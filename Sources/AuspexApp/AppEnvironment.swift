@@ -4,22 +4,45 @@ import Observation
 
 /// Process-wide dependencies the SwiftUI tree observes.
 ///
-/// A placeholder for now: it carries the resolved paths and version so the
-/// window has something real to show. The live session registry, the board
-/// snapshot publisher, and the MCP server handle get injected here as the
-/// later milestones land — view code should read them from the environment
-/// rather than reaching for a singleton.
+/// It carries the resolved paths, the version, and the open database. The
+/// live board is not wired up yet: `AuspexCore` has a `SessionRegistry` that
+/// turns an `AgentEvent` stream into `BoardSnapshot` frames, but nothing
+/// produces that stream until the source adapters land, and there is no view
+/// to render the frames.
+///
+/// TODO: once the ingest pipeline exists, hold a `SessionRegistry` here,
+/// start it with the merged event stream, and expose a `@MainActor` board
+/// model that consumes `registry.boardSnapshots`. View code should read that
+/// model from the environment rather than reaching for a singleton, and no
+/// view should ever touch `store` directly.
 @MainActor
 @Observable
 public final class AppEnvironment {
     /// Where Auspex reads and writes its own state.
     public let paths: AuspexPaths
 
+    /// The local database, or `nil` when it could not be opened.
+    ///
+    /// A failure here is not fatal: an app that cannot open its store can
+    /// still show the window and say why, which is more useful than a launch
+    /// that dies before drawing anything.
+    public let store: AuspexStore?
+
+    /// Why ``store`` is `nil`, for the settings pane to show.
+    public let storeErrorDescription: String?
+
     /// Sidebar destinations. Static until the live board exists.
     public let sections: [BoardSection] = BoardSection.allCases
 
     public init(paths: AuspexPaths = .default) {
         self.paths = paths
+        do {
+            self.store = try AuspexStore(paths: paths)
+            self.storeErrorDescription = nil
+        } catch {
+            self.store = nil
+            self.storeErrorDescription = String(describing: error)
+        }
     }
 
     /// Version string for the menu bar and the placeholder detail pane.
