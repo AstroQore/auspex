@@ -25,7 +25,14 @@ let package = Package(
         .executableTarget(
             name: "AuspexApp",
             dependencies: [
-                "AuspexCore"
+                "AuspexCore",
+                // The view layer renders `SessionSnapshot`, `SessionState`,
+                // and `Harness` directly, and `AppEnvironment` builds the
+                // ingest pipeline out of `AgentSessionLive` types. Importing
+                // AuspexCore does not re-export them, so both products are
+                // named here as well.
+                .product(name: "AgentSessionKit", package: "agent-session-kit"),
+                .product(name: "AgentSessionLive", package: "agent-session-kit")
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
