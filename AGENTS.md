@@ -1,0 +1,175 @@
+# AGENTS.md
+
+Operating manual for AI agents (and humans) working in this repository.
+Authoritative; `CLAUDE.md` just points here.
+
+## 1. What Auspex Is
+
+A native macOS app that observes every AI coding agent running on the user's
+Mac — Claude Code, Codex, Cursor, Grok Build, Antigravity — and shows them on
+one live board: who is thinking, calling tools, delegating to sub-agents,
+writing files, or waiting for permission. Sessions group by project and task,
+and the task board is exposed over MCP.
+
+Pure Swift package, ad-hoc-signed, **unsandboxed**, distributed as source.
+No Xcode workspace, no installer, no notarized release, no server, no network.
+
+**Status: pre-alpha.** The repository is a skeleton; most of
+`docs/ARCHITECTURE.md` is target design, not shipped code.
+
+## 2. Repository Map
+
+```
+Package.swift              SwiftPM manifest — tools 6.2, macOS 26, Swift 6 language mode
+Sources/
+  AuspexCore/              Testable library. All logic lives here.
+    AuspexPaths.swift      Single source of truth for the ~/.auspex/ tree
+    AuspexVersion.swift    Build identity; mirrors Resources/Info.plist
+    Store/AuspexStore.swift  GRDB store + DatabaseMigrator
+  AuspexApp/               SwiftUI executable. UI glue only.
+    main.swift             Subcommand dispatch, then AuspexApp.main()
+    AuspexApp.swift        App scene: WindowGroup + MenuBarExtra
+    AppEnvironment.swift   Observable dependency holder (placeholder)
+    RootView.swift         NavigationSplitView shell
+Tests/AuspexCoreTests/     swift-testing suites
+Resources/
+  Info.plist               Bundle metadata; com.astroqore.auspex
+  Auspex.entitlements      Deliberately empty — see § 5
+Scripts/build_app.sh       swift build → .app bundle → codesign → sandbox assert
+docs/ARCHITECTURE.md       Target architecture
+```
+
+**The target split is load-bearing.** `AuspexCore` holds every parser, reducer,
+adapter, and storage type, and is testable without a running app.
+`AuspexApp` holds windows, scenes, and view code. If a piece of logic is worth
+a test, it belongs in Core.
+
+## 3. Toolchain
+
+macOS 26 (Tahoe) or newer on Apple silicon, Xcode 26 / Swift 6.2 or newer.
+Both targets compile in Swift 6 language mode; keep it that way.
+
+## 4. Verification Before Completion
+
+Before claiming a change works, run all four:
+
+```sh
+swift build
+swift test
+./Scripts/build_app.sh release
+codesign -dv --entitlements - .build/Auspex.app
+```
+
+The `codesign` output must be an empty `<dict/>` plist with no
+`com.apple.security.app-sandbox` key. `build_app.sh` also asserts this and
+fails the build if the key appears.
+
+## 5. Why Auspex Is Unsandboxed
+
+Auspex's entire job is to read session stores that other tools scatter across
+the home directory (`~/.claude/projects`, `~/.codex/sessions`,
+`~/.cursor/chats`, `~/.grok/sessions`, AntiGravity's conversation databases).
+A sandboxed app cannot read across those trees, and it cannot bind
+`~/.auspex/mcp.sock`. So `Resources/Auspex.entitlements` is an empty dict on
+purpose.
+
+**The failure mode is silent.** A sandboxed Auspex launches fine and shows an
+empty board. Do not re-add the sandbox without coordinating the observation
+features first.
+
+**Unsandboxed is not a license for casual filesystem access.** Treat the user's
+disk with the discipline a sandboxed app would: read only the harness stores
+Auspex actually observes, and write nothing outside `~/.auspex/`.
+
+## 6. Code Conventions
+
+- **Swift package, two targets.** Heavy logic in `AuspexCore`, UI glue in
+  `AuspexApp`. Logic worth testing goes in Core.
+- **All writes go through `AuspexPaths`.** Every file Auspex owns lives under
+  `~/.auspex/` (mode 0700) and its URL is vended by `AuspexPaths`. Do not
+  build a path by hand, and do not add a second write root. `AuspexPaths`
+  refuses to create a directory outside its base — keep it that way, because
+  it is what makes the write scope a property of the code rather than a
+  convention.
+- **Never write into another harness's directory.** Their stores are read-only
+  to Auspex: no writes, no deletes, no transcript edits, no lock files, no
+  "harmless" touch. If a harness store must be opened with SQLite, open it
+  read-only and expect a live WAL.
+- **Home directory resolution** goes through `AuspexPaths.realHomeDirectory()`.
+  New hits on `NSHomeDirectory()`, `FileManager.default.homeDirectoryForCurrentUser`,
+  `URL.homeDirectory`, or `getenv("HOME")` in product code are bugs — a stray
+  `HOME` in a spawned agent's environment would otherwise redirect us.
+- **Sanitize process argv before logging or storing it.** Some harnesses pass
+  credentials on the command line — `cursor-agent` takes `--api-key` in argv,
+  so anything derived from `ps`, `sysctl KERN_PROCARGS2`, or a process
+  snapshot is a potential secret leak. Strip the value of every
+  credential-shaped flag before that string reaches a log line, the database,
+  or the UI.
+- **Transcripts are sensitive.** Session content is source code and whatever
+  was pasted into a prompt. It stays in the local database; it is never logged
+  at whole-message granularity and never leaves the machine.
+- **JSONL parsing must be O(n).** Session logs grow to tens of megabytes and
+  are tailed continuously. Use a moving cursor; never `removeSubrange` in a
+  read loop.
+- **Migrations are append-only.** Never edit a `registerMigration` block that
+  has shipped; add the next one.
+
+## 7. Privacy & Source-Content Rules
+
+The repository is public and AGPL-3.0-only — every commit, file, and diff is
+visible to the world. What is **not** allowed in any commit:
+
+- Real API keys, OAuth tokens, session cookies, JWTs, organization UUIDs,
+  account IDs, or personal email addresses — in source, tests, fixtures, or
+  log strings.
+- `/Users/<name>` paths or machine hostnames anywhere, including examples and
+  test output. **Fixtures use `/Users/example/...`** and synthetic tokens.
+- Real transcript content captured from an actual session. Fixtures are
+  hand-written or synthesized.
+- Logging raw credentials, raw argv, or unsanitized prompt text.
+- Re-enabling the app sandbox without coordinating the observation features
+  (§ 5).
+
+Before finishing any change, grep your diff:
+
+```sh
+git diff | grep -nE '/Users/|sk-|ghp_|xox[baprs]-|eyJ|Bearer |api[-_]?key' \
+         | grep -v '/Users/example'
+```
+
+(BSD `grep` has no PCRE lookahead, hence the second stage rather than a
+`(?!example)` in the pattern.)
+
+This is a source-content rule. It applies to what you commit, not who you
+commit as.
+
+## 8. Git Workflow
+
+- **Agents work in `.agents/worktrees/<branch>`, never on the main tree.**
+  Multiple agents may be working here at once; a shared checkout means one
+  agent's build sees another's half-written files. `.agents/worktrees/` is
+  gitignored.
+
+  ```sh
+  git worktree add .agents/worktrees/feat-live-board -b feat/live-board main
+  ```
+
+- **Branch prefixes:** `feat/`, `fix/`, `chore/`, `docs/`, `refactor/`,
+  `test/`. Conventional prefixes go on branch names.
+- **Commit subjects** use the conventional form (`feat:`, `fix:`, `chore:`,
+  `build:`, `docs:`, `refactor:`, `test:`), imperative, ≤ 72 characters.
+  Explain *why* in the body, not just what.
+- **Every commit ends with a `Co-Authored-By:` trailer** naming the real
+  participants when more than one human or agent shaped it, e.g.
+  `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
+- **Commit identity.** Use your own git identity, or GitHub's privacy email
+  (`<id>+<login>@users.noreply.github.com`) if you would rather keep a personal
+  mailbox out of the public log.
+- Never force-push `main`.
+
+## 9. What Not To Change Without Explicit Instruction
+
+- The empty `Resources/Auspex.entitlements` (§ 5).
+- The `~/.auspex/` write scope and the `AuspexPaths` containment check.
+- The bundle identifier `com.astroqore.auspex`.
+- The read-only stance toward every other harness's directory.
