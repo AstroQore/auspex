@@ -1,0 +1,22 @@
+.build/
+.swiftpm/
+*.xcodeproj/
+DerivedData/
+.DS_Store
+Package.resolved
+*.app/
+dist/
+
+# Agent worktrees and per-harness scratch directories
+.agents/worktrees/
+.codex/
+.claude/
+.grok/
+.agy/
+.gemini/
+.cursor/
+.research/
+
+# Python bytecode from helper scripts
+__pycache__/
+*.pyc
