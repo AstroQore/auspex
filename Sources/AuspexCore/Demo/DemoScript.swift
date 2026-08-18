@@ -1,0 +1,743 @@
+import AgentSessionKit
+import AgentSessionLive
+import Foundation
+
+/// A fabricated board, for developing and demonstrating the UI before the
+/// harness adapters land.
+///
+/// The script is a flat, offset-ordered list of events across several
+/// synthetic sessions. A host replays it against wall-clock time; nothing here
+/// sleeps, reads a file, or looks at the real machine, which is what makes the
+/// whole thing reproducible from a seed.
+///
+/// Everything in it is invented. Paths live under `/Users/example`, session
+/// ids are fixed strings, and no line was captured from a real transcript —
+/// the same rule the test fixtures follow, for the same reason: this ships in
+/// a public repository and gets screenshotted.
+///
+/// ## Shape of a loop
+///
+/// Each session opens with a compressed prologue — a turn or two of history
+/// emitted inside the first half second — so the board is populated the moment
+/// the window appears rather than filling in over a minute. The live beats
+/// follow at real-time gaps, staggered so that within a few seconds of launch
+/// the wall shows every state at once: something thinking, something mid-tool,
+/// something writing, one session delegating to a child, and one blocked on a
+/// permission prompt.
+public struct DemoScript: Sendable, Equatable {
+    /// One event and when to emit it, measured from the start of the loop.
+    public struct Step: Sendable, Equatable {
+        /// Seconds since the loop began.
+        public let offset: TimeInterval
+        /// The event to feed the registry.
+        public let event: AgentEvent
+
+        public init(offset: TimeInterval, event: AgentEvent) {
+            self.offset = offset
+            self.event = event
+        }
+    }
+
+    /// Every step, ascending by ``Step/offset``.
+    public let steps: [Step]
+
+    /// How long one loop lasts. A replayer waits this long before starting
+    /// the next generation.
+    public let duration: TimeInterval
+
+    /// The seed the script was built from, so a bug report can name it.
+    public let seed: UInt64
+
+    /// The default seed. Any value works; this one produces a board with all
+    /// five hero harnesses visible and the permission prompt early.
+    public static let defaultSeed: UInt64 = 0xA5_9E_C0_DE
+
+    /// Builds one loop.
+    ///
+    /// - Parameters:
+    ///   - seed: drives every jitter. The same seed and generation always
+    ///     produce byte-identical steps, event ids included.
+    ///   - startedAt: the instant offset `0` corresponds to. Only used to
+    ///     stamp the events; a replayer re-stamps them with the real emission
+    ///     time so a card's elapsed-in-state readout is honest.
+    ///   - generation: which pass around the loop this is. Sessions keep their
+    ///     keys across generations — a loop restarts the same eight sessions
+    ///     rather than piling up new ones — so the board stays a fixed size no
+    ///     matter how long the demo runs.
+    public static func make(
+        seed: UInt64 = DemoScript.defaultSeed,
+        startedAt: Date,
+        generation: Int = 0
+    ) -> DemoScript {
+        var rng = SeededRandom(seed: seed &+ UInt64(bitPattern: Int64(generation)))
+        var steps: [Step] = []
+        for blueprint in Blueprint.all {
+            var writer = Writer(
+                blueprint: blueprint,
+                startedAt: startedAt,
+                generation: generation,
+                rng: rng
+            )
+            writer.compile()
+            steps.append(contentsOf: writer.steps)
+            rng = writer.rng
+        }
+        steps.sort { lhs, rhs in
+            if lhs.offset != rhs.offset { return lhs.offset < rhs.offset }
+            return lhs.event.sequence < rhs.event.sequence
+        }
+        let end = steps.last?.offset ?? 0
+        return DemoScript(steps: steps, duration: end + 6, seed: seed)
+    }
+
+    private init(steps: [Step], duration: TimeInterval, seed: UInt64) {
+        self.steps = steps
+        self.duration = duration
+        self.seed = seed
+    }
+
+    /// The session keys the script uses, for a host that wants to pre-select
+    /// one or assert on the board it produced.
+    public static var sessionKeys: [SessionKey] {
+        Blueprint.all.map(\.key)
+    }
+}
+
+// MARK: - Beats
+
+extension DemoScript {
+    /// One thing a synthetic session does. The blueprint is a list of these;
+    /// ``Writer`` turns them into events with plausible gaps between them.
+    enum Beat: Sendable {
+        /// A person asks for something. Opens a turn.
+        case prompt(String)
+        /// The model reasons for roughly this long.
+        case think(TimeInterval)
+        /// The model says something.
+        case say(String)
+        /// A tool runs and succeeds.
+        case tool(String, ToolKind, String?, TimeInterval)
+        /// A tool runs and fails.
+        case toolFails(String, ToolKind, String?, TimeInterval)
+        /// A file is written — the state the board calls out separately.
+        case write(String, TimeInterval)
+        /// A child session runs to completion while the parent waits.
+        case delegate(String, String, TimeInterval)
+        /// A permission prompt sits unanswered for this long, then resolves.
+        case permission(String, TimeInterval, Bool)
+        /// Tokens are billed.
+        case usage(Int, Int, Int)
+        /// The turn closes.
+        case endTurn
+        /// Nothing happens.
+        case idle(TimeInterval)
+        /// The session exits.
+        case end(SessionEndReason)
+    }
+
+    /// A synthetic session: who it is, and what it does.
+    struct Blueprint: Sendable {
+        let harness: Harness
+        let sessionID: String
+        let cwd: String
+        let gitRoot: String?
+        let branch: String
+        let title: String
+        let model: String
+        let pid: pid_t
+        let entrypoint: String
+        let variant: String?
+        /// Emitted inside the first half second, so the board opens populated.
+        let prologue: [Beat]
+        /// Emitted at real-time gaps.
+        let live: [Beat]
+        /// How long to wait before the live beats begin. Staggering is what
+        /// keeps eight sessions from changing state in lockstep.
+        let startDelay: TimeInterval
+
+        var key: SessionKey {
+            SessionKey(harness: harness, sessionID: sessionID)
+        }
+
+        var sourcePath: String {
+            switch harness {
+            case .claudeCode, .claudeCowork:
+                "/Users/example/.claude/projects/\(projectSlug)/\(sessionID).jsonl"
+            case .codex, .chatgptWork:
+                "/Users/example/.codex/sessions/2026/08/19/rollout-\(sessionID).jsonl"
+            case .cursor:
+                "/Users/example/.cursor/chats/\(sessionID)/store.db"
+            case .grokBuild:
+                "/Users/example/.grok/sessions/\(sessionID)/updates.jsonl"
+            case .antigravity, .geminiCLI:
+                "/Users/example/.gemini/antigravity/conversations/\(sessionID).json"
+            }
+        }
+
+        private var projectSlug: String {
+            BoardGrouping.projectName(forPath: gitRoot ?? cwd)
+        }
+    }
+}
+
+// MARK: - The cast
+
+extension DemoScript.Blueprint {
+    /// The eight sessions the demo board shows.
+    ///
+    /// Chosen to cover every harness the UI has an identity for, every state
+    /// the card can be in, both grouping axes (four distinct projects, two of
+    /// them shared by different harnesses), and a parent/child pair.
+    static let all: [DemoScript.Blueprint] = [
+        // 1. The long-running one: tools, a subagent, then a permission wall.
+        DemoScript.Blueprint(
+            harness: .claudeCode,
+            sessionID: "3f2a1c88-4b6d-4e21-9a7c-0d51e8b23a94",
+            cwd: "/Users/example/Code/auspex",
+            gitRoot: "/Users/example/Code/auspex",
+            branch: "feat/board-ui",
+            title: "Build the live board",
+            model: "claude-opus-5",
+            pid: 41_207,
+            entrypoint: "terminal",
+            variant: "cli",
+            prologue: [
+                .prompt("Wire the board to the registry and give the cards a real design"),
+                .think(1.2),
+                .tool("Read", .fileRead, "Sources/AuspexCore/Registry/SessionRegistry.swift", 0.6),
+                .tool("Grep", .search, "boardSnapshots", 0.3),
+                .usage(48_210, 3_140, 31_800),
+                .endTurn
+            ],
+            live: [
+                .prompt("Now add the trace inspector"),
+                .think(2.5),
+                .tool("Read", .fileRead, "Sources/AuspexCore/Store/SessionRepository.swift", 3.0),
+                .write("Sources/AuspexApp/Trace/SessionTraceView.swift", 6.0),
+                .delegate("9c4e7b10-22af-4d33-8f61-77ac0e5d1b42", "explore", 14.0),
+                .say("The inspector needs the tool-call ledger to pair starts with finishes."),
+                .permission("Bash", 26.0, true),
+                .tool("Bash", .shell, "swift build 2>&1 | tail -20", 9.0),
+                .usage(62_900, 5_480, 44_100),
+                .endTurn,
+                .idle(8.0)
+            ],
+            startDelay: 1.0
+        ),
+
+        // 2. Codex grinding through a build. Mostly one very long shell call.
+        DemoScript.Blueprint(
+            harness: .codex,
+            sessionID: "0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6",
+            cwd: "/Users/example/Code/auspex",
+            gitRoot: "/Users/example/Code/auspex",
+            branch: "feat/codex-adapter",
+            title: "Codex rollout adapter",
+            model: "gpt-5.6-terra",
+            pid: 41_882,
+            entrypoint: "terminal",
+            variant: "codex_cli_rs",
+            prologue: [
+                .prompt("Tail ~/.codex/sessions rollouts and emit AgentEvents"),
+                .think(0.9),
+                .tool("shell", .shell, "ls ~/.codex/sessions", 0.4),
+                .usage(21_400, 1_890, 12_000),
+                .endTurn
+            ],
+            live: [
+                .prompt("Run the suite"),
+                .think(1.4),
+                .tool("shell", .shell, "swift test --filter CodexAdapter", 22.0),
+                .write("Sources/AgentSessionLive/Adapters/Codex/CodexTailer.swift", 5.0),
+                .toolFails("shell", .shell, "swift test --filter CodexAdapter", 11.0),
+                .say("One rollout fixture has a null timestamp; guarding it."),
+                .write("Tests/CodexAdapterTests/RolloutFixtures.swift", 4.0),
+                .tool("shell", .shell, "swift test --filter CodexAdapter", 13.0),
+                .usage(33_050, 4_120, 18_600),
+                .endTurn,
+                .idle(6.0)
+            ],
+            startDelay: 0.4
+        ),
+
+        // 3. Cursor, editing steadily. The writingFile state, mostly.
+        DemoScript.Blueprint(
+            harness: .cursor,
+            sessionID: "b8d31f0a4c7e2916",
+            cwd: "/Users/example/Code/storefront-web",
+            gitRoot: "/Users/example/Code/storefront-web",
+            branch: "feat/checkout-v2",
+            title: "Checkout step indicator",
+            model: "composer-2",
+            pid: 38_140,
+            entrypoint: "ide",
+            variant: nil,
+            prologue: [
+                .prompt("Extract the checkout stepper into its own component"),
+                .think(0.8),
+                .write("src/components/CheckoutStepper.tsx", 0.5),
+                .usage(12_800, 2_240, 4_100),
+                .endTurn
+            ],
+            live: [
+                .prompt("Make step 3 announce itself to screen readers"),
+                .think(1.8),
+                .write("src/components/CheckoutStepper.tsx", 9.0),
+                .write("src/components/CheckoutStepper.test.tsx", 7.0),
+                .tool("run_terminal_cmd", .shell, "pnpm vitest run checkout", 12.0),
+                .say("Added aria-current and a visually hidden live region."),
+                .usage(18_400, 3_010, 6_800),
+                .endTurn,
+                .idle(14.0)
+            ],
+            startDelay: 2.2
+        ),
+
+        // 4. Grok Build, blocked almost immediately. The red card.
+        DemoScript.Blueprint(
+            harness: .grokBuild,
+            sessionID: "sess_7hq2mv4k9x",
+            cwd: "/Users/example/Code/ingest-pipeline",
+            gitRoot: "/Users/example/Code/ingest-pipeline",
+            branch: "main",
+            title: "Backfill the events table",
+            model: "grok-4.6",
+            pid: 39_551,
+            entrypoint: "terminal",
+            variant: nil,
+            prologue: [
+                .prompt("Backfill observed_at for every event written before the migration"),
+                .think(1.1),
+                .tool("read_file", .fileRead, "migrations/007_observed_at.sql", 0.4),
+                .usage(9_600, 1_120, 2_400),
+                .endTurn
+            ],
+            live: [
+                .prompt("Go ahead and run it against the local database"),
+                .think(1.6),
+                .permission("execute_command", 34.0, false),
+                .say("Holding — that would rewrite 1.2M rows in place. Writing a dry run instead."),
+                .write("scripts/backfill_dry_run.py", 6.0),
+                .tool("execute_command", .shell, "python scripts/backfill_dry_run.py", 8.0),
+                .usage(14_200, 2_650, 3_900),
+                .endTurn,
+                .idle(10.0)
+            ],
+            startDelay: 1.6
+        ),
+
+        // 5. AntiGravity, searching the web and reading widely.
+        DemoScript.Blueprint(
+            harness: .antigravity,
+            sessionID: "conv:2026-08-19:4d81a0",
+            cwd: "/Users/example/Code/mobile-client",
+            gitRoot: "/Users/example/Code/mobile-client",
+            branch: "chore/deps",
+            title: "Audit the dependency tree",
+            model: "gemini-3.7-flash",
+            pid: 37_006,
+            entrypoint: "ide",
+            variant: "ide",
+            prologue: [
+                .prompt("Which of our direct dependencies have known advisories?"),
+                .think(1.0),
+                .tool("search_web", .web, "swift-nio advisories 2026", 0.6),
+                .endTurn
+            ],
+            live: [
+                .prompt("Check the transitive ones too"),
+                .think(2.2),
+                .tool("read_resource", .mcp, "sbom://mobile-client/latest", 5.0),
+                .tool("search_web", .web, "grpc-swift CVE 2026", 7.0),
+                .tool("grep_search", .search, "Package.resolved", 2.5),
+                .say("Two transitive packages are behind; neither has an advisory."),
+                .usage(28_700, 6_310, 9_200),
+                .endTurn,
+                .idle(16.0)
+            ],
+            startDelay: 3.0
+        ),
+
+        // 6. A second Claude Code session in a different project, ending mid-loop.
+        DemoScript.Blueprint(
+            harness: .claudeCode,
+            sessionID: "7a1b9d43-5e02-4c8f-b6d1-3e90f2a71c55",
+            cwd: "/Users/example/Code/storefront-web",
+            gitRoot: "/Users/example/Code/storefront-web",
+            branch: "fix/cart-total",
+            title: "Cart total rounds down",
+            model: "claude-sonnet-5",
+            pid: 40_310,
+            entrypoint: "terminal",
+            variant: "cli",
+            prologue: [
+                .prompt("The cart total is a cent short when a line item has a 3-way split"),
+                .think(1.3),
+                .tool("Grep", .search, "roundingMode", 0.5),
+                .write("src/lib/money.ts", 0.6),
+                .tool("Bash", .shell, "pnpm vitest run money", 0.7),
+                .usage(16_900, 2_480, 7_700),
+                .endTurn
+            ],
+            live: [
+                .say("Fixed: the split was truncating instead of distributing the remainder."),
+                .idle(9.0),
+                .end(.exited)
+            ],
+            startDelay: 0.8
+        ),
+
+        // 7. Codex on infrastructure, killed part way through.
+        DemoScript.Blueprint(
+            harness: .codex,
+            sessionID: "0198f4d1-1c33-7b52-9e08-6a4f2b7c1d09",
+            cwd: "/Users/example/Code/infra-terraform",
+            gitRoot: nil,
+            branch: "main",
+            title: "Plan the staging cluster",
+            model: "gpt-5.6-luna",
+            pid: 36_774,
+            entrypoint: "terminal",
+            variant: "codex_exec",
+            prologue: [
+                .prompt("terraform plan for staging, summarise the destructive changes"),
+                .think(1.0),
+                .tool("shell", .shell, "terraform plan -out=staging.tfplan", 0.9),
+                .endTurn
+            ],
+            live: [
+                .think(3.0),
+                .tool("shell", .shell, "terraform show -json staging.tfplan", 5.0),
+                .idle(4.0),
+                .end(.killed)
+            ],
+            startDelay: 2.8
+        ),
+
+        // 8. Cursor, idle the whole loop. Every wall has one.
+        DemoScript.Blueprint(
+            harness: .cursor,
+            sessionID: "e07c4a91b2d8635f",
+            cwd: "/Users/example/Code/design-tokens",
+            gitRoot: "/Users/example/Code/design-tokens",
+            branch: "main",
+            title: "Token naming pass",
+            model: "composer-2",
+            pid: 35_902,
+            entrypoint: "ide",
+            variant: nil,
+            prologue: [
+                .prompt("Rename the surface tokens to match the new scale"),
+                .think(0.7),
+                .write("tokens/color.json", 0.5),
+                .say("Renamed 24 tokens and updated the two usages outside the package."),
+                .usage(7_400, 1_180, 2_050),
+                .endTurn
+            ],
+            live: [
+                .idle(48.0),
+                .prompt("One more: fold the elevation tokens in"),
+                .think(2.0),
+                .write("tokens/elevation.json", 5.0),
+                .endTurn
+            ],
+            startDelay: 0.2
+        )
+    ]
+}
+
+// MARK: - Compilation
+
+extension DemoScript {
+    /// Turns one blueprint's beats into events.
+    ///
+    /// A struct rather than a function because compiling a beat needs a
+    /// running offset, a sequence number, a byte offset into the pretend
+    /// transcript, and the random generator — and threading five inout
+    /// parameters through a dozen call sites is worse than owning them.
+    private struct Writer {
+        let blueprint: Blueprint
+        let startedAt: Date
+        let generation: Int
+        var rng: SeededRandom
+        var steps: [Step] = []
+
+        private var offset: TimeInterval = 0
+        private var sequence: Int64 = 0
+        private var byteOffset: Int64 = 4_096
+        private var callIndex = 0
+        private var permissionIndex = 0
+        /// Compressed prologue timing: history lands in the first half second.
+        private var isPrologue = true
+
+        init(blueprint: Blueprint, startedAt: Date, generation: Int, rng: SeededRandom) {
+            self.blueprint = blueprint
+            self.startedAt = startedAt
+            self.generation = generation
+            self.rng = rng
+        }
+
+        mutating func compile() {
+            emit(.sessionStarted(identity: identity))
+            for beat in blueprint.prologue { compile(beat) }
+            isPrologue = false
+            offset = blueprint.startDelay
+            for beat in blueprint.live { compile(beat) }
+        }
+
+        private var identity: SessionIdentity {
+            SessionIdentity(
+                key: blueprint.key,
+                sourcePath: blueprint.sourcePath,
+                variant: blueprint.variant,
+                cwd: blueprint.cwd,
+                gitRoot: blueprint.gitRoot,
+                gitBranch: blueprint.branch,
+                pid: blueprint.pid,
+                procStart: startedAt.addingTimeInterval(-1_800),
+                title: blueprint.title,
+                model: blueprint.model,
+                entrypoint: blueprint.entrypoint
+            )
+        }
+
+        private mutating func compile(_ beat: Beat) {
+            switch beat {
+            case .prompt(let text):
+                emit(.turnStarted)
+                advance(0.05)
+                emit(.userPrompt(preview: preview(text)))
+                emit(.textBody(role: .user, text: text, toolCallID: nil))
+
+            case .think(let seconds):
+                emit(.thinking)
+                advance(seconds)
+
+            case .say(let text):
+                emit(.assistantText(preview: preview(text)))
+                emit(.textBody(role: .assistant, text: text, toolCallID: nil))
+                advance(0.4)
+
+            case .tool(let name, let kind, let target, let seconds):
+                runTool(name: name, kind: kind, target: target, seconds: seconds, fails: false)
+
+            case .toolFails(let name, let kind, let target, let seconds):
+                runTool(name: name, kind: kind, target: target, seconds: seconds, fails: true)
+
+            case .write(let path, let seconds):
+                runTool(
+                    name: writeToolName,
+                    kind: .fileWrite,
+                    target: path,
+                    seconds: seconds,
+                    fails: false
+                )
+
+            case .delegate(let childID, let agentType, let seconds):
+                compileDelegation(childID: childID, agentType: agentType, seconds: seconds)
+
+            case .permission(let tool, let seconds, let allowed):
+                permissionIndex += 1
+                let id = "perm-\(generation)-\(permissionIndex)"
+                emit(.permissionRequested(id: id, tool: tool))
+                advance(seconds)
+                emit(.permissionResolved(id: id, allowed: allowed))
+                advance(0.3)
+
+            case .usage(let input, let output, let cached):
+                emit(.usage(
+                    model: blueprint.model,
+                    inputTokens: input + jitter(upTo: 400),
+                    outputTokens: output + jitter(upTo: 120),
+                    cachedTokens: cached
+                ))
+
+            case .endTurn:
+                emit(.turnEnded(reason: .complete))
+                advance(0.4)
+
+            case .idle(let seconds):
+                advance(seconds)
+
+            case .end(let reason):
+                emit(.sessionEnded(reason: reason))
+                advance(0.5)
+            }
+        }
+
+        /// The tool a harness uses to change a file, as that harness spells it.
+        private var writeToolName: String {
+            switch blueprint.harness {
+            case .claudeCode, .claudeCowork: "Edit"
+            case .codex, .chatgptWork: "apply_patch"
+            case .cursor: "edit_file"
+            case .grokBuild: "write_file"
+            case .antigravity, .geminiCLI: "replace_file_content"
+            }
+        }
+
+        private mutating func runTool(
+            name: String,
+            kind: ToolKind,
+            target: String?,
+            seconds: TimeInterval,
+            fails: Bool
+        ) {
+            callIndex += 1
+            let id = "call-\(generation)-\(callIndex)"
+            emit(.toolCallStarted(id: id, name: name, kind: kind, target: target))
+            advance(seconds)
+            emit(.toolCallFinished(id: id, isError: fails))
+            advance(0.2)
+        }
+
+        private mutating func compileDelegation(
+            childID: String,
+            agentType: String,
+            seconds: TimeInterval
+        ) {
+            let child = SessionKey(harness: blueprint.harness, sessionID: childID)
+            callIndex += 1
+            let toolUseID = "call-\(generation)-\(callIndex)"
+            emit(.subagentStarted(child: child, agentType: agentType, toolUseID: toolUseID))
+
+            // The child's own short life, on the same timeline.
+            let childIdentity = SessionIdentity(
+                key: child,
+                sourcePath: blueprint.sourcePath,
+                variant: blueprint.variant,
+                parent: blueprint.key,
+                parentLink: .subagent(toolUseID: toolUseID),
+                cwd: blueprint.cwd,
+                gitRoot: blueprint.gitRoot,
+                gitBranch: blueprint.branch,
+                pid: blueprint.pid + 1,
+                procStart: startedAt,
+                title: "Find every call site of recentEvents",
+                model: blueprint.model,
+                entrypoint: blueprint.entrypoint
+            )
+            emit(.sessionStarted(identity: childIdentity), session: child)
+            emit(.turnStarted, session: child)
+            emit(.userPrompt(preview: "Find every call site of recentEvents"), session: child)
+            advance(seconds * 0.2)
+
+            let childCall = "call-\(generation)-child-\(callIndex)"
+            emit(
+                .toolCallStarted(id: childCall, name: "Grep", kind: .search, target: "recentEvents("),
+                session: child
+            )
+            advance(seconds * 0.5)
+            emit(.toolCallFinished(id: childCall, isError: false), session: child)
+            advance(seconds * 0.3)
+
+            emit(
+                .usage(model: blueprint.model, inputTokens: 8_100, outputTokens: 940, cachedTokens: 0),
+                session: child
+            )
+            emit(.turnEnded(reason: .complete), session: child)
+            emit(.sessionEnded(reason: .exited), session: child)
+            emit(.subagentFinished(child: child))
+            advance(0.3)
+        }
+
+        // MARK: Primitives
+
+        /// Appends one event at the current offset.
+        private mutating func emit(_ kind: AgentEventKind, session: SessionKey? = nil) {
+            sequence += 1
+            byteOffset += Int64(192 + jitter(upTo: 512))
+            let event = AgentEvent(
+                id: rng.nextUUID(),
+                session: session ?? blueprint.key,
+                timestamp: startedAt.addingTimeInterval(offset),
+                observedAt: startedAt.addingTimeInterval(offset),
+                sequence: sequence,
+                kind: kind,
+                raw: RawRef(path: blueprint.sourcePath, byteOffset: byteOffset)
+            )
+            steps.append(Step(offset: offset, event: event))
+            // Two events at the same instant are what a real flush looks like,
+            // but a trace reads better when they are merely close.
+            offset += 0.02
+        }
+
+        /// Moves the clock forward by `seconds`, give or take.
+        ///
+        /// The jitter is what keeps eight sessions from pulsing in unison —
+        /// a wall where every card changes state on the same tick looks like
+        /// an animation, not a readout.
+        private mutating func advance(_ seconds: TimeInterval) {
+            guard !isPrologue else {
+                // History is compressed: keep the ordering, drop the waiting.
+                offset += min(seconds, 0.04)
+                return
+            }
+            let spread = seconds * 0.18
+            offset += max(0.05, seconds + Double(jitter(upTo: 200)) / 100.0 * spread / 2)
+        }
+
+        private mutating func jitter(upTo bound: Int) -> Int {
+            bound <= 0 ? 0 : Int(rng.next() % UInt64(bound))
+        }
+
+        /// The short form a state event carries. Adapters cut previews at a
+        /// couple of hundred characters; the trace folds the full body back in.
+        private func preview(_ text: String) -> String {
+            text.count <= 120 ? text : String(text.prefix(119)) + "…"
+        }
+    }
+}
+
+// MARK: - Seeded randomness
+
+/// SplitMix64 — a small, fast, fully specified generator.
+///
+/// `SystemRandomNumberGenerator` is not reproducible and Swift's standard
+/// library ships no seeded generator, so a script that must replay identically
+/// from a seed has to bring its own. SplitMix64 is the standard answer: eight
+/// lines, no state beyond a `UInt64`, and a fixed algorithm that will not
+/// change under us the way a library implementation might.
+///
+/// Not for anything that needs to be unguessable. This picks how many
+/// milliseconds a fake tool call takes.
+public struct SeededRandom: RandomNumberGenerator, Sendable {
+    private var state: UInt64
+
+    public init(seed: UInt64) {
+        self.state = seed
+    }
+
+    public mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+
+    /// A UUID drawn from this generator, so a replayed script produces the
+    /// same event ids and can be compared value-for-value in a test.
+    public mutating func nextUUID() -> UUID {
+        let high = next()
+        let low = next()
+        return UUID(uuid: (
+            UInt8(truncatingIfNeeded: high >> 56),
+            UInt8(truncatingIfNeeded: high >> 48),
+            UInt8(truncatingIfNeeded: high >> 40),
+            UInt8(truncatingIfNeeded: high >> 32),
+            UInt8(truncatingIfNeeded: high >> 24),
+            UInt8(truncatingIfNeeded: high >> 16),
+            UInt8(truncatingIfNeeded: high >> 8),
+            UInt8(truncatingIfNeeded: high),
+            UInt8(truncatingIfNeeded: low >> 56),
+            UInt8(truncatingIfNeeded: low >> 48),
+            UInt8(truncatingIfNeeded: low >> 40),
+            UInt8(truncatingIfNeeded: low >> 32),
+            UInt8(truncatingIfNeeded: low >> 24),
+            UInt8(truncatingIfNeeded: low >> 16),
+            UInt8(truncatingIfNeeded: low >> 8),
+            UInt8(truncatingIfNeeded: low)
+        ))
+    }
+}

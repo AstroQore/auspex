@@ -124,3 +124,13 @@ public struct SourceCursorRepository: SourceCursorStoring {
         return result
     }
 }
+
+/// The kit's own cursor-store protocol, satisfied by the same two methods.
+///
+/// `AgentSessionLive` declares ``SourceCursorStore`` for
+/// ``IngestCoordinator`` to resume from, and ships an in-memory and a
+/// JSON-file implementation for hosts without a database. Auspex has one, so
+/// it hands the coordinator this repository instead — the signatures already
+/// match, which is what ``SourceCursorStoring`` predicted, so the conformance
+/// is a declaration rather than an adapter.
+extension SourceCursorRepository: SourceCursorStore {}
