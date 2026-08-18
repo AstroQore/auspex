@@ -70,6 +70,7 @@ enum Fixtures {
         [
             event(.sessionStarted(identity: identity(key: key)), key: key, at: 0),
             event(.userPrompt(preview: "Make the resizer stop snapping back"), key: key, at: 1),
+            event(.textBody(role: .user, text: "Make the resizer stop snapping back", toolCallID: nil), key: key, at: 1),
             event(
                 .toolCallStarted(id: "call-1", name: "Bash", kind: .shell, target: "swift build"),
                 key: key,

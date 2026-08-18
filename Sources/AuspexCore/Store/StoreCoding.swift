@@ -97,6 +97,7 @@ extension AgentEventKind {
         case .sessionEnded: "sessionEnded"
         case .liveness: "liveness"
         case .note: "note"
+        case .textBody: "textBody"
         }
     }
 
@@ -110,6 +111,7 @@ extension AgentEventKind {
         case .permissionRequested(let id, _): id
         case .permissionResolved(let id, _): id
         case .subagentStarted(_, _, let toolUseID): toolUseID
+        case .textBody(_, _, let toolCallID): toolCallID
         default: nil
         }
     }

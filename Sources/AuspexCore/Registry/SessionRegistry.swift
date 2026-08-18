@@ -255,11 +255,12 @@ public actor SessionRegistry {
                 isError: isError
             ))
 
-        case .userPrompt(let preview):
-            indexText(preview, role: .user, event: event)
-
-        case .assistantText(let preview):
-            indexText(preview, role: .assistant, event: event)
+        case .textBody(let role, let text, _):
+            // Only full bodies reach the index. The preview-carrying state
+            // events (`userPrompt`, `assistantText`) are deliberately not
+            // indexed so a body is never stored twice; adapters emit a
+            // `textBody` alongside every text-bearing state event.
+            indexText(text, role: MessageRole(role), event: event)
 
         default:
             break

@@ -610,6 +610,17 @@ public enum MessageRole: String, Codable, Sendable, CaseIterable, Hashable {
     case system
 }
 
+extension MessageRole {
+    /// The store's role for a live-layer ``TextBodyRole``.
+    public init(_ role: TextBodyRole) {
+        switch role {
+        case .user: self = .user
+        case .assistant: self = .assistant
+        case .toolResult: self = .toolResult
+        }
+    }
+}
+
 /// One message on its way into the search index.
 public struct IndexedMessage: Hashable, Sendable {
     public let session: SessionKey

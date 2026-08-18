@@ -215,7 +215,7 @@ struct SessionRegistryTests {
         let key = Fixtures.key()
 
         let first = makeRegistry(store: store)
-        for event in Fixtures.oneTurnScript(key: key).prefix(4) {
+        for event in Fixtures.oneTurnScript(key: key).prefix(5) {
             await first.ingest(event)
         }
         await first.stop()
