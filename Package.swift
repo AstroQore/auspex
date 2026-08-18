@@ -13,11 +13,13 @@ let package = Package(
     dependencies: [
         // GRDB backs the local session/event store under ~/.auspex/auspex.db.
         // FTS5 full-text search over transcripts is planned for M1.
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0")
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         // AgentSessionKit / AgentSessionLive provide the harness source
         // adapters, the AgentEvent model, and the live tailing pipeline.
-        // The sibling package is still being written; wiring it up is M0-4.
-        // .package(path: "../agent-session-kit"),  // enabled in M0-4
+        // TODO: switch to the git URL once agent-session-kit is published and
+        // tagged; a path dependency is only workable while the two packages
+        // are checked out side by side.
+        .package(path: "../agent-session-kit")
     ],
     targets: [
         .executableTarget(
@@ -30,9 +32,9 @@ let package = Package(
         .target(
             name: "AuspexCore",
             dependencies: [
-                .product(name: "GRDB", package: "GRDB.swift")
-                // .product(name: "AgentSessionKit", package: "agent-session-kit"),  // enabled in M0-4
-                // .product(name: "AgentSessionLive", package: "agent-session-kit"),  // enabled in M0-4
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "AgentSessionKit", package: "agent-session-kit"),
+                .product(name: "AgentSessionLive", package: "agent-session-kit")
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
