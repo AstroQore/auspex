@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Auspex runs unsandboxed on purpose.
+
+        Its whole job is to observe agent harnesses that write their
+        session stores wherever they like: ~/.claude/projects,
+        ~/.codex/sessions, ~/.cursor/chats, ~/.grok/sessions, and
+        AntiGravity's conversation databases. A sandboxed app cannot
+        read across those trees, and it cannot bind the Unix socket at
+        ~/.auspex/mcp.sock that the MCP bridge connects to. So
+        `com.apple.security.app-sandbox` is intentionally absent.
+
+        Unsandboxed is not a license for casual filesystem access. See
+        AGENTS.md § Privacy: read only the harness stores Auspex
+        actually observes, treat every one of them as read-only, and
+        write nothing outside ~/.auspex/.
+    -->
+</dict>
+</plist>
