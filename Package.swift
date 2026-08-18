@@ -40,7 +40,11 @@ let package = Package(
         ),
         .testTarget(
             name: "AuspexCoreTests",
-            dependencies: ["AuspexCore"],
+            dependencies: [
+                "AuspexCore",
+                .product(name: "AgentSessionKit", package: "agent-session-kit"),
+                .product(name: "AgentSessionLive", package: "agent-session-kit")
+            ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         )
     ]
