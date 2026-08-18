@@ -17,8 +17,11 @@ Grok Build、Antigravity —— 并汇总到同一块实时看板：谁在思考
 派发子 agent、谁在写文件、谁在等待授权。会话可按项目和任务分组，任务看板通过 MCP
 对外暴露。
 
-> **状态：pre-alpha，私有开发中。** 当前仓库只是骨架，尚未真正观察任何东西，
-> 具体进度见 [路线图](#路线图)。
+> **状态：pre-alpha，私有开发中。** 看板、会话轨迹和菜单栏已经跑在真实数据管线
+> 上，但还没有任何 harness adapter 落地，所以真机上看板仍然是空的。想看它运行，
+> 先跑 [演示模式](#看看这块看板)；具体进度见 [路线图](#路线图)。
+
+![Auspex 看板：左侧是会话卡片，右侧是某个会话的轨迹](docs/screenshots/board.png)
 
 ## 为什么
 
@@ -50,6 +53,30 @@ open .build/Auspex.app
 
 设置 `AUSPEX_CODESIGN_IDENTITY` 可改用 Developer ID Application 证书签名，并启用
 hardened runtime。
+
+## 看看这块看板
+
+目前还没有任何 harness adapter 落地，所以真机启动只会看到空看板，以及它将要观察
+的存储清单。加上 `--demo` 会改为回放一块伪造的看板：五个 harness 上的八个会话，
+循环走完提问、调用工具、派发子 agent、等待授权、结束等状态。
+
+```sh
+./Scripts/build_app.sh debug
+.build/Auspex.app/Contents/MacOS/Auspex --demo
+```
+
+`open -a` 无法传参，所以直接运行二进制；或者设置环境变量 `AUSPEX_DEMO=1`，效果
+相同。
+
+演示模式完全在内存中运行：不打开任何 harness 存储，不创建 `~/.auspex/`，不往磁盘
+写任何东西，里面出现的所有路径都在 `/Users/example` 下。
+
+| | |
+| --- | --- |
+| ![会话轨迹：提问、工具调用与轮次组成的瀑布流](docs/screenshots/trace.png) | ![空看板，列出每个 harness 存放会话的位置](docs/screenshots/empty.png) |
+| **会话轨迹** —— 单个会话的全部事件，按轮次分组；一次工具调用折叠成一行并带上耗时，点开可看原始 payload。 | **空看板** —— 今天真机启动看到的样子：Auspex 将要读取的存储，以及哪些 adapter 已经就绪。 |
+
+看板以深色为主，同时跟随系统外观（[浅色模式](docs/screenshots/board-light.png)）。
 
 ## 数据从哪来
 
@@ -87,7 +114,7 @@ Agent 转录是开发机上最敏感的文本之一：里面有源码、基础�
 | 里程碑 | 范围 |
 | ------ | ---- |
 | **M0** | 仓库骨架，以及共享包 `agent-session-kit`：会话模型、事件流、source adapter 协议。 |
-| **M1** | Claude Code 与 Codex 的实时看板 —— 运行中 / 思考中 / 调用工具 / 等待授权 / 空闲，实时更新。 |
+| **M1** | Claude Code 与 Codex 的实时看板 —— 运行中 / 思考中 / 调用工具 / 等待授权 / 空闲，实时更新。*看板、轨迹检视器和菜单栏已完成，两个 adapter 正在落地。* |
 | **M2** | 全部五个 harness，加上项目与任务分组，以及像素场景视图。 |
 | **M3** | 基于 `~/.auspex/mcp.sock` 的 MCP 任务看板（含 `--mcp-stdio` 桥接），以及可选的 harness hook 实现即时更新。 |
 | **M4** | 控制能力 —— 不只是观察，还能直接对会话执行操作。 |

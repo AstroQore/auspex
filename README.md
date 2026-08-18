@@ -17,8 +17,13 @@ Cursor, Grok Build, Antigravity — in one live board: who is thinking, calling
 tools, delegating to sub-agents, writing files, or waiting for permission.
 Group sessions by project and task; expose a task board over MCP.
 
-> **Status: pre-alpha, private development.** The repository is a skeleton.
-> Nothing observes anything yet — see [Roadmap](#roadmap) for what lands when.
+> **Status: pre-alpha, private development.** The board, the session trace, and
+> the menu bar are built and running against the live pipeline, but no harness
+> adapter has shipped yet, so on a real machine the board is still empty. Run
+> [the demo](#see-the-board) to see it working — see [Roadmap](#roadmap) for
+> what lands when.
+
+![The Auspex board: session cards on the left, one session's trace on the right](docs/screenshots/board.png)
 
 ## Why
 
@@ -51,6 +56,33 @@ open .build/Auspex.app
 
 `AUSPEX_CODESIGN_IDENTITY` overrides ad-hoc signing with a Developer ID
 Application identity and enables the hardened runtime.
+
+## See the Board
+
+No harness adapter has shipped yet, so a real launch shows the empty board and
+the list of stores it will watch. `--demo` replays a fabricated one instead:
+eight sessions across all five harnesses, walking through prompts, tool calls,
+a sub-agent, a permission prompt, and a couple of endings, on a loop.
+
+```sh
+./Scripts/build_app.sh debug
+.build/Auspex.app/Contents/MacOS/Auspex --demo
+```
+
+`open -a` cannot pass arguments through, so run the binary directly — or set
+`AUSPEX_DEMO=1` in the environment, which does the same thing.
+
+The demo runs entirely in memory. It opens no harness store, creates no
+`~/.auspex/`, and writes nothing to disk. Every path in it is under
+`/Users/example`.
+
+| | |
+| --- | --- |
+| ![The session trace: a waterfall of prompts, tool calls, and turns](docs/screenshots/trace.png) | ![The empty board, listing the store each harness keeps its sessions in](docs/screenshots/empty.png) |
+| **Session trace** — every event in one session, grouped by turn, with tool calls collapsed to one row carrying their duration. Click a row for the payload. | **Empty board** — what a real launch shows today: the stores Auspex will read, and which adapters exist yet. |
+
+The board is dark-first and follows the system appearance
+([light mode](docs/screenshots/board-light.png)).
 
 ## How Data Is Collected
 
@@ -95,7 +127,7 @@ a prompt at 2am. Auspex treats them accordingly.
 | Milestone | Scope |
 | --------- | ----- |
 | **M0** | Repository skeleton and the shared `agent-session-kit` package: session model, event stream, source-adapter protocol. |
-| **M1** | Live board for Claude Code and Codex — running / thinking / tool call / waiting-for-permission / idle, updating in real time. |
+| **M1** | Live board for Claude Code and Codex — running / thinking / tool call / waiting-for-permission / idle, updating in real time. *The board, the trace inspector, and the menu bar are in; the two adapters are landing.* |
 | **M2** | All five harnesses, plus project and task grouping and the pixel scene view. |
 | **M3** | MCP task board over `~/.auspex/mcp.sock` (with an `--mcp-stdio` bridge) and opt-in harness hooks for instant updates. |
 | **M4** | Control — act on a session from Auspex, not just watch it. |
