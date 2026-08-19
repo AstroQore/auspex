@@ -49,4 +49,11 @@ public enum StoreMetaKey {
     /// decode error it has to infer from. A bump still needs its own migration
     /// — this is the diagnostic, not the mechanism.
     public static let eventSchemaVersion = "event_schema_version"
+
+    /// The event schema the last ``BriefBackfill`` pass ran under.
+    ///
+    /// A version rather than a boolean, because a schema bump can change what
+    /// the same rows fold into and a store stamped "done" would never find out.
+    /// Absent on a store that has never had a pass.
+    public static let briefBackfill = "brief_backfill_schema_version"
 }
