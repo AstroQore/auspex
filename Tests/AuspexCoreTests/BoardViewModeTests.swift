@@ -26,6 +26,16 @@ struct BoardViewModeTests {
         #expect(Set(symbols).count == symbols.count)
     }
 
+    @Test("exactly one mode is about a single session")
+    func onlyTrajectoryNeedsASelection() {
+        // The picker disables what `requiresSelection` marks, and the board
+        // model refuses to enter it with nothing selected. A second mode
+        // acquiring the flag by accident would silently become unreachable
+        // from an empty board.
+        #expect(BoardViewMode.allCases.filter(\.requiresSelection) == [.trajectory])
+        #expect(BoardViewMode.board.requiresSelection == false)
+    }
+
     @Test("a mode round-trips through its raw value")
     func rawValueRoundTrips() {
         // The window restores its mode across launches by raw value, so a

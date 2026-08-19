@@ -87,6 +87,7 @@ struct RootView: View {
                     case .board: BoardView(model: model)
                     case .scene: SceneContainerView(model: model)
                     case .crew: CrewView(model: model)
+                    case .trajectory: TrajectoryView(model: model)
                     }
                 } else {
                     ComingSoonView(section: section ?? .live)

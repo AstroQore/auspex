@@ -46,10 +46,15 @@ struct BoardHeader: View {
                 }
                 SegmentedPicker(
                     selection: $model.viewMode,
-                    options: BoardViewMode.pickerOrder.map { ($0, $0.title) }
+                    options: BoardViewMode.pickerOrder.map { ($0, $0.title) },
+                    // Trajectory draws one session, so it needs one selected.
+                    isEnabled: { !$0.requiresSelection || model.canOpenTrajectory }
                 )
                 .fixedSize()
-                .help("Read the same board as a wall of cards or as a room")
+                .help(
+                    "Read the same board as a wall of cards, as a room, "
+                        + "or one session as its trajectory"
+                )
                 groupMenu.fixedSize()
                 searchField
             } else {

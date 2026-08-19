@@ -80,7 +80,69 @@ final class LiveBoardModel {
     ///
     /// A mode rather than a destination, so switching keeps the selection, the
     /// grouping, the filters, and the trace beside it.
-    var viewMode: BoardViewMode = .board
+    var viewMode: BoardViewMode = .board {
+        didSet {
+            guard oldValue != viewMode else { return }
+            guard viewMode.requiresSelection else {
+                // Leaving the trajectory stops its reads. The fold is kept:
+                // coming back to the same session should not re-read a
+                // transcript the model already holds.
+                trajectory.stop()
+                return
+            }
+            modeBeforeTrajectory = oldValue
+            guard selectedKey != nil else {
+                viewMode = oldValue
+                return
+            }
+            loadTrajectory()
+        }
+    }
+
+    /// The mode to go back to when the trajectory is closed.
+    ///
+    /// Stored rather than assumed to be `.board`, because a person who opened
+    /// a trajectory from the scene asked to look at one session, not to be
+    /// moved to a different way of looking at all of them.
+    private var modeBeforeTrajectory: BoardViewMode = .board
+
+    /// The Trajectory mode's own state: the fold, the layout, the brush, and
+    /// the inspector's selection.
+    ///
+    /// Held here rather than inside the view so that switching modes, or
+    /// letting the window close, does not throw away a reader's place in a
+    /// five-thousand-step session.
+    let trajectory = TrajectoryModel()
+
+    /// Opens the Trajectory on the selected session, from wherever the reader
+    /// was. Does nothing with no session selected: there would be nothing to
+    /// draw, and a mode that shows an empty column is worse than a segment
+    /// that will not light up.
+    func openTrajectory() {
+        guard selectedKey != nil else { return }
+        if viewMode == .trajectory {
+            loadTrajectory()
+        } else {
+            viewMode = .trajectory
+        }
+    }
+
+    /// Leaves the Trajectory for whichever mode it was opened from.
+    func closeTrajectory() {
+        guard viewMode == .trajectory else { return }
+        viewMode = modeBeforeTrajectory
+    }
+
+    /// Whether the Trajectory segment can be pressed at all.
+    var canOpenTrajectory: Bool { selectedKey != nil }
+
+    private func loadTrajectory() {
+        trajectory.open(
+            key: selectedKey,
+            repository: repository,
+            isAlive: selectedSession?.isAlive ?? false
+        )
+    }
 
     /// How the grid is divided.
     ///
@@ -144,6 +206,9 @@ final class LiveBoardModel {
             followsTail = true
             lastTraceEventAt = nil
             reloadTrace()
+            if viewMode == .trajectory {
+                if selectedKey == nil { closeTrajectory() } else { loadTrajectory() }
+            }
         }
     }
 
@@ -525,6 +590,7 @@ final class LiveBoardModel {
         consumeTask = nil
         traceTask = nil
         searchTask = nil
+        trajectory.stop()
     }
 
     /// Records something the ingest pipeline reported.
@@ -593,6 +659,7 @@ final class LiveBoardModel {
         guard session.lastEventAt != lastTraceEventAt else { return }
         lastTraceEventAt = session.lastEventAt
         reloadTrace()
+        if viewMode == .trajectory { trajectory.refresh(isAlive: session.isAlive) }
     }
 
     // MARK: Trace loading

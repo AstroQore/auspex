@@ -205,11 +205,16 @@ extension FactChip where Content == Text {
 struct SegmentedPicker<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(value: Value, title: String)]
+    /// Whether a segment can be pressed. A segment that leads somewhere with
+    /// nothing in it is dimmed rather than hidden: a control that appears and
+    /// disappears as the selection changes is a control nobody learns.
+    var isEnabled: (Value) -> Bool = { _ in true }
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(options, id: \.value) { option in
                 let isOn = option.value == selection
+                let canPress = isEnabled(option.value)
                 Button { selection = option.value } label: {
                     Text(option.title)
                         .font(AuspexType.pill)
@@ -223,6 +228,8 @@ struct SegmentedPicker<Value: Hashable>: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(!canPress)
+                .opacity(canPress ? 1 : 0.4)
                 .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
             }
         }

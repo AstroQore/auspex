@@ -31,7 +31,8 @@ struct SessionTraceView: View {
                 children: model.selectedChildren,
                 projectName: model.board.projectKey(for: session)
                     .map(BoardGrouping.projectName(forPath:)),
-                onSelect: { model.selectedKey = $0 }
+                onSelect: { model.selectedKey = $0 },
+                onOpenTrajectory: { model.openTrajectory() }
             )
             tabBar
             traceList
@@ -265,6 +266,10 @@ struct SessionHeaderView: View {
     /// it recorded no directory of its own.
     var projectName: String?
     let onSelect: (SessionKey) -> Void
+    /// Opens this session's trajectory. `nil` where there is nowhere to open
+    /// it — the offscreen renderer builds this header without a board column
+    /// to switch.
+    var onOpenTrajectory: (() -> Void)?
 
     /// Whether the reader has opened the assignment out past its fold.
     @State private var showsWholeTask = false
@@ -391,6 +396,33 @@ struct SessionHeaderView: View {
         .help(resume.reason ?? "Open this session again in its own CLI")
     }
 
+    /// The way into the session's whole history.
+    ///
+    /// Beside Resume rather than in the header's top row, because both are
+    /// answers to "and now what": one goes back to the terminal, the other
+    /// goes back through what already happened.
+    private func trajectoryButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: BoardViewMode.trajectory.systemImage)
+                    .font(.system(size: 9, weight: .bold))
+                Text("Open trajectory")
+                    .font(AuspexType.pill)
+            }
+            .foregroundStyle(AuspexPalette.text2)
+            .fixedSize()
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(AuspexPalette.line, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open this session's whole history as a waterfall (⌘T)")
+    }
+
     /// The full name, never an abbreviation, and the three identifiers a
     /// person needs to find this session in their own terminal.
     private var identityLine: String {
@@ -490,6 +522,7 @@ struct SessionHeaderView: View {
             )
             .fixedSize()
             resumeButton
+            if let onOpenTrajectory { trajectoryButton(onOpenTrajectory) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

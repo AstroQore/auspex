@@ -142,6 +142,10 @@ struct BoardView: View {
                     EndedSessionRow(row: row, isSelected: model.selectedKey == row.key)
                         .equatable()
                         .opacity(model.ignoredKeys.contains(row.key) ? 0.4 : 1)
+                        .onTapGesture(count: 2) {
+                            model.selectedKey = row.key
+                            model.openTrajectory()
+                        }
                         .onTapGesture { model.selectedKey = row.key }
                         .contextMenu {
                             actions(for: row)
