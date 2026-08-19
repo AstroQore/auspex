@@ -317,8 +317,8 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     /// The milestone this section arrives in, or `nil` when it is here.
     public var arrivesIn: String? {
         switch self {
-        case .live, .allSessions, .projects, .harnesses: nil
-        case .tasks, .settings: "M3"
+        case .live, .allSessions, .projects, .harnesses, .settings: nil
+        case .tasks: "M3"
         }
     }
 

@@ -61,6 +61,13 @@ struct RootView: View {
             Group {
                 if section == .harnesses {
                     HarnessesView(model: environment.harnesses, board: model.board)
+                } else if section == .settings {
+                    // The same pane the Settings window shows. Two ways in
+                    // rather than two panes: a person who found the row in the
+                    // sidebar should not be told to go and press a shortcut
+                    // instead, and a second implementation would be a second
+                    // place for a setting to go missing.
+                    SettingsSectionView()
                 } else if let section, section.isAvailable {
                     // The mode picker lives in the header, so the container is
                     // a plain switch: adding a way of looking at the board is
@@ -305,6 +312,20 @@ struct AuspexMark: View {
     }
 }
 
+/// Settings, in the board's column.
+///
+/// The pane is built for a settings *window* and sizes itself, so it sits on
+/// the board's ground rather than stretching — the same way the empty state and
+/// the coming-soon panel do, so a person who has seen one of those knows what
+/// they are looking at.
+struct SettingsSectionView: View {
+    var body: some View {
+        AuspexSettingsView(library: SpriteLibrary.shared)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(BoardSurfaceBackground())
+    }
+}
+
 /// What a not-yet-built section says for itself.
 ///
 /// Names the milestone and what will be there, because "coming soon" tells a
@@ -354,7 +375,7 @@ struct ComingSoonView: View {
             "The shared task board, exposed over MCP so an agent can see what its "
                 + "siblings are working on."
         case .settings:
-            "Retention, which harnesses to index, and the optional local hooks."
+            "Which character each harness wears, and where packages come from."
         case .live:
             "The live board."
         }

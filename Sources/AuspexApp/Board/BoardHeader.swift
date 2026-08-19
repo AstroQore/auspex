@@ -84,6 +84,8 @@ struct BoardHeader: View {
         switch section {
         case .harnesses:
             "\(AuspexAdapters.featured.count) harnesses · what Auspex can see on this Mac, and how"
+        case .settings:
+            "characters, and where packages come from"
         default:
             ""
         }
