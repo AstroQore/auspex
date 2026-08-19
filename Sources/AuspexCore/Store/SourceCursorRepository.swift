@@ -133,4 +133,17 @@ public struct SourceCursorRepository: SourceCursorStoring {
 /// it hands the coordinator this repository instead — the signatures already
 /// match, which is what ``SourceCursorStoring`` predicted, so the conformance
 /// is a declaration rather than an adapter.
-extension SourceCursorRepository: SourceCursorStore {}
+extension SourceCursorRepository: SourceCursorStore {
+    /// Writes only the cursors that moved.
+    ///
+    /// The coordinator saves every two seconds; with seven hundred sources
+    /// tracked and one of them growing, the protocol's default would rewrite
+    /// all seven hundred rows each time — `ftruncate` and a fsync's worth of
+    /// `pwrite` for nothing. The repository's upsert already handles a subset,
+    /// so the whole of this is choosing the smaller dictionary. `all` is
+    /// ignored on purpose: the table is the source of truth for what was not
+    /// touched.
+    public func save(changed: [String: SourceCursor], all: [String: SourceCursor]) async throws {
+        try await save(changed)
+    }
+}
