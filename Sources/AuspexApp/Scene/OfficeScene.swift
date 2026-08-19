@@ -66,10 +66,6 @@ final class OfficeScene: SKScene {
     /// does not reveal a room in the middle of catching up.
     private static let cullMargin: CGFloat = 240
 
-    /// How far a pinch has to travel to be worth a rung of the zoom ladder.
-    /// A trackpad reports magnification in fractions of the view's width, and
-    /// a quarter of that is about the size of a deliberate pinch.
-    private static let pinchPerStep: CGFloat = 0.25
 
     init(theme: SceneTheme) {
         self.theme = theme
@@ -96,6 +92,18 @@ final class OfficeScene: SKScene {
 
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
+        viewSizeChanged(to: size)
+    }
+
+    /// The window changed size.
+    ///
+    /// The camera keeps its zoom and re-clamps, so the office is *re-laid out*
+    /// at the new size rather than scaled to it — a wider window shows more
+    /// office, not a bigger one. Called from the view during a live resize as
+    /// well as from SpriteKit, because the two do not always agree about when
+    /// a drag has changed the bounds.
+    func viewSizeChanged(to size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
         cameraController.setViewSize(size)
         if !cameraController.hasFitted { fitAll() }
         cameraDidChange()
@@ -167,6 +175,12 @@ final class OfficeScene: SKScene {
         cameraDidChange()
     }
 
+    /// Steps the zoom around a point in the view, for a mouse's ⌘-scroll.
+    func step(zoom steps: Int, atViewPoint point: CGPoint) {
+        guard let view else { return }
+        step(zoom: steps, around: scenePoint(forViewPoint: point, in: view))
+    }
+
     /// Goes to one of the named zooms, keeping the middle of the view fixed.
     func setZoom(_ zoom: CGFloat) {
         cameraController.setZoom(zoom, animated: true)
@@ -212,6 +226,10 @@ final class OfficeScene: SKScene {
 
     /// The current zoom, for the overlay's readout.
     var zoom: CGFloat { cameraController.zoom }
+
+    /// Where the camera is pointed and how close it is. Read by the tests that
+    /// stand in for a trackpad nobody can hold in a test.
+    var viewport: SceneViewport { cameraController.viewport }
 
     /// The building's bounds in scene coordinates. What an offscreen render
     /// crops to.
@@ -329,34 +347,73 @@ final class OfficeScene: SKScene {
 
     // MARK: - Gestures
 
-    override func scrollWheel(with event: NSEvent) {
-        // The platform convention: a plain wheel or two-finger scroll moves the
-        // world, and the same gesture with a modifier zooms. Matching it
-        // matters more than any argument about which is more useful here.
-        guard let view else { return }
-        if event.modifierFlags.contains(.command) {
-            guard event.scrollingDeltaY != 0 else { return }
-            step(zoom: event.scrollingDeltaY > 0 ? 1 : -1, around: scenePoint(for: event, in: view))
-            return
-        }
-        cameraController.pan(by: CGVector(dx: -event.scrollingDeltaX, dy: -event.scrollingDeltaY))
+    /// Two fingers moving the map, one scroll event at a time.
+    ///
+    /// The whole gesture arrives here, momentum included: after the fingers
+    /// lift, AppKit keeps sending scroll events with a momentum phase and
+    /// decaying deltas, so inertia is a property of not throwing them away
+    /// rather than something to simulate. While fingers are actually on the
+    /// glass the map may be pulled past its edge against a resistance; when
+    /// they lift, ``settle()`` pulls it back.
+    ///
+    /// - Parameters:
+    ///   - delta: how far to move, in view points, in the scene's axes.
+    ///   - isTouching: whether fingers are still on the trackpad, as opposed
+    ///     to this being momentum or a wheel.
+    func pan(by delta: CGVector, isTouching: Bool) {
+        cameraController.pan(by: delta, rubberBanding: isTouching)
         cameraDidChange()
     }
 
-    /// A pinch is continuous and the zoom is a ladder, so the gesture
-    /// accumulates until it has earned a rung. Resetting the accumulator on
-    /// every step is what stops a slow pinch from crawling up the ladder one
-    /// frame at a time.
-    private var pinch: CGFloat = 0
-
-    override func magnify(with event: NSEvent) {
+    /// Zooms continuously, for the length of a pinch.
+    ///
+    /// Not stepped: a pinch that jumped between rungs under the fingers would
+    /// feel like a broken gesture, however crisp the pixels were at the end of
+    /// it. The rung is found when the fingers lift, in ``settle(atViewPoint:)``.
+    func magnify(by magnification: CGFloat, atViewPoint point: CGPoint) {
         guard let view else { return }
-        if event.phase == .began { pinch = 0 }
-        pinch += event.magnification
-        guard abs(pinch) >= Self.pinchPerStep else { return }
-        let steps = Int((pinch / Self.pinchPerStep).rounded(.towardZero))
-        pinch -= CGFloat(steps) * Self.pinchPerStep
-        step(zoom: steps, around: scenePoint(for: event, in: view))
+        let anchor = scenePoint(forViewPoint: point, in: view)
+        cameraController.zoom(
+            continuouslyTo: SceneGesture.zoom(cameraController.zoom, magnifiedBy: magnification),
+            around: anchor
+        )
+        cameraDidChange()
+    }
+
+    /// The end of a gesture: the zoom lands on a rung so the pixel grid comes
+    /// back, and anything pulled past the edge springs home.
+    func settle(atViewPoint point: CGPoint? = nil) {
+        let anchor = point.flatMap { location -> CGPoint? in
+            guard let view else { return nil }
+            return scenePoint(forViewPoint: location, in: view)
+        }
+        cameraController.settle(around: anchor)
+        cameraDidChange()
+    }
+
+    /// A two-finger double tap: frame the room under the pointer, or pull back
+    /// to the whole map if it is already framed.
+    ///
+    /// The same toggle every smart zoom on this platform performs — in, then
+    /// out again on the second tap — with "in" meaning the thing under the
+    /// pointer rather than a fixed magnification.
+    func smartZoom(atViewPoint point: CGPoint) {
+        guard let view else { return }
+        let scenePoint = scenePoint(forViewPoint: point, in: view)
+        guard let room = room(at: scenePoint) else {
+            fitAll(animated: true)
+            claimFocus(nil)
+            return
+        }
+        let rect = SceneGeometry.scene(from: room.frame)
+        let framed = cameraController.viewport.focused(on: rect)
+        if abs(framed.zoom - cameraController.zoom) < 0.001,
+           cameraController.viewport.showsAll(of: rect) {
+            fitAll(animated: true)
+            claimFocus(nil)
+        } else {
+            focus(room: room)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {

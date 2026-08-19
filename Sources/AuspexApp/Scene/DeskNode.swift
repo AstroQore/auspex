@@ -280,13 +280,32 @@ final class DeskNode: SKNode {
         sprite.apply(pose: look.pose, reduceMotion: look.reduceMotion)
     }
 
-    private func applyDesk(look: Look) {
+    /// One texture per harness, for the whole app.
+    ///
+    /// `SKTexture(cgImage:)` mints a new texture — and a new GPU upload —
+    /// every time it is called, and this is called whenever a desk's look
+    /// changes, which on a live board is several times a second per session.
+    /// The raster underneath was already cached; the texture was not, and an
+    /// afternoon of watching the office was an afternoon of uploading the same
+    /// nine logos. The mark is a mask coloured by the sprite, so one texture
+    /// serves every theme.
+    private static var markTextures: [Harness: SKTexture] = [:]
+
+    private static func markTexture(for harness: Harness) -> SKTexture? {
+        if let cached = markTextures[harness] { return cached }
         // Rasterised at four times its drawn size so the mark stays clean when
-        // the camera zooms in on one desk; the texture is cached per harness,
-        // so forty desks of five harnesses cost five rasters.
-        if let harness = look.harness,
-           let raster = HarnessLogo.cgImage(for: harness, pixelSize: Int(Self.markSize) * 4) {
-            mark.texture = SKTexture(cgImage: raster)
+        // the camera zooms in on one desk.
+        guard let raster = HarnessLogo.cgImage(
+            for: harness, pixelSize: Int(markSize) * 4
+        ) else { return nil }
+        let texture = SKTexture(cgImage: raster)
+        markTextures[harness] = texture
+        return texture
+    }
+
+    private func applyDesk(look: Look) {
+        if let harness = look.harness, let texture = Self.markTexture(for: harness) {
+            mark.texture = texture
             mark.color = theme.accent(harness)
             mark.isHidden = false
         } else {

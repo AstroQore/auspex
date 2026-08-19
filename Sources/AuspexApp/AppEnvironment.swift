@@ -367,6 +367,15 @@ public struct AppLaunchOptions: Sendable {
     /// Replay a fabricated board instead of tailing real stores.
     public var isDemo: Bool
 
+    /// Which way to look at the board on launch, when the command line said.
+    ///
+    /// It exists because the performance budget is a gate: "scene on screen,
+    /// no user input, ≤ 15 % process CPU" cannot be measured on a view that
+    /// only a person clicking a segmented control can reach. With this, one
+    /// command launches straight into the view being measured and `top` has
+    /// something honest to look at.
+    public var viewMode: BoardViewMode?
+
     /// Reads the flag from the command line, with an environment variable as
     /// the alternative for the case where the launcher owns the argv —
     /// `open -a Auspex` cannot pass arguments through.
@@ -374,12 +383,28 @@ public struct AppLaunchOptions: Sendable {
         arguments: [String] = CommandLine.arguments,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppLaunchOptions {
-        AppLaunchOptions(
-            isDemo: arguments.dropFirst().contains("--demo")
-                || environment["AUSPEX_DEMO"] == "1"
+        let rest = arguments.dropFirst()
+        let named = rest.firstIndex(of: "--view").flatMap { index -> String? in
+            let next = rest.index(after: index)
+            return next < rest.endIndex ? rest[next] : nil
+        }
+        return AppLaunchOptions(
+            isDemo: rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1",
+            viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(rawValue:))
         )
     }
 
     /// The mode these options select.
     public var mode: AppEnvironment.Mode { isDemo ? .demo : .live }
+}
+
+extension AppEnvironment {
+    /// The environment the app starts with, set up the way the command line
+    /// asked for.
+    @MainActor
+    public static func launched(_ options: AppLaunchOptions = .current()) -> AppEnvironment {
+        let environment = AppEnvironment(mode: options.mode)
+        if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
+        return environment
+    }
 }

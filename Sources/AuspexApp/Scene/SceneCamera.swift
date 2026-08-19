@@ -45,6 +45,8 @@ final class SceneCamera {
 
     /// How long a flight across the map takes.
     private static let flightDuration: TimeInterval = 0.32
+    /// How long the map takes to spring back after a gesture lets go of it.
+    private static let settleDuration: TimeInterval = 0.2
 
     /// The building, in scene coordinates.
     var contentRect: CGRect { viewport.content }
@@ -63,16 +65,41 @@ final class SceneCamera {
 
     // MARK: - Being told about the world
 
+    /// Whether the camera is still showing exactly what "fit" showed, with
+    /// nobody having panned or zoomed since.
+    ///
+    /// It is what makes a window resize feel native: a map that was framed
+    /// stays framed as the window grows, and a map somebody had zoomed into
+    /// keeps the zoom they chose and simply shows more of the world. The
+    /// alternative — always re-fitting — throws away a reader's place every
+    /// time they drag a window edge.
+    private(set) var isFramingEverything = false
+
     /// Tells the camera how big its viewport is.
+    ///
+    /// The zoom is deliberately not touched: during a live resize the content
+    /// must re-lay out rather than scale, which is the difference between a
+    /// window that feels native and one that looks like a stretched
+    /// screenshot until the drag ends.
     func setViewSize(_ size: CGSize) {
         guard size.width > 0, size.height > 0, size != viewport.size else { return }
-        apply(viewport.withSize(size), animated: false)
+        reframe(viewport.withSize(size))
     }
 
     /// Tells the camera how big the world is.
     func setContentRect(_ rect: CGRect) {
         guard rect != viewport.content else { return }
-        apply(viewport.withContent(rect), animated: false)
+        reframe(viewport.withContent(rect))
+    }
+
+    /// Applies a viewport the *world* changed rather than the reader: the
+    /// window was resized, or a room opened. A camera that was framing
+    /// everything goes on framing everything; one somebody had put somewhere
+    /// stays where they put it.
+    private func reframe(_ next: SceneViewport) {
+        let framing = isFramingEverything
+        apply(framing ? next.fitted() : next, animated: false)
+        isFramingEverything = framing
     }
 
     // MARK: - Moving
@@ -82,6 +109,7 @@ final class SceneCamera {
         guard viewport.content.width > 0, viewport.size.width > 0 else { return }
         hasFitted = true
         apply(viewport.fitted(), animated: animated)
+        isFramingEverything = true
     }
 
     /// Frames one room, with air around it.
@@ -106,11 +134,27 @@ final class SceneCamera {
         apply(viewport.zoomed(to: zoom, around: anchor), animated: animated)
     }
 
-    /// Moves the camera by a view-space delta.
-    func pan(by delta: CGVector) {
-        // The view's y runs the other way from the scene's, and a scroll's
-        // delta is where the *content* should go, not the camera.
-        apply(viewport.panned(by: CGVector(dx: -delta.dx, dy: delta.dy)), animated: false)
+    /// Moves the camera by a delta in view points, already in the scene's
+    /// axes — see ``SceneGesture/panDelta(x:y:isDirectionInverted:)``.
+    func pan(by delta: CGVector, rubberBanding: Bool = false) {
+        apply(viewport.panned(by: delta, rubberBanding: rubberBanding), animated: false)
+    }
+
+    /// Zooms without landing on a rung, for the length of a pinch.
+    func zoom(continuouslyTo target: CGFloat, around anchor: CGPoint?) {
+        apply(viewport.zoomed(to: target, around: anchor, snapping: false), animated: false)
+    }
+
+    /// What happens when the fingers lift: the zoom lands on a rung and
+    /// anything pulled past the edge springs back.
+    func settle(around anchor: CGPoint? = nil) {
+        let settled = viewport.settled(around: anchor)
+        guard settled != viewport else { return }
+        // Animated, because this is the camera moving on its own: an
+        // instantaneous snap after a gesture reads as the map jumping away
+        // from the fingers that just let go. Quicker than a flight across the
+        // map, because it is a settle rather than a journey.
+        apply(settled, animated: true, duration: Self.settleDuration)
     }
 
     /// The point in scene coordinates a view-space offset from the middle of
@@ -130,7 +174,15 @@ final class SceneCamera {
 
     // MARK: - The one place the node is written
 
-    private func apply(_ next: SceneViewport, animated: Bool) {
+    private func apply(
+        _ next: SceneViewport,
+        animated: Bool,
+        duration: TimeInterval = SceneCamera.flightDuration
+    ) {
+        // Anything that moves the camera is somebody choosing where to look;
+        // only `fit` puts it back to framing the lot. Set before the early
+        // exits below so a no-op still counts as a choice.
+        isFramingEverything = false
         viewport = next
         node.removeAllActions()
         let scale = next.zoom > 0 ? 1 / next.zoom : 1
@@ -139,10 +191,10 @@ final class SceneCamera {
             node.position = next.center
             return
         }
-        let move = SKAction.move(to: next.center, duration: Self.flightDuration)
-        move.timingMode = .easeInEaseOut
-        let zoom = SKAction.scale(to: scale, duration: Self.flightDuration)
-        zoom.timingMode = .easeInEaseOut
+        let move = SKAction.move(to: next.center, duration: duration)
+        move.timingMode = .easeOut
+        let zoom = SKAction.scale(to: scale, duration: duration)
+        zoom.timingMode = .easeOut
         node.run(.group([move, zoom]))
     }
 }

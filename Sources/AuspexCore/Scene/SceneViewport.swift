@@ -197,10 +197,20 @@ public struct SceneViewport: Sendable, Equatable {
         return moved.clamped()
     }
 
-    /// Moved to the nearest rung to `target`, keeping the world point under
-    /// `anchor` under it afterwards.
-    public func zoomed(to target: CGFloat, around anchor: CGPoint? = nil) -> Self {
-        let next = min(Self.maxZoom, max(Self.minZoom, Self.snapped(target)))
+    /// Moved to `target`, keeping the world point under `anchor` under it
+    /// afterwards.
+    ///
+    /// - Parameter snapping: whether to land on a rung of ``zoomLadder``. A
+    ///   pinch passes `false`, because a gesture that jumped between rungs
+    ///   under the fingers would feel broken rather than crisp; it lands on a
+    ///   rung when the fingers lift, via ``settled(around:)``.
+    public func zoomed(
+        to target: CGFloat,
+        around anchor: CGPoint? = nil,
+        snapping: Bool = true
+    ) -> Self {
+        let wanted = snapping ? Self.snapped(target) : target
+        let next = min(Self.maxZoom, max(Self.minZoom, wanted))
         guard next != zoom, zoom > 0 else { return self }
         var moved = self
         moved.zoom = next
@@ -226,11 +236,50 @@ public struct SceneViewport: Sendable, Equatable {
     /// the window reports it, in the scene's axis convention. Dividing by the
     /// zoom is what makes a two-inch drag move two inches of screen whatever
     /// the camera is doing.
-    public func panned(by delta: CGVector) -> Self {
+    ///
+    /// - Parameter rubberBanding: while fingers are still on the glass, let
+    ///   the map be pulled past its edge against a resistance that grows the
+    ///   further it goes, the way every scroll view on this platform does. It
+    ///   is not decoration: a hard stop under a moving finger reads as a
+    ///   dropped gesture, and the give is what says *this is the edge* rather
+    ///   than *this broke*. ``settled()`` is what pulls it back.
+    public func panned(by delta: CGVector, rubberBanding: Bool = false) -> Self {
         guard zoom > 0 else { return self }
         var moved = self
         moved.center = CGPoint(x: center.x + delta.dx / zoom, y: center.y + delta.dy / zoom)
-        return moved.clamped()
+        guard rubberBanding else { return moved.clamped() }
+
+        let inside = moved.clamped().center
+        // Asymptotic resistance: the first points past the edge cost almost
+        // nothing and the last cost everything, so the map can never be pulled
+        // more than `rubberBandLimit` points off no matter how long the drag.
+        let limit = Self.rubberBandLimit / zoom
+        func damped(_ overshoot: CGFloat) -> CGFloat {
+            overshoot == 0 ? 0 : overshoot * limit / (limit + abs(overshoot))
+        }
+        moved.center = CGPoint(
+            x: inside.x + damped(moved.center.x - inside.x),
+            y: inside.y + damped(moved.center.y - inside.y)
+        )
+        return moved
+    }
+
+    /// How far past the edge of the world a drag can pull the map, in points.
+    public static let rubberBandLimit: CGFloat = 140
+
+    /// What the camera does when the fingers lift: the zoom lands on a rung
+    /// and anything pulled past the edge springs back.
+    public func settled(around anchor: CGPoint? = nil) -> Self {
+        let rung = min(Self.maxZoom, max(Self.minZoom, Self.snapped(zoom)))
+        guard rung != zoom else { return clamped() }
+        return zoomed(to: rung, around: anchor, snapping: false).clamped()
+    }
+
+    /// `true` when the map has been pulled off its edge and is waiting to
+    /// spring back.
+    public var isOverscrolled: Bool {
+        let inside = clamped()
+        return abs(inside.center.x - center.x) > 0.5 || abs(inside.center.y - center.y) > 0.5
     }
 
     /// Pointed at one place without changing how close the camera is.

@@ -163,6 +163,11 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         store is read and nothing is written to ~/.auspex/.
                         `AUSPEX_DEMO=1` does the same, for launchers such as
                         `open -a` that cannot pass arguments through.
+          --view <board|scene|crew>
+                        Open the live section in this view instead of the
+                        board. `AUSPEX_VIEW` does the same. What the
+                        performance budget for the scene and the crew is
+                        measured with.
           --render-scene <path> [seconds] [project]
                         Render the scene view's office to a PNG, offscreen,
                         from the demo board at `seconds` into its loop

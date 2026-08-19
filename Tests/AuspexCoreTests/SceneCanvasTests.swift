@@ -279,6 +279,111 @@ struct SceneCanvasTests {
         #expect(camera.shows(CGRect(x: 2_450, y: 1_500, width: 10, height: 10), margin: 200))
     }
 
+    // MARK: - Trackpad
+
+    @Test("A two-finger scroll moves the map with the fingers")
+    func scrollFollowsTheFingers() {
+        // With natural scrolling on — the default — AppKit's deltas already
+        // describe the content following the fingers.
+        let natural = SceneGesture.panDelta(x: 10, y: 6, isDirectionInverted: true)
+        let classic = SceneGesture.panDelta(x: 10, y: 6, isDirectionInverted: false)
+        #expect(natural.dx == -classic.dx)
+        #expect(natural.dy == -classic.dy)
+        // Fingers pushing the map left move the camera right.
+        #expect(natural.dx < 0)
+        // The scroll deltas are y-down and the scene is y-up.
+        #expect(natural.dy > 0)
+    }
+
+    @Test("Momentum keeps the map moving and still stops at the edge")
+    func momentumStopsAtTheEdge() {
+        var camera = Self.camera(zoom: 2)
+        // A flick: fingers, then eight momentum events with decaying deltas.
+        camera = camera.panned(by: CGVector(dx: 1_200, dy: 0), rubberBanding: true)
+        var delta: CGFloat = 3_000
+        for _ in 0..<8 {
+            camera = camera.panned(by: CGVector(dx: delta, dy: 0))
+            delta *= 0.7
+        }
+        #expect(camera.visibleRect.maxX == Self.world.maxX)
+        #expect(!camera.isOverscrolled)
+    }
+
+    @Test("The map can be pulled off its edge, but only so far, and it comes back")
+    func rubberBanding() {
+        let camera = Self.camera(zoom: 2)
+        var pulled = camera
+        for _ in 0..<20 {
+            pulled = pulled.panned(by: CGVector(dx: 400, dy: 0), rubberBanding: true)
+        }
+        let clamped = camera.panned(by: CGVector(dx: 8_000, dy: 0))
+
+        #expect(pulled.isOverscrolled)
+        // Past the edge, but never more than the limit however long the drag.
+        let overshoot = pulled.center.x - clamped.center.x
+        #expect(overshoot > 0)
+        #expect(overshoot <= SceneViewport.rubberBandLimit / pulled.zoom + 0.001)
+        // And it springs home when the fingers lift.
+        #expect(!pulled.settled().isOverscrolled)
+        #expect(abs(pulled.settled().center.x - clamped.center.x) < 0.001)
+    }
+
+    @Test("A pinch zooms continuously and lands on a rung when the fingers lift")
+    func pinchIsContinuousThenCrisp() {
+        var camera = Self.camera(zoom: 1)
+        let anchor = CGPoint(x: 2_200, y: 1_600)
+        func offset(_ viewport: SceneViewport) -> CGPoint {
+            CGPoint(
+                x: (anchor.x - viewport.center.x) * viewport.zoom,
+                y: (anchor.y - viewport.center.y) * viewport.zoom
+            )
+        }
+        let before = offset(camera)
+
+        // Twelve events of a tenth each: a pinch, not a step.
+        for _ in 0..<12 {
+            camera = camera.zoomed(
+                to: SceneGesture.zoom(camera.zoom, magnifiedBy: 0.1),
+                around: anchor,
+                snapping: false
+            )
+        }
+        #expect(camera.zoom > 3)
+        #expect(!SceneViewport.zoomLadder.contains(camera.zoom))
+        #expect(abs(offset(camera).x - before.x) < 0.001)
+        #expect(abs(offset(camera).y - before.y) < 0.001)
+
+        // The pixel grid comes back when the fingers do.
+        let settled = camera.settled(around: anchor)
+        #expect(SceneViewport.zoomLadder.contains(settled.zoom))
+        #expect(abs(offset(settled).x - before.x) < 0.001)
+    }
+
+    @Test("A pinch composes by multiplication, so the same distance is the same zoom")
+    func pinchComposes() {
+        var slow: CGFloat = 1
+        for _ in 0..<10 { slow = SceneGesture.zoom(slow, magnifiedBy: 0.05) }
+        var fast: CGFloat = 1
+        for _ in 0..<5 { fast = SceneGesture.zoom(fast, magnifiedBy: 0.1025) }
+        #expect(abs(slow - fast) < 0.01)
+    }
+
+    @Test("A wheel notch is one rung, either way")
+    func wheelNotches() {
+        #expect(SceneGesture.rungs(forWheelDelta: 1) == 1)
+        #expect(SceneGesture.rungs(forWheelDelta: -3) == -1)
+        #expect(SceneGesture.rungs(forWheelDelta: 0) == 0)
+    }
+
+    @Test("A window resize shows more office rather than a bigger office")
+    func resizingKeepsTheZoom() {
+        let camera = Self.camera(zoom: 2)
+        let wider = camera.withSize(CGSize(width: 1_200, height: 900))
+        #expect(wider.zoom == camera.zoom)
+        #expect(wider.visibleRect.width > camera.visibleRect.width)
+        #expect(Self.world.contains(wider.visibleRect))
+    }
+
     // MARK: - Minimap
 
     private static let minimapFrame = CGRect(x: 0, y: 0, width: 120, height: 90)

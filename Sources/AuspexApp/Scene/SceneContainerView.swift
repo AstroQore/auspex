@@ -79,7 +79,7 @@ struct LiveSectionView: View {
             Spacer(minLength: 8)
 
             if mode == .scene {
-                Text("Scroll to pan · pinch or ⌘-scroll to zoom · click a desk")
+                Text("Scroll to pan · ⌘-scroll or pinch to zoom · double-click a room · ⌘0 fits")
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.textTertiary)
             }
@@ -107,7 +107,14 @@ struct SceneContainerView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var commands = SceneCommands()
-    @State private var overview = SceneOverview.empty
+    /// Where the scene leaves its picture of the map.
+    ///
+    /// An observable box rather than a `@State` value: the scene publishes a
+    /// new overview whenever the camera moves, and a value held here would
+    /// invalidate *this* body — which would rebuild the representable and push
+    /// the whole board back through the layout for every frame of a pan. Only
+    /// the two small views that read it are invalidated instead.
+    @State private var overview = SceneOverviewBox()
 
     var body: some View {
         // Read on this side of the representable on purpose: observation is
@@ -119,7 +126,10 @@ struct SceneContainerView: View {
         // that decides it.
         let board = model.board
         let selected = model.selectedKey
-        let focused = model.focusedProjectKey
+        // The sidebar's project is what the camera follows until something
+        // sets a focus of its own, so picking a project there binds the scene
+        // to that room without the sidebar having to know the scene exists.
+        let focused = model.focusedProjectKey ?? model.projectFilter
 
         ZStack(alignment: .topTrailing) {
             OfficeSceneRepresentable(
@@ -130,7 +140,7 @@ struct SceneContainerView: View {
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
                 onFocusProject: { model.focusedProjectKey = $0 },
-                onOverview: { overview = $0 }
+                onOverview: { [overview] in overview.value = $0 }
             )
             .ignoresSafeArea()
 
@@ -145,13 +155,15 @@ struct SceneContainerView: View {
             legend.padding(12)
         }
         .overlay(alignment: .bottomTrailing) {
-            if overview.isWorthDrawing {
-                SceneMinimapView(overview: overview) { commands.jump($0) }
-                    .padding(12)
-                    .transition(.opacity)
-            }
+            SceneMinimapView(overview: overview) { commands.jump($0) }
+                .padding(12)
         }
         .background(AuspexPalette.canvas)
+        // Switching to the board is the common case and SwiftUI takes the
+        // representable away with it, but a mode switch that kept the view
+        // alive would keep a scene rendering behind the cards — which is a
+        // whole core spent on a picture nobody is looking at.
+        .onDisappear { commands.pause() }
     }
 
     // MARK: Chrome
@@ -171,21 +183,7 @@ struct SceneContainerView: View {
             controlButton("Zoom in", systemImage: "plus.magnifyingglass") { commands.zoomIn() }
                 .keyboardShortcut("=", modifiers: .command)
 
-            Menu {
-                ForEach(SceneViewport.zoomPresets, id: \.self) { preset in
-                    Button(Self.percent(preset)) { commands.setZoom(preset) }
-                }
-            } label: {
-                Text(Self.percent(overview.zoom))
-                    .auspexLabel(AuspexType.labelSmall)
-                    .monospacedDigit()
-                    .frame(width: 34, height: 16)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .foregroundStyle(AuspexPalette.textSecondary)
-            .help("Zoom")
+            SceneZoomControl(overview: overview, commands: commands)
 
             controlButton("Zoom out", systemImage: "minus.magnifyingglass") { commands.zoomOut() }
                 .keyboardShortcut("-", modifiers: .command)
@@ -201,11 +199,6 @@ struct SceneContainerView: View {
         )
     }
 
-    /// A zoom as a person reads it. Rounded, because `33 %` is what a third is
-    /// called and `33.3 %` is what a spreadsheet calls it.
-    private static func percent(_ zoom: CGFloat) -> String {
-        "\(Int((zoom * 100).rounded()))%"
-    }
 
     private func controlButton(
         _ title: String, systemImage: String, action: @escaping () -> Void
@@ -272,24 +265,69 @@ struct SceneContainerView: View {
     }
 }
 
+/// The zoom, and the four zooms a person can ask for by name.
+///
+/// A menu rather than a label because the presets are the only way to an exact
+/// zoom, and somebody who has zoomed somewhere odd wants "100 %" more than
+/// they want to count clicks back to it. Its own view so that a readout
+/// changing during a pinch invalidates a readout rather than a scene.
+private struct SceneZoomControl: View {
+    let overview: SceneOverviewBox
+    let commands: SceneCommands
+
+    var body: some View {
+        Menu {
+            ForEach(SceneViewport.zoomPresets, id: \.self) { preset in
+                Button(Self.percent(preset)) { commands.setZoom(preset) }
+            }
+        } label: {
+            Text(Self.percent(overview.value.zoom))
+                .auspexLabel(AuspexType.labelSmall)
+                .monospacedDigit()
+                .frame(width: 34, height: 16)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(AuspexPalette.textSecondary)
+        .help("Zoom")
+    }
+
+    /// A zoom as a person reads it. Rounded, because `33 %` is what a third is
+    /// called and `33.3 %` is what a spreadsheet calls it.
+    private static func percent(_ zoom: CGFloat) -> String {
+        "\(Int((zoom * 100).rounded()))%"
+    }
+}
+
 /// The map of the whole office, in the corner.
 ///
 /// One `Canvas`, drawn from a value the scene publishes when it changes and at
 /// no other time — a second SpriteKit view here would be a second animated
 /// scene to pay for. Dragging on it scrubs the camera around the map, which is
 /// the same gesture as clicking and is what people try first.
+///
+/// It shows up when there is something to navigate and disappears when the
+/// window already shows the whole office, because a map of what you are
+/// looking at is furniture rather than information.
 private struct SceneMinimapView: View {
-    let overview: SceneOverview
+    let overview: SceneOverviewBox
     /// Called with a point in layout space.
     let onJump: (CGPoint) -> Void
+
+    var body: some View {
+        if overview.value.isWorthDrawing {
+            map(overview.value)
+        }
+    }
 
     /// How much of the window the overview may take. Small enough to be
     /// furniture, large enough that a room is a few points across.
     private static let maximum = CGSize(width: 168, height: 116)
 
-    var body: some View {
+    private func map(_ overview: SceneOverview) -> some View {
         let box = SceneMinimap.frame(for: overview.world, maximum: Self.maximum)
-        Canvas(opaque: false) { context, size in
+        return Canvas(opaque: false) { context, size in
             let map = SceneMinimap(
                 world: overview.world, in: CGRect(origin: .zero, size: size)
             )
@@ -353,6 +391,9 @@ final class SceneCommands {
     var setZoom: (CGFloat) -> Void = { _ in }
     /// Points the camera at a place on the map, in layout space.
     var jump: (CGPoint) -> Void = { _ in }
+    /// Stops the clock, for the moment SwiftUI takes the view off screen
+    /// without taking it away.
+    var pause: () -> Void = {}
 }
 
 /// The `SKView` itself.
@@ -380,10 +421,13 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         commands.zoomOut = { [weak scene] in scene?.step(zoom: -1) }
         commands.setZoom = { [weak scene] zoom in scene?.setZoom(zoom) }
         commands.jump = { [weak scene] point in scene?.jump(toLayoutPoint: point) }
+        commands.pause = { [weak view] in view?.suspend() }
         return view
     }
 
     func updateNSView(_ view: OfficeSKView, context: Context) {
+        // Being asked to update is proof the scene is the mode on screen.
+        view.refreshPaused()
         guard let scene = view.scene as? OfficeScene else { return }
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
@@ -420,7 +464,7 @@ final class OfficeSKView: SKView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        preferredFramesPerSecond = 30
+        preferredFramesPerSecond = Self.framesPerSecond
         ignoresSiblingOrder = true
         allowsTransparency = false
         NotificationCenter.default.addObserver(
@@ -438,10 +482,30 @@ final class OfficeSKView: SKView {
 
     /// Releases the scene when SwiftUI takes the view away.
     func stop() {
-        isPaused = true
-        scene?.isPaused = true
+        suspend()
         presentScene(nil)
     }
+
+    /// Stops the clock, whoever asked.
+    ///
+    /// Three things rather than one, because each covers a different way the
+    /// scene could keep costing something: `isPaused` on the view stops the
+    /// render loop, `isPaused` on the scene stops every `SKAction` in it, and
+    /// the frame rate is dropped so that even a run loop that somehow ticks is
+    /// ticking once a second rather than thirty times.
+    func suspend() {
+        isPaused = true
+        scene?.isPaused = true
+        preferredFramesPerSecond = 1
+    }
+
+    /// Recomputes whether the scene should be running, from the window.
+    ///
+    /// Called on every SwiftUI update as well as from the notifications,
+    /// because "is this view on screen" has more ways of changing than there
+    /// are notifications for it — a mode switch that leaves the view alive is
+    /// the one that costs a core.
+    func refreshPaused() { updatePaused() }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -463,8 +527,137 @@ final class OfficeSKView: SKView {
         officeScene?.handleHover(at: nil)
     }
 
+    // MARK: - Trackpad
+
+    /// Two fingers on the glass, and the momentum they leave behind.
+    ///
+    /// ## Why this is here and not in the scene
+    ///
+    /// An `SKScene` is in the responder chain and would receive these too, but
+    /// the view is what the window actually hands the gesture to, it is what
+    /// knows the pointer's position in its own coordinates, and it is the one
+    /// object that still exists while the scene is paused. Everything a
+    /// trackpad can say is handled here and turned into a camera instruction.
+    ///
+    /// Momentum is not simulated: AppKit keeps sending scroll events with
+    /// decaying deltas after the fingers lift, and inertia is what happens
+    /// when they are not thrown away. `phase` says whether fingers are still
+    /// down, which is what decides between pulling the map past its edge and
+    /// stopping at it.
+    override func scrollWheel(with event: NSEvent) {
+        guard let scene = officeScene else { return }
+        let point = convert(event.locationInWindow, from: nil)
+
+        // ⌘-scroll is the mouse's way to zoom. A trackpad reports precise
+        // deltas and gets a continuous zoom; a wheel reports notches and gets
+        // a rung per notch, because half a rung of a wheel is a wheel that
+        // feels broken.
+        if event.modifierFlags.contains(.command) {
+            if event.hasPreciseScrollingDeltas {
+                let magnification = event.scrollingDeltaY / Self.pointsPerDoubling
+                scene.magnify(by: magnification, atViewPoint: point)
+                if event.phase == .ended || event.momentumPhase == .ended {
+                    scene.settle(atViewPoint: point)
+                }
+            } else {
+                scene.step(zoom: SceneGesture.rungs(forWheelDelta: event.scrollingDeltaY),
+                           atViewPoint: point)
+            }
+            return
+        }
+
+        let delta = SceneGesture.panDelta(
+            x: event.scrollingDeltaX,
+            y: event.scrollingDeltaY,
+            isDirectionInverted: event.isDirectionInvertedFromDevice
+        )
+        // Fingers down means the map may be pulled past its edge; momentum and
+        // wheels stop at it.
+        let touching = event.phase == .began || event.phase == .changed
+        scene.pan(by: delta, isTouching: touching)
+        if event.phase == .ended || event.phase == .cancelled {
+            scene.settle()
+        }
+    }
+
+    /// A pinch, continuously, around the point between the fingers.
+    override func magnify(with event: NSEvent) {
+        guard let scene = officeScene else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        scene.magnify(by: event.magnification, atViewPoint: point)
+        if event.phase == .ended || event.phase == .cancelled {
+            // The pixel grid comes back when the fingers lift, not while they
+            // are still moving.
+            scene.settle(atViewPoint: point)
+        }
+    }
+
+    /// A two-finger double tap: frame the room under the pointer, or pull back
+    /// out if it is already framed.
+    override func smartMagnify(with event: NSEvent) {
+        officeScene?.smartZoom(atViewPoint: convert(event.locationInWindow, from: nil))
+    }
+
+    /// How far a ⌘-scroll has to travel on a trackpad to double the zoom.
+    private static let pointsPerDoubling: CGFloat = 260
+
+    // MARK: - Live resize
+
+    /// Keeps the office laid out at the window's size while the window is
+    /// being dragged, instead of scaling the last frame and catching up when
+    /// the drag stops.
+    ///
+    /// ## What is actually wrong without this
+    ///
+    /// A Metal layer's drawable is the size it was when it was drawn. As the
+    /// window grows, AppKit stretches that drawable to the new bounds until
+    /// another frame arrives, so the office appears to zoom and then snap
+    /// back — the single most "not native" thing a Metal-backed view does.
+    /// `presentsWithTransaction` makes the layer present its drawable inside
+    /// the same Core Animation transaction that resizes it, so the frame and
+    /// the bounds change together; it costs a synchronisation per frame, so it
+    /// is switched on for the drag and off again afterwards.
+    ///
+    /// The other half is the camera: ``SceneCamera/setViewSize(_:)`` keeps the
+    /// zoom and re-clamps, so a wider window shows *more office* rather than a
+    /// bigger office. Nothing is deferred to the end of the drag, so there is
+    /// nothing to jump when it ends.
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        setPresentsWithTransaction(true)
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        setPresentsWithTransaction(false)
+        // The scene has been following the size all along; this is only the
+        // last one, and it lands on a size it has already been given.
+        officeScene?.viewSizeChanged(to: bounds.size)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        officeScene?.viewSizeChanged(to: newSize)
+    }
+
+    /// Every Metal layer under this view. SpriteKit does not promise where its
+    /// layer is, or that there is one, so this walks and tolerates nothing.
+    private func setPresentsWithTransaction(_ enabled: Bool) {
+        func walk(_ layer: CALayer?) {
+            guard let layer else { return }
+            if let metal = layer as? CAMetalLayer { metal.presentsWithTransaction = enabled }
+            for sublayer in layer.sublayers ?? [] { walk(sublayer) }
+        }
+        walk(layer)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updatePaused()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
         updatePaused()
     }
 
@@ -487,10 +680,21 @@ final class OfficeSKView: SKView {
 
     private func updatePaused() {
         let onScreen = window?.occlusionState.contains(.visible) ?? false
-        let visible = window != nil && !isHiddenOrHasHiddenAncestor && onScreen
-        isPaused = !visible
-        scene?.isPaused = !visible
+        let visible = window != nil && superview != nil
+            && !isHiddenOrHasHiddenAncestor && onScreen
+        guard visible else {
+            suspend()
+            return
+        }
+        preferredFramesPerSecond = Self.framesPerSecond
+        isPaused = false
+        scene?.isPaused = false
     }
+
+    /// Thirty rather than sixty for the same reason the board coalesces its
+    /// snapshots at twenty: the fastest thing in the scene is a typing hand at
+    /// ten changes a second.
+    private static let framesPerSecond = 30
 }
 
 /// Renders the office to a PNG without a window.

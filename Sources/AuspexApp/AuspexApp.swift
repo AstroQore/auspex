@@ -19,7 +19,7 @@ import SwiftUI
 struct AuspexApp: App {
     static let mainWindowID = "auspex.main"
 
-    @State private var environment = AppEnvironment(mode: AppLaunchOptions.current().mode)
+    @State private var environment = AppEnvironment.launched()
 
     var body: some Scene {
         WindowGroup(id: Self.mainWindowID) {

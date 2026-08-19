@@ -1,6 +1,21 @@
 import AuspexCore
 import CoreGraphics
+import Observation
 import SwiftUI
+
+/// Where the scene leaves its picture of the map for SwiftUI to draw.
+///
+/// A reference rather than a value because of *who is invalidated*: the scene
+/// publishes a fresh overview on every frame of a pan, and a `@State` value on
+/// the container would rebuild the container — and with it the `SKView`
+/// representable, and with that a whole board through the layout — sixty times
+/// a second. An `@Observable` box invalidates only the views that read it,
+/// which are the minimap and the zoom readout.
+@MainActor
+@Observable
+final class SceneOverviewBox {
+    var value = SceneOverview.empty
+}
 
 /// The whole map, small enough to draw in a corner.
 ///
