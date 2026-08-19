@@ -343,7 +343,7 @@ struct BriefBackfillTests {
         #expect(first.didRun)
         #expect(first.updated == 1)
         #expect(try fixture.store.metaValue(forKey: StoreMetaKey.briefBackfill)
-            == String(AgentSessionLive.eventSchemaVersion))
+            == BriefBackfill.stamp)
 
         let second = try backfill.runIfNeeded()
         #expect(!second.didRun)
@@ -382,6 +382,177 @@ struct BriefBackfillTests {
         #expect(briefs[silent] == nil)
         // Read-only: the store still holds the empty brief it started with.
         #expect(try fixture.brief(key).isEmpty)
+    }
+}
+
+@Suite("BriefBackfill · deciding what a person has already lived through")
+struct BriefBackfillSeenSeedingTests {
+    /// A session whose last activity is `offset` seconds from the fixture
+    /// epoch, with the brief the backfill would have given it.
+    @discardableResult
+    private func quiet(
+        _ fixture: BackfilledStore,
+        _ key: SessionKey,
+        turnEndedAt: TimeInterval?,
+        lastEventAt: TimeInterval
+    ) throws -> SessionSnapshot {
+        var snapshot = Fixtures.snapshot(key: key)
+        snapshot.lastEventAt = Fixtures.date(lastEventAt)
+        snapshot.brief = SessionBrief(lastTurnEndedAt: turnEndedAt.map(Fixtures.date))
+        try fixture.repository.upsert(snapshot: snapshot)
+        return snapshot
+    }
+
+    /// "Now" for these tests: three days after the fixture epoch, so a session
+    /// stamped at the epoch is well outside the window and one stamped an hour
+    /// ago is well inside it.
+    private var now: Date { Fixtures.date(3 * 24 * 3600) }
+
+    @Test("a session quiet for longer than the window is marked read when it stopped")
+    func longQuietSessionsAreMarkedSeen() throws {
+        let fixture = try BackfilledStore()
+        let key = Fixtures.key()
+        try quiet(fixture, key, turnEndedAt: 0, lastEventAt: 0)
+
+        let marked = try BriefBackfill(store: fixture.store).markStaleSessionsSeen(now: now)
+
+        #expect(marked == 1)
+        // At the moment the turn closed, not at `now`: "read today" would be a
+        // claim about today that is not true, and it would outlive the pass.
+        #expect(try fixture.repository.lastSeen(key: key) == Fixtures.date(0))
+        #expect(!TaskLedger.isUnseenDone(
+            state: .idle,
+            lastTurnEndedAt: Fixtures.date(0),
+            lastSeenAt: try fixture.repository.lastSeen(key: key)
+        ))
+    }
+
+    @Test("a session that was active this week stays unread")
+    func recentSessionsStayUnseen() throws {
+        let fixture = try BackfilledStore()
+        let key = Fixtures.key(.codex, "still-warm")
+        // An hour before `now` — inside the 48-hour window.
+        try quiet(fixture, key, turnEndedAt: 3 * 24 * 3600 - 3600, lastEventAt: 3 * 24 * 3600 - 3600)
+
+        let marked = try BriefBackfill(store: fixture.store).markStaleSessionsSeen(now: now)
+
+        #expect(marked == 0)
+        #expect(try fixture.repository.lastSeen(key: key) == nil)
+        // Which is the whole point: this is a session somebody may have
+        // forgotten this week, and it stays on the board saying so.
+        #expect(TaskLedger.isUnseenDone(
+            state: .idle,
+            lastTurnEndedAt: Fixtures.date(3 * 24 * 3600 - 3600),
+            lastSeenAt: nil
+        ))
+    }
+
+    @Test("the boundary belongs to the window: exactly 48 hours old stays unread")
+    func theBoundaryIsUnread() throws {
+        let fixture = try BackfilledStore()
+        let onTheLine = Fixtures.key(.cursor, "on-the-line")
+        let justOver = Fixtures.key(.cursor, "just-over")
+        let cutoff = 3 * 24 * 3600 - BriefBackfill.unreadWindow
+        try quiet(fixture, onTheLine, turnEndedAt: cutoff, lastEventAt: cutoff)
+        try quiet(fixture, justOver, turnEndedAt: cutoff - 1, lastEventAt: cutoff - 1)
+
+        #expect(try BriefBackfill(store: fixture.store).markStaleSessionsSeen(now: now) == 1)
+        #expect(try fixture.repository.lastSeen(key: onTheLine) == nil)
+        #expect(try fixture.repository.lastSeen(key: justOver) != nil)
+    }
+
+    @Test("with no turn end it falls back to the last thing that happened")
+    func fallsBackToLastEvent() throws {
+        let fixture = try BackfilledStore()
+        let key = Fixtures.key(.grokBuild, "no-turn-end")
+        try quiet(fixture, key, turnEndedAt: nil, lastEventAt: 0)
+
+        #expect(try BriefBackfill(store: fixture.store).markStaleSessionsSeen(now: now) == 1)
+        #expect(try fixture.repository.lastSeen(key: key) == Fixtures.date(0))
+    }
+
+    @Test("a session with no clock at all is left alone, not read at the epoch")
+    func sessionsWithNoClockAreSkipped() throws {
+        let fixture = try BackfilledStore()
+        let key = Fixtures.key(.geminiCLI, "never-did-anything")
+        var snapshot = Fixtures.snapshot(key: key)
+        snapshot.lastEventAt = nil
+        snapshot.brief = SessionBrief()
+        try fixture.repository.upsert(snapshot: snapshot)
+
+        #expect(try BriefBackfill(store: fixture.store).markStaleSessionsSeen(now: now) == 0)
+        #expect(try fixture.repository.lastSeen(key: key) == nil)
+    }
+
+    @Test("what the person actually read is never overwritten")
+    func neverOverwritesARealView() throws {
+        let fixture = try BackfilledStore()
+        let key = Fixtures.key()
+        try quiet(fixture, key, turnEndedAt: 0, lastEventAt: 0)
+        // They opened this card long after the session went quiet. The seeding
+        // pass must not walk that back to when the turn closed.
+        try fixture.repository.markSeen(key: key, at: Fixtures.date(10_000))
+
+        #expect(try BriefBackfill(store: fixture.store).markStaleSessionsSeen(now: now) == 0)
+        #expect(try fixture.repository.lastSeen(key: key) == Fixtures.date(10_000))
+    }
+
+    @Test("seeding twice marks nothing the first pass did not")
+    func seedingIsIdempotent() throws {
+        let fixture = try BackfilledStore()
+        try quiet(fixture, Fixtures.key(), turnEndedAt: 0, lastEventAt: 0)
+        try quiet(fixture, Fixtures.key(.codex, "second"), turnEndedAt: 5, lastEventAt: 5)
+
+        let backfill = BriefBackfill(store: fixture.store)
+        #expect(try backfill.markStaleSessionsSeen(now: now) == 2)
+        #expect(try backfill.markStaleSessionsSeen(now: now) == 0)
+        #expect(try fixture.repository.lastSeen(key: Fixtures.key()) == Fixtures.date(0))
+    }
+
+    @Test("the first pass seeds; a later one never does it again")
+    func onlyTheFirstPassSeeds() throws {
+        let fixture = try BackfilledStore()
+        let old = Fixtures.key(.claudeCode, "long-finished")
+        let recent = Fixtures.key(.codex, "finished-an-hour-ago")
+        try fixture.session(old)
+        try fixture.session(recent)
+        try fixture.index(old, .user, "Rebuild the index", at: 0)
+        try fixture.log(old, .turnEnded(reason: .complete), at: 0)
+        try fixture.index(recent, .user, "Rebuild the index again", at: 3 * 24 * 3600 - 3600)
+        try fixture.log(recent, .turnEnded(reason: .complete), at: 3 * 24 * 3600 - 3600)
+
+        let backfill = BriefBackfill(store: fixture.store)
+        let first = try backfill.runIfNeeded(now: now)
+        #expect(first.didRun)
+        #expect(first.updated == 2)
+        // Both got a brief; only the one that has been quiet for two days got
+        // marked read.
+        #expect(first.markedSeen == 1)
+        #expect(try fixture.repository.lastSeen(key: old) == Fixtures.date(0))
+        #expect(try fixture.repository.lastSeen(key: recent) == nil)
+
+        // A month later, with the session still unread: the pass is done, and
+        // deciding on somebody's behalf that they have read something is a
+        // thing to do once.
+        let second = try backfill.runIfNeeded(now: now.addingTimeInterval(30 * 24 * 3600))
+        #expect(!second.didRun)
+        #expect(second.markedSeen == 0)
+        #expect(try fixture.repository.lastSeen(key: recent) == nil)
+    }
+
+    @Test("a pass that learned something new runs again")
+    func aPassBumpRerunsIt() throws {
+        let fixture = try BackfilledStore()
+        let key = Fixtures.key()
+        try quiet(fixture, key, turnEndedAt: 0, lastEventAt: 0)
+        // Stamped by a build whose pass only knew how to fill in briefs.
+        try fixture.store.setMetaValue(
+            "1.\(AgentSessionLive.eventSchemaVersion)", forKey: StoreMetaKey.briefBackfill
+        )
+
+        let report = try BriefBackfill(store: fixture.store).runIfNeeded(now: now)
+        #expect(report.didRun)
+        #expect(report.markedSeen == 1)
     }
 }
 

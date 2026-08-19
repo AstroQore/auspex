@@ -61,17 +61,54 @@ public struct BriefBackfill: Sendable {
     /// spends its time on.
     public static let defaultBatchSize = 200
 
+    /// How recently a session must have been active to stay *unread* when the
+    /// first pass seeds `session_views`.
+    ///
+    /// The backfill fills `lastTurnEndedAt` for hundreds of sessions at once,
+    /// and every one of them then satisfies "a turn closed, and you have not
+    /// looked at it since". Without this the first launch after the pass opens
+    /// on seven hundred rows in the *done unseen* bucket — and a board that
+    /// flags everything flags nothing.
+    ///
+    /// Two days is the line between *this week's work, which somebody may
+    /// genuinely have forgotten* and *history, which they lived through*.
+    /// Anything quiet for longer is marked read at the moment it last did
+    /// something, which is the honest claim to make on their behalf: they were
+    /// at the machine when it happened. Anything newer is left alone, because
+    /// those are exactly the sessions the ledger was built to surface.
+    public static let unreadWindow: TimeInterval = 48 * 60 * 60
+
+    /// What this pass knows how to fill in, versioned apart from the event
+    /// schema.
+    ///
+    /// Bumped when the pass itself learns to do something new — seeding
+    /// `session_views` was the second thing it learned — so a store stamped by
+    /// a build that did less runs again rather than being taken for finished.
+    public static let passVersion = 2
+
+    /// What a completed pass stamps into `meta`.
+    ///
+    /// Both halves matter and for different reasons: the event schema because
+    /// a bump can change what the same rows fold into, the pass version because
+    /// a bump means there is more to fold.
+    public static var stamp: String {
+        "\(passVersion).\(AgentSessionLive.eventSchemaVersion)"
+    }
+
     // MARK: - Running
 
-    /// Runs the pass unless this store has already had one for the event schema
-    /// it is on.
+    /// Runs the pass unless this store has already had this one.
     ///
-    /// The stamp is ``AgentSessionLive/eventSchemaVersion`` rather than a bare
-    /// "done" flag: a schema bump is the one thing that can change what a fold
-    /// produces from the same rows, and a pass that never ran again would leave
-    /// the store on whatever the old fold decided.
-    public func runIfNeeded(batchSize: Int = defaultBatchSize) throws -> BriefBackfillReport {
-        let stamp = String(AgentSessionLive.eventSchemaVersion)
+    /// The first pass is also the only one that seeds `session_views` — see
+    /// ``markStaleSessionsSeen(now:)``. That is deliberately tied to the same
+    /// stamp rather than run on every launch: deciding on somebody's behalf
+    /// that they have read something is a thing to do once, while repairing
+    /// history, and never again afterwards.
+    public func runIfNeeded(
+        batchSize: Int = defaultBatchSize,
+        now: Date = Date()
+    ) throws -> BriefBackfillReport {
+        let stamp = Self.stamp
         let recorded = try dbWriter.read { db in
             try String.fetchOne(
                 db,
@@ -82,6 +119,10 @@ public struct BriefBackfill: Sendable {
         guard recorded != stamp else { return BriefBackfillReport() }
 
         var report = try run(batchSize: batchSize)
+        // After the briefs, never before: the cutoff reads `last_turn_ended_at`,
+        // and for most of these sessions that column is something this pass has
+        // only just written.
+        report.markedSeen = try markStaleSessionsSeen(now: now)
         try dbWriter.write { db in
             try db.execute(
                 sql: """
@@ -93,6 +134,38 @@ public struct BriefBackfill: Sendable {
         }
         report.didRun = true
         return report
+    }
+
+    /// Marks every session that went quiet longer ago than ``unreadWindow`` as
+    /// read, at the moment it last did anything.
+    ///
+    /// Three properties, and each is one clause of the statement:
+    ///
+    /// - **The stamp is the session's own clock**, `lastTurnEndedAt` falling
+    ///   back to `lastEventAt` — not `now`. Recording "read at this instant"
+    ///   for a session that ended in March would be a claim about today that is
+    ///   not true, and it would survive into every later comparison.
+    /// - **An existing row is never touched.** `session_views` is the one table
+    ///   that holds a fact about the *person* rather than about a harness, and a
+    ///   repair pass has no business editing it. `DO NOTHING`, not `DO UPDATE`.
+    /// - **A session with no clock at all is skipped**, rather than marked read
+    ///   at the epoch.
+    ///
+    /// - Returns: how many sessions were marked.
+    @discardableResult
+    public func markStaleSessionsSeen(now: Date = Date()) throws -> Int {
+        let cutoff = now.addingTimeInterval(-Self.unreadWindow).timeIntervalSince1970
+        return try dbWriter.write { db in
+            try db.execute(sql: """
+                INSERT INTO session_views (session_key, last_seen_at)
+                SELECT key, COALESCE(last_turn_ended_at, last_event_at)
+                  FROM sessions
+                 WHERE COALESCE(last_turn_ended_at, last_event_at) IS NOT NULL
+                   AND COALESCE(last_turn_ended_at, last_event_at) < ?
+                ON CONFLICT(session_key) DO NOTHING
+                """, arguments: [cutoff])
+            return db.changesCount
+        }
     }
 
     /// Runs the pass over every session whose brief is missing something,
@@ -476,6 +549,9 @@ public struct BriefBackfillReport: Sendable {
     public var firstPrompts: Int = 0
     /// Sessions that gained a "when the turn closed" they did not have.
     public var turnEnds: Int = 0
+    /// Sessions marked read on the person's behalf because they had been quiet
+    /// for longer than ``BriefBackfill/unreadWindow``.
+    public var markedSeen: Int = 0
     /// The briefs that changed, so a registry holding the same sessions in
     /// memory can apply them instead of re-reading the store.
     public var briefs: [SessionKey: SessionBrief] = [:]
@@ -485,7 +561,8 @@ public struct BriefBackfillReport: Sendable {
     /// A line for a log or a notice. Counts only — never a word of a prompt.
     public var summary: String {
         "backfilled \(updated) of \(considered) sessions in \(batches) batches "
-            + "(\(firstPrompts) assignments, \(turnEnds) turn ends)"
+            + "(\(firstPrompts) assignments, \(turnEnds) turn ends), "
+            + "and marked \(markedSeen) long-quiet sessions read"
     }
 }
 
