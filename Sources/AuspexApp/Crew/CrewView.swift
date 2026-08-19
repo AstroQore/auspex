@@ -340,7 +340,12 @@ final class CrewRoster {
             harness: key.harness,
             state: session.state,
             isStale: session.isStale,
-            at: clock
+            at: clock,
+            // The same hash the phase comes from, taken from the other end:
+            // the phase spreads the blink schedule, the seed gives each avatar
+            // its own resting gaze. Two avatars would otherwise still trace the
+            // same drift, one merely a couple of seconds behind the other.
+            seed: UInt32(truncatingIfNeeded: Self.hash(of: key.sessionID) >> 32)
         )
         driver.update(state: session.state, isStale: session.isStale, at: clock)
         drivers[key] = driver
@@ -361,16 +366,19 @@ final class CrewRoster {
 
     /// A stable offset in [0, 3.7) seconds — a little more than the longest gap
     /// between two scheduled blinks, so the whole schedule is spread out.
-    ///
+    private static func phase(of id: String) -> TimeInterval {
+        Double(hash(of: id) % 3_700) / 1_000
+    }
+
     /// FNV-1a rather than `hashValue`: Swift seeds its hasher per process, and
     /// a phase that changed on every launch would be a wall that blinks
     /// differently every morning for no reason.
-    private static func phase(of id: String) -> TimeInterval {
+    private static func hash(of id: String) -> UInt64 {
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325
         for byte in id.utf8 {
             hash ^= UInt64(byte)
             hash = hash &* 0x0000_0100_0000_01b3
         }
-        return Double(hash % 3_700) / 1_000
+        return hash
     }
 }

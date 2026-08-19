@@ -119,6 +119,11 @@ public struct BloubEngine: Sendable {
     /// Radius of the resting ball, in viewBox units.
     public let scale: Double
 
+    /// Which model the resting gaze drifts on. Fixed for the life of the
+    /// engine: it is an identity, not a state, and a drift that changed model
+    /// mid-flight would move the head without anything having happened.
+    public let drift: BloubGazeDrift
+
     private var current: BloubStateID
     private var previous: BloubStateID?
     /// A **frozen** start pose, set only when a state change arrives while a
@@ -156,12 +161,14 @@ public struct BloubEngine: Sendable {
         scale: Double = BloubFrameOfReference.radius,
         state: BloubStateID = .idle,
         shape: BloubShapeID? = nil,
-        expression: BloubExpressionID? = nil
+        expression: BloubExpressionID? = nil,
+        drift: BloubGazeDrift = .measured
     ) {
         self.scale = scale
         current = state
         self.shape = shape
         self.expression = expression
+        self.drift = drift
     }
 
     /// The state currently being played.
@@ -553,7 +560,8 @@ public struct BloubEngine: Sendable {
         let life = BloubFace.liveliness(
             now,
             wander: alive ? target.wander : 0,
-            blink: alive
+            blink: alive,
+            drift: drift
         )
 
         let gaze = BloubGaze(

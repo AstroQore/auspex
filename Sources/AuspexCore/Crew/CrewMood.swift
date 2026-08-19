@@ -199,13 +199,23 @@ public struct CrewAvatarDriver: Sendable {
     private var lastChildren: Int?
     /// The last session state seen, to spot the edge a turn ending makes.
     private var lastSessionState: SessionState?
+    /// When the avatar last changed state, so the card can pop on it.
+    private var changedAt: Double?
+
+    /// How long the pop that greets a state change lasts.
+    public static let popDuration = 0.32
+    /// How far it goes. Four per cent: enough to catch the eye on a 120-point
+    /// avatar, small enough that a wall of them changing at once does not look
+    /// like a wave.
+    public static let popScale = 0.04
 
     public init(
         harness: Harness,
         state: SessionState,
         isStale: Bool = false,
         at now: Double,
-        scale: Double = BloubFrameOfReference.radius
+        scale: Double = BloubFrameOfReference.radius,
+        seed: UInt32 = 0
     ) {
         // A session first seen already delegating has, from the wall's point of
         // view, just done it: it gets the burst like any other.
@@ -228,7 +238,12 @@ public struct CrewAvatarDriver: Sendable {
             scale: scale,
             state: mood.state,
             shape: mood.shape,
-            expression: mood.expression
+            expression: mood.expression,
+            // Every session gets its own resting drift. Sixty avatars reading
+            // one clock and one drift function would all look the same way at
+            // the same moment, which is the difference between a crew and a
+            // screensaver.
+            drift: .wander(seed: seed)
         )
         // The engine starts its clock at zero, and this driver is handed a
         // clock that has been running since the wall opened. Without this the
@@ -278,10 +293,12 @@ public struct CrewAvatarDriver: Sendable {
             isSpawning: spawnUntil != nil
         )
         if next.state != mood.state {
-            // Every state change is hidden by a blink — the engine does that
-            // for the states bloub measured a blink on.
+            // The morph, the blink at its midpoint and the eyes' 60 ms lag all
+            // belong to the engine; what the driver adds is the date, so the
+            // card knows when to pop.
             engine.setState(next.state, at: now)
             mood.state = next.state
+            changedAt = now
         }
         if next.expression != mood.expression {
             engine.setExpression(next.expression, at: now)
@@ -296,6 +313,27 @@ public struct CrewAvatarDriver: Sendable {
 
     /// The frame at `now`.
     public func sample(_ now: Double) -> BloubFrame { engine.sample(now) }
+
+    /// The avatar's own scale at `now`: a 4 % pop on each state change.
+    ///
+    /// A pure function of time like everything else here, and deliberately not
+    /// a SwiftUI animation. The wall already has a clock ticking every frame;
+    /// asking SwiftUI to run sixty more interpolations alongside it would buy
+    /// nothing and cost a transaction per card. It also means the pop replays
+    /// identically from a screenshot renderer with no window.
+    ///
+    /// Up on an ease-out over the first 40 %, back down on an ease-in-out over
+    /// the rest: it leaves 1 and rejoins 1 at rest, and never overshoots — the
+    /// body's own rule, kept.
+    public func pop(at now: Double) -> Double {
+        guard let changedAt else { return 1 }
+        let k = (now - changedAt) / CrewAvatarDriver.popDuration
+        if k <= 0 || k >= 1 { return 1 }
+        let shape = k < 0.4
+            ? BloubMath.easeOutCubic(k / 0.4)
+            : 1 - BloubMath.easeInOutCubic((k - 0.4) / 0.6)
+        return 1 + CrewAvatarDriver.popScale * shape
+    }
 
     /// Whether a soft notification is showing.
     public var isNotifying: Bool { notifyUntil != nil }

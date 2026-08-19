@@ -32,6 +32,29 @@ public struct BloubEyePose: Sendable, Hashable {
     public var depth: Double
 }
 
+/// Which model the resting gaze drifts on.
+public enum BloubGazeDrift: Sendable, Hashable {
+    /// bloub's own: three sines per axis on periods coprime with each other,
+    /// so the path never visibly repeats. This is what the favicon golden pins
+    /// and what a single avatar should keep.
+    case measured
+
+    /// An eased random walk: a fresh aim every 2 to 5 seconds, smoothstepped
+    /// between, drawn from a per-avatar seed.
+    ///
+    /// Why a wall needs its own model. bloub draws one avatar, so a drift that
+    /// never repeats *for that one* is enough. Auspex draws up to sixty off a
+    /// single clock, and `measured` hands every one of them the **same** path —
+    /// the roster's phase offset slides it in time but does not change it — so
+    /// the wall drifts as one slow wave, which reads as a screensaver rather
+    /// than as sixty things each minding their own business.
+    ///
+    /// Seeding it costs nothing in purity: the schedule is *regenerated* from
+    /// the seed on every sample, never remembered, so ``BloubEngine/sample(_:)``
+    /// stays a pure function of time.
+    case wander(seed: UInt32)
+}
+
 /// What the resting body does on its own: gaze drift, saccades, blinks.
 public struct BloubLiveliness: Sendable, Hashable {
     public var deltaYaw: Double
@@ -202,20 +225,96 @@ public enum BloubFace {
         _ t: Double,
         wander: Double = 1,
         blink: Bool = true,
-        float: Bool = true
+        float: Bool = true,
+        drift: BloubGazeDrift = .measured
     ) -> BloubLiveliness {
-        // Periods coprime with each other: the drift never visibly repeats.
-        BloubLiveliness(
-            deltaYaw: (BloubMath.loopNoise(t, 11.3, 0.4) * 5.5
-                + BloubMath.loopNoise(t, 3.7, 2.1) * 1.6) * wander,
-            deltaPitch: (BloubMath.loopNoise(t, 9.1, 1.3) * 4.2
-                + BloubMath.loopNoise(t, 4.3, 0.7) * 1.3) * wander,
-            deltaRoll: BloubMath.loopNoise(t, 13.7, 3.2) * 2.2 * wander,
+        let aim: (yaw: Double, pitch: Double, roll: Double)
+        switch drift {
+        case .measured:
+            // Periods coprime with each other: the drift never visibly repeats.
+            aim = (
+                BloubMath.loopNoise(t, 11.3, 0.4) * 5.5
+                    + BloubMath.loopNoise(t, 3.7, 2.1) * 1.6,
+                BloubMath.loopNoise(t, 9.1, 1.3) * 4.2
+                    + BloubMath.loopNoise(t, 4.3, 0.7) * 1.3,
+                BloubMath.loopNoise(t, 13.7, 3.2) * 2.2
+            )
+        case .wander(let seed):
+            aim = wanderGaze(t, seed: seed)
+        }
+        return BloubLiveliness(
+            deltaYaw: aim.yaw * wander,
+            deltaPitch: aim.pitch * wander,
+            deltaRoll: aim.roll * wander,
             lid: blink ? blinkLid(t) : 1,
             driftX: float ? BloubMath.loopNoise(t, 7.9, 1.9) * 0.006 : 0,
             driftY: float ? BloubMath.loopNoise(t, 5.3, 0.3) * 0.007 : 0,
             // The width is constant; only the height breathes, very slightly.
             breath: float ? 1 + sin((t / 3.4) * .pi * 2) * 0.005 : 1
+        )
+    }
+
+    // MARK: The random walk
+
+    /// Nominal gap between two aims. The jitter below turns it into 2–5 s.
+    private static let wanderCadence = 3.5
+    /// How far a boundary may slide either way. Strictly under half the
+    /// cadence, which is what keeps the boundaries in order.
+    private static let wanderJitter = 0.75
+
+    /// When aim `index` gives way to the next one.
+    ///
+    /// The jitter is on the **boundary**, not on the interval, and that is the
+    /// whole trick: intervals would have to be summed from zero to know where
+    /// `t` falls, which is a walk. Boundaries stay ordered as long as the
+    /// jitter is under half the cadence, so the segment holding `t` is a
+    /// division give or take one step.
+    private static func wanderBoundary(_ index: Int, seed: UInt32) -> Double {
+        Double(index) * wanderCadence
+            + (BloubRNG.value(index: index, salt: 7, seed: seed) * 2 - 1) * wanderJitter
+    }
+
+    /// Where aim `index` points, in degrees off the pose's own direction.
+    ///
+    /// The amplitudes are bloub's primary ones: this changes the *path* the
+    /// gaze takes, never how far it may stray.
+    private static func wanderAim(_ index: Int, seed: UInt32) -> (yaw: Double, pitch: Double) {
+        (
+            yaw: (BloubRNG.value(index: index, salt: 11, seed: seed) * 2 - 1) * 5.5,
+            pitch: (BloubRNG.value(index: index, salt: 13, seed: seed) * 2 - 1) * 4.2
+        )
+    }
+
+    /// The random walk's gaze offset at `t`.
+    ///
+    /// Smoothstepped between two aims, so the head leaves one and reaches the
+    /// next at rest and never travels at a constant rate. bloub's faster
+    /// secondary noise rides on top, phase-shifted by the seed: without it the
+    /// walk is smooth to the point of looking mechanical between targets.
+    static func wanderGaze(
+        _ t: Double,
+        seed: UInt32
+    ) -> (yaw: Double, pitch: Double, roll: Double) {
+        var index = Int((t / wanderCadence).rounded(.down))
+        // At most one step either way, by construction of the boundaries.
+        while wanderBoundary(index, seed: seed) > t { index -= 1 }
+        while wanderBoundary(index + 1, seed: seed) <= t { index += 1 }
+
+        let from = wanderBoundary(index, seed: seed)
+        let to = wanderBoundary(index + 1, seed: seed)
+        let k = BloubMath.smoothstep((t - from) / max(to - from, 1e-6))
+        let a = wanderAim(index, seed: seed)
+        let b = wanderAim(index + 1, seed: seed)
+
+        let phase = BloubRNG.value(index: 0, salt: 17, seed: seed) * bloubTau
+        return (
+            yaw: BloubMath.lerp(a.yaw, b.yaw, k) + BloubMath.loopNoise(t, 3.7, phase) * 1.6,
+            pitch: BloubMath.lerp(a.pitch, b.pitch, k)
+                + BloubMath.loopNoise(t, 4.3, phase + 0.7) * 1.3,
+            // The head tilt stays a slow sine — ±2.2° over about 14 s — because
+            // a roll that jumped to a new target would read as a head snap,
+            // where a yaw that does the same reads as a glance.
+            roll: BloubMath.loopNoise(t, 13.7, phase + 3.2) * 2.2
         )
     }
 
