@@ -121,15 +121,15 @@ struct SceneContainerView: View {
         // tracked in a `body`, and a value read only inside `updateNSView`
         // would never schedule the update that reads it.
         //
-        // TODO: read `model.visibleBoard` here once the ignore rules land —
-        // the scene must draw what the board draws, and this is the one line
-        // that decides it.
+        // `board` rather than `rawBoard`: it is the frame with the person's
+        // ignore rules already applied, so a session they told Auspex to stop
+        // showing has no desk, and the office cannot disagree with the wall
+        // about who is here.
         let board = model.board
         let selected = model.selectedKey
-        // The sidebar's project is what the camera follows until something
-        // sets a focus of its own, so picking a project there binds the scene
-        // to that room without the sidebar having to know the scene exists.
-        let focused = model.focusedProjectKey ?? model.projectFilter
+        // One property for every surface: the sidebar sets it, the wall keeps
+        // that project's sections, and the camera flies to that room.
+        let focused = model.focusedProjectKey
 
         ZStack(alignment: .topTrailing) {
             OfficeSceneRepresentable(
