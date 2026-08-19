@@ -11,8 +11,9 @@ import Observation
 /// ```text
 /// IngestCoordinator ─┐
 ///                    ├─> merged AgentEvent stream ─> SessionRegistry ─> BoardSnapshot ─> LiveBoardModel
-/// LivenessResolver ──┘                                     │
-///        (or DemoEventSource, in demo mode)                └─> AuspexStore ─> SessionRepository ─> trace
+/// LivenessResolver ──┘                                     │ ▲
+///        (or DemoEventSource, in demo mode)                │ └── GroupingCoordinator
+///                                                          └─> AuspexStore ─> SessionRepository ─> trace
 /// ```
 ///
 /// The two producers are merged into one stream rather than given to the
@@ -20,6 +21,13 @@ import Observation
 /// liveness event is an `AgentEvent` like any other — folding it through the
 /// same reducer is what keeps "the process died" and "the session ended"
 /// consistent with each other.
+///
+/// ``GroupingCoordinator`` is the exception: it *reads* the registry and writes
+/// back through `applyPlacements` / `applyLinks` rather than producing events
+/// from outside. It has to, because both of its questions are asked *about* the
+/// board — which directories are on it, and which of its sessions are each
+/// other's ancestors — and neither can be answered by a producer that has never
+/// seen it.
 ///
 /// Views never see any of this. They read ``board``.
 @MainActor
@@ -62,6 +70,13 @@ public final class AppEnvironment {
     private var eventContinuation: AsyncStream<AgentEvent>.Continuation?
     private var tasks: [Task<Void, Never>] = []
     private var didStart = false
+
+    /// How often the grouping pass runs.
+    ///
+    /// The same three seconds as the liveness loop and as `ProcessTable`'s own
+    /// cache window, so a tick of each costs one process-table read between
+    /// them rather than two.
+    private static let groupingInterval = Duration.seconds(3)
 
     public init(paths: AuspexPaths = .default, mode: Mode = .live) {
         self.paths = paths
@@ -126,12 +141,34 @@ public final class AppEnvironment {
             await registry.run(events: events)
         })
 
+        // One process table for both loops. `ProcessTable` caches for three
+        // seconds and both tick on three seconds, so sharing it turns two
+        // `sysctl(KERN_PROC_ALL)` sweeps per tick into one. Arguments and
+        // working directories are deliberately not read: neither loop needs
+        // them, and some harnesses pass credentials in argv.
+        let table = ProcessTable(includesArguments: false, includesWorkingDirectory: false)
+
         switch mode {
         case .demo:
             startDemo(into: continuation)
         case .live:
-            startLive(store: store, into: continuation)
+            startLive(store: store, table: table, into: continuation)
         }
+
+        startGrouping(registry: registry, table: table)
+    }
+
+    /// Starts the pass that answers where each session is and who started it.
+    ///
+    /// Runs in demo mode too. The demo's directories are under
+    /// `/Users/example`, so nearly every placement resolves to "a directory in
+    /// no repository, named after itself" and every link is already recorded by
+    /// the script — which is the point: the demo exercises the same code path
+    /// the live board does, and a coordinator that only ran in one of them
+    /// would be a coordinator only tested in one of them.
+    private func startGrouping(registry: SessionRegistry, table: any ProcessTableReading) {
+        let grouping = GroupingCoordinator(registry: registry, table: table)
+        tasks.append(Task { await grouping.run(every: Self.groupingInterval) })
     }
 
     /// Stops every producer and flushes what the registry has buffered.
@@ -154,7 +191,11 @@ public final class AppEnvironment {
 
     // MARK: Producers
 
-    private func startLive(store: AuspexStore, into continuation: AsyncStream<AgentEvent>.Continuation) {
+    private func startLive(
+        store: AuspexStore,
+        table: any ProcessTableReading,
+        into continuation: AsyncStream<AgentEvent>.Continuation
+    ) {
         let home = paths.homeDirectory.path
         let coordinator = IngestCoordinator(
             adapters: AuspexAdapters.all,
@@ -177,12 +218,10 @@ public final class AppEnvironment {
 
         // Liveness answers a question no transcript can: the harness process
         // is gone, so the session that looked like it was thinking has in fact
-        // stopped. Arguments and working directories are deliberately not read
-        // — a liveness probe needs neither, and some harnesses pass
-        // credentials in argv.
+        // stopped.
         let resolver = LivenessResolver(
             adapters: AuspexAdapters.all,
-            table: ProcessTable(includesArguments: false, includesWorkingDirectory: false),
+            table: table,
             home: home
         )
         tasks.append(Task { [weak self] in
