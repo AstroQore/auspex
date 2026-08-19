@@ -29,8 +29,7 @@ struct SessionTraceView: View {
                 session: session,
                 parent: model.selectedParent,
                 children: model.selectedChildren,
-                projectName: model.board.projectKey(for: session)
-                    .map(BoardGrouping.projectName(forPath:)),
+                projectName: model.selectedProjectName,
                 onSelect: { model.selectedKey = $0 },
                 onOpenTrajectory: { model.openTrajectory() }
             )

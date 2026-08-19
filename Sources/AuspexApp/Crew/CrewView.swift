@@ -87,7 +87,10 @@ struct CrewView: View {
         // hundred keys is not worth doing to reclaim a handful of structs — a
         // replacement that kept the count identical simply waits for the next
         // one.
-        .onChange(of: model.board.sessions.count) {
+        // The count comes off the model's own derived property rather than out
+        // of the frame: `board` is replaced on every applied frame, so reading
+        // it here would subscribe this body to all of them.
+        .onChange(of: model.sessionCount) {
             roster.prune(keeping: Set(model.board.sessions.map(\.key)))
         }
     }

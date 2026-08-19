@@ -116,6 +116,11 @@ final class ProjectsModel {
             guard didAutoExpand.insert(project.key).inserted else { continue }
             expandedProjects.insert(project.key)
         }
+        // Assigned every frame and *published* only when it moved: the
+        // `@Observable` macro compares before it notifies, and `ProjectTree` is
+        // `Equatable`. Keep it that way — a field the tree cannot compare (a
+        // timestamp, a closure, a class) would put the whole column back on the
+        // per-frame rebuild this relies on avoiding.
         self.tree = tree
     }
 

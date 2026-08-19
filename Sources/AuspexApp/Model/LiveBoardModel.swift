@@ -47,7 +47,38 @@ final class LiveBoardModel {
     ///
     /// Starts empty so the first render has something to draw before any event
     /// arrives.
+    ///
+    /// ## Who may read it, and who may not
+    ///
+    /// Every other observable property here is published only when it moves,
+    /// because the `@Observable` macro compares an `Equatable` value against
+    /// the one it is replacing and stays quiet when they match. This one can
+    /// never match: a frame carries a fresh `generatedAt` and a fresh array of
+    /// snapshots every time, so **every applied frame invalidates every view
+    /// that read `board`** — eight times a second on a busy machine, whether
+    /// or not anything those views draw has changed.
+    ///
+    /// That is affordable for the surfaces that are on screen one at a time —
+    /// the scene, the crew wall, the Harnesses page — and ruinous for the ones
+    /// that are always on screen. A `sample` of the live board with ~700
+    /// sessions had the main thread busy 100 % of a three-second window, and
+    /// 57.7 % of it inside `NSHostingView.minSize()`: AppKit re-asking the
+    /// SwiftUI root for its minimum size, which is a `sizeThatFits` over the
+    /// whole window, on every display cycle in which the graph was dirty.
+    ///
+    /// So the always-visible surfaces — the sidebar, the header, the trace
+    /// pane — read the narrow values derived below instead: ``sessionCount``,
+    /// ``selectedSession``, ``selectedParent``, ``selectedChildren``,
+    /// ``selectedProjectName``. Reading `board` from one of them puts the
+    /// whole window back on that treadmill.
     private(set) var board: BoardSnapshot = .empty
+
+    /// How many sessions the current frame holds.
+    ///
+    /// The sidebar's "All sessions" row and the header's count. An `Int`, so
+    /// its readers are invalidated when the number moves; `board.sessions.count`
+    /// would read ``board`` and invalidate them on every frame instead.
+    private(set) var sessionCount = 0
 
     /// The frame as it arrived, before the user layer.
     ///
@@ -220,6 +251,7 @@ final class LiveBoardModel {
     var selectedKey: SessionKey? {
         didSet {
             guard oldValue != selectedKey else { return }
+            refreshSelection()
             if let selectedKey { markSeen(selectedKey) }
             trace = []
             traceItems = []
@@ -310,6 +342,13 @@ final class LiveBoardModel {
             includesEnded: false
         )
         self.groups = groups
+        // Assigned every frame and *published* only when it moved: the
+        // `@Observable` macro compares an `Equatable` value against the one it
+        // is replacing and stays quiet when they match. That is the whole
+        // reason a row is a flat value — a frame arrives whenever any session
+        // changed, most of those changes never reach the wall, and the
+        // comparison that decides is a scan of scalars rather than a re-layout
+        // of the grid.
         rowGroups = groups.map { group in
             // A delegation tree keeps its own order: the shape *is* the
             // information, and re-sorting it by urgency would draw a child
@@ -347,6 +386,42 @@ final class LiveBoardModel {
         // Counted before the bucket filter, on purpose: a chip that zeroed the
         // others when clicked would leave no way back to them.
         summary = BoardSummary(sessions: kept, seenAt: seenAt)
+        sessionCount = board.sessions.count
+        refreshSelection()
+    }
+
+    /// Re-derives the four things the trace pane draws about the selection.
+    ///
+    /// The pane asks four questions of the frame — which session is selected,
+    /// what spawned it, what it spawned, and what its project is called — and
+    /// it used to ask them from its own body, through computed properties over
+    /// ``board`` and ``sessionIndex``. Both of those are replaced wholesale on
+    /// every applied frame, so the pane was invalidated on every applied frame:
+    /// a header, a tab bar and a two-thousand-row waterfall re-laid out eight
+    /// times a second because some other session on the machine had said
+    /// something.
+    ///
+    /// Answered here instead, once per frame, into four `Equatable` properties
+    /// the pane can read without seeing the frame. Each is compared by the
+    /// `@Observable` macro before it notifies, so the pane is invalidated when
+    /// *its* session moves and not when anything else does.
+    private func refreshSelection() {
+        let session = selectedKey.flatMap { sessionIndex[$0] }
+        selectedSession = session
+        selectedParent = session?.identity.parent.flatMap { sessionIndex[$0] }
+
+        // Taken from the frame's own forest rather than from
+        // `SessionSnapshot.children`, because that list is what the *adapter*
+        // recorded — it has no way to know about a `codex exec` the process
+        // table linked up three seconds ago, and the header should show both
+        // kinds of child the same way.
+        selectedChildren = selectedKey
+            .flatMap { board.tree.node(for: $0) }?
+            .children.compactMap { sessionIndex[$0.key] } ?? []
+
+        selectedProjectName = session
+            .flatMap { board.projectKey(for: $0) }
+            .map(BoardGrouping.projectName(forPath:))
     }
 
     /// Turns the bucket filter on, or off if it is already on this bucket.
@@ -428,44 +503,41 @@ final class LiveBoardModel {
     /// Every session on the current frame, by key.
     ///
     /// Rebuilt with the frame. `BoardSnapshot.session(for:)` is a linear scan,
-    /// and the three selection lookups below run on every render of the trace
-    /// pane — which on a board of several hundred sessions is a scan per
-    /// child per body.
-    private var sessionIndex: [SessionKey: SessionSnapshot] = [:]
+    /// and the selection lookups below would otherwise be a scan per child per
+    /// body on a board of several hundred sessions.
+    ///
+    /// Deliberately not observed. It is a lookup table, not something anybody
+    /// draws, and it is replaced wholesale on every applied frame — so a view
+    /// that read it would be invalidated on every applied frame. What views
+    /// read is the four properties below, derived from it once per frame and
+    /// published only when they move.
+    @ObservationIgnored private var sessionIndex: [SessionKey: SessionSnapshot] = [:]
 
     /// One session's live snapshot, when the current frame still has it.
     ///
     /// A lookup into the per-frame index, for the handful of places that need
     /// the whole snapshot rather than the row derived from it — a resume
     /// command needs the session id, the variant, and the working directory,
-    /// none of which a card carries.
+    /// none of which a card carries. Those places are context menus and sheets,
+    /// built when they are opened rather than with the board, which is why an
+    /// unobserved index is enough for them.
     func session(for key: SessionKey) -> SessionSnapshot? {
         sessionIndex[key]
     }
 
     /// The selected session's live snapshot, when the board still has one.
-    var selectedSession: SessionSnapshot? {
-        selectedKey.flatMap { sessionIndex[$0] }
-    }
+    private(set) var selectedSession: SessionSnapshot?
 
     /// The parent of the selected session, when it has one and the board
     /// knows it. Drives the "spawned by" link in the trace header.
-    var selectedParent: SessionSnapshot? {
-        selectedSession?.identity.parent.flatMap { sessionIndex[$0] }
-    }
+    private(set) var selectedParent: SessionSnapshot?
 
     /// What the selected session spawned, direct children only, in board
     /// order.
-    ///
-    /// Taken from the frame's own forest rather than from
-    /// ``SessionSnapshot/children``, because that list is what the *adapter*
-    /// recorded — it has no way to know about a `codex exec` the process table
-    /// linked up three seconds ago, and the header should show both kinds of
-    /// child the same way.
-    var selectedChildren: [SessionSnapshot] {
-        guard let key = selectedKey else { return [] }
-        return board.tree.node(for: key)?.children.compactMap { sessionIndex[$0.key] } ?? []
-    }
+    private(set) var selectedChildren: [SessionSnapshot] = []
+
+    /// What the selected session's project is called, for the trace header.
+    private(set) var selectedProjectName: String?
 
     /// The directory a session is actually working in, unabbreviated.
     ///

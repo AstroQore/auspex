@@ -104,7 +104,7 @@ struct BoardHeader: View {
     private var headingCount: Int? {
         switch section {
         case .live: model.summary.live
-        case .allSessions: model.board.sessions.count
+        case .allSessions: model.sessionCount
         default: nil
         }
     }

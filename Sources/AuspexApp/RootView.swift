@@ -161,7 +161,7 @@ struct SidebarView: View {
 
             SidebarRow(
                 title: BoardSection.allSessions.title,
-                count: model.board.sessions.count,
+                count: model.sessionCount,
                 isSelected: section == .allSessions
             ) { section = .allSessions }
 
