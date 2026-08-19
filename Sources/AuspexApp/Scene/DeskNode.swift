@@ -269,7 +269,7 @@ final class DeskNode: SKNode {
             sprite = existing
         } else {
             agent?.removeFromParent()
-            let created = AgentSprite(harness: harness, variant: session.identity.variant)
+            let created = AgentSprite(harness: harness, key: session.key)
             created.name = harness.rawValue
             created.position = CGPoint(x: -20, y: 4)
             created.zPosition = 2

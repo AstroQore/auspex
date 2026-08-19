@@ -63,6 +63,16 @@ if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
     cp "$ROOT/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 fi
 
+# The character packages the office draws its people from (docs/CHARACTERS.md).
+# Copied whole rather than declared as a SwiftPM resource: they are already the
+# exact bytes to ship, the folder structure *is* the format, and art lands one
+# pose at a time — a build that failed because a declared resource directory was
+# still empty would stop the app for the sake of a PNG nobody had drawn yet.
+if [[ -d "$ROOT/Resources/Characters" ]]; then
+    echo "==> bundling character packages"
+    cp -R "$ROOT/Resources/Characters" "$APP_DIR/Contents/Resources/Characters"
+fi
+
 printf '%s' "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then

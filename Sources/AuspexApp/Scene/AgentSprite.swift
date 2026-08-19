@@ -6,11 +6,13 @@ import SpriteKit
 ///
 /// ## Two rigs behind one interface
 ///
-/// If ``SpriteLibrary`` has a frame strip for this harness and pose, the sprite
-/// is one node playing it. If it does not — which is every harness today — the
-/// sprite is a two-piece procedural rig: a head and a torso, drawn by
-/// ``PlaceholderArt`` in the harness's own hue, animated by swapping the
-/// torso's pose texture and moving the head.
+/// If this session's character package has a strip for the pose, the sprite is
+/// one node playing it. If it does not — because nobody has drawn that pose
+/// yet, or because no package claims the harness at all — the sprite is a
+/// two-piece procedural rig: a head and a torso, drawn by ``PlaceholderArt`` in
+/// the harness's own hue, animated by swapping the torso's pose texture and
+/// moving the head. The choice is made per *pose*, so a package holding only
+/// `blocked.png` gives exactly the sessions that need a person a person.
 ///
 /// The rig matters because it decides what motion is available. A frame strip
 /// can do anything the artist drew and nothing else; the procedural rig can
@@ -47,7 +49,7 @@ final class AgentSprite: SKNode {
     static let headSize = CGSize(width: 20, height: 16)
 
     private let harness: Harness
-    private let variant: String?
+    private let key: SessionKey
 
     private let body = SKSpriteNode()
     private let head = SKSpriteNode()
@@ -57,9 +59,9 @@ final class AgentSprite: SKNode {
     private var currentPose: ScenePose?
     private var currentReduceMotion: Bool?
 
-    init(harness: Harness, variant: String?) {
+    init(harness: Harness, key: SessionKey) {
         self.harness = harness
-        self.variant = variant
+        self.key = key
         super.init()
 
         body.anchorPoint = CGPoint(x: 0.5, y: 0)
@@ -78,6 +80,12 @@ final class AgentSprite: SKNode {
         addChild(body)
         addChild(head)
         addChild(atlas)
+
+        // Weakly held. A character package can be redrawn while the office is
+        // on screen, and a desk only re-applies a pose when its *session*
+        // changes — so the library repaints the sprites it knows about rather
+        // than waiting for a board frame that may not arrive for minutes.
+        SpriteLibrary.shared.register(self)
     }
 
     @available(*, unavailable)
@@ -103,11 +111,24 @@ final class AgentSprite: SKNode {
         head.position.y = Self.bodySize.height - 2
         alpha = 1
 
-        if let strip = SpriteLibrary.shared.strip(harness: harness, variant: variant, pose: pose) {
+        if let strip = SpriteLibrary.shared.strip(for: key, pose: pose) {
             applyStrip(strip, reduceMotion: reduceMotion)
         } else {
             applyProcedural(pose, reduceMotion: reduceMotion)
         }
+    }
+
+    /// Redraws the current pose from whatever the library holds now.
+    ///
+    /// Called after a reload, when the art behind an unchanged pose may be
+    /// different — a package appeared, was edited, or was deleted. The memo in
+    /// ``apply(pose:reduceMotion:)`` exists to stop a board frame arriving
+    /// twenty times a second from restarting every loop in the room, and it is
+    /// exactly what has to be defeated here.
+    func refreshArt() {
+        guard let pose = currentPose, let reduceMotion = currentReduceMotion else { return }
+        currentPose = nil
+        apply(pose: pose, reduceMotion: reduceMotion)
     }
 
     // MARK: Drawn art
@@ -117,10 +138,13 @@ final class AgentSprite: SKNode {
         body.isHidden = true
         head.isHidden = true
         atlas.isHidden = false
+        // `pointsPerPixel` and not `PlaceholderArt.pixelScale`: a 48-pixel cell
+        // is a more detailed character, not a taller one, so both legal cell
+        // sizes land the same height on screen.
         let pixels = first.size()
         atlas.size = CGSize(
-            width: pixels.width * PlaceholderArt.pixelScale,
-            height: pixels.height * PlaceholderArt.pixelScale
+            width: pixels.width * strip.pointsPerPixel,
+            height: pixels.height * strip.pointsPerPixel
         )
         atlas.texture = first
         guard !reduceMotion, strip.frames.count > 1 else { return }
