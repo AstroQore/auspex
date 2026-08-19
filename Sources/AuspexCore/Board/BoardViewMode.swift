@@ -19,6 +19,8 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
     /// The rendered office. Fewer facts per session, but the shape of the
     /// whole machine at a glance.
     case scene
+    /// One geometric avatar per session, animated by what it is doing.
+    case crew
 
     public var id: String { rawValue }
 
@@ -27,6 +29,7 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
         switch self {
         case .board: "Board"
         case .scene: "Scene"
+        case .crew: "Crew"
         }
     }
 
@@ -35,6 +38,7 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
         switch self {
         case .board: "square.grid.2x2"
         case .scene: "building.2"
+        case .crew: "person.3"
         }
     }
 

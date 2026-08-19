@@ -33,6 +33,6 @@ struct BoardViewModeTests {
         for mode in BoardViewMode.allCases {
             #expect(BoardViewMode(rawValue: mode.rawValue) == mode)
         }
-        #expect(BoardViewMode(rawValue: "crew") == nil)
+        #expect(BoardViewMode(rawValue: "office") == nil)
     }
 }

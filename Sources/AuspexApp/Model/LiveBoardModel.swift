@@ -107,6 +107,16 @@ final class LiveBoardModel {
     /// hold flat values of scalars and strings.
     private(set) var rowGroups: [BoardRowGroup] = []
 
+    /// The same sections as snapshots, for the crew wall.
+    ///
+    /// The board does not read this and must not: it is an array of
+    /// `SessionSnapshot`, which is the value whose equality this whole
+    /// arrangement exists to keep out of the render loop. The crew wall draws
+    /// avatars from fields the row model does not carry and is only built
+    /// while its mode is on screen, so it keeps the snapshots for now — one
+    /// mode's cost rather than the board's.
+    private(set) var groups: [BoardGroup] = []
+
     /// The finished sessions the collapsed section at the bottom draws from,
     /// most recently finished first.
     ///
@@ -153,6 +163,7 @@ final class LiveBoardModel {
             projectFilter: projectFilter,
             includesEnded: false
         )
+        self.groups = groups
         rowGroups = groups.map { group in
             BoardRowGroup(
                 id: group.id,
@@ -232,6 +243,14 @@ final class LiveBoardModel {
     var selectedChildren: [SessionSnapshot] {
         guard let key = selectedKey else { return [] }
         return board.tree.node(for: key)?.children.compactMap { sessionIndex[$0.key] } ?? []
+    }
+
+    /// How many sessions the given one has below it, at any depth.
+    ///
+    /// The board's cards carry this on their row, worked out once per frame.
+    /// This is for the crew wall, which still asks per card.
+    func descendantCount(of key: SessionKey) -> Int {
+        board.tree.descendants(of: key).count
     }
 
     /// Whether any session has ever been seen. Distinguishes "watching, and

@@ -75,6 +75,7 @@ struct RootView: View {
                     switch model.viewMode {
                     case .board: BoardView(model: model)
                     case .scene: SceneContainerView(model: model)
+                    case .crew: CrewView(model: model)
                     }
                 } else {
                     ComingSoonView(section: section ?? .live)
