@@ -257,21 +257,31 @@ public enum BloubDecor {
     /// 5 particles, a new one every 0.2 s, lifetime 0.55 s.
     ///
     /// They do not fly off in a straight line: they spiral **inwards** (radius
-    /// ×0.75 per frame, angle +100°/s) while growing, and pass behind the core
-    /// where they are swallowed.
+    /// ×0.75 per frame) while growing, and pass behind the core where they are
+    /// swallowed. The inward run keeps bloub's exponential, which decelerates
+    /// on its own; what is eased here is everything that was a straight line.
+    ///
+    /// The sweep is the visible one: bloub turned each particle at a flat
+    /// 100°/s, so it appeared already at full speed and stopped mid-turn when
+    /// it died. It now covers the same 62° of arc, easing in and out of it, so
+    /// a particle drifts out of the core rather than being flicked out of it.
     public static func particles(_ t: Double, scale: Double) -> [BloubDot] {
+        /// Lifetime, and the total sweep it used to cover at 100°/s.
+        let life = 0.62
+        let sweep = 100 * life * .pi / 180
+
         var out: [BloubDot] = []
         for p in particleSeeds {
             let u = t - p.birth
-            if u < 0 || u > 0.62 { continue }
+            if u < 0 || u > life { continue }
             let rho = p.rho * pow(0.75, u * 10)
-            let a = p.angle + u * 100 * .pi / 180
+            let a = p.angle + BloubMath.easeInOutCubic(BloubMath.clamp(u / life)) * sweep
             out.append(
                 BloubDot(
                     x: cos(a) * rho * scale,
                     y: sin(a) * rho * scale,
-                    radius: (0.04 + 0.028 * BloubMath.clamp(u / 0.55)) * scale,
-                    opacity: BloubMath.clamp(u / 0.06) * BloubMath.clamp((0.62 - u) / 0.08),
+                    radius: (0.04 + 0.028 * BloubMath.smoothstep(u / 0.55)) * scale,
+                    opacity: BloubMath.rampUp(u, 0, 0.06) * BloubMath.rampDown(u, life, 0.08),
                     depth: BloubMath.clamp(1 - rho / 0.8)
                 )
             )

@@ -37,6 +37,11 @@ public enum BloubMath {
     @inlinable
     public static func easeOutCubic(_ t: Double) -> Double { 1 - pow(1 - t, 3) }
 
+    /// The mirror of ``easeOutCubic``: leaves at zero speed and arrives at
+    /// full speed. What a lid does on its way down.
+    @inlinable
+    public static func easeInCubic(_ t: Double) -> Double { t * t * t }
+
     @inlinable
     public static func easeInOutCubic(_ t: Double) -> Double {
         t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
@@ -44,6 +49,52 @@ public enum BloubMath {
 
     @inlinable
     public static func easeOutQuint(_ t: Double) -> Double { 1 - pow(1 - t, 5) }
+
+    /// The classic S: zero slope at both ends, so anything driven by it leaves
+    /// and rejoins its neighbours with no visible corner.
+    ///
+    /// This is what replaced every bare `clamp(t / span)` in the state
+    /// catalogue. Those linear ramps were invisible individually and audible in
+    /// aggregate: an opacity that starts at a constant rate and stops dead is
+    /// the difference between a decor that breathes in and one that is switched
+    /// on.
+    @inlinable
+    public static func smoothstep(_ t: Double) -> Double {
+        let u = clamp(t)
+        return u * u * (3 - 2 * u)
+    }
+
+    /// A smooth 0 → 1 ramp that begins at `start` and takes `span` seconds.
+    @inlinable
+    public static func rampUp(_ t: Double, _ start: Double, _ span: Double) -> Double {
+        smoothstep((t - start) / span)
+    }
+
+    /// A smooth 1 → 0 ramp that is finished at `end`, having taken `span`
+    /// seconds to get there.
+    @inlinable
+    public static func rampDown(_ t: Double, _ end: Double, _ span: Double) -> Double {
+        smoothstep((end - t) / span)
+    }
+
+    /// Distance covered by `t` seconds of a speed that eases from 0 to 1 over
+    /// `span` — that is, ∫₀ᵗ smoothstep(s / span) ds, in closed form.
+    ///
+    /// Spinning something up by multiplying its *angle* by a ramp is the
+    /// obvious mistake and it lurches: with θ = ω·t·ramp(t) the angular speed
+    /// is ω(ramp + t·ramp′), which peaks at twice ω half-way through the ramp
+    /// and then falls back. Integrating the ramp instead gives a speed that
+    /// rises monotonically to ω and stays there, which is what a wheel does.
+    ///
+    /// Closed form and not an accumulator on purpose: the engine is a pure
+    /// function of time, and an integrator would be state.
+    @inlinable
+    public static func easedTravel(_ t: Double, span: Double) -> Double {
+        if t <= 0 { return 0 }
+        if t >= span { return t - span / 2 }
+        let u = t / span
+        return span * (u * u * u - u * u * u * u / 2)
+    }
 
     // MARK: Noise
 
@@ -74,6 +125,27 @@ public struct BloubRNG: Sendable {
         var t = (state ^ (state >> 15)) &* (1 | state)
         t = (t &+ ((t ^ (t >> 7)) &* (61 | t))) ^ t
         return Double(t ^ (t >> 14)) / 4_294_967_296
+    }
+
+    /// One value in [0, 1) for an (index, salt, seed) triple.
+    ///
+    /// A hash and not a stream, because the caller has to be able to ask for
+    /// segment 412 without having drawn the 411 before it. The resting gaze's
+    /// schedule is *regenerated* from the seed on every sample rather than
+    /// remembered — that is what lets a per-avatar random walk stay a pure
+    /// function of time.
+    ///
+    /// The first draw is discarded: mulberry32 seeded with two nearby values
+    /// returns two nearby first outputs, and adjacent segments would drift
+    /// towards each other instead of being independent.
+    public static func value(index: Int, salt: UInt32, seed: UInt32) -> Double {
+        var rng = BloubRNG(
+            seed: seed
+                &+ salt &* 0x9e37_79b9
+                &+ UInt32(truncatingIfNeeded: index) &* 0x85eb_ca6b
+        )
+        _ = rng.next()
+        return rng.next()
     }
 }
 

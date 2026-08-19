@@ -165,11 +165,22 @@ public enum BloubStates {
     }
 
     /// The pulse wave that runs left to right across the three dots.
+    ///
+    /// A raised cosine over the **whole** period, gently sharpened. bloub ran
+    /// the cosine over the first half, doubled it and clamped: that gave a flat
+    /// top for a quarter of the cycle and then dropped the dot from full to
+    /// nothing between two frames. On a wall the size of ours the cut is what
+    /// the eye catches, so the port trades the measured silhouette of the pulse
+    /// for a wave with no on/off in it — one of the deliberate departures listed
+    /// in ``BloubTransition``.
+    ///
+    /// The exponent is what keeps it reading as a pulse rather than as three
+    /// dots breathing in a fog: 1 would spend too long half-lit. It is > 1, so
+    /// the curve still leaves and rejoins zero with zero slope.
     private static func dotPulse(_ t: Double, _ index: Int) -> Double {
         let raw = ((t - Double(index) * 0.5) / 1.5).truncatingRemainder(dividingBy: 1)
         let p = (raw + 1).truncatingRemainder(dividingBy: 1)
-        let k = p < 0.5 ? 0.5 - 0.5 * cos(p * bloubTau) : 0
-        return BloubMath.clamp(k * 2)
+        return pow(0.5 - 0.5 * cos(p * bloubTau), 1.6)
     }
 
     // MARK: The catalogue
@@ -272,10 +283,15 @@ public enum BloubStates {
                 // overshoot.
                 let p = BloubMath.clamp(t / 1.5)
                 let travel = BloubMath.easeInOutCubic(p) * 0.82 - 0.087
-                let back = t > 1.6 ? BloubMath.clamp((t - 1.6) / 0.4) : 0
+                // The return was a linear cross-fade in bloub, which is the one
+                // place the "!" visibly snapped: it left its far position at
+                // full speed. Eased, the mark settles instead of being yanked.
+                let back = BloubMath.smoothstep((t - 1.6) / 0.4)
                 let x = travel * (1 - back) + 0.1 * back
-                // Secondary 2.5 Hz buzz, bar and dot in antiphase.
+                // Secondary 2.5 Hz buzz, bar and dot in antiphase, faded in and
+                // out so the mark does not arrive already vibrating.
                 let buzz = sin(t * 2.5 * bloubTau) * 0.005
+                    * BloubMath.rampUp(t, 0, 0.3) * BloubMath.rampDown(t, 2.1, 0.35)
                 let tilt = 17.7 * .pi / 180
                 return BloubPose(
                     silhouette: barItalic(rotation: tilt, centerX: x, centerY: -0.325 - buzz),
@@ -410,7 +426,12 @@ public enum BloubStates {
             usesBaseFace: false,
             pose: { t in
                 // The triangle stays almost still while the bouquet crosses it.
-                let fade = BloubMath.clamp(t / 0.35) * BloubMath.clamp((2.2 - t) / 0.5)
+                let fade = BloubMath.rampUp(t, 0, 0.35) * BloubMath.rampDown(t, 2.2, 0.5)
+                // The sweep itself: bloub moved the bouquet at a constant
+                // 0.42 units a second, which is the only true straight line in
+                // the catalogue and reads exactly like one. Same start, same
+                // finish, eased in and out across the block.
+                let sweep = BloubMath.easeInOutCubic(BloubMath.clamp(t / 2)) * 0.84
                 return BloubPose(
                     silhouette: spinningTriangle(0),
                     gaze: BloubGaze(yaw: 12, pitch: -8, roll: -6),
@@ -419,7 +440,7 @@ public enum BloubStates {
                     // the bouquet sweeps right to left over the triangle
                     arcs: BloubDecor.swoosh.enumerated().map { index, seed in
                         var moved = seed
-                        moved.centerX = 0.45 - t * 0.42
+                        moved.centerX = 0.45 - sweep
                         return BloubArcSpec(id: "sw\(index)", seed: moved, time: t, opacity: fade)
                     }
                 )
@@ -436,10 +457,21 @@ public enum BloubStates {
             usesBaseBody: false,
             usesBaseFace: false,
             pose: { t in
-                // Measured rotation: a 0.35 s ramp then 1.25 turns/s,
-                // anticlockwise.
-                let ramp = BloubMath.easeInOutCubic(BloubMath.clamp(t / 0.35))
-                let rot = -bloubTau * 1.25 * t * ramp
+                // Measured rotation: 1.25 turns a second, anticlockwise, after
+                // a ramp.
+                //
+                // bloub multiplied the *angle* by that ramp, which makes the
+                // angular speed peak at twice the cruise half-way up and fall
+                // back — a lurch. Here the ramp is the **speed**, integrated
+                // in closed form, so the wheel spins up from a standstill to
+                // 1.25 turns/s over 0.5 s and, because Auspex holds this state
+                // for as long as the tool call takes, spins back down to a
+                // standstill over the 0.5 s before it replays at 2.5 s. Both
+                // ends of the loop therefore have zero angular speed and the
+                // seam has nothing to catch on.
+                let spun = BloubMath.easedTravel(t, span: 0.5)
+                    - BloubMath.easedTravel(t - 2, span: 0.5)
+                let rot = -bloubTau * 1.25 * spun
                 // The body relaxes from the triangle to the ball during the orbit.
                 let back = BloubMath.easeInOutCubic(BloubMath.clamp((t - 1.6) / 0.9))
                 let tri = spinningTriangle(rot)
@@ -450,7 +482,7 @@ public enum BloubStates {
                     centerX: tri.centerX * (1 - back),
                     centerY: tri.centerY * (1 - back)
                 )
-                let fade = BloubMath.clamp(t / 0.8) * BloubMath.clamp((3.6 - t) / 0.9)
+                let fade = BloubMath.rampUp(t, 0, 0.8) * BloubMath.rampDown(t, 3.6, 0.9)
                 return BloubPose(
                     silhouette: silhouette,
                     // the eyes race around the sphere ~3× faster than the outline
@@ -466,8 +498,7 @@ public enum BloubStates {
                             id: "rg\(index)",
                             seed: seed,
                             time: t,
-                            opacity: fade
-                                * BloubMath.clamp((t - Double(index) * 0.13) / 0.3)
+                            opacity: fade * BloubMath.rampUp(t, Double(index) * 0.13, 0.3)
                         )
                     }
                 )
@@ -511,8 +542,8 @@ public enum BloubStates {
                             // they enter one after another then fade before the
                             // block ends, so the return to rest starts on an
                             // already clean frame
-                            opacity: BloubMath.clamp((t - Double(index) * 0.06) / 0.14)
-                                * BloubMath.clamp((1.22 - t) / 0.34)
+                            opacity: BloubMath.rampUp(t, Double(index) * 0.06, 0.14)
+                                * BloubMath.rampDown(t, 1.22, 0.34)
                         )
                     }
                 )
@@ -534,7 +565,7 @@ public enum BloubStates {
                 let regrow = BloubMath.easeOutQuint(BloubMath.clamp((t - 1.7) / 0.7))
                 return BloubPose(
                     silhouette: BloubShape.circle(collapse + (1 - collapse) * regrow),
-                    eyeAlpha: BloubMath.clamp((t - 1.85) / 0.4),
+                    eyeAlpha: BloubMath.rampUp(t, 1.85, 0.4),
                     dots: BloubDecor.particles(t, scale: 1),
                     dotsBehind: true
                 )
@@ -557,15 +588,14 @@ public enum BloubStates {
                     - (1 - BloubDecor.cometDot)
                     * BloubMath.easeOutQuint(BloubMath.clamp(t / 0.55))
                 let regrow = BloubMath.easeOutQuint(BloubMath.clamp((t - 1.85) / 0.6))
-                let fade = BloubMath.clamp((t - 0.15) / 0.25)
-                    * BloubMath.clamp((1.95 - t) / 0.3)
+                let fade = BloubMath.rampUp(t, 0.15, 0.25) * BloubMath.rampDown(t, 1.95, 0.3)
                 return BloubPose(
                     // The dot drifts 0.035 down then comes back (measured wobble).
                     silhouette: BloubShape.circle(
                         collapse + (1 - collapse) * regrow,
                         centerY: sin(BloubMath.clamp(t / 1.7) * .pi) * 0.035
                     ),
-                    eyeAlpha: BloubMath.clamp((t - 2) / 0.35),
+                    eyeAlpha: BloubMath.rampUp(t, 2, 0.35),
                     arcs: BloubDecor.cometRibbons.enumerated().map { index, seed in
                         BloubArcSpec(id: "cm\(index)", seed: seed, time: t, opacity: fade)
                     }
