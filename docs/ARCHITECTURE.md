@@ -90,7 +90,64 @@ birth and death are the reducer's; project and task grouping are *M2*. —
 redrawn for nobody. Views never read the registry directly, so the SwiftUI
 board, the pixel scene, and the menu bar always agree. Sorted alive first, then
 by which session most needs a person, then by recency; grouped by harness and
-by project. — *M1.*
+by project, and carrying the delegation forest as `tree`. — *M1.*
+
+## Grouping
+
+Two axes cut across the board, and neither is recorded by any harness: **where**
+a session is working, and **who** started it.
+
+### Where: `ProjectResolver` → `projects` / `worktrees`
+
+`ProjectResolver` turns a working directory into a `ProjectPlacement` by reading
+git's own files — `.git` (a directory in a main checkout, a file naming a
+gitdir in a linked worktree), `<gitdir>/commondir`, and `<gitdir>/HEAD`. No
+`git` subprocess: a placement is resolved per session and re-checked whenever a
+session moves, and a process launch per session per change is real CPU spent on
+a question three short text files already answer.
+
+The placement's `projectRootPath` is the **main repository**, so three agents in
+three worktrees of one repo are one project with three checkouts rather than
+three projects. Paths following the agent-worktree conventions —
+`.agents/worktrees/<task>` and the `.claude`, `.codex`, `.cursor`, `.grok`
+variants — also yield `agentWorktreeTask`, which is usually the most
+informative label a row has before a title arrives. A directory in no
+repository is its own project, named after itself.
+
+Placements are cached per directory and invalidated by `HEAD`'s modification
+date, because the branch is the only part of the answer that goes stale; a
+directory with no `HEAD` to watch expires on a 30-second TTL instead.
+
+`PlacementService` is the debounce in front of it: a `(session, cwd)` pair is
+resolved **once**, which matters because Claude Code re-reports its working
+directory on every transcript line. `ProjectRepository` writes what comes out —
+upserting `projects` and `worktrees`, pointing `sessions.project_id` /
+`worktree_id` at them, and answering the questions a live board cannot, like
+"every session this machine has ever run in this repository". — *M2.*
+
+### Who: `ProcessLinker` → `sessions.parent_key` / `root_key`
+
+A Claude Code tool call that runs `codex exec` is a real parent/child pair that
+*neither* log records. `ProcessLinker` (in `AgentSessionLive`) recovers it from
+the process table: first the environment — a harness passes its session id to
+everything it launches, so `CLAUDE_CODE_SESSION_ID` in a Codex process's
+environment is evidence only the parent could have left — and failing that the
+spawn tree. The result is a `ParentLink` of `.envInherited` or
+`.spawnedProcess`, ranked *below* the `.subagent` links adapters read out of a
+log and the `.manual` ones a person makes, and only ever applied to a session
+that has no parent yet.
+
+`SessionTreeBuilder` folds those parents into a `SessionTree`: roots, depths,
+`descendants(of:)`, and the `root_key` every session row stores. It is total —
+orphans whose parent is not on the board become roots, and a cycle is broken
+rather than followed. `BoardSnapshot.byProject` uses it to place a child that
+recorded no directory of its own (a subagent has no process and no cwd) under
+its nearest ancestor's project.
+
+`GroupingCoordinator` runs both on a three-second tick, off the registry's
+actor — `sysctl` and `stat` do not belong on the path of every event — and
+feeds the answers back in through `SessionRegistry.applyPlacements(_:)` and
+`applyLinks(_:)`, which turn them into ordinary `identityUpdated` events. — *M2.*
 
 ## Storage
 
@@ -104,7 +161,7 @@ shipped one. `v1_initial` creates:
 
 | Table | Holds |
 | --- | --- |
-| `projects`, `worktrees` | checkouts and their worktrees, so branches of one repository group together — *M2* |
+| `projects`, `worktrees` | checkouts and their worktrees, so branches of one repository group together |
 | `sessions` | one row per session, keyed `"<harness>:<id>"` |
 | `events` | the append-only event log |
 | `tool_calls` | one row per call, so durations need no replay of the log |
@@ -120,6 +177,14 @@ projected out of it. The projection is written in one place, so the two cannot
 drift, and the board never decodes a blob to sort. `events.detail_json`
 likewise holds the whole encoded `AgentEventKind`, so a row round-trips back
 into the event that produced it without the schema growing a column per case.
+
+Three columns are deliberately *not* part of that projection:
+`project_id`, `worktree_id`, and `root_key`. Each is resolved on a different
+schedule from the snapshot — a placement needs the filesystem, a root needs the
+whole delegation tree — so `ProjectRepository` owns them, and an upsert of the
+snapshot leaves them alone rather than blanking them on every event until the
+resolver catches up. A brand-new row still gets `root_key = key`, because a
+session with no parent is its own root and grouping should never see NULL.
 
 **FTS5 with the `trigram` tokenizer**, over `messages` as an external-content
 table kept in step by three triggers. Trigram rather than a word tokenizer

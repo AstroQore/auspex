@@ -82,6 +82,43 @@ Auspex is pre-alpha; there are no released versions yet.
   sessions across all five harnesses, seeded and reproducible — out of an
   in-memory store, so the UI can be developed and demonstrated before any
   adapter exists. It reads no harness store and writes nothing to disk.
+  a person, and grouped by harness and by project. Carries the delegation
+  forest as `tree`, and groups a child that recorded no directory of its own
+  under its nearest ancestor's project rather than leaving it homeless.
+- `ProjectResolver` — turns a working directory into a `ProjectPlacement` by
+  reading git's own files (`.git`, `commondir`, `HEAD`) and never shelling out
+  to `git`. A linked worktree resolves to the **repository** it was branched
+  from, so three agents in three worktrees of one repo are one project with
+  three checkouts. Recognises the agent-worktree conventions —
+  `.agents/worktrees/<task>` and the `.claude`, `.codex`, `.cursor`, `.grok`
+  variants — and reports the task name. Cached per directory, invalidated by
+  `HEAD`'s mtime, with a 30-second TTL for directories that have no `HEAD` to
+  watch.
+- `PlacementService` — resolves each `(session, directory)` pair once, which is
+  what keeps a harness that re-reports its cwd on every transcript line from
+  costing a filesystem walk per line.
+- `ProjectRepository` — upserts `projects` and `worktrees` from placements,
+  points `sessions.project_id` / `worktree_id` at them, writes `root_key` from
+  the session tree, and answers `fetchProjects(withCounts:)`,
+  `sessions(inProject:)`, and `sessions(inTreeRootedAt:)`. A later resolution
+  that learned less never erases what an earlier one knew.
+- `SessionTree` / `SessionTreeBuilder` — the cross-harness delegation forest
+  built from `identity.parent`, with `rootKey(for:)`, `descendants(of:)`, and
+  per-node depth. Total by construction: an orphan whose parent is not on the
+  board becomes a root, and a contradictory pair of stored parents is broken
+  rather than followed.
+- `SessionRegistry.applyPlacements(_:)` and `applyLinks(_:)` — the entry
+  points that turn resolved placements and inferred parent links into ordinary
+  `identityUpdated` events, so the snapshot, the event log, the store, and the
+  board learn them the same way everything else is learned. A link is refused
+  for a session that acquired a recorded parent in the meantime, and one
+  naming a parent the board does not have is dropped.
+- `GroupingCoordinator` — the thin three-second driver that runs both off the
+  registry's actor, because `sysctl` and `stat` do not belong on the path of
+  every event. Sessions that are no longer running keep their session id but
+  lose their pid, so a recycled pid cannot be mistaken for a live parent.
+- Empty main window (`NavigationSplitView` with Live / Projects / Tasks /
+  Harnesses / Settings) and a menu bar extra with Open and Quit.
 - `--mcp-stdio` and `--hook` command-line placeholders, dispatched before
   AppKit starts; both exit 2 until M3.
 - `Scripts/build_app.sh` — packages and ad-hoc signs `.build/Auspex.app`, and
