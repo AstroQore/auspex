@@ -65,18 +65,24 @@ struct BoardHeader: View {
             Text(section.title)
                 .font(AuspexType.windowTitle)
                 .foregroundStyle(AuspexPalette.text)
-            Text("\(headingCount)")
-                .font(AuspexType.monoCount)
-                .auspexTabularDigits()
-                .foregroundStyle(AuspexPalette.text3)
+            if let headingCount {
+                Text("\(headingCount)")
+                    .font(AuspexType.monoCount)
+                    .auspexTabularDigits()
+                    .foregroundStyle(AuspexPalette.text3)
+            }
         }
         .fixedSize()
     }
 
-    private var headingCount: Int {
+    /// The number beside the heading, when the heading is about a number of
+    /// sessions. A status page is not, and a count there would be counting
+    /// something the page below it does not show.
+    private var headingCount: Int? {
         switch section {
+        case .live: model.summary.live
         case .allSessions: model.board.sessions.count
-        default: model.summary.live
+        default: nil
         }
     }
 

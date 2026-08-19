@@ -170,7 +170,6 @@ struct FactChip<Content: View>: View {
             .foregroundStyle(tint ?? AuspexPalette.text2)
             .lineLimit(1)
             .truncationMode(.middle)
-            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(

@@ -41,10 +41,6 @@ struct ActivityStrip: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// How many cells the strip is divided into. Enough to read as a bar
-    /// chart of the last minute rather than as a progress bar.
-    static let cellCount = 24
-
     var body: some View {
         Group {
             if reduceMotion || !motion.isAnimated {
@@ -89,6 +85,19 @@ private struct StaticStrip: View {
 ///
 /// The clock is optional so a card rendered outside the board — a preview, a
 /// screenshot renderer — degrades to a still strip instead of trapping.
+///
+/// ## Why there is no geometry here
+///
+/// Every rhythm is expressed in shape parameters that interpolate on their
+/// own: an opacity, a gradient's unit points, one rectangle per running child.
+/// Nothing measures the strip, nothing rebuilds a row of cells, and the
+/// implicit `linear` animation keyed on the phase is what turns four steps a
+/// second into continuous movement — the interpolation happens in the render
+/// server rather than in the view update the ticker drives.
+///
+/// The earlier version drew twenty-four cells and lit a range of them. It was
+/// twenty-four views rebuilt four times a second per animating card, and on a
+/// busy board that was most of what the animation cost.
 private struct AnimatedStrip: View {
     let motion: StateStyle.Motion
     let color: Color
@@ -96,23 +105,31 @@ private struct AnimatedStrip: View {
 
     @Environment(BoardClock.self) private var clock: BoardClock?
 
+    /// How many ticks a sweep takes to cross. Six seconds at 4 Hz: slow
+    /// enough to read as one thing travelling rather than as a flicker.
+    private static let sweepPeriod = 24
+
     var body: some View {
         let phase = clock?.phase ?? 0
         Group {
             switch motion {
             case .breathe:
-                bar(opacity: phase.isMultiple(of: 2) ? 0.25 : 0.8)
+                // Four steps to a cycle, so a room full of them reads as calm
+                // rather than as blinking.
+                bar(opacity: [0.25, 0.5, 0.8, 0.5][phase % 4])
             case .strobe:
-                bar(opacity: phase.isMultiple(of: 2) ? 0.30 : 1)
-            case .sweep(let cells):
-                cellRow(lit: sweepIndices(phase: phase, span: cells))
+                // The one rhythm on the board with a hard edge, because it is
+                // the only state that will not resolve itself.
+                bar(opacity: phase.isMultiple(of: 2) ? 0.3 : 1)
+            case .sweep(let width):
+                sweep(phase: phase, width: width)
             case .ticks(let count):
                 tickRow(count: count, phase: phase)
             case .steady(let opacity):
                 bar(opacity: opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.22), value: phase)
+        .animation(.linear(duration: 1 / Double(BoardClock.rate)), value: phase)
     }
 
     private func bar(opacity: Double) -> some View {
@@ -120,26 +137,28 @@ private struct AnimatedStrip: View {
             .fill(color.opacity(opacity))
     }
 
-    /// The travelling head, as a set of lit cell indices.
+    /// A bright head travelling left to right over a dim base, wrapping.
     ///
-    /// The head is `span` cells wide and wraps, which is what makes it read as
-    /// progress rather than as scrubbing — a segment that slid back would say
-    /// something the session is not doing.
-    private func sweepIndices(phase: Int, span: Int) -> ClosedRange<Int> {
-        let total = ActivityStrip.cellCount
-        let head = phase % total
-        return head...(head + span - 1)
-    }
-
-    private func cellRow(lit: ClosedRange<Int>) -> some View {
-        let total = ActivityStrip.cellCount
-        return HStack(spacing: 2) {
-            ForEach(0..<total, id: \.self) { index in
-                let isLit = lit.contains(index) || lit.contains(index + total)
+    /// The head is a gradient whose unit points move, which needs no
+    /// measurement of the strip and animates as two points rather than as a
+    /// layout. `autoreverses` is not an option, for the same reason it never
+    /// was: a segment that slid back would read as scrubbing rather than as
+    /// progress.
+    private func sweep(phase: Int, width: Int) -> some View {
+        let half = Double(width) / Double(Self.sweepPeriod)
+        let centre = Double(phase % Self.sweepPeriod) / Double(Self.sweepPeriod)
+        return RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(color.opacity(0.16))
+            .overlay {
                 RoundedRectangle(cornerRadius: 1, style: .continuous)
-                    .fill(color.opacity(isLit ? 0.95 : 0.16))
+                    .fill(
+                        LinearGradient(
+                            colors: [color.opacity(0), color, color.opacity(0)],
+                            startPoint: UnitPoint(x: centre - half, y: 0.5),
+                            endPoint: UnitPoint(x: centre + half, y: 0.5)
+                        )
+                    )
             }
-        }
     }
 
     /// One tick per running child, lighting in sequence. The count *is* the

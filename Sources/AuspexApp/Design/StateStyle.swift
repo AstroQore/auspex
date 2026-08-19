@@ -50,10 +50,10 @@ struct StateStyle: Sendable, Equatable {
         case steady(Double)
         /// The whole strip fades between two opacities and back. Thinking.
         case breathe
-        /// A bright segment travels left to right and wraps. A tool is open;
-        /// `cells` is how many steps it takes to cross, so a file write moves
-        /// faster than a shell command.
-        case sweep(cells: Int)
+        /// A bright head travels left to right and wraps. A tool is open;
+        /// `width` is how wide the head is, in twenty-fourths of the strip, so
+        /// a file write reads as a tighter, busier pass than a shell command.
+        case sweep(width: Int)
         /// The strip snaps to full and falls away. Someone is waiting.
         case strobe
         /// One tick per child, lighting in sequence.
@@ -101,7 +101,7 @@ extension SessionState {
                 label: "Tool",
                 glyph: "›_",
                 symbolName: "wrench.adjustable",
-                motion: .sweep(cells: 7),
+                motion: .sweep(width: 7),
                 isAlarming: false
             )
         case .writingFile:
@@ -110,7 +110,7 @@ extension SessionState {
                 label: "Writing",
                 glyph: "✎",
                 symbolName: "square.and.pencil",
-                motion: .sweep(cells: 5),
+                motion: .sweep(width: 5),
                 isAlarming: false
             )
         case .delegating(let children):
