@@ -46,7 +46,7 @@ struct RootView: View {
             if section == .harnesses {
                 HarnessesView(model: environment.harnesses, board: model.board)
             } else if let section, section.isAvailable {
-                BoardView(model: model)
+                LiveSectionView(model: model)
             } else {
                 ComingSoonView(section: section ?? .live)
             }
