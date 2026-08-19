@@ -146,6 +146,11 @@ public enum BoardGrouping {
     ///     ``BoardSnapshot/projectKey(for:)`` answers with. `nil` keeps every
     ///     project. Applied on every axis, because a person who clicked a
     ///     project in the sidebar meant it whatever the board is grouped by.
+    ///   - includesEnded: whether finished sessions belong in the sections.
+    ///     `false` is what the board asks for: finished sessions leave the grid
+    ///     entirely and collect in one collapsed section of their own — see
+    ///     ``EndedSessions``. A section that ends up empty as a result is
+    ///     dropped rather than drawn with a zero in it.
     /// - Returns: the sections, in display order. Empty when nothing survives
     ///   the filters, so a caller can distinguish "no sessions" from "one empty
     ///   section".
@@ -153,14 +158,18 @@ public enum BoardGrouping {
         for snapshot: BoardSnapshot,
         groupBy: BoardGroupBy,
         harnessFilter: Set<Harness> = [],
-        projectFilter: String? = nil
+        projectFilter: String? = nil,
+        includesEnded: Bool = true
     ) -> [BoardGroup] {
-        let sessions = filtered(
+        var sessions = filtered(
             snapshot.sessions,
             harnessFilter: harnessFilter,
             projectFilter: projectFilter,
             in: snapshot
         )
+        if !includesEnded {
+            sessions = EndedSessions.split(sessions).active
+        }
         guard !sessions.isEmpty else { return [] }
 
         switch groupBy {
