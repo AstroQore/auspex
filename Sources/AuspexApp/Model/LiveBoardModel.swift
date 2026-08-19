@@ -210,7 +210,11 @@ final class LiveBoardModel {
             projectFilter: projectFilter,
             in: board
         )
-        let ended = EndedSessions.mostRecentFirst(EndedSessions.split(kept).ended)
+        // `EndedSessions.split` and not `mostRecentFirst`: the ledger's order
+        // is total and supersedes it, and sorting four hundred finished rows
+        // twice per frame is exactly the kind of redundant work the board's
+        // budget is spent avoiding.
+        let ended = EndedSessions.split(kept).ended
         let endedRows = TaskLedger.sorted(builder.rows(for: ended))
         self.endedRows = bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows
         // Counted before the bucket filter, on purpose: a chip that zeroed the

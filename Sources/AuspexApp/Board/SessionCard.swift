@@ -123,7 +123,9 @@ struct SessionCard: View, Equatable {
                 .truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if row.isUnseenDone { UnseenDot() }
+            // Nudged down to the cap height of the title beside it, which is
+            // top-aligned so a two-line assignment grows downwards.
+            if row.isUnseenDone { UnseenDot().padding(.top, 7) }
             if row.isStale, !isOver { StaleTag() }
             StatePill(state: row.state, isStale: row.isStale)
                 .fixedSize()
@@ -324,7 +326,6 @@ struct UnseenDot: View {
         Circle()
             .fill(AuspexPalette.stateWriting.opacity(0.8))
             .frame(width: 7, height: 7)
-            .padding(.top, 4)
             .accessibilityLabel("Finished, and you have not looked at it")
     }
 }
@@ -332,7 +333,10 @@ struct UnseenDot: View {
 /// *done · 12 min ago · unseen*, in place of the stopwatch.
 private struct DoneLabel: View {
     let at: Date
-    @Environment(BoardClock.self) private var clock
+    /// Optional for the same reason ``ElapsedLabel``'s is: an offscreen
+    /// render and a preview have no clock, and a label that traps there
+    /// would make the board unrenderable rather than merely still.
+    @Environment(BoardClock.self) private var clock: BoardClock?
 
     var body: some View {
         HStack(spacing: 5) {
@@ -341,7 +345,7 @@ private struct DoneLabel: View {
                 .foregroundStyle(AuspexPalette.text3)
             // Reads the shared clock rather than owning one, so this label
             // re-renders on the board's own tick and nothing above it does.
-            Text(RelativeTimeText.since(at, now: clock.now))
+            Text(RelativeTimeText.since(at, now: clock?.now ?? Date()))
                 .font(AuspexType.monoClock)
                 .auspexTabularDigits()
                 .foregroundStyle(AuspexPalette.stateWriting.opacity(0.8))

@@ -182,7 +182,7 @@ struct EndedSessionRow: View, Equatable {
     var body: some View {
         HStack(spacing: 10) {
             HarnessBadge(harness: row.harness, size: 16, isMuted: !row.isUnseenDone)
-            if row.isUnseenDone { UnseenDot().padding(.top, 0) }
+            if row.isUnseenDone { UnseenDot() }
             Text(row.title)
                 .font(AuspexType.caption)
                 .foregroundStyle(row.isUnseenDone ? AuspexPalette.text : AuspexPalette.text2)
