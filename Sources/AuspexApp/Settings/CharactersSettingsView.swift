@@ -38,7 +38,7 @@ struct AuspexSettingsView: View {
 /// office, because the office falls back to the placeholder rig and carries on.
 /// This is the one surface that can say what went wrong, so it says all of it.
 struct CharactersSettingsView: View {
-    @Bindable var library: SpriteLibrary
+    let library: SpriteLibrary
 
     private var packages: [CharacterPackage] { library.catalog.packages }
 
@@ -55,7 +55,6 @@ struct CharactersSettingsView: View {
         }
         .background(AuspexPalette.canvas)
         .task { library.startWatching() }
-        .onChange(of: library.generation) { CharacterPreview.invalidate() }
     }
 
     // MARK: Header
@@ -220,7 +219,7 @@ struct CharactersSettingsView: View {
 /// One harness and the character its sessions are drawn as.
 private struct HarnessCharacterRow: View {
     let harness: Harness
-    @Bindable var library: SpriteLibrary
+    let library: SpriteLibrary
 
     /// The packages that can be chosen here: the ones that name this harness,
     /// plus every package that names none — a pet belongs to no vendor.

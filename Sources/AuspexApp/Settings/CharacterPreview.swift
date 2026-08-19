@@ -24,16 +24,22 @@ enum CharacterPreview {
     static let boxSize: CGFloat = 128
 
     /// Frame 0 of `package`, or `nil` when it has no strips at all.
+    ///
+    /// Cached on the strip's own identity — path, size, and modification date —
+    /// rather than on the package's id. A character is redrawn *in place* while
+    /// the app is open, which is the whole point of watching the folder, and a
+    /// cache keyed on anything that survives that edit would show a person the
+    /// pixels they just replaced.
     static func image(for package: CharacterPackage) -> NSImage? {
-        let key = Key(id: package.id, path: package.directory.path)
+        let key = Key(package)
         if let cached = cache[key] { return cached }
         let image = render(package)
         cache[key] = image
         return image
     }
 
-    /// Throws every cached preview away. Called on reload, because a package
-    /// can be redrawn without its id or its path changing.
+    /// Throws every cached preview away. Not needed for correctness — the key
+    /// covers an edit on its own — but it is what the Reload button means.
     static func invalidate() {
         cache.removeAll(keepingCapacity: true)
     }
@@ -57,6 +63,19 @@ enum CharacterPreview {
     private struct Key: Hashable {
         let id: String
         let path: String
+        let size: Int
+        let modified: Date?
+
+        init(_ package: CharacterPackage) {
+            id = package.id
+            let url = package.previewPose?.url
+            path = url?.path ?? package.directory.path
+            let values = url.flatMap {
+                try? $0.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            }
+            size = values?.fileSize ?? 0
+            modified = values?.contentModificationDate
+        }
     }
 
     private static var cache: [Key: NSImage?] = [:]
