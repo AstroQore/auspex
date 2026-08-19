@@ -266,6 +266,41 @@ public struct SessionRepository: Sendable {
         }
     }
 
+    /// The events written after `id`, oldest first.
+    ///
+    /// The tail counterpart of ``recentEvents(key:limit:)``, for a reader that
+    /// keeps a fold rather than a window. The trace re-reads its window on
+    /// every frame because a few hundred rows are cheaper to re-render than to
+    /// reconcile; a trajectory can hold thousands of steps, so it asks only
+    /// for what it has not seen and patches what it already has.
+    ///
+    /// `id` is an `events.id`, which is the primary key, so this is an index
+    /// seek rather than a scan even on a session with a long log.
+    public func events(key: SessionKey, after id: Int64, limit: Int = 2_000) throws -> [StoredEvent] {
+        guard limit > 0 else { return [] }
+        return try dbWriter.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, session_key, ts, observed_at, seq, kind,
+                       tool_call_id, tool_name, detail_json, raw_path, raw_offset
+                FROM events
+                WHERE session_key = ? AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """, arguments: [key.description, id, limit])
+            let decoder = StoreJSON.makeDecoder()
+            return rows.compactMap { StoredEvent(row: $0, decoder: decoder) }
+        }
+    }
+
+    /// The first `limit` events of a session, oldest first.
+    ///
+    /// A trajectory reads *forwards* — it is the record of how a session got
+    /// to where it is, and a window taken from the newest end would start
+    /// mid-turn with no prompt above it.
+    public func firstEvents(key: SessionKey, limit: Int = 2_000) throws -> [StoredEvent] {
+        try events(key: key, after: 0, limit: limit)
+    }
+
     /// How many events are stored for a session.
     public func eventCount(key: SessionKey) throws -> Int {
         try dbWriter.read { db in
