@@ -30,7 +30,8 @@
 ### 0.3 色板（全局，所有素材共用）
 - 画布 `#101012` · 面板 `#161619` · 描边 `#26262C` · 文字 `#EDEDEF` / `#A0A0A8` / `#6C6C75`
 - 状态色（唯一的饱和色）：thinking `#6EA8FE` · tool `#F2B544` · writing `#4FD08A` · delegating `#B48CFF` · **needs-you `#FF5C6C`** · idle `#7A7A85` · ended `#46464E`
-- Harness 主色：claudeCode `#E0785A` · codex `#2DD4BF` · cursor `#4C8DFF` · grokBuild `#F45FA0` · antigravity `#B4E048`（可选：chatgptWork `#22A06B` · claudeCowork `#CE8F6E` · geminiCLI `#7DD3FC`）
+- Harness 主色（**7 个正式 harness**，全部用全名，不出现任何缩写/首字母）：Claude Code `#E0785A` · Claude Cowork `#CE8F6E` · Codex `#2DD4BF` · ChatGPT Work `#22A06B` · Cursor `#4C8DFF` · Grok Build `#F45FA0` · AntiGravity `#B4E048`（可选：Gemini CLI `#7DD3FC`）
+- **Harness 标识一律用厂商真 logo**，源文件已放在 `auspex/Resources/ProviderIcons/`（复用 vibe-bar 资产，单色 SVG，app 按上表主色着色）：`ProviderIcon-claude.svg`（Claude Code / Claude Cowork）· `ProviderIcon-codex.svg`（OpenAI 花，Codex / ChatGPT Work）· `ProviderIcon-cursor.svg` · `ProviderIcon-grok.svg` · `ProviderIcon-antigravity.svg` · `ProviderIcon-gemini.svg`。同一 logo 的两个 harness 靠**全名文字 + 主色**区分，不靠改 logo。
 
 ---
 
@@ -73,8 +74,7 @@ Auspex = 古罗马**观鸟占卜的祭司**。
 ## 3. 应用内图标集（`Resources/Icons/`，SVG + PDF，template）
 每个给 16/20/24 三档（`name-16.svg` …）。命名与列表：
 
-**Harness 标识**（每个 harness 一个独特几何简形，不是厂商 logo；配色由 app 着上表主色）：
-`harness-claudeCode` `harness-codex` `harness-cursor` `harness-grokBuild` `harness-antigravity`（+可选 `chatgptWork` `claudeCowork` `geminiCLI`）
+**Harness 标识：不需要新画**——直接用 `Resources/ProviderIcons/*.svg` 的厂商 logo（见 §0.3）。如需，只补一件事：把 6 个 SVG 各出一版 **16 / 20 / 24 pt 光学对齐的 PDF**（描边/填充按原样，单色，template），命名 `ProviderIcon-<name>-{16,20,24}.pdf`。
 
 **状态**：`state-thinking`（虚线圆/呼吸环）`state-tool`（提示符 `›_`）`state-writing`（笔）`state-delegating`（分叉箭头 ↳）`state-needsYou`（感叹号气泡）`state-idle`（暂停/圆点）`state-stale`（zzz）`state-ended`（方块/离席）
 
@@ -91,16 +91,18 @@ Auspex = 古罗马**观鸟占卜的祭司**。
 ## 4. 角色 atlas（场景核心，最先做）
 
 路径：`Resources/Sprites/<harness>/<variant>/<pose>.png`
-harness 文件夹名（严格）：`claudeCode` `codex` `cursor` `grokBuild` `antigravity`；variant 先只做 `default`（后续可加 `cli` 卫衣版 / `ide` 耳机版）。
+harness 文件夹名（严格，这是代码里的枚举原值，仅用于路径）：`claudeCode` `claudeCowork` `codex` `chatgptWork` `cursor` `grokBuild` `antigravity`（可选 `geminiCLI`）；variant 先只做 `default`（后续可加 `cli` 卫衣版 / `ide` 耳机版）。**界面上任何地方展示的都是全名**（Claude Code、Claude Cowork、Codex、ChatGPT Work、Cursor、Grok Build、AntiGravity），不出现缩写。
 
-每个 harness 一个"人"，上衣用 harness 主色，皮肤/发型各异让 5 人一眼可分：
-| harness | 上衣 | 建议气质 |
-|---|---|---|
-| claudeCode | `#E0785A` | 沉稳，卷发 |
-| codex | `#2DD4BF` | 利落，短发+眼镜 |
-| cursor | `#4C8DFF` | 年轻，鸭舌帽 |
-| grokBuild | `#F45FA0` | 张扬，高马尾 |
-| antigravity | `#B4E048` | 松弛，长发 |
+每个 harness 一个"人"，上衣用 harness 主色，皮肤/发型各异让 7 人一眼可分；同门的两位（Claude Code / Claude Cowork，Codex / ChatGPT Work）保持家族相似但可区分（例如同发型不同配饰）：
+| harness（全名） | 文件夹 | 上衣 | 建议气质 |
+|---|---|---|---|
+| Claude Code | `claudeCode` | `#E0785A` | 沉稳，卷发 |
+| Claude Cowork | `claudeCowork` | `#CE8F6E` | 与 Claude Code 同发型，戴围巾/工牌 |
+| Codex | `codex` | `#2DD4BF` | 利落，短发+眼镜 |
+| ChatGPT Work | `chatgptWork` | `#22A06B` | 与 Codex 同发型，穿马甲 |
+| Cursor | `cursor` | `#4C8DFF` | 年轻，鸭舌帽 |
+| Grok Build | `grokBuild` | `#F45FA0` | 张扬，高马尾 |
+| AntiGravity | `antigravity` | `#B4E048` | 松弛，长发 |
 
 cell 32×32，人物约 14 宽 × 22 高，脚底贴 cell 底边（bottom-center 锚点），左右各留 ≥ 8 px；**默认坐姿朝上（背对观众、面向显示器）**，桌子与显示器由 app 画在人物上方，人物上方 8 px 不要画东西。
 
@@ -142,6 +144,7 @@ cell 32×32，人物约 14 宽 × 22 高，脚底贴 cell 底边（bottom-center
 | `wallSide` | 4×16 | 左右墙边 |
 | `wallCornerTL` `wallCornerTR` | 8×24 | |
 | `roomLabelPlate` | 32×12 | 门牌底板（项目名 app 写字） |
+| `deskNamePlate` | 24×8 | 桌前小名牌底板（app 写 harness 全名） |
 
 ---
 
@@ -211,11 +214,11 @@ Resources/
 ├── Sprites/<harness>/default/<pose>.png (+ .json)
 ├── Tiles/ office.png office.json screens.png screens.json fx.png fx.json bubbles.png bubbles.json
 └── UI/ emptyState.png launch.png scanning.png harnessOffline.png onboarding-hero.png
-docs/art/ contact-<harness>.png ×5  contact-tiles.png  contact-fx.png  contact-icons.png  social-preview.png
+docs/art/ contact-<harness>.png ×7  contact-tiles.png  contact-fx.png  contact-icons.png  social-preview.png
 ```
 
 ## 11. 验收
-- Sprites 丢进 `~/.auspex/sprites/` 跑 Scene：`blocked` 在 1:1 下必须是全屏最抓眼元素；五个人 1:1 一眼可分；放大 8× 无一处抗锯齿灰边。
+- Sprites 丢进 `~/.auspex/sprites/` 跑 Scene：`blocked` 在 1:1 下必须是全屏最抓眼元素；七个人 1:1 一眼可分；放大 8× 无一处抗锯齿灰边。
 - 图标：16/32 两档在浅/深色 Dock 与 Finder 列表里可辨；菜单栏 template 在浅/深菜单栏都清晰。
 - 每个 atlas 的 JSON 与 PNG 尺寸一致，`columns = width/height` 成立。
 
