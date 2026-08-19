@@ -220,4 +220,143 @@ struct BoardGroupingTests {
     func rootlessSessionHasNoProjectName() {
         #expect(BoardGrouping.projectName(for: session(.codex, "a", cwd: nil)) == nil)
     }
+
+    // MARK: - Inherited placement
+
+    /// A snapshot with a parent, for the cases where the tree is the answer.
+    private func child(
+        _ harness: Harness,
+        _ id: String,
+        of parent: SessionKey,
+        cwd: String? = nil,
+        state: SessionState = .thinking,
+        at offset: TimeInterval = 0
+    ) -> SessionSnapshot {
+        var snapshot = session(harness, id, state: state, cwd: cwd, at: offset)
+        snapshot.identity.parent = parent
+        snapshot.identity.parentLink = .subagent(toolUseID: nil)
+        return snapshot
+    }
+
+    @Test("a child with no directory groups under its parent's project, not under none")
+    func childInheritsItsParentsProject() {
+        let parent = session(.claudeCode, "parent", cwd: "/Users/example/Code/auspex", at: 30)
+        let frame = board([parent, child(.claudeCode, "child", of: parent.key, cwd: nil, at: 20)])
+
+        let groups = BoardGrouping.groups(for: frame, groupBy: .project)
+
+        // The whole point of asking the frame rather than the session: a
+        // subagent has no process and no cwd line, and a section called
+        // "No project" would be the wrong answer for something plainly working
+        // inside one.
+        #expect(groups.map(\.title) == ["auspex"])
+        #expect(groups[0].sessions.count == 2)
+    }
+
+    // MARK: - Project filter
+
+    @Test("the project filter keeps one project, on every axis")
+    func projectFilterAppliesToEveryAxis() {
+        let frame = board([
+            session(.codex, "here", cwd: "/Users/example/Code/alpha", at: 30),
+            session(.cursor, "there", cwd: "/Users/example/Code/beta", at: 20)
+        ])
+
+        for axis in BoardGroupBy.allCases {
+            let placed = BoardGrouping.groups(
+                for: frame, groupBy: axis, projectFilter: "/Users/example/Code/alpha"
+            ).flatMap(\.sessions)
+            #expect(placed.map(\.key.sessionID) == ["here"], "axis \(axis.rawValue) ignored it")
+        }
+    }
+
+    @Test("the project filter keeps a child that inherited the project it names")
+    func projectFilterKeepsInheritedChildren() {
+        let parent = session(.claudeCode, "parent", cwd: "/Users/example/Code/auspex", at: 30)
+        let frame = board([parent, child(.claudeCode, "child", of: parent.key, at: 20)])
+
+        let groups = BoardGrouping.groups(
+            for: frame, groupBy: .none, projectFilter: "/Users/example/Code/auspex"
+        )
+
+        #expect(groups.first?.sessions.count == 2)
+    }
+
+    @Test("no project filter is not the same as a filter matching nothing")
+    func absentProjectFilterKeepsEverything() {
+        let frame = board([session(.codex, "a", cwd: "/Users/example/Code/alpha")])
+        #expect(BoardGrouping.groups(for: frame, groupBy: .none).first?.sessions.count == 1)
+        #expect(
+            BoardGrouping.groups(for: frame, groupBy: .none, projectFilter: "/nope").isEmpty
+        )
+    }
+
+    // MARK: - Tree
+
+    @Test("a root that delegated gets its own section, with its children nested under it")
+    func delegationSectionsNestTheirChildren() throws {
+        let root = session(.claudeCode, "root", state: .delegating(children: 1), at: 40)
+        let kid = child(.codex, "kid", of: root.key, at: 30)
+        let grandchild = child(.codex, "grandchild", of: kid.key, at: 20)
+        let frame = board([root, kid, grandchild])
+
+        let groups = BoardGrouping.groups(for: frame, groupBy: .tree)
+
+        #expect(groups.count == 1)
+        let group = try #require(groups.first)
+        #expect(group.sessions.count == 3)
+        let roots = try #require(group.roots)
+        #expect(roots.count == 1)
+        #expect(roots[0].session.key == root.key)
+        #expect(roots[0].descendantCount == 2)
+        #expect(roots[0].children.map(\.session.key) == [kid.key])
+        #expect(roots[0].children[0].children.map(\.session.key) == [grandchild.key])
+        #expect(roots[0].children[0].depth == 1)
+    }
+
+    @Test("roots that delegated to nobody share one trailing section")
+    func standaloneRootsShareASection() throws {
+        let root = session(.claudeCode, "root", state: .delegating(children: 1), at: 40)
+        let kid = child(.codex, "kid", of: root.key, at: 30)
+        let alone = session(.cursor, "alone", at: 10)
+        let frame = board([root, kid, alone])
+
+        let groups = BoardGrouping.groups(for: frame, groupBy: .tree)
+
+        #expect(groups.count == 2)
+        #expect(groups.last?.title == BoardGrouping.standaloneTitle)
+        #expect(groups.last?.sessions.map(\.key.sessionID) == ["alone"])
+        #expect(groups.last?.roots?.allSatisfy { $0.children.isEmpty } == true)
+    }
+
+    @Test("a child whose parent the harness filter removed becomes a root of its own")
+    func filteringOutAParentPromotesItsChild() throws {
+        let root = session(.claudeCode, "root", state: .delegating(children: 1), at: 40)
+        let kid = child(.codex, "kid", of: root.key, at: 30)
+        let frame = board([root, kid])
+
+        let groups = BoardGrouping.groups(for: frame, groupBy: .tree, harnessFilter: [.codex])
+
+        // A row that vanished because its parent was filtered out would be a
+        // filter that hid something it was not asked to hide.
+        #expect(groups.count == 1)
+        #expect(groups[0].title == BoardGrouping.standaloneTitle)
+        #expect(groups[0].sessions.map(\.key.sessionID) == ["kid"])
+    }
+
+    @Test("a delegation section is titled by its root and counts what is below it")
+    func delegationSectionTitleAndSubtitle() throws {
+        var root = session(.claudeCode, "root", state: .delegating(children: 2), at: 40)
+        root.identity.title = "Build the live board"
+        let frame = board([
+            root,
+            child(.codex, "a", of: root.key, at: 30),
+            child(.cursor, "b", of: root.key, at: 20)
+        ])
+
+        let group = try #require(BoardGrouping.groups(for: frame, groupBy: .tree).first)
+        #expect(group.title == "Build the live board")
+        #expect(group.subtitle == "2 below")
+        #expect(group.counts.live == 3)
+    }
 }
