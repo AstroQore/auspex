@@ -67,6 +67,17 @@ public struct AuspexPaths: Sendable {
         baseDirectory.appendingPathComponent("settings.json", isDirectory: false)
     }
 
+    /// `~/.auspex/projects.json` — the projects a person made, and the
+    /// directories each one claims.
+    ///
+    /// Its own file rather than a key in ``settingsURL`` for the reason
+    /// ``characterSelectionURL`` is one: it is written by a different surface
+    /// at a different rhythm, and adding a root to a project should not
+    /// rewrite the file holding the ignore rules.
+    public var projectsURL: URL {
+        baseDirectory.appendingPathComponent("projects.json", isDirectory: false)
+    }
+
     /// `~/.auspex/logs` — Auspex's own diagnostic logs (never harness logs).
     public var logsDirectory: URL {
         baseDirectory.appendingPathComponent("logs", isDirectory: true)

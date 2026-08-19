@@ -246,7 +246,7 @@ struct HarnessMCPConfigTests {
 
     @Test("the inline spelling of the same table is read too")
     func tomlInlineTables() {
-        let names = HarnessMCPConfigStore.tomlServerNames(in: """
+        let names = HarnessMCPConfigStore.tomlTableNames(in: """
             [mcp_servers]
             notebook = { command = "notebook-mcp" }
             "atlas.remote" = { url = "https://example.invalid/mcp" }
@@ -262,7 +262,7 @@ struct HarnessMCPConfigTests {
 
     @Test("a header that never closes is skipped rather than swallowing the file")
     func tomlToleratesAnUnclosedHeader() {
-        let names = HarnessMCPConfigStore.tomlServerNames(in: """
+        let names = HarnessMCPConfigStore.tomlTableNames(in: """
             [mcp_servers.first]
             command = "a"
 

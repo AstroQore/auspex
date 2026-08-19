@@ -31,6 +31,16 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// would have three consumers each walking the same parent chains.
     public let tree: SessionTree
 
+    /// The user's own projects, as an index over the directories they claim.
+    ///
+    /// Carried on the frame rather than consulted by each view, for the same
+    /// reason everything else here is: ``projectKey(for:)`` is asked by the
+    /// wall, the sidebar, the cards, the scene and the trace header, and a
+    /// user layer applied anywhere but here would be a layer four of the five
+    /// remembered to apply. ``ProjectClaims/empty`` is the whole of the
+    /// behaviour before anybody has made a project.
+    public let claims: ProjectClaims
+
     /// The tallies a board shows at a glance.
     public struct Counts: Sendable, Equatable, Hashable {
         /// Believed to be running: alive and not ended. A stale session still
@@ -85,15 +95,72 @@ public struct BoardSnapshot: Sendable, Equatable {
 
     /// Creates a frame, sorting the sessions, tallying the counts, and
     /// building the delegation forest.
-    public init(generatedAt: Date, sessions: [SessionSnapshot]) {
+    public init(
+        generatedAt: Date,
+        sessions: [SessionSnapshot],
+        claims: ProjectClaims = .empty
+    ) {
         self.generatedAt = generatedAt
         self.sessions = Self.sorted(sessions)
         self.counts = Counts(sessions: self.sessions)
         self.tree = SessionTreeBuilder.build(self.sessions)
+        self.claims = claims
+    }
+
+    /// Creates a frame from sessions that are already in board order.
+    ///
+    /// Private, and the only way to skip the sort: the two callers are
+    /// ``applying(claims:)`` and ``filtered(keeping:)``, both of which start
+    /// from a frame that was sorted when it was made. Sorting a few hundred
+    /// sessions again on every applied frame is work spent to reach the order
+    /// they are already in.
+    private init(
+        sorted sessions: [SessionSnapshot],
+        generatedAt: Date,
+        counts: Counts,
+        tree: SessionTree,
+        claims: ProjectClaims
+    ) {
+        self.generatedAt = generatedAt
+        self.sessions = sessions
+        self.counts = counts
+        self.tree = tree
+        self.claims = claims
     }
 
     /// An empty board, for a view's initial state.
     public static let empty = BoardSnapshot(generatedAt: .distantPast, sessions: [])
+
+    /// The same frame, placed by a different set of user projects.
+    public func applying(claims: ProjectClaims) -> BoardSnapshot {
+        guard claims != self.claims else { return self }
+        return BoardSnapshot(
+            sorted: sessions,
+            generatedAt: generatedAt,
+            counts: counts,
+            tree: tree,
+            claims: claims
+        )
+    }
+
+    /// The frame with some sessions taken out: same order, recounted, and with
+    /// a forest rebuilt from what is left.
+    ///
+    /// The forest is rebuilt rather than pruned so a child whose parent was
+    /// removed becomes a root instead of disappearing with it — the same rule
+    /// ``BoardGrouping`` follows for a harness filter, and for the same
+    /// reason: hiding a session is not a claim about the ones it started.
+    public func filtered(keeping isKept: (SessionSnapshot) -> Bool) -> BoardSnapshot {
+        let kept = sessions.filter(isKept)
+        guard kept.count != sessions.count else { return self }
+        return BoardSnapshot(
+            sorted: kept,
+            generatedAt: generatedAt,
+            counts: Counts(sessions: kept),
+            tree: SessionTreeBuilder.build(kept),
+            claims: claims
+        )
+    }
 
     /// Board order: running sessions first, then the ones that most need a
     /// person, then the most recently active.
@@ -165,17 +232,35 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// under a heading that means "could not be placed" would say something
     /// false about the store and bury the sessions that really could not be.
     /// Those take a ``PseudoProject`` key instead.
+    ///
+    /// A user project's claim is asked first, at every step of that walk: a
+    /// person who put a directory in a project meant its sessions and the
+    /// subagents they spawn, and a child that inherited its parent's automatic
+    /// key while its parent moved into a project would be the one row on the
+    /// board in the wrong place.
     public func projectKey(for session: SessionSnapshot) -> String? {
+        if let claimed = claims.key(for: session) { return claimed }
         if let own = Self.projectKey(for: session) { return own }
         var seen: Set<SessionKey> = [session.key]
         var current = session.identity.parent
         while let key = current, seen.insert(key).inserted {
             guard let ancestor = self.session(for: key) else { break }
+            if let claimed = claims.key(for: ancestor) { return claimed }
             if let inherited = Self.projectKey(for: ancestor) { return inherited }
             current = ancestor.identity.parent
         }
         guard !session.key.harness.recordsWorkingDirectory else { return nil }
         return PseudoProject.key(for: session.key.harness)
+    }
+
+    /// What to call a project key: the name a person gave it, then the
+    /// harness a pseudo key stands for, then the key's last path component.
+    ///
+    /// Every surface that heads a section goes through here, so renaming a
+    /// project in the Projects page renames it on the wall, in the sidebar, in
+    /// the scene, and in the trace at once.
+    public func projectDisplayName(forKey key: String) -> String {
+        claims.name(forKey: key) ?? BoardGrouping.projectName(forPath: key)
     }
 
     /// The grouping key a session carries on its own: `gitRoot ?? cwd`.

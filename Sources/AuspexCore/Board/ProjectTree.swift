@@ -57,6 +57,13 @@ public struct ProjectTree: Sendable, Equatable {
         /// `false` when no session here reported a git root: the directory is
         /// its own project, named after itself.
         public let isRepository: Bool
+        /// The colour a person chose for it, as `#RRGGBB`, when it is one of
+        /// their own projects.
+        public let colorHex: String?
+        /// Whether it is pinned. Pinned projects are already first in the
+        /// list; the row says so too, because a list that reorders itself
+        /// without explaining why is a list nobody trusts.
+        public let isPinned: Bool
 
         public var id: String { key }
 
@@ -65,13 +72,17 @@ public struct ProjectTree: Sendable, Equatable {
             name: String,
             checkouts: [Checkout],
             harnesses: [Harness],
-            isRepository: Bool
+            isRepository: Bool,
+            colorHex: String? = nil,
+            isPinned: Bool = false
         ) {
             self.key = key
             self.name = name
             self.checkouts = checkouts
             self.harnesses = harnesses
             self.isRepository = isRepository
+            self.colorHex = colorHex
+            self.isPinned = isPinned
             self.liveCount = checkouts.reduce(0) { $0 + $1.liveCount }
             self.sessionCount = checkouts.reduce(0) { $0 + $1.sessions.count }
         }
@@ -178,7 +189,7 @@ public struct ProjectTree: Sendable, Equatable {
             byProject[key]?.append(session)
         }
 
-        let projects = order.map { key -> Project in
+        let projects = board.claims.pinnedFirst(order) { $0 }.map { key -> Project in
             let sessions = byProject[key] ?? []
             // In catalog order, and in one pass: asking `allCases.filter` here
             // walked every session once per harness, on a sidebar that is
@@ -187,10 +198,17 @@ public struct ProjectTree: Sendable, Equatable {
             for session in sessions { seen.insert(session.key.harness) }
             return Project(
                 key: key,
-                name: names[key] ?? BoardGrouping.projectName(forPath: key),
+                // The person's own name for the project first, then the
+                // store's, then the path's last component. A project somebody
+                // named should be called that everywhere, and the store's name
+                // is what the resolver decided.
+                name: board.claims.name(forKey: key)
+                    ?? names[key] ?? BoardGrouping.projectName(forPath: key),
                 checkouts: checkouts(in: sessions, projectKey: key, builder: builder),
                 harnesses: Harness.allCases.filter(seen.contains),
-                isRepository: sessions.contains { $0.identity.gitRoot != nil }
+                isRepository: sessions.contains { $0.identity.gitRoot != nil },
+                colorHex: board.claims.colorHex(forKey: key),
+                isPinned: board.claims.isPinned(key)
             )
         }
         return ProjectTree(projects: projects, ungrouped: nested(ungrouped, builder: builder))

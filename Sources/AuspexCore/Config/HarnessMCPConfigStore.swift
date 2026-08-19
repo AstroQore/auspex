@@ -172,7 +172,7 @@ public struct HarnessMCPConfigStore: Sendable {
                 didParse: true
             )
         case .toml:
-            let names = Self.tomlServerNames(in: String(decoding: data, as: UTF8.self))
+            let names = Self.tomlTableNames(in: String(decoding: data, as: UTF8.self))
             return HarnessMCPConfig(
                 harness: harness,
                 location: location,
@@ -245,7 +245,8 @@ public struct HarnessMCPConfigStore: Sendable {
 
     // MARK: - TOML
 
-    /// The `<name>`s of every `[mcp_servers.<name>]` table in a TOML config.
+    /// The `<name>`s of every `[<table>.<name>]` table in a TOML config —
+    /// `mcp_servers` here, and `projects` for the Codex project registry.
     ///
     /// Deliberately a scanner over section headers:
     ///
@@ -259,7 +260,7 @@ public struct HarnessMCPConfigStore: Sendable {
     ///   is skipped without an opinion.
     ///
     /// The result is sorted and deduplicated.
-    static func tomlServerNames(in text: String, table: String = "mcp_servers") -> [String] {
+    static func tomlTableNames(in text: String, under table: String = "mcp_servers") -> [String] {
         var names: Set<String> = []
         var isInsideTable = false
 
