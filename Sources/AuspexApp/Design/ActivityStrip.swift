@@ -14,7 +14,7 @@ import SwiftUI
 /// thinking, a travelling cell is a tool, a hard blink is someone waiting on
 /// you.
 ///
-/// ## Why it is cheap
+/// ## Why the invalidation is cheap
 ///
 /// Every rhythm is a pure function of ``BoardClock``'s 4 Hz phase, and the
 /// phase is read *here*, in a leaf, and nowhere above it. That is what keeps a
@@ -24,8 +24,36 @@ import SwiftUI
 /// ``StaticStrip``, which reads no clock and is therefore never invalidated at
 /// all.
 ///
-/// The steps are interpolated with a short `easeInOut` keyed on the phase, so
-/// a 4 Hz ticker still produces a smooth breath rather than a stutter.
+/// The steps are interpolated with a short `linear` keyed on the phase, so a
+/// 4 Hz ticker still produces a smooth breath rather than a stutter.
+///
+/// ## What the interpolation costs — measured, and unresolved
+///
+/// The interpolation is not free, and on the live board it is the largest
+/// single cost the main thread carries. A new phase arrives every 250 ms and
+/// the animation lasts 250 ms, so an animation is always in flight; SwiftUI
+/// rebuilds the strip's display list on every display frame for as long as
+/// that is true, and AppKit answers a graph that is dirty on every display
+/// cycle by re-asking the window for its minimum size.
+///
+/// `sample <pid> 3`, release build, live against the real store with ~700
+/// sessions, window visible, three runs each at matched ingest load:
+///
+/// | strips | main thread busy | process CPU |
+/// | --- | --- | --- |
+/// | drawn still (the reduced-motion path) | 1.2–1.6 % | 7.3–8.2 % |
+/// | animated, interpolated (this) | 19.8–20.8 % | 24.5–25.8 % |
+/// | animated, stepping at 4 Hz, no interpolation | 5.3 % | 10.0 % |
+///
+/// Two ways out were tried and measured. Animating a view `.opacity(_:)` and
+/// an `.offset(x:)` instead of a fill's alpha and a gradient's unit points —
+/// on the theory that layer properties are handed to the render server — made
+/// no measurable difference (19.0–17.4 % over three runs), so SwiftUI is
+/// re-rendering either way. Dropping the interpolation is four times cheaper
+/// and visibly steppy. What is left is a design decision — a self-driving
+/// `repeatForever` per animating card, which is what ``BoardClock`` was
+/// introduced to replace, or a coarser rhythm — and it wants its own measured
+/// pass rather than a quiet change here.
 ///
 /// ## Reduced motion
 ///
