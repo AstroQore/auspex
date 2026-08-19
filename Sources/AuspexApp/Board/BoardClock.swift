@@ -18,9 +18,9 @@ import SwiftUI
 ///
 /// ## Why two properties instead of one
 ///
-/// ``phase`` advances four times a second; ``second`` advances once. They are
+/// ``phase`` advances four times a second; ``now`` advances once. They are
 /// stored separately rather than derived at the call site because Observation
-/// tracks reads *per property*: a stopwatch that reads only `second` is
+/// tracks reads *per property*: a stopwatch that reads only `now` is
 /// invalidated once a second, not four times, and a card that reads neither is
 /// never invalidated at all.
 ///
@@ -62,9 +62,12 @@ final class BoardClock {
             }
             guard !Task.isCancelled else { return }
             phase = next
-            // Republished only on a whole second: an `@Observable` property
-            // invalidates everything that read it on every write, including a
-            // write of the value it already held.
+            // Republished only on a whole second. The `@Observable` macro's
+            // own guard is no help here: it compares the new value with the
+            // old and stays quiet when they match, and no two readings of
+            // `Date()` ever match. Without this, every stopwatch on the wall
+            // would be invalidated four times a second to show the same
+            // number three of those times.
             if next.isMultiple(of: Self.rate) { now = Date() }
         }
     }

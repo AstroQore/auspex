@@ -74,6 +74,12 @@ struct ProjectsSidebar: View {
             isIgnored: ignoredKeys.contains(row.key),
             onSelect: { onSelectSession(row.key) }
         )
+        // `.equatable()` and not merely the conformance: SwiftUI only calls a
+        // view's own `==` when it is asked to, and a struct carrying a closure
+        // is one it otherwise treats as always changed. The column is rebuilt
+        // whenever anything under any project moves — a token count is enough —
+        // so without this every row on screen redraws for a change to one.
+        .equatable()
         .contextMenu { sessionMenu(row) }
     }
 
