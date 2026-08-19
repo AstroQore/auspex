@@ -24,6 +24,13 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// menu bar title, and the sidebar badges.
     public let counts: Counts
 
+    /// Who spawned whom, across every harness on the board.
+    ///
+    /// Computed with the frame rather than on demand: it is what ``byProject``
+    /// groups by and what an outline view renders, and rebuilding it per reader
+    /// would have three consumers each walking the same parent chains.
+    public let tree: SessionTree
+
     /// The tallies a board shows at a glance.
     public struct Counts: Sendable, Equatable, Hashable {
         /// Believed to be running: alive and not ended. A stale session still
@@ -76,11 +83,13 @@ public struct BoardSnapshot: Sendable, Equatable {
         }
     }
 
-    /// Creates a frame, sorting the sessions and tallying the counts.
+    /// Creates a frame, sorting the sessions, tallying the counts, and
+    /// building the delegation forest.
     public init(generatedAt: Date, sessions: [SessionSnapshot]) {
         self.generatedAt = generatedAt
         self.sessions = Self.sorted(sessions)
         self.counts = Counts(sessions: self.sessions)
+        self.tree = SessionTreeBuilder.build(self.sessions)
     }
 
     /// An empty board, for a view's initial state.
@@ -128,18 +137,40 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// Sessions whose adapter has recorded neither are in
     /// ``ungroupedSessions`` rather than under a made-up key.
     public var byProject: [String: [SessionSnapshot]] {
-        Dictionary(grouping: sessions.filter { Self.projectKey(for: $0) != nil }) {
-            Self.projectKey(for: $0) ?? ""
+        Dictionary(grouping: sessions.filter { projectKey(for: $0) != nil }) {
+            projectKey(for: $0) ?? ""
         }
     }
 
-    /// Sessions with no git root and no working directory, which therefore
-    /// cannot be placed under a project yet.
+    /// Sessions that can be placed under no project: no directory of their
+    /// own, and no ancestor with one either.
     public var ungroupedSessions: [SessionSnapshot] {
-        sessions.filter { Self.projectKey(for: $0) == nil }
+        sessions.filter { projectKey(for: $0) == nil }
     }
 
-    /// The grouping key for one session: `gitRoot ?? cwd`.
+    /// The grouping key for one session, falling back to its ancestors.
+    ///
+    /// A delegated session frequently records no directory at all — a Claude
+    /// subagent has no process and no cwd line, and a spawned harness may not
+    /// have written one yet — but it is unambiguously working on whatever its
+    /// parent is working on. So an unplaceable child takes the key of the
+    /// nearest ancestor that has one, and only a chain with no directory
+    /// anywhere in it ends up ungrouped.
+    public func projectKey(for session: SessionSnapshot) -> String? {
+        if let own = Self.projectKey(for: session) { return own }
+        var seen: Set<SessionKey> = [session.key]
+        var current = session.identity.parent
+        while let key = current, seen.insert(key).inserted {
+            guard let ancestor = self.session(for: key) else { return nil }
+            if let inherited = Self.projectKey(for: ancestor) { return inherited }
+            current = ancestor.identity.parent
+        }
+        return nil
+    }
+
+    /// The grouping key a session carries on its own: `gitRoot ?? cwd`.
+    /// Ignores the tree — see ``projectKey(for:)-(SessionSnapshot)`` for the
+    /// answer a board groups by.
     public static func projectKey(for session: SessionSnapshot) -> String? {
         session.identity.gitRoot ?? session.identity.cwd
     }
