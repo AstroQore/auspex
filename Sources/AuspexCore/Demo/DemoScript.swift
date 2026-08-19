@@ -175,6 +175,9 @@ extension DemoScript {
                 "/Users/example/.grok/sessions/\(sessionID)/updates.jsonl"
             case .antigravity, .geminiCLI:
                 "/Users/example/.gemini/antigravity/conversations/\(sessionID).json"
+            case .grokBot:
+                "/Users/example/Library/Application Support/Grok Bot"
+                    + "/sand-client-persistence/\(sessionID).blob"
             }
         }
 
@@ -651,6 +654,9 @@ extension DemoScript {
             case .cursor: "edit_file"
             case .grokBuild: "write_file"
             case .antigravity, .geminiCLI: "replace_file_content"
+            // The cloud bot writes inside its own remote sandbox; the local
+            // cache records the call under the server's name for it.
+            case .grokBot: "write"
             }
         }
 

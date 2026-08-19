@@ -88,18 +88,28 @@ public struct HarnessMCPConfigStore: Sendable {
                 path: path(".gemini", "config", "mcp_config.json"),
                 format: .json
             )
+        case .grokBot:
+            // The cloud bot client. Its tools run server-side, so there is no
+            // local MCP file to name — and `~/.grok/config.toml` is Grok
+            // Build's, a different product that only shares a company.
+            return nil
         }
     }
 
     /// Why a harness has no config file here, in the words a page shows.
     ///
     /// `nil` whenever ``location(for:home:)`` names a file, because then the
-    /// page can show the file instead. The one case is Claude Cowork: its MCP
-    /// servers are configured inside Claude.app, and "managed by Claude.app"
-    /// is both true and the only thing Auspex can say without opening a
-    /// container it has no business reading.
+    /// page can show the file instead. Two harnesses have no file to name:
+    /// Claude Cowork, whose MCP servers are configured inside Claude.app, and
+    /// Grok Bot, whose tools run on xAI's servers. In both cases naming where
+    /// the configuration actually lives is the only thing Auspex can say
+    /// without opening a container it has no business reading.
     public static func externallyManagedNote(for harness: Harness) -> String? {
-        harness == .claudeCowork ? "managed by Claude.app" : nil
+        switch harness {
+        case .claudeCowork: "managed by Claude.app"
+        case .grokBot: "managed by xAI, server-side"
+        default: nil
+        }
     }
 
     // MARK: - Reading

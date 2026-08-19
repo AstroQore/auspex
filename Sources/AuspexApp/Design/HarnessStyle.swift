@@ -99,6 +99,12 @@ extension Harness {
                 accent: AuspexPalette.harnessCursor,
                 symbolName: "cursorarrow.rays"
             )
+        case .grokBot:
+            HarnessStyle(
+                harness: self,
+                accent: AuspexPalette.harnessGrokBot,
+                symbolName: "bubble.left.and.text.bubble.right"
+            )
         }
     }
 

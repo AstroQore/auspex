@@ -93,6 +93,9 @@ enum AuspexPalette {
     static let harnessGeminiCLI = dynamic(dark: 0x7DD3FC, light: 0x0C79AE)
     static let harnessAntiGravity = dynamic(dark: 0xB4E048, light: 0x67870F)
     static let harnessGrokBuild = dynamic(dark: 0xF45FA0, light: 0xBC2A6D)
+    /// xAI's other harness — a lighter, softer magenta than Grok Build's, so
+    /// the pair reads as one vendor and still as two harnesses.
+    static let harnessGrokBot = dynamic(dark: 0xF98BBE, light: 0xC0407F)
     static let harnessCursor = dynamic(dark: 0x4C8DFF, light: 0x2059D0)
 
     // MARK: Construction

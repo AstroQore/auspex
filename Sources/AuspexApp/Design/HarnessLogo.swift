@@ -41,15 +41,16 @@ enum HarnessLogo {
 
     /// The mark file for a harness, without its extension.
     ///
-    /// A vendor, not a harness: the two Claude harnesses share Claude's mark
-    /// and the two OpenAI ones share the flower. Gemini CLI and AntiGravity do
-    /// *not* share, because AntiGravity ships its own.
+    /// A vendor, not a harness: the two Claude harnesses share Claude's mark,
+    /// the two OpenAI ones share the flower, and the two xAI ones share the
+    /// slash. Gemini CLI and AntiGravity do *not* share, because AntiGravity
+    /// ships its own.
     static func assetName(for harness: Harness) -> String {
         switch harness {
         case .claudeCode, .claudeCowork: "ProviderIcon-claude"
         case .codex, .chatgptWork: "ProviderIcon-codex"
         case .cursor: "ProviderIcon-cursor"
-        case .grokBuild: "ProviderIcon-grok"
+        case .grokBuild, .grokBot: "ProviderIcon-grok"
         case .antigravity: "ProviderIcon-antigravity"
         case .geminiCLI: "ProviderIcon-gemini"
         }

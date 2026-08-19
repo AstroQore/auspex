@@ -74,6 +74,7 @@ enum AuspexAdapters {
         case .grokBuild: "~/.grok/sessions"
         case .antigravity: "~/.gemini/antigravity"
         case .geminiCLI: "~/.gemini/tmp"
+        case .grokBot: "~/Library/Application Support/Grok Bot/sand-client-persistence"
         }
     }
 
