@@ -42,6 +42,7 @@ public actor SessionRegistry {
 
     private let continuation: AsyncStream<BoardSnapshot>.Continuation
     private let repository: SessionRepository
+    private let projects: ProjectRepository
     private let reducer: SessionStateReducer
     private let publishInterval: TimeInterval
     private let persistInterval: TimeInterval
@@ -57,6 +58,7 @@ public actor SessionRegistry {
     private var pendingEvents: [AgentEvent] = []
     private var pendingMessages: [IndexedMessage] = []
     private var pendingToolCalls: [ToolCallWrite] = []
+    private var pendingPlacements: [SessionKey: ProjectPlacement] = [:]
 
     private var lastPublishedAt: Date?
     private var publishTask: Task<Void, Never>?
@@ -103,6 +105,7 @@ public actor SessionRegistry {
         boardBufferSize: Int = 256
     ) {
         self.repository = SessionRepository(store: store)
+        self.projects = ProjectRepository(store: store)
         self.reducer = reducer
         self.publishInterval = publishInterval
         self.persistInterval = persistInterval
@@ -281,6 +284,109 @@ public actor SessionRegistry {
         ))
     }
 
+    // MARK: - Grouping
+
+    /// Records where sessions are on disk: writes the git facts into their
+    /// identities, and queues the `projects` / `worktrees` rows the next flush
+    /// assigns them to.
+    ///
+    /// The resolution itself happens in ``PlacementService``, off this actor —
+    /// it is several `stat` calls and two file reads, and the actor that folds
+    /// every event should not be the one waiting on the filesystem. What
+    /// arrives here is the answer.
+    ///
+    /// The git facts go in as an ordinary `identityUpdated`, so the snapshot,
+    /// the event log, the store, and the board all learn them the same way
+    /// everything else is learned. A placement with nothing to say about git —
+    /// a directory in no repository — still queues its project assignment; the
+    /// project is the directory itself.
+    ///
+    /// - Returns: how many placements were taken. A placement for a session
+    ///   this registry has never seen is ignored rather than seeding a row.
+    @discardableResult
+    public func applyPlacements(_ placements: [SessionKey: ProjectPlacement]) -> Int {
+        guard !isStopped, !placements.isEmpty else { return 0 }
+        var applied = 0
+        let now = Date()
+        for (key, placement) in placements.sorted(by: { $0.key.description < $1.key.description }) {
+            guard let current = snapshots[key] else { continue }
+            applied += 1
+            pendingPlacements[key] = placement
+
+            let patch = SessionIdentityPatch(
+                gitBranch: placement.branch ?? current.identity.gitBranch,
+                gitRoot: placement.gitRoot,
+                worktreePath: placement.worktreePath
+            )
+            if patch.isEmpty || patch.applied(to: current.identity) == current.identity {
+                // Nothing new to say about the identity, but the project row
+                // still has to be written and pointed at.
+                dirtyKeys.insert(key)
+                schedulePersist()
+                continue
+            }
+            ingest(AgentEvent(session: key, timestamp: now, kind: .identityUpdated(patch)))
+        }
+        return applied
+    }
+
+    /// Applies inferred parent links, for sessions that have no parent yet.
+    ///
+    /// Guarded twice on purpose. ``ProcessLinker`` already refuses to propose a
+    /// link for a session that has one, but it inferred against a snapshot of
+    /// the board taken before the events of the last few hundred milliseconds
+    /// landed — a `subagentStarted` in that window is exactly the recorded
+    /// evidence an inference must not displace, so the check is repeated here
+    /// against the live set.
+    ///
+    /// A link naming a parent this registry has never seen is dropped: a parent
+    /// key pointing at nothing would make the child an orphan root with extra
+    /// steps.
+    ///
+    /// - Returns: how many links were applied.
+    @discardableResult
+    public func applyLinks(_ links: [ProcessLink]) -> Int {
+        guard !isStopped, !links.isEmpty else { return 0 }
+        var applied = 0
+        let now = Date()
+        for link in links {
+            guard let child = snapshots[link.child], child.identity.parent == nil else { continue }
+            guard link.parent != link.child, snapshots[link.parent] != nil else { continue }
+            ingest(AgentEvent(
+                session: link.child,
+                timestamp: now,
+                kind: .identityUpdated(
+                    SessionIdentityPatch(parent: link.parent, parentLink: link.link)
+                )
+            ))
+            applied += 1
+        }
+        return applied
+    }
+
+    /// The identities the linker and the placement service work from.
+    ///
+    /// Sessions that are not believed to be running have their pid removed
+    /// rather than being left out. A dead session's pid may since have been
+    /// recycled, so it must not be read as a process — but its session id is
+    /// still the right answer for a child that inherited it, and dropping the
+    /// row entirely would lose that.
+    public func linkableIdentities() -> [SessionIdentity] {
+        sessions.map { snapshot in
+            let isRunning = snapshot.isAlive && !snapshot.state.isEnded
+            guard !isRunning else { return snapshot.identity }
+            var identity = snapshot.identity
+            identity.pid = nil
+            identity.procStart = nil
+            return identity
+        }
+    }
+
+    /// The live snapshots, in board order.
+    public var sessions: [SessionSnapshot] {
+        BoardSnapshot.sorted(Array(snapshots.values))
+    }
+
     // MARK: - Staleness
 
     /// Re-evaluates ``SessionSnapshot/isStale`` for every live session.
@@ -395,12 +501,16 @@ public actor SessionRegistry {
             let events = pendingEvents
             let messages = pendingMessages
             let toolCalls = pendingToolCalls
+            let placements = pendingPlacements.filter { snapshots[$0.key] != nil }
+            let roots = rootKeys(touchedBy: sessionsToWrite.map(\.key))
             dirtyKeys.removeAll(keepingCapacity: true)
             pendingEvents.removeAll(keepingCapacity: true)
             pendingMessages.removeAll(keepingCapacity: true)
             pendingToolCalls.removeAll(keepingCapacity: true)
+            pendingPlacements.removeAll(keepingCapacity: true)
 
             let repository = self.repository
+            let projects = self.projects
             do {
                 try await repository.dbWriter.write { db in
                     try repository.upsert(snapshots: sessionsToWrite, in: db)
@@ -409,6 +519,10 @@ public actor SessionRegistry {
                         try call.apply(using: repository, in: db)
                     }
                     try repository.indexMessages(messages, in: db)
+                    // After the session rows: both of these update columns on
+                    // rows that must already exist.
+                    _ = try projects.assign(placements: placements, in: db)
+                    try projects.setRootKeys(roots, in: db)
                 }
             } catch {
                 recordFailure(error)
@@ -416,9 +530,27 @@ public actor SessionRegistry {
         }
     }
 
+    /// The root key of every session whose delegation chain the written rows
+    /// could have changed — the rows themselves, and everything below them.
+    ///
+    /// A root is not a property of one row: linking a session to a parent
+    /// re-roots its whole subtree, and none of those rows is dirty. So the
+    /// forest is rebuilt from the live set — one pass over what is already in
+    /// memory, at most four times a second — and the descendants come along.
+    private func rootKeys(touchedBy written: [SessionKey]) -> [SessionKey: SessionKey] {
+        guard !written.isEmpty else { return [:] }
+        let tree = SessionTreeBuilder.build(Array(snapshots.values))
+        var touched = Set(written)
+        for key in written {
+            touched.formUnion(tree.descendants(of: key))
+        }
+        return tree.rootKeys.filter { touched.contains($0.key) }
+    }
+
     private var hasPendingWork: Bool {
         !dirtyKeys.isEmpty || !pendingEvents.isEmpty
             || !pendingMessages.isEmpty || !pendingToolCalls.isEmpty
+            || !pendingPlacements.isEmpty
     }
 
     private func recordFailure(_ error: any Error) {
