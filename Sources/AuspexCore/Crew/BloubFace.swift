@@ -177,6 +177,30 @@ public enum BloubFace {
         return out
     }()
 
+    /// Whether a scheduled blink is running at `t`, or will start within
+    /// `lead` seconds of it.
+    ///
+    /// The wall asks this to decide how often to redraw an avatar that is
+    /// otherwise only drifting. A blink is 0.18 s: at fifteen frames a second
+    /// it would get two or three of them and read as a glitch, so the card goes
+    /// back to sixty for the length of one. That is only possible because the
+    /// schedule is **pre-drawn** — the engine is a pure function of time, so
+    /// the next blink is a fact about the future, not something to wait for.
+    ///
+    /// `lead` must be at least the caller's own frame interval, or a card
+    /// sampling slowly than that will step straight over the warning.
+    public static func blinkImminent(at t: Double, lead: Double) -> Bool {
+        // the first blink that could still be running at `t`
+        var low = 0
+        var high = blinks.count
+        while low < high {
+            let mid = (low + high) / 2
+            if blinks[mid] < t - blinkDuration { low = mid + 1 } else { high = mid }
+        }
+        guard low < blinks.count else { return false }
+        return blinks[low] <= t + lead
+    }
+
     static func blinkLid(_ t: Double) -> Double {
         for start in blinks {
             if t < start { break }

@@ -249,4 +249,105 @@ struct CrewMoodTests {
         let midpoint = 11.5 + BloubTransition.duration(BloubStates.state(.wink).morph) / 2
         #expect(abs(driver.sample(midpoint).eyes[0].d) < abs(open.d) * 0.2)
     }
+
+    // MARK: How often each avatar has to be drawn
+
+    /// The whole second after a state change runs at the full rate, whatever
+    /// the state settles into — that window has to cover the morph, the blink
+    /// inside it and the card's pop.
+    /// The first instant at or after `t` with no blink under way or about to
+    /// start. The blink rule would otherwise answer for the state rule, and a
+    /// test that did not say which one it was reading would pass by accident.
+    private static func quiet(from t: Double) -> Double {
+        var now = t
+        while BloubFace.blinkImminent(at: now, lead: CrewCadence.blinkLead) { now += 0.05 }
+        return now
+    }
+
+    @Test("a state change buys a second at the full rate")
+    func cadenceAfterAChange() {
+        var driver = CrewAvatarDriver(harness: .claudeCode, state: .idle, at: 0)
+        driver.update(state: .idle, isStale: false, at: 10)
+        // settled idle, away from a blink: the low rate
+        #expect(driver.frameInterval(at: Self.quiet(from: 10)) == CrewCadence.low)
+
+        driver.update(state: .thinking, isStale: false, at: 10)
+        #expect(driver.mood.state == .thinking)
+        for offset in [0.0, 0.2, 0.5, 0.9] {
+            #expect(driver.frameInterval(at: 10 + offset) == CrewCadence.full, "at +\(offset)")
+        }
+        // and drops to the state's own rate once nothing is in flight
+        #expect(driver.frameInterval(at: 11.2) == CrewCadence.half)
+        // the window is longer than the morph and the pop, which is why it can
+        // be one comparison rather than three
+        #expect(CrewCadence.settle > BloubTransition.span(BloubStates.state(.thinking).morph))
+        #expect(CrewCadence.settle > CrewAvatarDriver.popDuration)
+    }
+
+    /// The orbit is the one continuous state that keeps 60: its rings turn at 3
+    /// to 3.7 turns a second, so 30 fps would move each one 36–44° between
+    /// frames and the bouquet would strobe. Checked on a filmstrip sampled at
+    /// both rates, not assumed.
+    @Test("each state asks for the rate its fastest motion needs")
+    func cadencePerState() {
+        // A driver parked well past any change, so only the state decides.
+        func settled(_ state: SessionState, isStale: Bool = false) -> Double? {
+            var driver = CrewAvatarDriver(harness: .codex, state: .idle, at: 0)
+            driver.update(state: state, isStale: isStale, at: 0)
+            return driver.frameInterval(at: Self.quiet(from: 30))
+        }
+
+        #expect(settled(.toolCalling(name: "shell")) == CrewCadence.full)   // orbit
+        #expect(settled(.thinking) == CrewCadence.half)
+        #expect(settled(.writingFile(path: "/Users/example/a.swift")) == CrewCadence.half)
+        #expect(settled(.waitingPermission(tool: nil)) == CrewCadence.half)          // alert
+        // stale work is a wink: a still pose, so the low rate
+        #expect(settled(.thinking, isStale: true) == CrewCadence.low)
+        // and a session that is over is not drawn at all
+        #expect(settled(.ended(reason: .exited)) == nil)
+    }
+
+    /// A blink is 0.18 s. At fifteen frames a second it would get two of them,
+    /// so an idle card goes back to sixty around each one — which it can only
+    /// do because the schedule is pre-drawn and the next blink is a fact about
+    /// the future.
+    @Test("an idle avatar wakes up for its own blinks")
+    func cadenceAroundABlink() {
+        var driver = CrewAvatarDriver(harness: .claudeCode, state: .idle, at: 0)
+        driver.update(state: .idle, isStale: false, at: 0)
+
+        // Walk a minute at the rate the driver itself asks for, and collect
+        // what it says. This is the loop the wall runs.
+        var now = 2.0
+        var sawLow = false
+        var blinkFrames = 0
+        var lidsSeen: [Double] = []
+        while now < 40 {
+            let interval = driver.frameInterval(at: now) ?? CrewCadence.low
+            if interval == CrewCadence.low { sawLow = true }
+            let lid = BloubFace.liveliness(now).lid
+            if lid < 0.999 {
+                blinkFrames += 1
+                lidsSeen.append(lid)
+                // every frame drawn during a blink was drawn at the full rate
+                #expect(interval == CrewCadence.full, "blink frame at \(now)")
+            }
+            now += interval
+        }
+        #expect(sawLow, "an idle avatar should spend most of its time at the low rate")
+        // Roughly a dozen blinks in 38 s, each getting ten or more frames
+        // instead of the two the low rate would have given it.
+        #expect(blinkFrames > 100, "only \(blinkFrames) frames landed inside a blink")
+        // and the eye really does shut on some of them
+        #expect(lidsSeen.contains { $0 < 0.05 })
+    }
+
+    /// The warning has to arrive before the blink does, or a card sampling every
+    /// 67 ms steps straight over it.
+    @Test("the blink warning is longer than the slowest rate")
+    func blinkLeadCoversTheLowRate() {
+        #expect(CrewCadence.blinkLead > CrewCadence.low)
+        // three chances to notice
+        #expect(CrewCadence.blinkLead > CrewCadence.low * 3)
+    }
 }

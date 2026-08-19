@@ -36,11 +36,20 @@ enum CrewMotionRenderer {
     static let stripFrames = 16
 
     /// Renders one state → state transition as a filmstrip.
+    ///
+    /// - Parameter cadence: seconds between frames. `nil` spreads the sixteen
+    ///   frames evenly across the morph, which is what shows the easing. Given
+    ///   a value — and `from == to`, so there is no morph — it instead samples
+    ///   a **settled** state at exactly that interval, which is how a frame
+    ///   rate is judged: the question "does the orbit step at 30 fps" is
+    ///   answered by looking at consecutive 33 ms frames of it, and by nothing
+    ///   else.
     @MainActor
     static func renderStrip(
         from: BloubStateID,
         to: BloubStateID,
         to url: URL,
+        cadence: Double? = nil,
         scale: CGFloat = 2
     ) throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
@@ -61,9 +70,17 @@ enum CrewMotionRenderer {
         let span = BloubTransition.span(BloubStates.state(to).morph)
         // A frame before the change and a few after it, so the strip shows the
         // morph leaving rest and arriving at rest rather than only the middle.
-        let first = change - 0.05
-        let last = change + span + 0.15
-        let step = (last - first) / Double(stripFrames - 1)
+        let first: Double
+        let step: Double
+        if let cadence {
+            // Settled, sampled at the rate under test.
+            first = change + span + 0.4
+            step = cadence
+        } else {
+            first = change - 0.05
+            let last = change + span + 0.15
+            step = (last - first) / Double(stripFrames - 1)
+        }
 
         var tiles: [CrewFilmstripTile] = []
         var previousReach: Double?
@@ -87,6 +104,7 @@ enum CrewMotionRenderer {
                 from: from,
                 to: to,
                 duration: BloubTransition.duration(BloubStates.state(to).morph),
+                cadence: cadence,
                 tiles: tiles
             )
         )
@@ -297,6 +315,9 @@ private struct CrewFilmstripSheet: View {
     let from: BloubStateID
     let to: BloubStateID
     let duration: Double
+    /// Set when the strip is a steady state sampled at a fixed rate rather than
+    /// a morph spread across its own length.
+    let cadence: Double?
     let tiles: [CrewFilmstripTile]
 
     private static let tile: CGFloat = 132
@@ -327,21 +348,30 @@ private struct CrewFilmstripSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("\(from.rawValue)  →  \(to.rawValue)")
+            Text(cadence == nil ? "\(from.rawValue)  →  \(to.rawValue)" : from.rawValue)
                 .font(.system(size: 17, weight: .semibold, design: .monospaced))
                 .foregroundStyle(AuspexPalette.textPrimary)
-            Text(
-                String(
-                    format:
-                        "morph %.0f ms · ease-in-out · eyes %.0f ms behind · bars = "
-                        + "silhouette travelled since the previous frame",
-                    duration * 1000,
-                    BloubTransition.eyeLag * 1000
-                )
-            )
-            .font(.system(size: 11.5))
-            .foregroundStyle(AuspexPalette.textSecondary)
+            Text(subtitle)
+                .font(.system(size: 11.5))
+                .foregroundStyle(AuspexPalette.textSecondary)
         }
+    }
+
+    private var subtitle: String {
+        if let cadence {
+            return String(
+                format: "settled, sampled every %.1f ms — %.0f fps · bars = silhouette "
+                    + "travelled since the previous frame",
+                cadence * 1000,
+                1 / cadence
+            )
+        }
+        return String(
+            format: "morph %.0f ms · ease-in-out · eyes %.0f ms behind · bars = "
+                + "silhouette travelled since the previous frame",
+            duration * 1000,
+            BloubTransition.eyeLag * 1000
+        )
     }
 
     private func cell(_ tile: CrewFilmstripTile, peak: Double) -> some View {

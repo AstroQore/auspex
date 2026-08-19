@@ -335,9 +335,110 @@ public struct CrewAvatarDriver: Sendable {
         return 1 + CrewAvatarDriver.popScale * shape
     }
 
+    /// How long the wall may wait before drawing this avatar again at `now`,
+    /// or `nil` when it need not draw it at all.
+    ///
+    /// One clock per card is what makes this possible, and this is what pays
+    /// for it: on a real board most sessions are idle or ended most of the
+    /// time, and it is only ever the few that are working that need sixty
+    /// frames a second.
+    ///
+    /// Every branch is decided by the fastest thing the state puts on screen,
+    /// and each is justified where ``CrewCadence`` defines the tier.
+    public func frameInterval(at now: Double) -> Double? {
+        // Anything in flight — a morph, a replay, the pop — plus the second
+        // after it. `elapsed` covers `replay(at:)` as well as `setState`,
+        // which is why it is asked rather than the pop's own date.
+        if engine.elapsed(at: now) < CrewCadence.settle { return CrewCadence.full }
+
+        switch mood.state {
+        case .sleep:
+            // A session that is over is over. The measured 0.6 s bounce has
+            // had its second and stops where it is; there is no jump, because
+            // pausing a timeline leaves the last frame standing.
+            return nil
+
+        case .burst:
+            // Five particles with a 0.55 s life spiralling into the core: the
+            // fastest decor in the catalogue, and it runs for 2.4 s, well past
+            // the settle window.
+            return CrewCadence.full
+
+        case .orbit:
+            // The exception, and it was checked rather than assumed:
+            // `--render-crew-strip x.png orbit orbit 30` against the same at
+            // 60. The body turns at 1.25 turns a second, which 30 fps carries
+            // easily — but the six rings turn at 3 to 3.7, which is 36° to 44°
+            // of arc between frames. At that step a ring cannot be followed
+            // from one frame to the next and the bouquet strobes; at 60 fps it
+            // is 18° to 22° and each ring stays the same ring. Tool calls are
+            // also the state a person watches, so this is the one to spend on.
+            return CrewCadence.full
+
+        case .thinking, .play, .alert, .comet:
+            // Checked the same way. The thinking dots ride a 1.5 s wave, the
+            // "!" crosses in 1.5 s, the swoosh's arcs turn at 0.3 turns a
+            // second and the comet's ribbons at 210°/s — 7° between frames at
+            // this rate against the orbit's 40°. Consecutive frames differ by
+            // a pixel or two.
+            return CrewCadence.half
+
+        case .idle, .wink, .wide, .notify, .exclaim, .egg, .hexagon, .swirl:
+            // A still pose plus resting life. The blink is the one thing here
+            // that fifteen frames a second cannot draw — 0.18 s would get two
+            // of them — so the card goes back to sixty around each one. It can
+            // only do that because the schedule is pre-drawn.
+            return BloubFace.blinkImminent(at: now, lead: CrewCadence.blinkLead)
+                ? CrewCadence.full
+                : CrewCadence.low
+        }
+    }
+
     /// Whether a soft notification is showing.
     public var isNotifying: Bool { notifyUntil != nil }
 
     /// Whether the spawning burst is still playing.
     public var isSpawning: Bool { spawnUntil != nil }
+}
+
+/// How often each kind of avatar has to be redrawn.
+///
+/// The wall holds a clock per card, so the rate can follow what the card is
+/// actually doing rather than what the busiest card on the wall is doing. That
+/// is the whole saving: a session that has been idle for ten minutes is drifting
+/// its gaze and breathing, and neither of those needs sixty frames a second —
+/// while the half-second when it changes state needs every one of them.
+///
+/// The tiers are decided by *how fast the fastest thing on screen moves*, never
+/// by how important the state is:
+///
+/// - **full** — anything in flight: a morph, a replay, the pop, the burst's
+///   particles. Also the whole second after a state change, which is longer
+///   than any of them and saves splitting hairs about which is still running.
+/// - **half** — states whose motion is continuous but slow: the orbit's rings,
+///   the thinking dots' 1.5 s wave, the swoosh crossing the triangle, the "!"
+///   travelling. Verified frame by frame at this rate, not assumed.
+/// - **low** — states that are a still pose plus resting life. Gaze drift is a
+///   2–5 s random walk and the breath a 3.4 s sine; fifteen frames a second is
+///   more than either can use. A blink is the exception and it is handled by
+///   ``CrewAvatarDriver/frameInterval(at:)``.
+/// - **paused** — nothing moves at all.
+public enum CrewCadence {
+    public static let full = 1.0 / 60
+    public static let half = 1.0 / 30
+    public static let low = 1.0 / 15
+
+    /// How long after a state change an avatar keeps the full rate.
+    ///
+    /// Longer than the longest morph (0.66 s including the eyes' lag) and than
+    /// the pop (0.32 s), so "is anything still moving" is one comparison rather
+    /// than four.
+    public static let settle = 1.0
+
+    /// How far ahead of a scheduled blink to go back to the full rate.
+    ///
+    /// Must exceed ``low`` — a card sampling every 67 ms has to be *told* about
+    /// the blink before it arrives, or it steps over the warning entirely. 0.25
+    /// gives it three chances to notice.
+    public static let blinkLead = 0.25
 }

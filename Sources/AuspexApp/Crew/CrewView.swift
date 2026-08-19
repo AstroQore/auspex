@@ -29,20 +29,19 @@ struct CrewView: View {
     /// should not be costing frames.
     @State private var isOnScreen = true
 
-    /// 60 frames a second.
-    ///
-    /// This started at 30 on the argument that a blink lasts 0.18 s and would
-    /// still get five frames. That argument was about whether a *motion* is
-    /// legible, and it was answering the wrong question: what 30 fps costs is
-    /// not legibility but smoothness, and the whole complaint about this view
-    /// was that it looked stiff. A 480 ms morph at 30 fps is fourteen steps —
-    /// enough to see, and enough to see the steps.
-    ///
-    /// The budget it has to hold is unchanged (AGENTS.md § 4.1: 60 animating
-    /// characters at or under 15 % process CPU), and it does, because the cost
-    /// per frame did not change and the wall still stops dead the moment it is
-    /// off screen.
-    static let frameInterval = 1.0 / 60.0
+    // The wall has no single frame rate any more, and that is the point.
+    //
+    // It began at 30 everywhere, on the argument that a blink lasts 0.18 s and
+    // would still get five frames. That answered whether a motion is *legible*
+    // when the complaint was that it was not *smooth* — a 480 ms morph at 30
+    // fps is fourteen steps, enough to see and enough to see the steps. Putting
+    // the whole wall at 60 fixed the motion and cost four times the budget.
+    //
+    // So the rate follows the card: 60 while something is in flight and for the
+    // orbit's fast rings, 30 for the slower continuous states, 15 for a still
+    // pose that is only drifting, nothing at all for a session that has ended.
+    // ``CrewCadence`` holds the tiers and ``CrewAvatarDriver/frameInterval(at:)``
+    // the rule. Every card still stops dead the moment the window is hidden.
 
     /// How a card arrives and how it leaves.
     ///
@@ -183,11 +182,23 @@ struct CrewStillAvatar: View {
 /// separate timelines buy is that a tick invalidates sixty `Canvas`es instead
 /// of the whole wall's view list and layout. Measured, that is the difference
 /// between the budget and four times it.
+///
+/// And once each card owns its schedule, the *rate* can follow what that card
+/// is doing rather than what the busiest card on the wall is doing. The driver
+/// answers with the interval (``CrewAvatarDriver/frameInterval(at:)``); this
+/// view's only job is to notice when the answer changes and hand SwiftUI a new
+/// schedule. The answer is read inside the timeline, where the clock already
+/// is, and applied through `onChange`, which runs *after* the update rather
+/// than during it.
 struct CrewLiveAvatar: View {
     let session: SessionSnapshot
     let roster: CrewRoster
     let paused: Bool
     let frozen: Bool
+
+    /// The interval currently asked of the display link. Starts at the full
+    /// rate: a card that has just appeared is inside its own opening morph.
+    @State private var interval: Double? = CrewCadence.full
 
     /// One breath for the whole wall, off the shared clock: cards that are
     /// waiting on you pulse together, the way a row of indicator lamps does.
@@ -206,8 +217,12 @@ struct CrewLiveAvatar: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: CrewView.frameInterval, paused: paused)) {
-            context in
+        TimelineView(
+            .animation(
+                minimumInterval: interval ?? CrewCadence.low,
+                paused: paused || interval == nil
+            )
+        ) { context in
             let now = roster.seconds(since: context.date)
             let instant = roster.instant(for: session, at: now, frozen: frozen)
             CrewStillAvatar(
@@ -217,7 +232,14 @@ struct CrewLiveAvatar: View {
                 pop: instant.pop,
                 glowStrength: breath(at: now)
             )
+            .onChange(of: instant.interval) { _, wanted in interval = wanted }
         }
+        // A paused card has no clock left to notice anything with, so waking it
+        // cannot come from inside the timeline. These two are the only ways an
+        // avatar's state can change, and both arrive as a new snapshot from the
+        // model — which updates this view whatever its schedule is doing.
+        .onChange(of: session.state) { interval = CrewCadence.full }
+        .onChange(of: session.isStale) { interval = CrewCadence.full }
     }
 }
 
@@ -434,6 +456,9 @@ private struct CrewCardChrome: View, @MainActor Equatable {
 struct CrewInstant {
     var frame: BloubFrame
     var pop: Double
+    /// How long the wall may wait before drawing this avatar again, or `nil`
+    /// when it need not draw it at all. See ``CrewAvatarDriver/frameInterval(at:)``.
+    var interval: Double?
 }
 
 /// The avatars' engines, and the one clock they all read.
@@ -488,14 +513,22 @@ final class CrewRoster {
         drivers[key] = driver
 
         guard frozen else {
-            return CrewInstant(frame: driver.sample(clock), pop: driver.pop(at: clock))
+            return CrewInstant(
+                frame: driver.sample(clock),
+                pop: driver.pop(at: clock),
+                interval: driver.frameInterval(at: clock)
+            )
         }
         // A still engine placed on the state, sampled at its most legible
         // instant. Building it here rather than freezing the live one keeps the
         // live one's history intact for when Reduce Motion is turned back off.
         let mood = driver.mood
         let still = BloubEngine(state: mood.state, shape: mood.shape, expression: mood.expression)
-        return CrewInstant(frame: still.sample(BloubStates.poseTime[mood.state] ?? 1), pop: 1)
+        return CrewInstant(
+            frame: still.sample(BloubStates.poseTime[mood.state] ?? 1),
+            pop: 1,
+            interval: nil
+        )
     }
 
     /// Forgets the sessions the board no longer has.

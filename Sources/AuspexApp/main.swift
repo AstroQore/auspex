@@ -116,22 +116,34 @@ if let flag = arguments.firstIndex(of: "--render-crew-strip") {
           let to = BloubStateID(rawValue: names[2])
     else {
         let known = BloubStateID.allCases.map(\.rawValue).joined(separator: ", ")
-        let usage = "auspex: --render-crew-strip needs <path> <from-state> <to-state>.\n"
-            + "        states: \(known)\n"
+        let usage = "auspex: --render-crew-strip needs <path> <from-state> <to-state> "
+            + "[fps].\n        states: \(known)\n"
         FileHandle.standardError.write(Data(usage.utf8))
         exit(2)
     }
+    // A frame rate turns the strip into a steady-state sample at that rate,
+    // which is the only way to judge whether a cadence steps.
+    let fps = rest.dropFirst(3).first.flatMap(Double.init)
     do {
         try CrewMotionRenderer.renderStrip(
             from: from,
             to: to,
-            to: URL(fileURLWithPath: names[0])
+            to: URL(fileURLWithPath: names[0]),
+            cadence: fps.map { 1 / $0 }
         )
-        let morph = Int((BloubTransition.duration(BloubStates.state(to).morph) * 1000).rounded())
-        let lag = Int((BloubTransition.eyeLag * 1000).rounded())
         let frames = CrewMotionRenderer.stripFrames
-        let summary = "auspex: \(frames) frames of \(from.rawValue) → \(to.rawValue), "
-            + "morph \(morph) ms, eyes \(lag) ms behind\n"
+        let summary: String
+        if let fps {
+            summary = "auspex: \(frames) settled frames of \(from.rawValue) "
+                + "at \(Int(fps.rounded())) fps\n"
+        } else {
+            let morph = Int(
+                (BloubTransition.duration(BloubStates.state(to).morph) * 1000).rounded()
+            )
+            let lag = Int((BloubTransition.eyeLag * 1000).rounded())
+            summary = "auspex: \(frames) frames of \(from.rawValue) → \(to.rawValue), "
+                + "morph \(morph) ms, eyes \(lag) ms behind\n"
+        }
         FileHandle.standardOutput.write(Data(summary.utf8))
         exit(0)
     } catch {
@@ -287,12 +299,15 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         from the demo board at `seconds` into its loop
                         (default 16), with every avatar frozen `animation
                         seconds` into its own animation (default 1.4).
-          --render-crew-strip <path> <from-state> <to-state>
+          --render-crew-strip <path> <from-state> <to-state> [fps]
                         Render one avatar's state → state transition as a
                         16-frame filmstrip, with the distance the silhouette
                         travelled between frames drawn as a bar under each.
                         That row of bars is what tells an eased morph from a
-                        linear one; a single frame cannot.
+                        linear one; a single frame cannot. Given `fps` (and the
+                        same state twice) it instead samples that state once
+                        settled, at exactly that rate — which is how a frame
+                        rate is judged before it is chosen.
           --render-crew-motion <path> [seconds] [board seconds]
                         Render the whole demo wall in motion over `seconds`
                         (default 2). A `.gif` destination writes an animated
