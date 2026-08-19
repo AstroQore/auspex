@@ -1,0 +1,23 @@
+{
+  "id": "grokBot-default",
+  "displayName": "Grok Bot",
+  "kind": "person",
+  "harness": "grokBot",
+  "accent": "#F98BBE",
+  "cell": 32,
+  "anchor": "bottomCenter",
+  "poses": {
+    "idle": {"frames": 2, "fps": 2},
+    "thinking": {"frames": 4, "fps": 4},
+    "typing": {"frames": 6, "fps": 12},
+    "writing": {"frames": 4, "fps": 6},
+    "delegating": {"frames": 4, "fps": 6},
+    "blocked": {"frames": 2, "fps": 2},
+    "stale": {"frames": 2, "fps": 1},
+    "ended": {"frames": 4, "fps": 6},
+    "walkDown": {"frames": 4, "fps": 8},
+    "walkRight": {"frames": 4, "fps": 8},
+    "walkUp": {"frames": 4, "fps": 8},
+    "spawn": {"frames": 4, "fps": 8}
+  }
+}

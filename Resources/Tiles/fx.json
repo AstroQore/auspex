@@ -1,0 +1,102 @@
+[
+  {
+    "name": "coffeeSteam",
+    "x": 4,
+    "y": 4,
+    "w": 48,
+    "h": 16,
+    "frameWidth": 8,
+    "frames": 6,
+    "fps": 6
+  },
+  {
+    "name": "plantSway",
+    "x": 56,
+    "y": 4,
+    "w": 32,
+    "h": 24,
+    "frameWidth": 16,
+    "frames": 2,
+    "fps": 1
+  },
+  {
+    "name": "clockHands",
+    "x": 4,
+    "y": 32,
+    "w": 192,
+    "h": 16,
+    "frameWidth": 16,
+    "frames": 12,
+    "fps": 1
+  },
+  {
+    "name": "doorOpen",
+    "x": 4,
+    "y": 52,
+    "w": 64,
+    "h": 32,
+    "frameWidth": 16,
+    "frames": 4,
+    "fps": 8
+  },
+  {
+    "name": "printerWork",
+    "x": 72,
+    "y": 52,
+    "w": 96,
+    "h": 20,
+    "frameWidth": 24,
+    "frames": 4,
+    "fps": 6
+  },
+  {
+    "name": "poof",
+    "x": 4,
+    "y": 88,
+    "w": 144,
+    "h": 24,
+    "frameWidth": 24,
+    "frames": 6,
+    "fps": 12
+  },
+  {
+    "name": "sparkle",
+    "x": 4,
+    "y": 116,
+    "w": 144,
+    "h": 24,
+    "frameWidth": 24,
+    "frames": 6,
+    "fps": 12
+  },
+  {
+    "name": "keyDust",
+    "x": 152,
+    "y": 116,
+    "w": 36,
+    "h": 6,
+    "frameWidth": 12,
+    "frames": 3,
+    "fps": 12
+  },
+  {
+    "name": "radarPing",
+    "x": 4,
+    "y": 144,
+    "w": 128,
+    "h": 16,
+    "frameWidth": 16,
+    "frames": 8,
+    "fps": 8
+  },
+  {
+    "name": "windowLight",
+    "x": 136,
+    "y": 144,
+    "w": 64,
+    "h": 24,
+    "frameWidth": 16,
+    "frames": 4,
+    "fps": 1
+  }
+]

@@ -73,6 +73,18 @@ if [[ -d "$ROOT/Resources/Characters" ]]; then
     cp -R "$ROOT/Resources/Characters" "$APP_DIR/Contents/Resources/Characters"
 fi
 
+# The rest of the shipped art: tilesets and atlases the scene draws rooms from
+# (docs/ART-HANDOFF.md § 5–8), the menu bar template images, the in-app icon
+# set, and the empty-state / onboarding illustrations. Same reasoning as the
+# characters: the files are the format, and a folder is copied only if it
+# exists, so a build never waits on art.
+for art in Tiles MenuBar Icons UI; do
+    if [[ -d "$ROOT/Resources/$art" ]]; then
+        echo "==> bundling $art"
+        cp -R "$ROOT/Resources/$art" "$APP_DIR/Contents/Resources/$art"
+    fi
+done
+
 printf '%s' "APPL????" > "$APP_DIR/Contents/PkgInfo"
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then

@@ -1,0 +1,62 @@
+[
+  {
+    "name": "needsYou",
+    "x": 3,
+    "y": 3,
+    "w": 48,
+    "h": 24,
+    "frameWidth": 24,
+    "frames": 2,
+    "fps": 3
+  },
+  {
+    "name": "note",
+    "x": 54,
+    "y": 3,
+    "w": 48,
+    "h": 20,
+    "frameWidth": 24,
+    "frames": 2,
+    "fps": 2
+  },
+  {
+    "name": "zzz",
+    "x": 105,
+    "y": 3,
+    "w": 72,
+    "h": 20,
+    "frameWidth": 24,
+    "frames": 3,
+    "fps": 2
+  },
+  {
+    "name": "check",
+    "x": 3,
+    "y": 30,
+    "w": 24,
+    "h": 24,
+    "frameWidth": 24,
+    "frames": 1,
+    "fps": 1
+  },
+  {
+    "name": "question",
+    "x": 30,
+    "y": 30,
+    "w": 48,
+    "h": 24,
+    "frameWidth": 24,
+    "frames": 2,
+    "fps": 3
+  },
+  {
+    "name": "dots",
+    "x": 81,
+    "y": 30,
+    "w": 72,
+    "h": 20,
+    "frameWidth": 24,
+    "frames": 3,
+    "fps": 4
+  }
+]

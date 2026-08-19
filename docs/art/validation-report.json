@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "failures": [],
+  "checks": {
+    "characterPackages": 8,
+    "characterPoseStrips": 96,
+    "appIconFiles": 28,
+    "menuFiles": 8,
+    "applicationIconFiles": 254,
+    "officeTiles": 65,
+    "uiFiles": 10,
+    "contactSheets": 15
+  },
+  "resourceFiles": 414,
+  "artFiles": 28,
+  "characterValidator": "Scripts/validate_character.py --strict Resources/Characters/*",
+  "characterValidatorResult": "8 package(s) ok",
+  "verification": {
+    "swiftBuild": "passed",
+    "swiftTest": "305 tests passed",
+    "releaseApp": "passed",
+    "codesign": "ad-hoc; empty entitlement dictionary; signature valid",
+    "bundledCharacterPackages": 8,
+    "bundledCharacterFiles": 104,
+    "bundledAppIcon": true
+  }
+}
