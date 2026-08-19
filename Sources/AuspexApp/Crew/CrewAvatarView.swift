@@ -32,13 +32,25 @@ struct CrewAvatarView: View {
     let paper: Color
     /// A halo, for the one state that is allowed to shout.
     var glow: Color?
+    /// How bright the halo is right now, 0…1.
+    ///
+    /// A static glow is a sticker; a breathing one is a thing waiting for you.
+    /// The wall feeds this from the same clock the engine reads, so it costs a
+    /// cosine per card and no animation transaction at all.
+    var glowStrength: Double = 1
 
     var body: some View {
         Canvas(opaque: false, rendersAsynchronously: false) { context, size in
             draw(in: &context, size: size)
         }
-        .shadow(color: glow?.opacity(0.55) ?? .clear, radius: 14)
-        .shadow(color: glow?.opacity(0.7) ?? .clear, radius: 3)
+        .shadow(
+            color: glow?.opacity(0.30 + 0.35 * glowStrength) ?? .clear,
+            radius: 10 + 7 * glowStrength
+        )
+        .shadow(
+            color: glow?.opacity(0.45 + 0.30 * glowStrength) ?? .clear,
+            radius: 2 + 2.5 * glowStrength
+        )
         .accessibilityHidden(true)
     }
 

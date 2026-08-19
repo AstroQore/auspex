@@ -49,14 +49,14 @@ enum CrewSnapshotRenderer {
         var now = 0.0
         while now < avatarTime {
             for session in board.sessions {
-                _ = roster.frame(for: session, at: now, frozen: false)
+                _ = roster.instant(for: session, at: now, frozen: false)
             }
             now += 1.0 / 30
         }
         let cards = board.sessions.map { session in
             CrewSnapshotCard(
                 session: session,
-                frame: roster.frame(for: session, at: avatarTime, frozen: false),
+                frame: roster.instant(for: session, at: avatarTime, frozen: false).frame,
                 descendants: board.tree.descendants(of: session.key).count
             )
         }

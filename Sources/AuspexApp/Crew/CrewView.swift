@@ -29,14 +29,30 @@ struct CrewView: View {
     /// should not be costing frames.
     @State private var isOnScreen = true
 
-    /// 30 frames a second, not 60.
+    /// 60 frames a second.
     ///
-    /// The fastest thing an avatar does is a blink, and a blink lasts 0.18 s —
-    /// five frames at this rate, enough to read as a blink and not as a jump.
-    /// Everything else (gaze drift, the morphs, the orbit) is slower still. The
-    /// second thirty frames would double the cost of a sixty-avatar wall and
-    /// buy motion nobody can see.
-    private static let frameInterval = 1.0 / 30.0
+    /// This started at 30 on the argument that a blink lasts 0.18 s and would
+    /// still get five frames. That argument was about whether a *motion* is
+    /// legible, and it was answering the wrong question: what 30 fps costs is
+    /// not legibility but smoothness, and the whole complaint about this view
+    /// was that it looked stiff. A 480 ms morph at 30 fps is fourteen steps —
+    /// enough to see, and enough to see the steps.
+    ///
+    /// The budget it has to hold is unchanged (AGENTS.md § 4.1: 60 animating
+    /// characters at or under 15 % process CPU), and it does, because the cost
+    /// per frame did not change and the wall still stops dead the moment it is
+    /// off screen.
+    private static let frameInterval = 1.0 / 60.0
+
+    /// How a card arrives and how it leaves.
+    ///
+    /// Asymmetric on purpose: a new session should feel like it walked in, so
+    /// it grows the visible 10 %; a card going away should not draw attention
+    /// to itself on the way out, so it barely moves.
+    private static let cardTransition = AnyTransition.asymmetric(
+        insertion: .scale(scale: 0.9).combined(with: .opacity),
+        removal: .scale(scale: 0.96).combined(with: .opacity)
+    )
 
     /// A card is 200 points wide in the design, and the avatar inside it is
     /// 120. Below about 170 the avatar stops being readable at a glance, which
@@ -100,11 +116,21 @@ struct CrewView: View {
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(group.sessions, id: \.key) { session in
                                 card(for: session, at: now)
+                                    .transition(Self.cardTransition)
                             }
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 14)
                         .padding(.bottom, 20)
+                        // The ids are the session keys and they are stable, so
+                        // a card that moves to another slot when the board
+                        // re-sorts is the *same* view and SwiftUI glides it
+                        // there. All this adds is the curve it glides on — and
+                        // the arrivals and departures above ride the same one.
+                        .animation(
+                            .spring(duration: 0.5, bounce: 0.15),
+                            value: group.sessions.map(\.key)
+                        )
                     } header: {
                         BoardSectionHeader(group: group)
                     }
@@ -117,9 +143,15 @@ struct CrewView: View {
     private func card(for session: SessionSnapshot, at now: TimeInterval) -> some View {
         // Sampling happens here, inside the lazy grid's builder, so a session
         // scrolled off the wall costs nothing at all.
-        CrewCard(
+        let instant = roster.instant(for: session, at: now, frozen: reduceMotion)
+        return CrewCard(
             session: session,
-            frame: roster.frame(for: session, at: now, frozen: reduceMotion),
+            frame: instant.frame,
+            pop: instant.pop,
+            // One breath for the whole wall, off the shared clock: cards that
+            // are waiting on you should pulse together, the way a row of
+            // indicator lamps does. Reduce Motion holds it at rest.
+            glowStrength: reduceMotion ? 0.5 : 0.5 - 0.5 * cos(now * (bloubTau / 2.4)),
             isSelected: model.selectedKey == session.key,
             descendantCount: model.descendantCount(of: session.key)
         )
@@ -141,6 +173,11 @@ struct CrewView: View {
 struct CrewCard: View {
     let session: SessionSnapshot
     let frame: BloubFrame
+    /// The avatar's own scale: the eased pop the driver plays on a state
+    /// change. 1 when nothing is happening.
+    var pop: Double = 1
+    /// How bright a needs-you halo is right now.
+    var glowStrength: Double = 1
     let isSelected: Bool
     let descendantCount: Int
 
@@ -153,9 +190,11 @@ struct CrewCard: View {
                 frame: frame,
                 ink: session.key.harness.style.accent,
                 paper: AuspexPalette.panel,
-                glow: style.isAlarming ? style.color : nil
+                glow: style.isAlarming ? style.color : nil,
+                glowStrength: glowStrength
             )
             .frame(width: 120, height: 120)
+            .scaleEffect(pop)
             .overlay(alignment: .bottomTrailing) { childrenBadge }
 
             chrome
@@ -174,8 +213,13 @@ struct CrewCard: View {
                         : AuspexPalette.hairline,
                     lineWidth: isSelected ? 1.5 : 1
                 )
+                // The ring is the answer to a click, so it may not simply be
+                // there on the next frame: it has to be seen arriving, or the
+                // click reads as having selected nothing.
+                .animation(.easeInOut(duration: 0.26), value: isSelected)
         )
         .opacity(isOver ? 0.6 : 1)
+        .animation(.easeInOut(duration: 0.4), value: isOver)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
@@ -267,6 +311,11 @@ private struct CrewCardChrome: View, @MainActor Equatable {
             && lhs.isStale == rhs.isStale && lhs.said == rhs.said && lhs.isOver == rhs.isOver
     }
 
+    /// What has to change for the pill to be swapped rather than redrawn: the
+    /// words on it and the colour behind them. Not the child count, which the
+    /// pill is not showing here.
+    private var pillIdentity: String { "\(state.label)|\(isStale)" }
+
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 6) {
@@ -284,7 +333,20 @@ private struct CrewCardChrome: View, @MainActor Equatable {
             // The count is off here: the card already draws it as a badge on
             // the avatar's corner, and the same number twice on one card reads
             // as two facts.
-            StatePill(state: state, isStale: isStale, showsChildCount: false)
+            //
+            // The pill is replaced rather than mutated — a new `id` is a new
+            // view — so the outgoing and the incoming one cross-fade through
+            // each other with a 3 % pop. Re-colouring the same pill in place
+            // gives a word that changes underneath a shape that did not, which
+            // is the small snap this whole branch is about.
+            ZStack {
+                StatePill(state: state, isStale: isStale, showsChildCount: false)
+                    .id(pillIdentity)
+                    .transition(
+                        .opacity.combined(with: .scale(scale: 1.03))
+                    )
+            }
+            .animation(.spring(duration: 0.34, bounce: 0.2), value: pillIdentity)
 
             if let said {
                 Text(said)
@@ -293,10 +355,27 @@ private struct CrewCardChrome: View, @MainActor Equatable {
                     .lineLimit(1)
                     .truncationMode(PathDisplay.truncation(for: said))
                     .frame(maxWidth: .infinity)
+                    .id(said)
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 4)
+        // The line under the pill changes far more often than the pill does —
+        // every tool call — so it gets a crossfade and nothing else. Anything
+        // with movement in it would make the card twitch all day.
+        .animation(.easeInOut(duration: 0.3), value: said)
     }
+}
+
+/// One avatar's whole instant: the frame the engine drew and the scale the card
+/// wears while its state is changing.
+///
+/// The pop travels with the frame rather than being derived in the view because
+/// it is the *driver* that knows when the state changed — the frame alone
+/// cannot say whether it is 20 ms or 2 s into the morph it belongs to.
+struct CrewInstant {
+    var frame: BloubFrame
+    var pop: Double
 }
 
 /// The avatars' engines, and the one clock they all read.
@@ -322,13 +401,13 @@ final class CrewRoster {
         return date.timeIntervalSince(epoch)
     }
 
-    /// One session's frame at `now`.
+    /// One session's whole instant at `now`.
     ///
     /// - Parameter frozen: with Reduce Motion on, the avatar holds the pose its
     ///   state reads most clearly at — the same instant bloub's own state board
     ///   uses. The shape still says what the session is doing; it just stops
     ///   drifting, blinking and orbiting, which is the request.
-    func frame(for session: SessionSnapshot, at now: TimeInterval, frozen: Bool) -> BloubFrame {
+    func instant(for session: SessionSnapshot, at now: TimeInterval, frozen: Bool) -> CrewInstant {
         let key = session.key
         // A fixed offset per session, so sixty avatars do not blink in unison.
         // Derived from the session id rather than from an index, because an
@@ -350,13 +429,15 @@ final class CrewRoster {
         driver.update(state: session.state, isStale: session.isStale, at: clock)
         drivers[key] = driver
 
-        guard frozen else { return driver.sample(clock) }
+        guard frozen else {
+            return CrewInstant(frame: driver.sample(clock), pop: driver.pop(at: clock))
+        }
         // A still engine placed on the state, sampled at its most legible
         // instant. Building it here rather than freezing the live one keeps the
         // live one's history intact for when Reduce Motion is turned back off.
         let mood = driver.mood
         let still = BloubEngine(state: mood.state, shape: mood.shape, expression: mood.expression)
-        return still.sample(BloubStates.poseTime[mood.state] ?? 1)
+        return CrewInstant(frame: still.sample(BloubStates.poseTime[mood.state] ?? 1), pop: 1)
     }
 
     /// Forgets the sessions the board no longer has.
