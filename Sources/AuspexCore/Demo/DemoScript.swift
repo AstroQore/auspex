@@ -124,7 +124,9 @@ extension DemoScript {
         /// A child session runs to completion while the parent waits.
         case delegate(String, String, TimeInterval)
         /// A permission prompt sits unanswered for this long, then resolves.
-        case permission(String, TimeInterval, Bool)
+        /// The tool is `nil` where the harness reports only that a person is
+        /// needed — Grok Bot's roster carries a flag and no tool name.
+        case permission(String?, TimeInterval, Bool)
         /// Tokens are billed.
         case usage(Int, Int, Int)
         /// The turn closes.
@@ -139,12 +141,19 @@ extension DemoScript {
     struct Blueprint: Sendable {
         let harness: Harness
         let sessionID: String
-        let cwd: String
+        /// `nil` for a harness whose store records no working directory. Grok
+        /// Bot is the only one: its conversations run on xAI's servers, and a
+        /// demo that gave it a plausible `/Users/example` path would be
+        /// demonstrating a grouping the real adapter can never produce.
+        let cwd: String?
         let gitRoot: String?
-        let branch: String
+        let branch: String?
         let title: String
-        let model: String
-        let pid: pid_t
+        /// `nil` where the store genuinely does not record which model
+        /// answered.
+        let model: String?
+        /// `nil` where the work did not happen in a process on this Mac.
+        let pid: pid_t?
         let entrypoint: String
         let variant: String?
         /// Emitted inside the first half second, so the board opens populated.
@@ -181,8 +190,12 @@ extension DemoScript {
             }
         }
 
+        /// Only ever read by the Claude source paths, which belong to a
+        /// harness that always has a directory. The fallback exists so the
+        /// property stays total rather than because anything reaches it.
         private var projectSlug: String {
-            BoardGrouping.projectName(forPath: gitRoot ?? cwd)
+            guard let path = gitRoot ?? cwd else { return sessionID }
+            return BoardGrouping.projectName(forPath: path)
         }
     }
 }
@@ -190,16 +203,17 @@ extension DemoScript {
 // MARK: - The cast
 
 extension DemoScript.Blueprint {
-    /// The ten sessions the demo board shows.
+    /// The eleven sessions the demo board shows.
     ///
-    /// Chosen to cover all seven featured harnesses, every state the card can
-    /// be in, both grouping axes (five distinct projects, two of them shared
-    /// by different harnesses), and a parent/child pair.
+    /// Chosen to cover all eight featured harnesses, every state the card can
+    /// be in, both grouping axes (five directories, two of them shared by
+    /// different harnesses, plus the one pseudo project), and a parent/child
+    /// pair.
     ///
-    /// Claude Cowork and ChatGPT Work are here for a reason beyond coverage:
-    /// they are the two harnesses whose mark is shared with a sibling, so a
-    /// demo board that omitted them would never show whether the accent and
-    /// the full name are enough to tell one Claude row from another.
+    /// Claude Cowork, ChatGPT Work, and Grok Bot are here for a reason beyond
+    /// coverage: each shares a vendor mark with a sibling, so a demo board
+    /// that omitted them would never show whether the accent and the full
+    /// name are enough to tell one Claude — or one xAI — row from another.
     static let all: [DemoScript.Blueprint] = [
         // 1. The long-running one: tools, a subagent, then a permission wall.
         DemoScript.Blueprint(
@@ -523,6 +537,46 @@ extension DemoScript.Blueprint {
                 .idle(9.0)
             ],
             startDelay: 2.0
+        ),
+
+        // 11. Grok Bot: a cloud bot, and the only session on the board with
+        //     no directory of its own. No tools, no model, no tokens, no pid —
+        //     the run happened on xAI's servers and the desktop client only
+        //     replicated the conversation. It is here to prove two things a
+        //     screenshot should show: that a harness with no project still
+        //     gets a section of its own rather than the residue, and that a
+        //     *needs you* with no tool name renders.
+        DemoScript.Blueprint(
+            harness: .grokBot,
+            sessionID: "7c1f8ad4-5b02-4e77-9d38-2ab6014ef905",
+            cwd: nil,
+            gitRoot: nil,
+            branch: nil,
+            title: "Release Scout",
+            model: nil,
+            pid: nil,
+            entrypoint: "desktop",
+            variant: "bot",
+            prologue: [
+                .prompt("Watch the release feed and tell me when the changelog stops matching it"),
+                .think(1.6),
+                .say("Watching. I will check the feed every hour and flag anything undocumented."),
+                .endTurn
+            ],
+            live: [
+                .prompt("What did you find this morning?"),
+                .think(3.2),
+                .say("Three releases shipped and two of them are not in the changelog."),
+                .think(1.4),
+                .say("One is a behaviour change, so I would rather you decided how to word it."),
+                // The roster's `awaitingUserResponse`: the client says a
+                // person is needed and never says what for.
+                .permission(nil, 22.0, true),
+                .say("Filed under the release notes, in your wording."),
+                .endTurn,
+                .idle(11.0)
+            ],
+            startDelay: 2.6
         )
     ]
 }
@@ -654,8 +708,10 @@ extension DemoScript {
             case .cursor: "edit_file"
             case .grokBuild: "write_file"
             case .antigravity, .geminiCLI: "replace_file_content"
-            // The cloud bot writes inside its own remote sandbox; the local
-            // cache records the call under the server's name for it.
+            // Unreachable: the cloud client's cache records no tool calls at
+            // all — the run happened server-side — so no Grok Bot blueprint
+            // has a `.write` beat. Named rather than crashed on, because a
+            // switch that traps is a switch that ships a trap.
             case .grokBot: "write"
             }
         }
@@ -695,7 +751,7 @@ extension DemoScript {
                 cwd: blueprint.cwd,
                 gitRoot: blueprint.gitRoot,
                 gitBranch: blueprint.branch,
-                pid: blueprint.pid + 1,
+                pid: blueprint.pid.map { $0 + 1 },
                 procStart: startedAt,
                 title: "Find every call site of recentEvents",
                 model: blueprint.model,

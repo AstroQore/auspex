@@ -66,15 +66,78 @@ struct DemoScriptTests {
     func allFeaturedHarnessesAppear() {
         let script = DemoScript.make(startedAt: epoch)
         let harnesses = Set(script.steps.map(\.event.session.harness))
-        // All seven, including the two that share a vendor mark with a
+        // All eight, including the three that share a vendor mark with a
         // sibling: a demo board without them would never show whether the
-        // accent and the full name are enough to tell the pair apart.
+        // accent and the full name are enough to tell a pair apart.
         let featured: [Harness] = [
-            .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor, .grokBuild, .antigravity
+            .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor,
+            .grokBuild, .grokBot, .antigravity
         ]
         for harness in featured {
             #expect(harnesses.contains(harness), "\(harness.rawValue) is missing from the demo")
         }
+    }
+
+    @Test("the cloud bot demonstrates a session with no project of its own")
+    func grokBotSessionHasNoDirectory() {
+        let script = DemoScript.make(startedAt: epoch)
+        let identities: [SessionIdentity] = script.steps.compactMap { step in
+            guard case .sessionStarted(let identity) = step.event.kind,
+                  identity.key.harness == .grokBot
+            else { return nil }
+            return identity
+        }
+        let bot = try? #require(identities.first)
+        #expect(identities.count == 1)
+        // Everything the store genuinely cannot answer stays empty. A demo
+        // that filled any of these in would be demonstrating a board the real
+        // adapter can never produce.
+        #expect(bot?.cwd == nil)
+        #expect(bot?.gitRoot == nil)
+        #expect(bot?.gitBranch == nil)
+        #expect(bot?.model == nil)
+        #expect(bot?.pid == nil)
+        #expect(bot?.title?.isEmpty == false)
+
+        // No tool call is ever attributed to it: the run happened on xAI's
+        // servers and the local cache records none.
+        let botSteps = script.steps.filter { $0.event.session.harness == .grokBot }
+        #expect(!botSteps.isEmpty)
+        #expect(!botSteps.contains { if case .toolCallStarted = $0.event.kind { true } else { false } })
+        #expect(!botSteps.contains { if case .usage = $0.event.kind { true } else { false } })
+
+        // And it blocks on a person without naming a tool, which is the only
+        // shape its roster's needs-you flag can take.
+        let tools: [String?] = botSteps.compactMap { step in
+            if case .permissionRequested(_, let tool) = step.event.kind { return .some(tool) }
+            return nil
+        }
+        #expect(tools == [String?.none])
+    }
+
+    @Test("the demo board puts the cloud bot under a section of its own")
+    func grokBotGroupsUnderAPseudoProject() {
+        let script = DemoScript.make(startedAt: epoch)
+        let reducer = SessionStateReducer()
+        var snapshots: [SessionKey: SessionSnapshot] = [:]
+        for step in script.steps {
+            let key = step.event.session
+            let previous = snapshots[key] ?? {
+                if case .sessionStarted(let identity) = step.event.kind {
+                    return SessionStateReducer.initialSnapshot(identity: identity)
+                }
+                return SessionStateReducer.initialSnapshot(
+                    identity: SessionIdentity(key: key, sourcePath: "")
+                )
+            }()
+            snapshots[key] = reducer.reduce(previous, event: step.event)
+        }
+        let board = BoardSnapshot(
+            generatedAt: epoch, sessions: Array(snapshots.values).sorted { $0.key.sessionID < $1.key.sessionID })
+
+        let titles = BoardGrouping.groups(for: board, groupBy: .project).map(\.title)
+        #expect(titles.contains("Grok Bot"))
+        #expect(!titles.contains(BoardGrouping.noProjectTitle))
     }
 
     @Test("the two harnesses that share a store are still separate sessions")
