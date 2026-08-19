@@ -140,14 +140,20 @@ public final class AppEnvironment {
         )
         eventContinuation = continuation
 
-        tasks.append(Task { [weak self] in
+        // Detached: `AppEnvironment` is main-actor, and a plain `Task {}`
+        // here would inherit that — the pipeline's `for await` loops would
+        // then hop through the main thread once per event and crawl to a
+        // handful of events per second whenever the board is busy laying
+        // out. Everything that moves events runs off the main actor;
+        // only UI notices come back to it.
+        tasks.append(Task.detached { [weak self] in
             do {
                 // Before any producer starts, so a relaunch shows the board it
                 // had rather than one that fills in as each harness happens to
                 // write its next line.
                 try await registry.bootstrap()
             } catch {
-                self?.board.record(notice: "Stored sessions could not be reloaded: \(error).")
+                await self?.board.record(notice: "Stored sessions could not be reloaded: \(error).")
             }
             await registry.run(events: events)
         })
@@ -179,7 +185,7 @@ public final class AppEnvironment {
     /// would be a coordinator only tested in one of them.
     private func startGrouping(registry: SessionRegistry, table: any ProcessTableReading) {
         let grouping = GroupingCoordinator(registry: registry, table: table)
-        tasks.append(Task { await grouping.run(every: Self.groupingInterval) })
+        tasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
     }
 
     /// Stops every producer and flushes what the registry has buffered.
@@ -217,13 +223,16 @@ public final class AppEnvironment {
         )
         self.coordinator = coordinator
 
-        tasks.append(Task { [weak self] in
+        tasks.append(Task.detached { [weak self] in
             let streams = await coordinator.start()
-            self?.tasks.append(Task { [weak self] in
+            // Notices are for the UI and arrive rarely; the events are not
+            // and do not — they stay off the main actor.
+            let noticeTask = Task { @MainActor [weak self] in
                 for await notice in streams.notices {
                     self?.board.record(notice: Self.describe(notice))
                 }
-            })
+            }
+            await self?.track(noticeTask)
             for await event in streams.events {
                 continuation.yield(event)
             }
@@ -237,11 +246,12 @@ public final class AppEnvironment {
             table: table,
             home: home
         )
-        tasks.append(Task { [weak self] in
+        let registryForLiveness = registry
+        tasks.append(Task.detached {
             await resolver.runLoop(
                 every: .seconds(3),
-                identities: { [weak self] in
-                    guard let registry = await self?.registry else { return [] }
+                identities: {
+                    guard let registry = registryForLiveness else { return [] }
                     return await registry.snapshot().sessions.map(\.identity)
                 },
                 into: continuation
@@ -252,7 +262,12 @@ public final class AppEnvironment {
     private func startDemo(into continuation: AsyncStream<AgentEvent>.Continuation) {
         let source = DemoEventSource(continuation: continuation)
         demoSource = source
-        tasks.append(Task { await source.run() })
+        tasks.append(Task.detached { await source.run() })
+    }
+
+    /// Keeps a task alive for `shutdown()` to cancel.
+    private func track(_ task: Task<Void, Never>) {
+        tasks.append(task)
     }
 
     /// A notice, as a sentence rather than as an enum dump.

@@ -215,12 +215,40 @@ final class LiveBoardModel {
         self.repository = repository
         consumeTask?.cancel()
         consumeTask = Task { [weak self] in
+            // The registry publishes up to 20 frames a second; a wall of a few
+            // hundred cards cannot lay out that often without owning the main
+            // thread. Frames are coalesced to `frameInterval` — the newest one
+            // wins, nothing is queued — which is invisible on a live board and
+            // is what keeps ingest and rendering from fighting.
+            var lastApplied = ContinuousClock.now - Self.frameInterval
+            var pending: BoardSnapshot?
+            var flush: Task<Void, Never>?
             for await frame in registry.boardSnapshots {
                 guard !Task.isCancelled else { return }
-                self?.apply(frame)
+                let now = ContinuousClock.now
+                if now - lastApplied >= Self.frameInterval {
+                    flush?.cancel(); flush = nil; pending = nil
+                    lastApplied = now
+                    self?.apply(frame)
+                } else {
+                    pending = frame
+                    if flush == nil {
+                        let wait = Self.frameInterval - (now - lastApplied)
+                        flush = Task { @MainActor [weak self] in
+                            try? await Task.sleep(for: wait)
+                            guard !Task.isCancelled, let latest = pending else { return }
+                            pending = nil; flush = nil
+                            lastApplied = ContinuousClock.now
+                            self?.apply(latest)
+                        }
+                    }
+                }
             }
         }
     }
+
+    /// Minimum spacing between two applied frames (8 Hz).
+    private static let frameInterval: Duration = .milliseconds(120)
 
     /// Stops consuming. Called when the app is shutting down.
     func stop() {
