@@ -64,8 +64,9 @@ enum SceneText {
 ///   spills onto the desk and the agent, so a room of forty desks is read by
 ///   its lighting before anything is read as a shape.
 /// - **At a glance** — the body. Typing, standing, hand up, slumped.
-/// - **On purpose** — the monogram on the desk front, and the nameplate that
-///   appears under the pointer.
+/// - **On purpose** — the harness's vendor mark on the desk front, and the
+///   nameplate that appears under the pointer, which carries the harness's
+///   full name.
 ///
 /// ## Why the look is a value
 ///
@@ -85,7 +86,6 @@ final class DeskNode: SKNode {
         var isAlarming: Bool
         var isEnded: Bool
         var isVacant: Bool
-        var monogram: String
         var scale: CGFloat
         var reduceMotion: Bool
     }
@@ -102,6 +102,10 @@ final class DeskNode: SKNode {
     /// near a desk selects it rather than falling through to the floor.
     static let hitSize = CGSize(width: 104, height: 78)
 
+    /// The vendor mark on the desk front, in points. Small enough that the
+    /// monitor's light stays the loudest thing on the desk.
+    static let markSize: CGFloat = 11
+
     private let hitArea = SKSpriteNode(color: .clear, size: DeskNode.hitSize)
     private let chair = SKSpriteNode()
     private let desk = SKSpriteNode()
@@ -110,7 +114,8 @@ final class DeskNode: SKNode {
     private let glow = SKSpriteNode()
     private let paper = SKSpriteNode()
     private let bubble = SKSpriteNode()
-    private let monogram = SKLabelNode()
+    /// The harness's vendor mark, on the front of the desk.
+    private let mark = SKSpriteNode()
     private let ring = SKShapeNode(
         rect: CGRect(x: -52, y: -8, width: 104, height: 70), cornerRadius: 3
     )
@@ -175,11 +180,12 @@ final class DeskNode: SKNode {
         monitor.position = CGPoint(x: 22, y: 22)
         monitor.zPosition = 6
 
-        monogram.attributedText = SceneText.label("", size: 9, weight: .bold, color: theme.textTertiary)
-        monogram.position = CGPoint(x: -2, y: 6)
-        monogram.horizontalAlignmentMode = .center
-        monogram.verticalAlignmentMode = .baseline
-        monogram.zPosition = 7
+        mark.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        mark.size = CGSize(width: Self.markSize, height: Self.markSize)
+        mark.position = CGPoint(x: -2, y: 9)
+        mark.colorBlendFactor = 1
+        mark.zPosition = 7
+        mark.isHidden = true
 
         bubble.anchorPoint = CGPoint(x: 0.5, y: 0)
         bubble.size = CGSize(width: 26, height: 28)
@@ -202,7 +208,7 @@ final class DeskNode: SKNode {
         addChild(desk)
         addChild(paper)
         addChild(monitor)
-        addChild(monogram)
+        addChild(mark)
         addChild(bubble)
         addChild(ring)
         addChild(nameplate)
@@ -233,7 +239,6 @@ final class DeskNode: SKNode {
             isAlarming: session?.state.style.isAlarming ?? false,
             isEnded: session?.state.isEnded ?? false,
             isVacant: session == nil,
-            monogram: session.map { $0.key.harness.style.monogram } ?? "",
             scale: scale,
             reduceMotion: reduceMotion
         )
@@ -276,13 +281,18 @@ final class DeskNode: SKNode {
     }
 
     private func applyDesk(look: Look) {
-        monogram.attributedText = SceneText.label(
-            look.monogram,
-            size: 9,
-            weight: .bold,
-            color: look.harness.map { theme.accent($0) } ?? theme.textTertiary
-        )
-        monogram.alpha = look.isEnded ? 0.4 : 1
+        // Rasterised at four times its drawn size so the mark stays clean when
+        // the camera zooms in on one desk; the texture is cached per harness,
+        // so forty desks of five harnesses cost five rasters.
+        if let harness = look.harness,
+           let raster = HarnessLogo.cgImage(for: harness, pixelSize: Int(Self.markSize) * 4) {
+            mark.texture = SKTexture(cgImage: raster)
+            mark.color = theme.accent(harness)
+            mark.isHidden = false
+        } else {
+            mark.isHidden = true
+        }
+        mark.alpha = look.isEnded ? 0.4 : 1
         paper.isHidden = look.pose != .writing
         paper.removeAllActions()
         if look.pose == .writing, !look.reduceMotion {

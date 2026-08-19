@@ -21,6 +21,7 @@ enum AuspexAdapters {
     static var all: [any SourceAdapter] {
         [
             ClaudeLiveAdapter(),
+            ClaudeCoworkLiveAdapter(),
             CodexLiveAdapter(),
             CursorLiveAdapter(),
             GrokLiveAdapter(),
@@ -30,8 +31,13 @@ enum AuspexAdapters {
 
     /// The harnesses ``all`` actually covers. Derived rather than declared, so
     /// the empty state cannot claim to be watching something no adapter reads.
+    ///
+    /// `handledHarnesses` rather than `harness`: `CodexLiveAdapter` reads one
+    /// store that carries two harnesses, and keying off its primary alone
+    /// would have this page claim ChatGPT Work is unwatched while its sessions
+    /// are on the board.
     static var installed: Set<Harness> {
-        Set(all.map(\.harness))
+        Set(all.flatMap(\.handledHarnesses))
     }
 
     /// The directories each adapter actually watches, by harness.
@@ -44,7 +50,9 @@ enum AuspexAdapters {
     static func watchRoots(home: String) -> [Harness: [URL]] {
         var roots: [Harness: [URL]] = [:]
         for adapter in all {
-            roots[adapter.harness, default: []].append(contentsOf: adapter.watchRoots(home: home))
+            for harness in adapter.handledHarnesses {
+                roots[harness, default: []].append(contentsOf: adapter.watchRoots(home: home))
+            }
         }
         return roots
     }
@@ -59,7 +67,7 @@ enum AuspexAdapters {
     static func storeDescription(for harness: Harness) -> String {
         switch harness {
         case .claudeCode: "~/.claude/projects"
-        case .claudeCowork: "~/Library/Application Support/Claude"
+        case .claudeCowork: "~/Library/Application Support/Claude/local-agent-mode-sessions"
         case .codex: "~/.codex/sessions"
         case .chatgptWork: "~/.codex/sessions"
         case .cursor: "~/.cursor/chats"
@@ -69,11 +77,37 @@ enum AuspexAdapters {
         }
     }
 
-    /// The harnesses the board's empty state lists, in display order.
+    /// A one-line note about a store two harnesses share, or `nil` when the
+    /// harness has a store to itself.
     ///
-    /// The five a person is likely to be running. The other three in the
-    /// catalog — Claude Cowork, ChatGPT Work, Gemini CLI — are variants that
-    /// share a store with one of these, and listing all eight turns a status
-    /// panel into a specification.
-    static let featured: [Harness] = [.claudeCode, .codex, .cursor, .grokBuild, .antigravity]
+    /// Two rows on the Harnesses page name the same directory, which looks
+    /// like a bug until it is explained. It is not: `~/.codex/sessions` holds
+    /// both Codex and ChatGPT Work rollouts, told apart only by each
+    /// rollout's `originator`. Saying so on the row is cheaper than a person
+    /// discovering it from a duplicate path.
+    static func storeNote(for harness: Harness) -> String? {
+        switch harness {
+        case .codex:
+            "shares ~/.codex/sessions; every originator except ChatGPT Work"
+        case .chatgptWork:
+            "shares ~/.codex/sessions; originator ChatGPT Work"
+        default:
+            nil
+        }
+    }
+
+    /// The harnesses the board's empty state and the Harnesses page list, in
+    /// display order.
+    ///
+    /// The seven a person can actually be running on this Mac, grouped by
+    /// vendor. Claude Cowork and ChatGPT Work are here because they are
+    /// harnesses in their own right — Cowork has its own store inside
+    /// Claude.app, and ChatGPT Work is a different plan on a shared one — and
+    /// folding either into its sibling would attribute its work to the wrong
+    /// row. Gemini CLI is the one left out: it is deprecated, it has no live
+    /// adapter, and a status panel that listed every case in the catalog would
+    /// be a specification rather than a status panel.
+    static let featured: [Harness] = [
+        .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor, .grokBuild, .antigravity
+    ]
 }

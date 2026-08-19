@@ -62,13 +62,32 @@ struct DemoScriptTests {
         #expect(script.duration < 300)
     }
 
-    @Test("every harness the board has an identity for is on the demo board")
+    @Test("every featured harness is on the demo board")
     func allFeaturedHarnessesAppear() {
         let script = DemoScript.make(startedAt: epoch)
         let harnesses = Set(script.steps.map(\.event.session.harness))
-        for harness in [Harness.claudeCode, .codex, .cursor, .grokBuild, .antigravity] {
+        // All seven, including the two that share a vendor mark with a
+        // sibling: a demo board without them would never show whether the
+        // accent and the full name are enough to tell the pair apart.
+        let featured: [Harness] = [
+            .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor, .grokBuild, .antigravity
+        ]
+        for harness in featured {
             #expect(harnesses.contains(harness), "\(harness.rawValue) is missing from the demo")
         }
+    }
+
+    @Test("the two harnesses that share a store are still separate sessions")
+    func sharedStoresStaySeparateSessions() {
+        let script = DemoScript.make(startedAt: epoch)
+        let keys = Set(script.steps.map(\.event.session))
+        let codex = keys.filter { $0.harness == .codex }
+        let work = keys.filter { $0.harness == .chatgptWork }
+        #expect(!codex.isEmpty)
+        #expect(!work.isEmpty)
+        // Session ids are only unique within a harness; the pair must not
+        // collide into one card.
+        #expect(codex.intersection(work).isEmpty)
     }
 
     @Test("the demo shows every state a card can be in")

@@ -34,6 +34,13 @@ let package = Package(
                 .product(name: "AgentSessionKit", package: "agent-session-kit"),
                 .product(name: "AgentSessionLive", package: "agent-session-kit")
             ],
+            // The vendor marks every surface identifies a harness with.
+            // `.copy` rather than `.process`: these are already the exact
+            // bytes to ship, the directory structure is what `HarnessLogo`
+            // looks them up by, and `build_app.sh` moves the whole
+            // `Auspex_AuspexApp.bundle` into `Contents/Resources` before
+            // signing.
+            resources: [.copy("Resources/ProviderIcons")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(

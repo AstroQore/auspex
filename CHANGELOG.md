@@ -11,6 +11,28 @@ Auspex is pre-alpha; there are no released versions yet.
 
 ### Added
 
+- **Vendor marks, not initials.** `HarnessLogo` loads each vendor's own
+  single-colour SVG from `Sources/AuspexApp/Resources/ProviderIcons`, draws it
+  as a template tinted with the harness accent, and caches it per
+  `(harness, size)`. Every surface that identified a harness with two condensed
+  condensed capitals now wears the mark on the same tinted tile: the board card, the
+  sidebar, the trace header, the search results, the Harnesses page, the empty
+  state, the menu bar, and the desk fronts in the scene. The two-letter
+  `HarnessStyle` property they came from is gone, so nothing can reuse it, and
+  the SF Symbols survive only as
+  `HarnessLogo.fallback(for:)` for a mark that failed to load.
+- **Claude Cowork and ChatGPT Work are first-class harnesses.**
+  `AuspexAdapters.all` runs `ClaudeCoworkLiveAdapter`, and `featured` is now the
+  seven a person can actually be running: Claude Code, Claude Cowork, Codex,
+  ChatGPT Work, Cursor, Grok Build, AntiGravity. The Harnesses page shows all
+  seven, and the two rows that name one directory say why on the row —
+  `~/.codex/sessions` carries both Codex and ChatGPT Work rollouts, told apart
+  by each rollout's `originator`. The demo board gained a Claude Cowork session
+  and a ChatGPT Work session, so all seven are visible in `--demo`.
+- Full harness names everywhere. A menu bar row now carries the vendor mark and
+  the harness's full name rather than a two-letter code, and no UI string
+  abbreviates a harness.
+
 - SwiftPM package scaffold: `AuspexCore` library on GRDB 7 and
   `agent-session-kit`, and the `AuspexApp` SwiftUI executable, both in
   Swift 6 language mode.
@@ -43,7 +65,7 @@ Auspex is pre-alpha; there are no released versions yet.
   a person, and grouped by harness and by project.
 - **The live board.** A wall of session cards in a `NavigationSplitView`:
   sidebar, board, session trace. Each card carries its harness accent rail
-  and monogram, a state pill, the current tool or target, an elapsed-in-state
+  and vendor mark, a state pill, the current tool or target, an elapsed-in-state
   stopwatch, turn / tool-call / token counters, and the project, pid, and
   model. Group by nothing, by harness, or by project, with sticky section
   headers carrying live counts; search every transcript from the toolbar.
@@ -54,8 +76,8 @@ Auspex is pre-alpha; there are no released versions yet.
   permission prompt. One `repeatForever` animation per animating card and
   none at all for idle or ended ones; every rhythm collapses to a static bar
   under Reduce Motion.
-- **`HarnessStyle` and `StateStyle`** — the fixed accent hue and two-letter
-  monogram for each of the eight harnesses, and the colour, label, and motion
+- **`HarnessStyle` and `StateStyle`** — the fixed accent hue and vendor mark
+  for each of the eight harnesses, and the colour, label, and motion
   for each session state, defined once so the board, the trace, the menu bar,
   and M2's scene view cannot disagree. Colours are dynamic `NSColor`s, so
   light mode works without an asset catalog.
@@ -206,3 +228,13 @@ Auspex is pre-alpha; there are no released versions yet.
   fails the build if the signed bundle claims the app-sandbox entitlement.
 - Open-source scaffolding: README (English and Chinese), architecture notes,
   contributor and security policies, issue and PR templates, and CI.
+
+### Changed
+
+- `AuspexAdapters.installed` and `watchRoots(home:)` index by each adapter's
+  `handledHarnesses` rather than its primary `harness`, so ChatGPT Work is not
+  reported as unwatched while its sessions are on the board.
+- `HarnessMCPConfigStore` no longer answers `~/.claude.json` for Claude Cowork.
+  Cowork's MCP servers come from Claude.app's own settings inside the app
+  container, so the location is `nil` and the Harnesses page says *managed by
+  Claude.app* rather than reporting the CLI's servers as Cowork's.

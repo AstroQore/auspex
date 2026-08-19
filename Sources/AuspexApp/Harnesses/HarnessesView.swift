@@ -2,8 +2,8 @@ import AgentSessionKit
 import AuspexCore
 import SwiftUI
 
-/// The Harnesses page: a rack of five units, each with a status line and a
-/// detail line.
+/// The Harnesses page: a rack of the seven harnesses Auspex watches, each with
+/// a status line and a detail line.
 ///
 /// ## What it is for
 ///
@@ -121,7 +121,7 @@ struct HarnessesPanel: View {
             Text("Sessions").auspexLabel(AuspexType.labelSmall)
             Spacer(minLength: 8)
             Text("Last activity").auspexLabel(AuspexType.labelSmall)
-            Text("Store").auspexLabel(AuspexType.labelSmall).frame(width: 118, alignment: .trailing)
+            Text("Store").auspexLabel(AuspexType.labelSmall).frame(width: 168, alignment: .trailing)
         }
         .foregroundStyle(AuspexPalette.textTertiary)
         .padding(.horizontal, 12)
@@ -189,13 +189,26 @@ private struct HarnessRackRow: View {
                 .foregroundStyle(AuspexPalette.textSecondary)
                 .fixedSize()
 
-            Text(status.storePath.map(PathDisplay.abbreviate) ?? "—")
-                .font(AuspexType.monoSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
-                .lineLimit(1)
-                .truncationMode(.head)
-                .frame(width: 118, alignment: .trailing)
-                .help(status.storePath ?? "No adapter watches a store for this harness.")
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(status.storePath.map(PathDisplay.abbreviate) ?? "—")
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                // Two rows naming one directory looks like a bug until it is
+                // explained, and one line of explanation is cheaper than a
+                // person discovering it from a duplicate path.
+                if let note = AuspexAdapters.storeNote(for: status.harness) {
+                    Text(note)
+                        .font(AuspexType.labelSmall)
+                        .foregroundStyle(AuspexPalette.textTertiary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(width: 168, alignment: .trailing)
+            .help(status.storePath ?? "No adapter watches a store for this harness.")
         }
     }
 
@@ -231,6 +244,20 @@ private struct HarnessRackRow: View {
                         .fixedSize()
                 }
                 serverChips(mcp)
+            }
+            .padding(.leading, 27)
+        } else if let note = HarnessMCPConfigStore.externallyManagedNote(for: status.harness) {
+            // No file to name. Saying so is the honest row: pointing at the
+            // sibling harness's config would report the wrong servers with
+            // full confidence.
+            HStack(spacing: 6) {
+                Text("MCP")
+                    .auspexLabel(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.textTertiary)
+                Text(note)
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.textTertiary)
+                Spacer(minLength: 6)
             }
             .padding(.leading, 27)
         }

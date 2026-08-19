@@ -55,16 +55,26 @@ public struct HarnessMCPConfigStore: Sendable {
 
     /// Where a harness keeps its MCP configuration, and in what format.
     ///
-    /// `nil` for the harnesses that have no such file. The variants that share
-    /// a store with another harness share its configuration too, and are given
-    /// the same location rather than a second guess.
+    /// `nil` for the harnesses whose configuration Auspex cannot honestly
+    /// name — see ``externallyManagedNote(for:)``. A harness that shares
+    /// another's *store* usually shares its configuration too, and is given
+    /// the same location rather than a second guess; the exception is Claude
+    /// Cowork, which shares Claude Code's transcript format but not its
+    /// config file.
     public static func location(for harness: Harness, home: URL) -> MCPConfigLocation? {
         func path(_ components: String...) -> String {
             components.reduce(home) { $0.appendingPathComponent($1) }.path
         }
         switch harness {
-        case .claudeCode, .claudeCowork:
+        case .claudeCode:
             return MCPConfigLocation(path: path(".claude.json"), format: .json, isScoped: true)
+        case .claudeCowork:
+            // Cowork's servers come from Claude.app's own settings, inside the
+            // app's container. `~/.claude.json` is the CLI's file, and a
+            // Cowork row pointing at it would report the wrong servers with
+            // full confidence. Nothing is read rather than something is
+            // guessed.
+            return nil
         case .codex, .chatgptWork:
             return MCPConfigLocation(path: path(".codex", "config.toml"), format: .toml)
         case .cursor:
@@ -79,6 +89,17 @@ public struct HarnessMCPConfigStore: Sendable {
                 format: .json
             )
         }
+    }
+
+    /// Why a harness has no config file here, in the words a page shows.
+    ///
+    /// `nil` whenever ``location(for:home:)`` names a file, because then the
+    /// page can show the file instead. The one case is Claude Cowork: its MCP
+    /// servers are configured inside Claude.app, and "managed by Claude.app"
+    /// is both true and the only thing Auspex can say without opening a
+    /// container it has no business reading.
+    public static func externallyManagedNote(for harness: Harness) -> String? {
+        harness == .claudeCowork ? "managed by Claude.app" : nil
     }
 
     // MARK: - Reading

@@ -12,8 +12,9 @@
   · <a href="README.md">English</a>
 </p>
 
-Auspex 观察你 Mac 上运行的每一个 AI 编程 agent —— Claude Code、Codex、Cursor、
-Grok Build、Antigravity —— 并汇总到同一块实时看板：谁在思考、谁在调用工具、谁在
+Auspex 观察你 Mac 上运行的每一个 AI 编程 agent —— Claude Code、Claude Cowork、
+Codex、ChatGPT Work、Cursor、Grok Build、AntiGravity —— 并汇总到同一块实时看板：
+谁在思考、谁在调用工具、谁在
 派发子 agent、谁在写文件、谁在等待授权。会话可按项目和任务分组，任务看板通过 MCP
 对外暴露。
 
@@ -57,7 +58,7 @@ hardened runtime。
 ## 看看这块看板
 
 目前还没有任何 harness adapter 落地，所以真机启动只会看到空看板，以及它将要观察
-的存储清单。加上 `--demo` 会改为回放一块伪造的看板：五个 harness 上的八个会话，
+的存储清单。加上 `--demo` 会改为回放一块伪造的看板：七个 harness 上的十个会话，
 循环走完提问、调用工具、派发子 agent、等待授权、结束等状态。
 
 ```sh
@@ -98,6 +99,23 @@ hardened runtime。
 ## Harness 状态
 
 ![Harnesses 页：每个 harness 的安装检测、会话计数与 MCP 配置](docs/screenshots/harnesses.png)
+
+七个 harness 都是一等公民：各有一行、一个主色和厂商自己的 logo，并且在任何界面里
+都写全名，Auspex 从不缩写。
+
+| Harness | 厂商 | Auspex 读取的存储 |
+| --- | --- | --- |
+| Claude Code | Anthropic | `~/.claude/projects`、`~/.config/claude/projects` |
+| Claude Cowork | Anthropic | `~/Library/Application Support/Claude/local-agent-mode-sessions` |
+| Codex | OpenAI | `~/.codex/sessions` —— 除 ChatGPT Work 外的全部 originator |
+| ChatGPT Work | OpenAI | 同一棵目录树，`originator` 为 ChatGPT Work |
+| Cursor | Anysphere | `~/.cursor/chats` |
+| Grok Build | xAI | `~/.grok/sessions` |
+| AntiGravity | Google | `~/.gemini/antigravity` |
+
+有两对 harness 共用同一个厂商 logo，因为它们本来就是同一家的：Claude Code 与
+Claude Cowork，Codex 与 ChatGPT Work。区分它们靠主色和全名，而不是改动 logo。
+Gemini CLI 能被识别但不进这七个：它已被弃用，Auspex 也没有对应的实时 adapter。
 
 Harnesses 页回答两个问题：*为什么这个 harness 没出现在看板上*，以及*它能够到什么*。
 页面给出它的存储在本机是否存在、有多少会话正在运行、最后一次活动是什么时候，以及它
@@ -141,7 +159,7 @@ Agent 转录是开发机上最敏感的文本之一：里面有源码、基础�
 | ------ | ---- |
 | **M0** | 仓库骨架，以及共享包 `agent-session-kit`：会话模型、事件流、source adapter 协议。 |
 | **M1** | Claude Code 与 Codex 的实时看板 —— 运行中 / 思考中 / 调用工具 / 等待授权 / 空闲，实时更新。*看板、轨迹检视器和菜单栏已完成，两个 adapter 正在落地。* |
-| **M2** | 全部五个 harness，加上项目与任务分组，以及像素场景视图。 |
+| **M2** | 全部七个 harness，加上项目与任务分组，以及像素场景视图。 |
 | **M3** | 基于 `~/.auspex/mcp.sock` 的 MCP 任务看板（含 `--mcp-stdio` 桥接），以及可选的 harness hook 实现即时更新。 |
 | **M4** | 控制能力 —— 不只是观察，还能直接对会话执行操作。 |
 

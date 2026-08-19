@@ -65,7 +65,27 @@ glue only.
 **SourceAdapters** watch each harness's on-disk store and emit events. They
 never write: transcripts are tailed with a byte cursor, and SQLite stores are
 opened read-only with a live WAL expected. Each adapter owns exactly one
-harness's file format. — *M1 (Claude Code, Codex), M2 (the rest).*
+*file format* — which is not the same as one harness. `CodexLiveAdapter` reads
+`~/.codex/sessions`, which carries both Codex and ChatGPT Work rollouts, told
+apart by each rollout's `originator`; it reports both through
+`SourceAdapter.handledHarnesses`, and `AuspexAdapters` indexes by that so
+neither harness can be claimed unwatched while its sessions are on the board.
+Claude Cowork is the mirror case — the same format as Claude Code, a different
+store inside Claude.app's container, and therefore its own adapter. — *M1
+(Claude Code, Codex), M2 (the rest).*
+
+### The seven harnesses
+
+`AuspexAdapters.featured` is the list every surface reports on: Claude Code,
+Claude Cowork, Codex, ChatGPT Work, Cursor, Grok Build, AntiGravity. Gemini CLI
+is in the kit's catalog and has no live adapter, so it is recognised but not
+featured.
+
+Identity is the vendor's own single-colour mark (`HarnessLogo`, loaded from
+`Sources/AuspexApp/Resources/ProviderIcons`, drawn as a template in the harness
+accent) plus the harness's **full** name. Two pairs share a mark because they
+share a vendor; the accent and the name are what separate them, and no UI
+string abbreviates a harness.
 
 **AgentEvent stream** merges every adapter into a single ordered async stream:
 turn started, assistant text, tool call started/finished, sub-agent spawned,
@@ -187,6 +207,14 @@ and a shared process ancestor are not the same claim.
 `~/.gemini/config/mcp_config.json`, and the `[mcp_servers.<name>]` tables in
 `~/.codex/config.toml` and `~/.grok/config.toml` — and takes the server names
 and nothing else.
+
+A harness that shares another's store usually shares its configuration file too,
+and is given the same location rather than a second guess: ChatGPT Work reads
+Codex's `~/.codex/config.toml`. Claude Cowork is the exception. Its servers come
+from Claude.app's own settings inside the app container, not from the CLI's
+`~/.claude.json`, so `location(for:)` answers `nil` and the page says *managed
+by Claude.app*. Naming a file that has not been verified would report the wrong
+servers with full confidence, which is worse than reporting none.
 
 It is **read-only in the strong sense**: no writes, no creation of a missing
 file, no rewriting of a file it could not fully parse. § 6 of `AGENTS.md`

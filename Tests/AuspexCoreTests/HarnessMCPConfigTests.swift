@@ -28,19 +28,24 @@ struct HarnessMCPConfigTests {
 
     // MARK: - Locations
 
-    @Test("every featured harness has a config file to look at")
+    @Test("every featured harness with a config file of its own has a location")
     func everyFeaturedHarnessHasALocation() {
         let home = URL(fileURLWithPath: "/Users/example")
-        for harness in [Harness.claudeCode, .codex, .cursor, .grokBuild, .antigravity] {
+        // Claude Cowork is deliberately absent — see
+        // `coworkConfigurationIsNotGuessed`.
+        for harness in [Harness.claudeCode, .chatgptWork, .codex, .cursor, .grokBuild, .antigravity] {
             let location = HarnessMCPConfigStore.location(for: harness, home: home)
             #expect(location != nil, "\(harness) has no MCP config location")
             #expect(location?.path.hasPrefix("/Users/example/") == true)
+            #expect(HarnessMCPConfigStore.externallyManagedNote(for: harness) == nil)
         }
     }
 
-    @Test("the variants that share a store share its configuration")
+    @Test("the harnesses that share a store share its configuration")
     func variantsShareTheirParentsConfiguration() {
         let home = URL(fileURLWithPath: "/Users/example")
+        // ChatGPT Work is a different plan on the same Codex install, and it
+        // reads the same `~/.codex/config.toml`.
         #expect(
             HarnessMCPConfigStore.location(for: .chatgptWork, home: home)
                 == HarnessMCPConfigStore.location(for: .codex, home: home)
@@ -49,6 +54,30 @@ struct HarnessMCPConfigTests {
             HarnessMCPConfigStore.location(for: .geminiCLI, home: home)
                 == HarnessMCPConfigStore.location(for: .antigravity, home: home)
         )
+    }
+
+    @Test("Claude Cowork's configuration is reported as external, never guessed")
+    func coworkConfigurationIsNotGuessed() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        // A Claude Code config with servers in it. Cowork's MCP servers come
+        // from Claude.app's own settings, so reading this file for a Cowork
+        // row would report someone else's servers with full confidence.
+        try write(
+            """
+            { "mcpServers": { "notebook": { "command": "notebook-mcp" } } }
+            """,
+            to: home.appendingPathComponent(".claude.json")
+        )
+        let store = HarnessMCPConfigStore(homeDirectory: home)
+
+        #expect(HarnessMCPConfigStore.location(for: .claudeCowork, home: home) == nil)
+        #expect(store.config(for: .claudeCowork) == nil)
+        #expect(HarnessMCPConfigStore.externallyManagedNote(for: .claudeCowork)
+            == "managed by Claude.app")
+        // The sibling still reads its own file.
+        #expect(store.config(for: .claudeCode)?.serverNames == ["notebook"])
     }
 
     // MARK: - JSON

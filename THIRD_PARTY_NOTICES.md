@@ -9,7 +9,7 @@
 
 ## Brand marks
 
-`Resources/ProviderIcons/` carries the vendor marks Auspex uses to identify
+`Sources/AuspexApp/Resources/ProviderIcons/` carries the vendor marks Auspex uses to identify
 which harness a session belongs to — Anthropic (Claude Code, Claude Cowork),
 OpenAI (Codex, ChatGPT Work), Cursor, xAI (Grok Build), Google (AntiGravity,
 Gemini CLI). They are reproduced from the vendors' public brand assets, as

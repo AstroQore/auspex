@@ -96,9 +96,20 @@ struct MenuBarContent: View {
                 Button {
                     open(session.key)
                 } label: {
-                    // A menu item is a template image too, so the harness is
-                    // named rather than coloured.
-                    Text("\(session.key.harness.style.monogram)  \(menuTitle(for: session))  ·  \(session.state.label)")
+                    // The mark *and* the full name. A menu draws its images as
+                    // monochrome templates, so two harnesses that share a
+                    // vendor mark are indistinguishable here without the name —
+                    // and a menu row that could not be copied out as readable
+                    // text would be worse than a slightly long one.
+                    Label {
+                        Text(
+                            "\(session.key.harness.displayName)  ·  "
+                                + "\(menuTitle(for: session))  ·  \(session.state.label)"
+                        )
+                    } icon: {
+                        HarnessLogo.image(for: session.key.harness, size: 16)
+                            ?? HarnessLogo.fallback(for: session.key.harness)
+                    }
                 }
             }
             if sessions.count > Self.listLimit {

@@ -320,6 +320,12 @@ private struct DisclosureChevron: View {
 }
 
 /// One dot per harness at work in a project, in its own accent.
+///
+/// A dot rather than the harness's mark, and deliberately: at five points a
+/// vendor logo is a smudge, while the accent is exactly as legible at 5 pt as
+/// it is at 28. The accent is the identity channel the mark shares, so the row
+/// still agrees with every other surface — and the full names are one hover or
+/// one VoiceOver stop away.
 private struct HarnessDots: View {
     let harnesses: [Harness]
 
@@ -340,9 +346,13 @@ private struct HarnessDots: View {
                     .foregroundStyle(AuspexPalette.textTertiary)
             }
         }
-        .accessibilityLabel(
-            harnesses.map(\.displayName).joined(separator: ", ")
-        )
+        .accessibilityLabel(names)
+        .help(names)
+    }
+
+    /// Full names, never abbreviations.
+    private var names: String {
+        harnesses.map(\.displayName).joined(separator: ", ")
     }
 }
 

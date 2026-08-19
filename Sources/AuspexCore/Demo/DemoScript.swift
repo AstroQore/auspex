@@ -161,8 +161,12 @@ extension DemoScript {
 
         var sourcePath: String {
             switch harness {
-            case .claudeCode, .claudeCowork:
+            case .claudeCode:
                 "/Users/example/.claude/projects/\(projectSlug)/\(sessionID).jsonl"
+            case .claudeCowork:
+                // Claude.app's own container, one throwaway workspace per run.
+                "/Users/example/Library/Application Support/Claude/local-agent-mode-sessions"
+                    + "/w1/a/local_\(sessionID)/.claude/projects/\(projectSlug)/\(sessionID).jsonl"
             case .codex, .chatgptWork:
                 "/Users/example/.codex/sessions/2026/08/19/rollout-\(sessionID).jsonl"
             case .cursor:
@@ -183,11 +187,16 @@ extension DemoScript {
 // MARK: - The cast
 
 extension DemoScript.Blueprint {
-    /// The eight sessions the demo board shows.
+    /// The ten sessions the demo board shows.
     ///
-    /// Chosen to cover every harness the UI has an identity for, every state
-    /// the card can be in, both grouping axes (four distinct projects, two of
-    /// them shared by different harnesses), and a parent/child pair.
+    /// Chosen to cover all seven featured harnesses, every state the card can
+    /// be in, both grouping axes (five distinct projects, two of them shared
+    /// by different harnesses), and a parent/child pair.
+    ///
+    /// Claude Cowork and ChatGPT Work are here for a reason beyond coverage:
+    /// they are the two harnesses whose mark is shared with a sibling, so a
+    /// demo board that omitted them would never show whether the accent and
+    /// the full name are enough to tell one Claude row from another.
     static let all: [DemoScript.Blueprint] = [
         // 1. The long-running one: tools, a subagent, then a permission wall.
         DemoScript.Blueprint(
@@ -442,6 +451,75 @@ extension DemoScript.Blueprint {
                 .endTurn
             ],
             startDelay: 0.2
+        ),
+
+        // 9. Claude Cowork: a background run Claude.app started for itself, in
+        //    a directory that is not a checkout. Same mark as Claude Code,
+        //    different accent, different store.
+        DemoScript.Blueprint(
+            harness: .claudeCowork,
+            sessionID: "c41d7e69-8a05-4b12-9f37-2e6b8d40a913",
+            cwd: "/Users/example/Documents/ops-runbook",
+            gitRoot: nil,
+            branch: "main",
+            title: "Reconcile the on-call runbook",
+            model: "claude-opus-5",
+            pid: 42_615,
+            entrypoint: "claude-app",
+            variant: nil,
+            prologue: [
+                .prompt("Read the runbook and list every step that names a person rather than a rota"),
+                .think(1.1),
+                .tool("Read", .fileRead, "runbook/on-call.md", 0.5),
+                .usage(11_300, 1_640, 5_200),
+                .endTurn
+            ],
+            live: [
+                .prompt("Rewrite those steps against the rota, and keep the wording"),
+                .think(2.1),
+                .write("runbook/on-call.md", 7.0),
+                .tool("Read", .fileRead, "runbook/escalation.md", 3.0),
+                .say("Four steps named an individual. All four now point at the rota."),
+                .usage(19_800, 3_920, 8_400),
+                .endTurn,
+                .idle(12.0)
+            ],
+            startDelay: 1.3
+        ),
+
+        // 10. ChatGPT Work: the desktop app's Work mode. Same rollout tree as
+        //     Codex, same OpenAI mark, told apart by the accent and the name.
+        DemoScript.Blueprint(
+            harness: .chatgptWork,
+            sessionID: "0198f5a3-64e1-7c09-a2b7-91d3fe0c5482",
+            cwd: "/Users/example/Code/storefront-web",
+            gitRoot: "/Users/example/Code/storefront-web",
+            branch: "chore/analytics-schema",
+            title: "Reconcile the analytics schema",
+            model: "gpt-5.6-sol",
+            pid: 43_128,
+            entrypoint: "desktop",
+            variant: "codex_work_desktop",
+            prologue: [
+                .prompt("Compare the event schema in the docs with the one the client emits"),
+                .think(1.4),
+                .tool("shell", .shell, "rg -n 'track\\(' src/analytics", 0.6),
+                .usage(15_700, 2_050, 6_600),
+                .endTurn
+            ],
+            live: [
+                .prompt("Write up the drift and open a checklist"),
+                .think(2.6),
+                .tool("read_resource", .mcp, "schema://storefront/events", 6.0),
+                .write("docs/analytics-drift.md", 8.0),
+                .say("Six events carry properties the schema does not declare."),
+                .permission("shell", 18.0, true),
+                .tool("shell", .shell, "pnpm analytics:validate", 10.0),
+                .usage(26_400, 4_760, 11_900),
+                .endTurn,
+                .idle(9.0)
+            ],
+            startDelay: 2.0
         )
     ]
 }

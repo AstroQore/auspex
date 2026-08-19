@@ -12,10 +12,11 @@
   · <a href="README.zh-CN.md">中文</a>
 </p>
 
-Auspex watches every AI coding agent running on your Mac — Claude Code, Codex,
-Cursor, Grok Build, Antigravity — in one live board: who is thinking, calling
-tools, delegating to sub-agents, writing files, or waiting for permission.
-Group sessions by project and task; expose a task board over MCP.
+Auspex watches every AI coding agent running on your Mac — Claude Code, Claude
+Cowork, Codex, ChatGPT Work, Cursor, Grok Build, AntiGravity — in one live
+board: who is thinking, calling tools, delegating to sub-agents, writing files,
+or waiting for permission. Group sessions by project and task; expose a task
+board over MCP.
 
 > **Status: pre-alpha, private development.** The board, the session trace, and
 > the menu bar are built and running against the live pipeline, but no harness
@@ -61,7 +62,7 @@ Application identity and enables the hardened runtime.
 
 No harness adapter has shipped yet, so a real launch shows the empty board and
 the list of stores it will watch. `--demo` replays a fabricated one instead:
-eight sessions across all five harnesses, walking through prompts, tool calls,
+ten sessions across all seven harnesses, walking through prompts, tool calls,
 a sub-agent, a permission prompt, and a couple of endings, on a loop.
 
 ```sh
@@ -91,7 +92,7 @@ desk; every project is a room they share; a sub-agent sits at a smaller desk
 beside the agent that spawned it, with a dotted line back to it. Switch with
 the **Board / Scene** control above the grid.
 
-![The scene view: six project rooms, each with pixel agents at desks, their monitors lit by what they are doing](docs/screenshots/scene.png)
+![The scene view: a project room per checkout, each with pixel agents at desks wearing their harness's mark, their monitors lit by what they are doing](docs/screenshots/scene.png)
 
 It exists because the two views answer different questions. The wall of cards
 answers *what is this session doing* precisely — tool name, target file,
@@ -150,6 +151,25 @@ answers in the sidebar and on the wall.
 
 ![The Harnesses page: detection, session counts, and MCP configuration per harness](docs/screenshots/harnesses.png)
 
+Seven harnesses are first-class — each gets a row, an accent, and its vendor's
+own mark, and each is named in full everywhere it appears. Auspex never
+abbreviates one.
+
+| Harness | Vendor | Store Auspex reads |
+| --- | --- | --- |
+| Claude Code | Anthropic | `~/.claude/projects`, `~/.config/claude/projects` |
+| Claude Cowork | Anthropic | `~/Library/Application Support/Claude/local-agent-mode-sessions` |
+| Codex | OpenAI | `~/.codex/sessions` — every originator but ChatGPT Work |
+| ChatGPT Work | OpenAI | the same tree, `originator` = ChatGPT Work |
+| Cursor | Anysphere | `~/.cursor/chats` |
+| Grok Build | xAI | `~/.grok/sessions` |
+| AntiGravity | Google | `~/.gemini/antigravity` |
+
+Two pairs share a vendor mark, because they share a vendor: Claude Code with
+Claude Cowork, Codex with ChatGPT Work. They are told apart by their accent and
+by their full name, never by a modified logo. Gemini CLI is recognised but not
+featured — it is deprecated, and Auspex has no live adapter for it.
+
 The Harnesses page answers *why is this harness not on my board* and *what can
 it reach*: whether its store exists on this Mac, how many of its sessions are
 live, when it last did anything, and which MCP servers it has been configured
@@ -200,7 +220,7 @@ a prompt at 2am. Auspex treats them accordingly.
 | --------- | ----- |
 | **M0** | Repository skeleton and the shared `agent-session-kit` package: session model, event stream, source-adapter protocol. |
 | **M1** | Live board for Claude Code and Codex — running / thinking / tool call / waiting-for-permission / idle, updating in real time. *The board, the trace inspector, and the menu bar are in; the two adapters are landing.* |
-| **M2** | All five harnesses, plus project and task grouping and the pixel scene view. |
+| **M2** | All seven harnesses, plus project and task grouping and the pixel scene view. |
 | **M3** | MCP task board over `~/.auspex/mcp.sock` (with an `--mcp-stdio` bridge) and opt-in harness hooks for instant updates. |
 | **M4** | Control — act on a session from Auspex, not just watch it. |
 

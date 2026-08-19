@@ -38,7 +38,7 @@
 - 画布 `#101012` · 面板 `#161619` · 描边 `#26262C` · 文字 `#EDEDEF` / `#A0A0A8` / `#6C6C75`
 - 状态色（唯一的饱和色）：thinking `#6EA8FE` · tool `#F2B544` · writing `#4FD08A` · delegating `#B48CFF` · **needs-you `#FF5C6C`** · idle `#7A7A85` · ended `#46464E`
 - Harness 主色（**8 个正式 harness**，全部用全名，不出现任何缩写/首字母）：Claude Code `#E0785A` · Claude Cowork `#CE8F6E` · Codex `#2DD4BF` · ChatGPT Work `#22A06B` · Cursor `#4C8DFF` · Grok Build `#F45FA0` · Grok Bot `#F98BBE` · AntiGravity `#B4E048`（可选：Gemini CLI `#7DD3FC`）
-- **Harness 标识一律用厂商真 logo**，源文件已放在 `auspex/Resources/ProviderIcons/`（复用 vibe-bar 资产，单色 SVG，app 按上表主色着色）：`ProviderIcon-claude.svg`（Claude Code / Claude Cowork）· `ProviderIcon-codex.svg`（OpenAI 花，Codex / ChatGPT Work）· `ProviderIcon-cursor.svg` · `ProviderIcon-grok.svg`（Grok Build / Grok Bot）· `ProviderIcon-antigravity.svg` · `ProviderIcon-gemini.svg`。同一 logo 的两个 harness 靠**全名文字 + 主色**区分，不靠改 logo。
+- **Harness 标识一律用厂商真 logo**，源文件已放在 `auspex/Sources/AuspexApp/Resources/ProviderIcons/`（复用 vibe-bar 资产，单色 SVG，app 按上表主色着色）：`ProviderIcon-claude.svg`（Claude Code / Claude Cowork）· `ProviderIcon-codex.svg`（OpenAI 花，Codex / ChatGPT Work）· `ProviderIcon-cursor.svg` · `ProviderIcon-grok.svg`（Grok Build / Grok Bot）· `ProviderIcon-antigravity.svg` · `ProviderIcon-gemini.svg`。同一 logo 的两个 harness 靠**全名文字 + 主色**区分，不靠改 logo。
 
 ---
 
@@ -81,7 +81,7 @@ Auspex = 古罗马**观鸟占卜的祭司**。
 ## 3. 应用内图标集（`Resources/Icons/`，SVG + PDF，template）
 每个给 16/20/24 三档（`name-16.svg` …）。命名与列表：
 
-**Harness 标识：不需要新画**——直接用 `Resources/ProviderIcons/*.svg` 的厂商 logo（见 §0.3）。如需，只补一件事：把 6 个 SVG 各出一版 **16 / 20 / 24 pt 光学对齐的 PDF**（描边/填充按原样，单色，template），命名 `ProviderIcon-<name>-{16,20,24}.pdf`。
+**Harness 标识：不需要新画**——直接用 `Sources/AuspexApp/Resources/ProviderIcons/*.svg` 的厂商 logo（见 §0.3）。如需，只补一件事：把 6 个 SVG 各出一版 **16 / 20 / 24 pt 光学对齐的 PDF**（描边/填充按原样，单色，template），命名 `ProviderIcon-<name>-{16,20,24}.pdf`。
 
 **状态**：`state-thinking`（虚线圆/呼吸环）`state-tool`（提示符 `›_`）`state-writing`（笔）`state-delegating`（分叉箭头 ↳）`state-needsYou`（感叹号气泡）`state-idle`（暂停/圆点）`state-stale`（zzz）`state-ended`（方块/离席）
 
