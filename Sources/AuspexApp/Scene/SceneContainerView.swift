@@ -7,13 +7,15 @@ import SwiftUI
 
 /// Which way the live section is being read.
 ///
-/// Two views of one board, and the choice is remembered: a person who prefers
+/// Three views of one board, and the choice is remembered: a person who prefers
 /// the office should not have to pick it again every launch.
 enum LiveViewMode: String, CaseIterable, Identifiable {
     /// The wall of session cards.
     case board
     /// The pixel office.
     case scene
+    /// One geometric avatar per session.
+    case crew
 
     var id: String { rawValue }
 
@@ -21,6 +23,7 @@ enum LiveViewMode: String, CaseIterable, Identifiable {
         switch self {
         case .board: "Board"
         case .scene: "Scene"
+        case .crew: "Crew"
         }
     }
 
@@ -28,6 +31,7 @@ enum LiveViewMode: String, CaseIterable, Identifiable {
         switch self {
         case .board: "square.grid.2x2"
         case .scene: "building.2"
+        case .crew: "person.3"
         }
     }
 }
@@ -51,6 +55,7 @@ struct LiveSectionView: View {
                 switch mode {
                 case .board: BoardView(model: model)
                 case .scene: SceneContainerView(model: model)
+                case .crew: CrewView(model: model)
                 }
             }
         }
@@ -68,8 +73,8 @@ struct LiveSectionView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 152)
-            .help("Read the same board as a wall of cards or as a room")
+            .frame(width: 210)
+            .help("Read the same board as a wall of cards, as a room, or as a crew")
 
             Spacer(minLength: 8)
 

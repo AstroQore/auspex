@@ -178,12 +178,19 @@ public struct CrewAvatarDriver: Sendable {
         self.harness = harness
         self.mood = mood
         lastSessionState = state
-        engine = BloubEngine(
+        var engine = BloubEngine(
             scale: scale,
             state: mood.state,
             shape: mood.shape,
             expression: mood.expression
         )
+        // The engine starts its clock at zero, and this driver is handed a
+        // clock that has been running since the wall opened. Without this the
+        // avatar would be born several seconds into its own animation — an
+        // orbit whose rings had already faded out, a burst already recomposed —
+        // which is exactly what a session that has just appeared has not done.
+        engine.reset(to: mood.state, at: now)
+        self.engine = engine
     }
 
     /// Feeds the driver the session's current state and the clock.

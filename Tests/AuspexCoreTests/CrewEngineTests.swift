@@ -259,6 +259,20 @@ struct CrewEngineTests {
         _ = engine
     }
 
+    /// Every state names the instant it reads most clearly at. That is the
+    /// pose bloub's own frozen state board shows, and the one this port holds
+    /// when Reduce Motion is on — so a missing entry would be an avatar stuck
+    /// on an arbitrary frame.
+    @Test("every state names its most legible instant")
+    func poseTimes() {
+        for state in BloubStateID.allCases {
+            let time = BloubStates.poseTime[state]
+            #expect(time != nil, "\(state) has no pose time")
+            #expect((time ?? 0) > 0)
+            #expect((time ?? 0) <= BloubStates.state(state).duration)
+        }
+    }
+
     // MARK: Auspex's own addition
 
     /// A replay blends out of the pose that was on screen, so the seam is

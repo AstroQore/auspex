@@ -57,6 +57,41 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
     }
 }
 
+// Renders the crew wall from the demo board, offscreen, for the same reasons
+// `--render-scene` does: a picture of a running window is a picture of whatever
+// else was on that screen, and a `Canvas` has no view hierarchy to assert
+// against, so drawing one and looking at it is the honest check.
+if let flag = arguments.firstIndex(of: "--render-crew") {
+    let rest = arguments[arguments.index(after: flag)...]
+    guard let path = rest.first, !path.hasPrefix("-") else {
+        FileHandle.standardError.write(
+            Data("auspex: --render-crew needs a destination path.\n".utf8)
+        )
+        exit(2)
+    }
+    let elapsed = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 16
+    let avatarTime = rest.dropFirst(2).first.flatMap(TimeInterval.init) ?? 1.4
+    do {
+        let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
+        try CrewSnapshotRenderer.render(
+            board: board,
+            to: URL(fileURLWithPath: path),
+            avatarTime: avatarTime
+        )
+        let counts = board.counts
+        let summary = "auspex: \(board.sessions.count) avatars at t+\(Int(elapsed))s, "
+            + "animation t=\(avatarTime)s — "
+            + "\(counts.thinking) thinking, \(counts.tooling) tooling, "
+            + "\(counts.delegating) delegating, \(counts.waitingPermission) blocked, "
+            + "\(counts.idle) idle, \(counts.ended) ended\n"
+        FileHandle.standardOutput.write(Data(summary.utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 if arguments.contains("--help") || arguments.contains("-h") {
     FileHandle.standardOutput.write(Data("""
         auspex — one live board for every AI coding agent on this Mac.
@@ -72,6 +107,11 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         Render the scene view's office to a PNG, offscreen,
                         from the demo board at `seconds` into its loop
                         (default 16). Used to build the README screenshot.
+          --render-crew <path> [seconds] [animation seconds]
+                        Render the crew view's avatars to a PNG, offscreen,
+                        from the demo board at `seconds` into its loop
+                        (default 16), with every avatar frozen `animation
+                        seconds` into its own animation (default 1.4).
           --mcp-stdio   Serve the task board over MCP on stdio. (M3)
           --hook        Handle a harness hook invocation. (M3)
           --help        Show this.
