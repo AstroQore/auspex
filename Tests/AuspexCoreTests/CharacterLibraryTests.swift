@@ -406,7 +406,7 @@ struct CharacterCatalogTests {
             package(id: "office-cat", harness: nil)
         ])
         var selection = CharacterSelection()
-        selection.setCharacterID("office-cat", for: .codex)
+        selection.setChoice(.package("office-cat"), for: .codex)
 
         #expect(catalog.package(for: .codex, selection: selection)?.id == "office-cat")
     }
@@ -419,7 +419,7 @@ struct CharacterCatalogTests {
         ])
         let key = SessionKey(harness: .codex, sessionID: "abc123")
         var selection = CharacterSelection()
-        selection.setCharacterID("office-cat", for: key)
+        selection.setChoice(.package("office-cat"), for: key)
 
         #expect(catalog.package(for: key, selection: selection)?.id == "office-cat")
         #expect(catalog.package(for: .codex, selection: selection)?.id == "codex-default")
@@ -432,7 +432,7 @@ struct CharacterCatalogTests {
             package(id: "empty", harness: nil, drawable: false)
         ])
         var selection = CharacterSelection()
-        selection.setCharacterID("empty", for: .codex)
+        selection.setChoice(.package("empty"), for: .codex)
 
         #expect(catalog.package(for: .codex, selection: selection)?.id == "codex-default")
     }
@@ -447,6 +447,84 @@ struct CharacterCatalogTests {
         #expect(catalog.packages(for: .codex).map(\.id) == ["codex-default", "office-cat"])
         #expect(catalog.packages(for: .cursor).map(\.id) == ["office-cat"])
     }
+
+    @Test("choosing the built-in figures beats the package that claims the harness")
+    func builtInBeatsTheClaim() {
+        let catalog = CharacterCatalog(packages: [package(id: "codex-default", harness: .codex)])
+        var selection = CharacterSelection()
+        selection.setChoice(.builtIn, for: .codex)
+
+        // `nil` is how the scene is told to draw its own rig, and it is the
+        // whole point of the choice: the art is installed and is not worn.
+        #expect(catalog.package(for: .codex, selection: selection) == nil)
+        #expect(catalog.resolvedChoice(for: .codex, selection: selection) == .builtIn)
+        // The package is still installed and still offered.
+        #expect(catalog.automaticPackage(for: .codex)?.id == "codex-default")
+        #expect(catalog.packages(for: .codex).map(\.id) == ["codex-default"])
+    }
+
+    @Test("a session that chose the built-in figures keeps them over its harness's package")
+    func builtInOverrideBeatsTheHarness() {
+        let catalog = CharacterCatalog(packages: [package(id: "codex-default", harness: .codex)])
+        let key = SessionKey(harness: .codex, sessionID: "abc123")
+        var selection = CharacterSelection()
+        selection.setChoice(.builtIn, for: key)
+
+        #expect(catalog.package(for: key, selection: selection) == nil)
+        #expect(catalog.package(for: .codex, selection: selection)?.id == "codex-default")
+    }
+
+    @Test("a session on a package beats a harness on the built-in figures")
+    func sessionPackageBeatsABuiltInHarness() {
+        let catalog = CharacterCatalog(packages: [
+            package(id: "codex-default", harness: .codex),
+            package(id: "office-cat", harness: nil)
+        ])
+        let key = SessionKey(harness: .codex, sessionID: "abc123")
+        var selection = CharacterSelection()
+        selection.setChoice(.builtIn, for: .codex)
+        selection.setChoice(.package("office-cat"), for: key)
+
+        #expect(catalog.package(for: key, selection: selection)?.id == "office-cat")
+        #expect(catalog.package(for: .codex, selection: selection) == nil)
+    }
+
+    @Test("the three answers are asked for in order: session, harness, then automatic")
+    func resolvesInOrder() {
+        let catalog = CharacterCatalog(packages: [
+            package(id: "codex-default", harness: .codex),
+            package(id: "office-cat", harness: nil)
+        ])
+        let key = SessionKey(harness: .codex, sessionID: "abc123")
+        var selection = CharacterSelection()
+
+        // Nothing chosen: the package that claims the harness.
+        #expect(catalog.resolvedChoice(for: key, selection: selection) == .package("codex-default"))
+
+        // The harness's choice, over automatic.
+        selection.setChoice(.builtIn, for: .codex)
+        #expect(catalog.resolvedChoice(for: key, selection: selection) == .builtIn)
+
+        // The session's own, over its harness's.
+        selection.setChoice(.package("office-cat"), for: key)
+        #expect(catalog.resolvedChoice(for: key, selection: selection) == .package("office-cat"))
+
+        // And back down again, one level at a time.
+        selection.setChoice(.automatic, for: key)
+        #expect(catalog.resolvedChoice(for: key, selection: selection) == .builtIn)
+        selection.setChoice(.automatic, for: .codex)
+        #expect(catalog.resolvedChoice(for: key, selection: selection) == .package("codex-default"))
+    }
+
+    @Test("a harness nobody has drawn resolves to the built-in figures on its own")
+    func undrawnHarnessResolvesToTheRig() {
+        let catalog = CharacterCatalog(packages: [package(id: "codex-default", harness: .codex)])
+
+        #expect(catalog.automaticPackage(for: .grokBuild) == nil)
+        #expect(
+            catalog.resolvedChoice(for: .grokBuild, selection: CharacterSelection()) == .builtIn
+        )
+    }
 }
 
 @Suite("Character selection")
@@ -459,20 +537,20 @@ struct CharacterSelectionTests {
         let store = CharacterSelectionStore(paths: paths)
 
         var selection = CharacterSelection()
-        selection.setCharacterID("office-cat", for: .codex)
-        selection.setCharacterID("claudeCode-default", for: .claudeCode)
-        selection.setCharacterID(
-            "office-cat", for: SessionKey(harness: .cursor, sessionID: "abc:123")
+        selection.setChoice(.package("office-cat"), for: .codex)
+        selection.setChoice(.package("claudeCode-default"), for: .claudeCode)
+        selection.setChoice(
+            .package("office-cat"), for: SessionKey(harness: .cursor, sessionID: "abc:123")
         )
         try store.save(selection)
 
         let reloaded = store.load()
 
         #expect(reloaded == selection)
-        #expect(reloaded.characterID(for: .codex) == "office-cat")
+        #expect(reloaded.choice(for: .codex) == .package("office-cat"))
         #expect(
-            reloaded.characterID(for: SessionKey(harness: .cursor, sessionID: "abc:123"))
-                == "office-cat"
+            reloaded.choice(for: SessionKey(harness: .cursor, sessionID: "abc:123"))
+                == .package("office-cat")
         )
         #expect(paths.contains(store.url))
     }
@@ -495,24 +573,124 @@ struct CharacterSelectionTests {
     @Test("clearing a harness's choice removes it from the file")
     func clearingRemovesTheEntry() {
         var selection = CharacterSelection()
-        selection.setCharacterID("office-cat", for: .codex)
-        selection.setCharacterID(nil, for: .codex)
+        selection.setChoice(.package("office-cat"), for: .codex)
+        selection.setChoice(.automatic, for: .codex)
 
-        #expect(selection.characterID(for: .codex) == nil)
+        #expect(selection.choice(for: .codex) == .automatic)
         #expect(selection.isEmpty)
     }
 
     @Test("pruning drops references to characters that no longer exist")
     func pruningDropsDanglingReferences() {
         var selection = CharacterSelection()
-        selection.setCharacterID("gone", for: .codex)
-        selection.setCharacterID("kept", for: .cursor)
-        selection.setCharacterID("gone", for: SessionKey(harness: .codex, sessionID: "1"))
+        selection.setChoice(.package("gone"), for: .codex)
+        selection.setChoice(.package("kept"), for: .cursor)
+        selection.setChoice(.builtIn, for: .claudeCode)
+        selection.setChoice(.package("gone"), for: SessionKey(harness: .codex, sessionID: "1"))
 
         selection.prune(keeping: ["kept"])
 
-        #expect(selection.characterID(for: .codex) == nil)
-        #expect(selection.characterID(for: .cursor) == "kept")
+        #expect(selection.choice(for: .codex) == .automatic)
+        #expect(selection.choice(for: .cursor) == .package("kept"))
+        // The rig names no package, so no package going missing can strand it.
+        #expect(selection.choice(for: .claudeCode) == .builtIn)
         #expect(selection.overridesBySession.isEmpty)
+    }
+
+    @Test("choosing the built-in figures round-trips through the file")
+    func builtInRoundTripsThroughDisk() throws {
+        let home = try CharacterFixtures.temporaryHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = AuspexPaths(homeDirectory: home)
+        let store = CharacterSelectionStore(paths: paths)
+        let key = SessionKey(harness: .cursor, sessionID: "abc:123")
+
+        var selection = CharacterSelection()
+        selection.setChoice(.builtIn, for: .codex)
+        selection.setChoice(.package("office-cat"), for: .claudeCode)
+        selection.setChoice(.builtIn, for: key)
+        try store.save(selection)
+
+        let reloaded = store.load()
+
+        #expect(reloaded == selection)
+        #expect(reloaded.choice(for: .codex) == .builtIn)
+        #expect(reloaded.choice(for: .claudeCode) == .package("office-cat"))
+        #expect(reloaded.choice(for: key) == .builtIn)
+        // Written as the documented token, because a person is expected to be
+        // able to read this file and know what it says.
+        let written = try String(contentsOf: paths.characterSelectionURL, encoding: .utf8)
+        #expect(written.contains("\"codex\" : \"@built-in\""))
+    }
+
+    @Test("a selection file written before the rig was selectable still means what it said")
+    func decodesAFileFromBeforeTheBuiltInWasAChoice() throws {
+        // Exactly the shape the store used to write: two flat maps of package
+        // ids, and no notion of a choice that is not a package.
+        let json = """
+            {
+              "defaultsByHarness" : {
+                "codex" : "codex-default"
+              },
+              "overridesBySession" : {
+                "cursor:abc" : "office-cat"
+              }
+            }
+            """
+        let selection = try JSONDecoder().decode(
+            CharacterSelection.self, from: Data(json.utf8)
+        )
+
+        #expect(selection.choice(for: .codex) == .package("codex-default"))
+        #expect(
+            selection.choice(for: SessionKey(harness: .cursor, sessionID: "abc"))
+                == .package("office-cat")
+        )
+        // A harness the old file never mentioned is automatic — today's
+        // behaviour, and what it meant then too.
+        #expect(selection.choice(for: .claudeCode) == .automatic)
+        #expect(selection.choice(for: SessionKey(harness: .codex, sessionID: "1")) == .automatic)
+    }
+
+    @Test("an empty selection file is every harness on automatic")
+    func decodesAnEmptyFile() throws {
+        let selection = try JSONDecoder().decode(
+            CharacterSelection.self, from: Data("{}".utf8)
+        )
+
+        #expect(selection.isEmpty)
+        for harness in Harness.allCases {
+            #expect(selection.choice(for: harness) == .automatic)
+        }
+    }
+}
+
+@Suite("Character choice")
+struct CharacterChoiceTests {
+    @Test("automatic is the absence of a key, not a word for one")
+    func automaticStoresNothing() {
+        #expect(CharacterChoice.automatic.stored == nil)
+        #expect(CharacterChoice(stored: nil) == .automatic)
+        #expect(CharacterChoice(stored: "") == .automatic)
+
+        var selection = CharacterSelection()
+        selection.setChoice(.automatic, for: .codex)
+        #expect(selection.defaultsByHarness.isEmpty)
+    }
+
+    @Test("the built-in figures have one spelling on disk")
+    func builtInHasOneSpelling() {
+        #expect(CharacterChoice.builtIn.stored == "@built-in")
+        #expect(CharacterChoice(stored: "@built-in") == .builtIn)
+        #expect(CharacterChoice.builtIn.packageID == nil)
+    }
+
+    @Test("every other value is a package id")
+    func anythingElseIsAPackage() {
+        #expect(CharacterChoice(stored: "codex-default") == .package("codex-default"))
+        #expect(CharacterChoice(stored: "codex-default").packageID == "codex-default")
+        #expect(CharacterChoice.package("codex-default").stored == "codex-default")
+        // Not the token, and so not the rig.
+        #expect(CharacterChoice(stored: "built-in") == .package("built-in"))
     }
 }

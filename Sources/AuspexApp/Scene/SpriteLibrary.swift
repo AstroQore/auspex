@@ -188,18 +188,19 @@ final class SpriteLibrary {
 
     // MARK: Choosing
 
-    /// Sets the character every session of `harness` is drawn as, or clears
-    /// the choice so the package that claims the harness is used again.
-    func setCharacter(_ id: String?, for harness: Harness) {
+    /// Sets what every session of `harness` is drawn as: a package, Auspex's
+    /// own built-in figures, or automatic — whichever package claims the
+    /// harness, and the built-in figures while none does.
+    func setChoice(_ choice: CharacterChoice, for harness: Harness) {
         var next = selection
-        next.setCharacterID(id, for: harness)
+        next.setChoice(choice, for: harness)
         apply(next)
     }
 
-    /// Sets the character one session is drawn as, overriding its harness.
-    func setCharacter(_ id: String?, for key: SessionKey) {
+    /// Sets what one session is drawn as, overriding its harness.
+    func setChoice(_ choice: CharacterChoice, for key: SessionKey) {
         var next = selection
-        next.setCharacterID(id, for: key)
+        next.setChoice(choice, for: key)
         apply(next)
     }
 
@@ -220,7 +221,9 @@ final class SpriteLibrary {
 
     // MARK: Lookups
 
-    /// The package one session's agent is drawn as.
+    /// The package one session's agent is drawn as, or `nil` when it wears
+    /// the procedural rig — because that was chosen, or because nobody has
+    /// drawn its harness.
     func package(for key: SessionKey) -> CharacterPackage? {
         catalog.package(for: key, selection: selection)
     }

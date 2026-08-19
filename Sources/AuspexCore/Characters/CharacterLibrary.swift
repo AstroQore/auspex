@@ -127,6 +127,15 @@ public struct CharacterLibrary: Sendable {
             )
         }
         if manifest.displayName.isEmpty { manifest.displayName = manifest.id }
+        if manifest.id == CharacterChoice.builtInToken {
+            problems.append(
+                .warning(
+                    "\"\(CharacterChoice.builtInToken)\" is reserved for Auspex's own "
+                        + "built-in figures, so this package can be automatic for a harness "
+                        + "but can never be picked by hand. Give it another id."
+                )
+            )
+        }
 
         if !CharacterManifest.supportedCells.contains(manifest.cell) {
             let supported = CharacterManifest.supportedCells.sorted()
@@ -163,7 +172,7 @@ public struct CharacterLibrary: Sendable {
             problems.append(
                 .warning(
                     pose: pose.rawValue,
-                    "No \(pose.rawValue).png; that pose uses the placeholder rig."
+                    "No \(pose.rawValue).png; that pose uses the built-in figures."
                 )
             )
         }
@@ -347,20 +356,39 @@ public struct CharacterCatalog: Sendable, Equatable {
         packages.filter { $0.harness == harness || $0.harness == nil }
     }
 
-    /// The package a harness's people are drawn as.
+    /// The package that claims `harness` on its own, ignoring every choice —
+    /// what ``CharacterChoice/automatic`` resolves to.
     ///
-    /// The person's choice first, then the package that claims the harness,
-    /// preferring the conventional `<harness>-default` id when several do.
-    /// `nil` means nobody has drawn this harness and the scene should use its
-    /// procedural rig.
-    public func package(for harness: Harness, selection: CharacterSelection) -> CharacterPackage? {
-        if let chosen = selection.characterID(for: harness),
-           let package = package(id: chosen), package.isDrawable {
-            return package
-        }
+    /// The conventional `<harness>-default` id wins when more than one package
+    /// claims the harness, so a person experimenting with a second Codex
+    /// character does not silently displace the shipped one. `nil` means
+    /// nobody has drawn this harness yet.
+    public func automaticPackage(for harness: Harness) -> CharacterPackage? {
         let claimed = packages.filter { $0.harness == harness && $0.isDrawable }
         let conventional = "\(harness.rawValue)-default"
         return claimed.first { $0.id == conventional } ?? claimed.first
+    }
+
+    /// The package a harness's people are drawn as.
+    ///
+    /// `nil` means the scene draws its procedural rig — either because that is
+    /// what was *chosen*, or because nobody has drawn this harness. The scene
+    /// treats the two identically, which is exactly why the choice has to be
+    /// remembered as more than the absence of a package.
+    public func package(for harness: Harness, selection: CharacterSelection) -> CharacterPackage? {
+        switch selection.choice(for: harness) {
+        case .builtIn:
+            return nil
+        case .package(let id):
+            // A choice pointing at a package that has since been deleted — or
+            // one that cannot be drawn — is ignored, not obeyed. Falling back
+            // to automatic rather than to the rig keeps a broken folder from
+            // looking like a deliberate preference for rectangles.
+            if let package = package(id: id), package.isDrawable { return package }
+            return automaticPackage(for: harness)
+        case .automatic:
+            return automaticPackage(for: harness)
+        }
     }
 
     /// The package one session's agent is drawn as: its own override if it has
@@ -369,10 +397,32 @@ public struct CharacterCatalog: Sendable, Equatable {
         for key: SessionKey,
         selection: CharacterSelection
     ) -> CharacterPackage? {
-        if let chosen = selection.characterID(for: key),
-           let package = package(id: chosen), package.isDrawable {
-            return package
+        switch selection.choice(for: key) {
+        case .builtIn:
+            return nil
+        case .package(let id):
+            if let package = package(id: id), package.isDrawable { return package }
+            return package(for: key.harness, selection: selection)
+        case .automatic:
+            return package(for: key.harness, selection: selection)
         }
-        return package(for: key.harness, selection: selection)
+    }
+
+    /// What a harness actually ends up wearing, with
+    /// ``CharacterChoice/automatic`` resolved to the answer it stands for.
+    /// Never ``CharacterChoice/automatic`` itself.
+    public func resolvedChoice(
+        for harness: Harness,
+        selection: CharacterSelection
+    ) -> CharacterChoice {
+        package(for: harness, selection: selection).map { .package($0.id) } ?? .builtIn
+    }
+
+    /// What one session's agent ends up wearing.
+    public func resolvedChoice(
+        for key: SessionKey,
+        selection: CharacterSelection
+    ) -> CharacterChoice {
+        package(for: key, selection: selection).map { .package($0.id) } ?? .builtIn
     }
 }

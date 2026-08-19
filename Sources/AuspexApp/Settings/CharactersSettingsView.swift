@@ -35,7 +35,7 @@ struct AuspexSettingsView: View {
 /// A character package is hand-made, usually by generating pixels and dropping
 /// a folder in. Every mistake it can have — a strip one pixel too short, a
 /// manifest that says four frames over a six-frame walk — is invisible in the
-/// office, because the office falls back to the placeholder rig and carries on.
+/// office, because the office falls back to the built-in rig and carries on.
 /// This is the one surface that can say what went wrong, so it says all of it.
 struct CharactersSettingsView: View {
     let library: SpriteLibrary
@@ -119,7 +119,8 @@ struct CharactersSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             sectionHeader(
                 "Default per harness",
-                detail: "Automatic uses whichever package names the harness."
+                detail: "Automatic uses whichever package names the harness, "
+                    + "and the built-in figures while none does."
             )
             ForEach(Harness.boardOrder, id: \.self) { harness in
                 HarnessCharacterRow(harness: harness, library: library)
@@ -227,9 +228,11 @@ private struct HarnessCharacterRow: View {
         library.catalog.packages(for: harness)
     }
 
+    /// What Automatic resolves to for this harness right now — the name that
+    /// makes "Automatic" a statement rather than a shrug.
     private var automaticDescription: String {
-        library.catalog.package(for: harness, selection: .init())?.displayName
-            ?? "placeholder figure"
+        library.catalog.automaticPackage(for: harness)?.displayName
+            ?? CharacterChoice.builtInDisplayName
     }
 
     var body: some View {
@@ -247,36 +250,42 @@ private struct HarnessCharacterRow: View {
             }
             Spacer(minLength: 8)
             Picker("", selection: binding) {
-                Text("Automatic").tag(String?.none)
+                Text("Automatic (recommended)").tag(CharacterChoice.automatic)
+                Text(CharacterChoice.builtInDisplayName).tag(CharacterChoice.builtIn)
                 if !choices.isEmpty {
                     Divider()
                     ForEach(choices) { package in
-                        Text(package.displayName).tag(String?.some(package.id))
+                        Text(package.displayName).tag(CharacterChoice.package(package.id))
                     }
                 }
             }
             .labelsHidden()
-            .frame(width: 190)
-            .disabled(choices.isEmpty)
+            .frame(width: 210)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
     }
 
     private var subtitle: String {
-        guard let chosen = library.selection.characterID(for: harness) else {
+        switch library.selection.choice(for: harness) {
+        case .automatic:
             return "Automatic · \(automaticDescription)"
+        case .builtIn:
+            return "\(CharacterChoice.builtInDisplayName) · drawn in code"
+        case .package(let id):
+            // A choice that outlived its folder. Saying so beats both silently
+            // reverting the picker and quietly drawing something else.
+            guard library.catalog.package(id: id) != nil else {
+                return "\(id) is not installed · using \(automaticDescription)"
+            }
+            return "Chosen"
         }
-        guard library.catalog.package(id: chosen) != nil else {
-            return "\(chosen) is not installed · using \(automaticDescription)"
-        }
-        return "Chosen"
     }
 
-    private var binding: Binding<String?> {
+    private var binding: Binding<CharacterChoice> {
         Binding(
-            get: { library.selection.characterID(for: harness) },
-            set: { library.setCharacter($0, for: harness) }
+            get: { library.selection.choice(for: harness) },
+            set: { library.setChoice($0, for: harness) }
         )
     }
 }
