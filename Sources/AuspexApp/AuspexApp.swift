@@ -24,15 +24,17 @@ struct AuspexApp: App {
         WindowGroup(id: Self.mainWindowID) {
             RootView()
                 .environment(environment)
-                .frame(minWidth: 900, minHeight: 520)
-                .preferredColorScheme(nil)
+                .frame(minWidth: 960, minHeight: 560)
                 // The office reads character packages out of
                 // `~/.auspex/characters/`, and a person dropping one in expects
                 // the room to change, not to be told to relaunch.
                 .task { SpriteLibrary.shared.startWatching() }
         }
         .defaultSize(width: 1_440, height: 900)
-        .windowToolbarStyle(.unified(showsTitle: true))
+        // The window's own heading lives in the board's header bar, where it
+        // can carry the counts beside it. A title bar that repeated it would
+        // be two headings for one screen.
+        .windowToolbarStyle(.unified(showsTitle: false))
 
         Settings {
             AuspexSettingsView(library: SpriteLibrary.shared)
@@ -40,17 +42,24 @@ struct AuspexApp: App {
 
         MenuBarExtra {
             MenuBarContent(environment: environment)
+                .preferredColorScheme(.dark)
         } label: {
             MenuBarLabel(board: environment.board)
         }
+        // A window rather than a menu. An `NSMenu` draws its images as
+        // monochrome templates and its rows as system rows, so two harnesses
+        // that share a vendor mark are indistinguishable in it and a state
+        // pill is impossible — which throws away the two things this list
+        // exists to show.
+        .menuBarExtraStyle(.window)
     }
 }
 
 /// The menu bar's title: an eye, and the counts that matter.
 ///
-/// Three numbers at most, and only the non-zero ones — live, delegating,
-/// blocked. A status item that always shows `0 0 0` teaches its reader to stop
-/// looking at it, which defeats the point of having one.
+/// Three numbers at most, and only the non-zero ones. A status item that always
+/// shows `0 0 0` teaches its reader to stop looking at it, which defeats the
+/// point of having one.
 ///
 /// Symbols rather than colour: the menu bar renders its label as a template
 /// image, so colour would be flattened away. The exclamation mark carries the
@@ -59,36 +68,36 @@ struct MenuBarLabel: View {
     let board: LiveBoardModel
 
     var body: some View {
-        let counts = board.board.counts
+        let summary = board.summary
         HStack(spacing: 3) {
             Image(systemName: "eye")
-            if counts.live > 0 {
-                Text("\(counts.live)")
+            if summary.working > 0 {
+                Image(systemName: "play.fill")
+                Text("\(summary.working)")
             }
-            if counts.delegating > 0 {
-                Image(systemName: "arrow.triangle.branch")
-                Text("\(counts.delegating)")
+            if summary.idle > 0 {
+                Image(systemName: "hourglass")
+                Text("\(summary.idle)")
             }
-            if counts.waitingPermission > 0 {
+            if summary.needsYou > 0 {
                 Image(systemName: "exclamationmark.triangle.fill")
-                Text("\(counts.waitingPermission)")
+                Text("\(summary.needsYou)")
             }
         }
-        .accessibilityLabel(accessibilityLabel(counts))
+        .accessibilityLabel(accessibilityLabel(summary))
     }
 
-    private func accessibilityLabel(_ counts: BoardSnapshot.Counts) -> String {
+    private func accessibilityLabel(_ summary: BoardSummary) -> String {
         var parts = ["Auspex"]
-        if counts.live > 0 { parts.append("\(counts.live) live") }
-        if counts.delegating > 0 { parts.append("\(counts.delegating) delegating") }
-        if counts.waitingPermission > 0 {
-            parts.append("\(counts.waitingPermission) waiting for permission")
-        }
+        if summary.working > 0 { parts.append("\(summary.working) working") }
+        if summary.idle > 0 { parts.append("\(summary.idle) idle") }
+        if summary.needsYou > 0 { parts.append("\(summary.needsYou) needs you") }
+        if parts.count == 1 { parts.append("nothing running") }
         return parts.joined(separator: ", ")
     }
 }
 
-/// Contents of the menu bar extra's menu.
+/// The menu bar extra's panel.
 ///
 /// The live sessions, most urgent first, each one a button that opens the
 /// window onto that session. That is the whole job: the menu bar answers
@@ -97,70 +106,196 @@ struct MenuBarContent: View {
     let environment: AppEnvironment
     @Environment(\.openWindow) private var openWindow
 
-    /// Long enough to be useful, short enough that the menu never scrolls.
-    private static let listLimit = 12
+    /// Long enough to be useful, short enough that the panel never scrolls
+    /// past the bottom of a laptop screen.
+    private static let listLimit = 10
 
     var body: some View {
         let sessions = environment.board.board.sessions.filter { !$0.state.isEnded }
+        let summary = environment.board.summary
 
-        if sessions.isEmpty {
-            Text(environment.mode == .demo ? "Demo starting…" : "No live sessions")
-        } else {
-            ForEach(sessions.prefix(Self.listLimit), id: \.key) { session in
-                Button {
-                    open(session.key)
-                } label: {
-                    // The mark *and* the full name. A menu draws its images as
-                    // monochrome templates, so two harnesses that share a
-                    // vendor mark are indistinguishable here without the name —
-                    // and a menu row that could not be copied out as readable
-                    // text would be worse than a slightly long one.
-                    Label {
-                        Text(
-                            "\(session.key.harness.displayName)  ·  "
-                                + "\(menuTitle(for: session))  ·  \(session.state.label)"
-                        )
-                    } icon: {
-                        HarnessLogo.image(for: session.key.harness, size: 16)
-                            ?? HarnessLogo.fallback(for: session.key.harness)
-                    }
+        VStack(alignment: .leading, spacing: 2) {
+            header(count: summary.live, needsYou: summary.needsYou)
+
+            if sessions.isEmpty {
+                Text(environment.mode == .demo ? "Demo starting…" : "No live sessions")
+                    .font(AuspexType.body)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            } else {
+                ForEach(sessions.prefix(Self.listLimit), id: \.key) { session in
+                    MenuBarRow(session: session) { open(session.key) }
+                }
+                if sessions.count > Self.listLimit {
+                    Text("and \(sessions.count - Self.listLimit) more")
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
                 }
             }
-            if sessions.count > Self.listLimit {
-                Text("and \(sessions.count - Self.listLimit) more")
+
+            Divider().overlay(AuspexPalette.line).padding(.vertical, 6)
+
+            MenuBarCommand(title: "Open Auspex", key: "a", modifiers: [.command, .shift]) {
+                open(nil)
+            }
+            // The one window that is not the board still has to be reachable
+            // from here: the menu bar is where this app is used from.
+            SettingsLink {
+                MenuBarCommandLabel(title: "Settings\u{2026}", shortcut: "\u{2318},")
+            }
+            .buttonStyle(.plain)
+            MenuBarCommand(title: "Quit", key: "q", modifiers: .command) {
+                NSApplication.shared.terminate(nil)
             }
         }
-
-        Divider()
-
-        Button("Open Auspex") { open(nil) }
-            .keyboardShortcut("o")
-
-        // The menu bar is where this app is used from, so the one window that
-        // is not the board has to be reachable from here too.
-        SettingsLink {
-            Text("Settings\u{2026}")
-        }
-        .keyboardShortcut(",")
-
-        Divider()
-
-        Button("Quit Auspex") {
-            NSApplication.shared.terminate(nil)
-        }
-        .keyboardShortcut("q")
+        .padding(8)
+        .frame(width: 340)
+        .background(AuspexPalette.bg1)
     }
 
-    private func menuTitle(for session: SessionSnapshot) -> String {
-        if let title = session.identity.title, !title.isEmpty {
-            return title.count > 44 ? String(title.prefix(43)) + "…" : title
+    private func header(count: Int, needsYou: Int) -> some View {
+        HStack(spacing: 8) {
+            Text("Live")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(AuspexPalette.text)
+            Text("\(count)")
+                .font(AuspexType.monoCount)
+                .auspexTabularDigits()
+                .foregroundStyle(AuspexPalette.text3)
+            Spacer(minLength: 4)
+            if needsYou > 0 {
+                HStack(spacing: 5) {
+                    StateDot(color: AuspexPalette.statePermission, glows: true)
+                    Text(needsYou == 1 ? "1 needs you" : "\(needsYou) needs you")
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.statePermission)
+                }
+            }
         }
-        return BoardGrouping.projectName(for: session) ?? session.key.sessionID
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
     }
 
     private func open(_ key: SessionKey?) {
         if let key { environment.board.selectedKey = key }
         NSApplication.shared.activate(ignoringOtherApps: true)
         openWindow(id: AuspexApp.mainWindowID)
+    }
+}
+
+/// One live session in the menu bar panel.
+///
+/// The mark *and* the full name of what it is doing. Two harnesses that share
+/// a vendor mark are told apart by the accent behind it, exactly as they are on
+/// the board — which is the point of the panel being a window rather than a
+/// menu.
+private struct MenuBarRow: View {
+    let session: SessionSnapshot
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                HarnessBadge(harness: session.key.harness, size: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(AuspexPalette.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(subtitle)
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 6)
+                StatePill(state: session.state, isStale: session.isStale)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(session.key.harness.displayName) — \(session.state.label)")
+    }
+
+    private var title: String {
+        if let title = session.identity.title, !title.isEmpty { return title }
+        return BoardGrouping.projectName(for: session) ?? session.key.sessionID
+    }
+
+    /// Where it is, and what it is doing right now — the two facts that fit
+    /// under a title at this width.
+    private var subtitle: String {
+        var parts: [String] = []
+        if let project = BoardGrouping.projectName(for: session) { parts.append(project) }
+        if let activity = session.state.activityDescription {
+            parts.append(activity)
+        } else if session.state.isEnded {
+            parts.append("ended")
+        }
+        return parts.isEmpty ? session.key.sessionID : parts.joined(separator: " · ")
+    }
+}
+
+/// How a command at the bottom of the panel looks.
+///
+/// Its own view because `SettingsLink` builds its own button and only takes a
+/// label — so the row that opens Settings and the rows beside it would
+/// otherwise be two different shapes.
+private struct MenuBarCommandLabel: View {
+    let title: String
+    let shortcut: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(AuspexType.row)
+                .foregroundStyle(AuspexPalette.text2)
+            Spacer(minLength: 8)
+            Text(shortcut)
+                .font(AuspexType.monoSmall)
+                .foregroundStyle(AuspexPalette.text3)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 26)
+        .contentShape(Rectangle())
+    }
+}
+
+/// A command at the bottom of the panel: a word and its shortcut.
+private struct MenuBarCommand: View {
+    let title: String
+    let key: KeyEquivalent
+    let modifiers: EventModifiers
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            // Written out from the binding rather than typed in beside it, so
+            // a shortcut that changes cannot leave a label claiming the old
+            // one.
+            MenuBarCommandLabel(
+                title: title,
+                shortcut: Self.describe(key: key, modifiers: modifiers)
+            )
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(key, modifiers: modifiers)
+    }
+
+    static func describe(key: KeyEquivalent, modifiers: EventModifiers) -> String {
+        var text = ""
+        if modifiers.contains(.control) { text += "⌃" }
+        if modifiers.contains(.option) { text += "⌥" }
+        if modifiers.contains(.shift) { text += "⇧" }
+        if modifiers.contains(.command) { text += "⌘" }
+        return text + String(key.character).uppercased()
     }
 }

@@ -2,8 +2,7 @@ import AgentSessionKit
 import AuspexCore
 import SwiftUI
 
-/// The Harnesses page: a rack of the seven harnesses Auspex watches, each with
-/// a status line and a detail line.
+/// The Harnesses page: a rack of the harnesses Auspex watches, one row each.
 ///
 /// ## What it is for
 ///
@@ -38,243 +37,181 @@ struct HarnessesPage: View {
     let rows: [HarnessStatus]
 
     var body: some View {
-        ScrollView {
+        BoardScroll {
             HarnessesPanel(rows: rows)
-                .padding(24)
-                .frame(maxWidth: .infinity)
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(BoardSurfaceBackground())
+        .background(AuspexPalette.canvas)
     }
 }
 
-/// The panel, without the scroll view around it — the same split
+/// The rack, without the scroll view around it — the same split
 /// ``BoardEmptyState`` uses, and for the same reason: a panel is composable and
 /// a scroll view is not.
 struct HarnessesPanel: View {
     let rows: [HarnessStatus]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header(rows: rows)
-            rack(rows: rows)
-            footnote
-        }
-        .frame(maxWidth: 720, alignment: .leading)
-        .panelChrome()
-    }
-
-    // MARK: Header
-
-    private func header(rows: [HarnessStatus]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Harnesses").auspexLabel()
-            }
-            .foregroundStyle(AuspexPalette.stateWriting)
-
-            Text(headline(rows: rows))
-                .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.textPrimary)
-
-            Text(
-                "Auspex reads each harness's own session store and its MCP configuration. "
-                    + "It never writes to either."
-            )
-            .font(AuspexType.body)
-            .foregroundStyle(AuspexPalette.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
-    }
-
-    private func headline(rows: [HarnessStatus]) -> String {
-        let detected = rows.count(where: \.isDetected)
-        let live = rows.reduce(0) { $0 + $1.liveCount }
-        let installed = detected == 1 ? "1 harness installed" : "\(detected) harnesses installed"
-        guard live > 0 else { return "\(installed), nothing running." }
-        return "\(installed), \(live) session\(live == 1 ? "" : "s") running."
-    }
-
-    // MARK: Rack
-
-    private func rack(rows: [HarnessStatus]) -> some View {
-        VStack(spacing: 0) {
-            columnHeader
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(rows) { row in
                 HarnessRackRow(status: row)
-                if row.id != rows.last?.id {
-                    Divider().overlay(AuspexPalette.hairline)
-                }
             }
+            footnote
         }
-        .background(AuspexPalette.well)
-        .overlay(Rectangle().strokeBorder(AuspexPalette.hairline, lineWidth: 1))
+        .frame(maxWidth: 1_180, alignment: .leading)
     }
 
-    private var columnHeader: some View {
-        HStack(spacing: 10) {
-            Text("Harness").auspexLabel(AuspexType.labelSmall).frame(width: 132, alignment: .leading)
-            Text("Sessions").auspexLabel(AuspexType.labelSmall)
-            Spacer(minLength: 8)
-            Text("Last activity").auspexLabel(AuspexType.labelSmall)
-            Text("Store").auspexLabel(AuspexType.labelSmall).frame(width: 168, alignment: .trailing)
-        }
-        .foregroundStyle(AuspexPalette.textTertiary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(AuspexPalette.hairline).frame(height: 1)
-        }
-    }
-
+    /// One sentence, in a dashed box, at the bottom of the rack.
+    ///
+    /// It is the page's one claim about *behaviour* rather than about state,
+    /// and it is the claim a reader most needs: nothing here is written to.
     private var footnote: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("Hooks")
-                .auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
-            Text(
-                "Harness hooks push a lifecycle event to Auspex the moment it happens, "
-                    + "instead of on the next file poll. They are opt-in and land in M3; "
-                    + "file tailing stays the baseline either way."
-            )
-            .font(AuspexType.body)
-            .foregroundStyle(AuspexPalette.textTertiary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        Text(
+            "Everything here is read-only. Auspex tails each store's own files and never "
+                + "writes into a harness directory; hooks and the auspex MCP entry are opt-in "
+                + "and arrive in M3."
+        )
+        .font(AuspexType.caption)
+        .foregroundStyle(AuspexPalette.text3)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(
+                AuspexPalette.line,
+                style: StrokeStyle(lineWidth: 1, dash: [4, 4])
+            )
+        )
+        .padding(.top, 6)
     }
 }
 
-/// One unit in the rack: a status line, and the configuration under it.
+/// One unit in the rack, as one line.
+///
+/// Six columns, fixed, because the page is read down a column: *which of these
+/// is not detected*, *which one is busy*, *which one has been quiet all day*.
+/// A row whose fields moved with its content would make every one of those a
+/// left-to-right read instead.
 private struct HarnessRackRow: View {
     let status: HarnessStatus
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            statusLine
-            configLine
+        HStack(alignment: .center, spacing: 16) {
+            identity.frame(width: 240, alignment: .leading)
+            detection.frame(width: 104, alignment: .leading)
+            counters.frame(width: 186, alignment: .leading)
+            Text(RelativeTimeText.since(status.lastEventAt))
+                .font(AuspexType.monoSmall)
+                .foregroundStyle(AuspexPalette.text3)
+                .frame(width: 96, alignment: .leading)
+            servers.frame(maxWidth: .infinity, alignment: .leading)
+            hooks.frame(width: 96, alignment: .leading)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .panelChrome()
         .accessibilityElement(children: .contain)
     }
 
-    // MARK: Status
-
-    private var statusLine: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 7) {
-                HarnessBadge(harness: status.harness, size: 20, isMuted: !status.isDetected)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(status.harness.displayName)
-                        .font(AuspexType.body)
-                        .foregroundStyle(AuspexPalette.textPrimary)
-                        .lineLimit(1)
-                    DetectionTag(isDetected: status.isDetected)
-                }
-            }
-            .frame(width: 132, alignment: .leading)
-
-            counters
-
-            Spacer(minLength: 8)
-
-            Text(RelativeTimeText.since(status.lastEventAt))
-                .font(AuspexType.monoSmall)
-                .foregroundStyle(AuspexPalette.textSecondary)
-                .fixedSize()
-
-            VStack(alignment: .trailing, spacing: 1) {
+    /// The vendor's mark, the harness's full name, and the directory Auspex
+    /// actually opens for it.
+    private var identity: some View {
+        HStack(spacing: 12) {
+            HarnessBadge(harness: status.harness, size: 28, isMuted: !status.isDetected)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(status.harness.displayName)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AuspexPalette.text)
+                    .lineLimit(1)
                 Text(status.storePath.map(PathDisplay.abbreviate) ?? "—")
                     .font(AuspexType.monoSmall)
-                    .foregroundStyle(AuspexPalette.textTertiary)
-                    .lineLimit(1)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(2)
                     .truncationMode(.head)
-                // Two rows naming one directory looks like a bug until it is
-                // explained, and one line of explanation is cheaper than a
-                // person discovering it from a duplicate path.
-                if let note = AuspexAdapters.storeNote(for: status.harness) {
-                    Text(note)
-                        .font(AuspexType.labelSmall)
-                        .foregroundStyle(AuspexPalette.textTertiary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.trailing)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
-            .frame(width: 168, alignment: .trailing)
-            .help(status.storePath ?? "No adapter watches a store for this harness.")
+        }
+        .help(status.storePath ?? "No adapter watches a store for this harness.")
+    }
+
+    /// Whether the store is on this Mac. A `stat`, and nothing else — kept
+    /// visibly apart from the counts so that "no sessions on the board" can
+    /// never read as "not installed".
+    private var detection: some View {
+        HStack(spacing: 6) {
+            StateDot(
+                color: status.isDetected ? AuspexPalette.stateWriting : AuspexPalette.text3,
+                glows: false,
+                size: 7
+            )
+            Text(status.isDetected ? "detected" : "not installed")
+                .font(AuspexType.body)
+                .foregroundStyle(AuspexPalette.text2)
+                .fixedSize()
         }
     }
 
     /// Live, idle, total — in that order, because a reader scanning this column
     /// is looking for the first one.
     private var counters: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 14) {
             CountBadge(value: status.liveCount, label: "live", tint: AuspexPalette.stateWriting)
-            CountBadge(value: status.idleCount, label: "idle", tint: AuspexPalette.textSecondary)
-            CountBadge(value: status.totalCount, label: "total", tint: AuspexPalette.textSecondary)
+            CountBadge(value: status.idleCount, label: "idle", tint: AuspexPalette.text)
+            CountBadge(value: status.totalCount, label: "total", tint: AuspexPalette.text)
         }
     }
 
-    // MARK: MCP
-
+    /// What this harness has been told it can reach.
     @ViewBuilder
-    private var configLine: some View {
+    private var servers: some View {
         if let mcp = status.mcp {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text("MCP")
-                        .auspexLabel(AuspexType.labelSmall)
-                        .foregroundStyle(AuspexPalette.textTertiary)
-                    Text(PathDisplay.abbreviate(mcp.location.path))
-                        .font(AuspexType.monoSmall)
-                        .foregroundStyle(AuspexPalette.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Spacer(minLength: 6)
-                    Text(summary(mcp))
-                        .font(AuspexType.monoSmall)
-                        .foregroundStyle(AuspexPalette.textSecondary)
-                        .fixedSize()
+            FlowLayout(spacing: 6, lineSpacing: 6) {
+                Text("MCP")
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .padding(.vertical, 5)
+                ForEach(mcp.serverNames, id: \.self) { name in
+                    ServerChip(name: name, isScoped: false)
                 }
-                serverChips(mcp)
+                ForEach(mcp.scopedServerNames, id: \.self) { name in
+                    ServerChip(name: name, isScoped: true)
+                }
+                AuspexSlot(isRegistered: mcp.registersAuspex)
             }
-            .padding(.leading, 27)
+            .help(summary(mcp))
         } else if let note = HarnessMCPConfigStore.externallyManagedNote(for: status.harness) {
             // No file to name. Saying so is the honest row: pointing at the
             // sibling harness's config would report the wrong servers with
             // full confidence.
             HStack(spacing: 6) {
                 Text("MCP")
-                    .auspexLabel(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.textTertiary)
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
                 Text(note)
                     .font(AuspexType.monoSmall)
-                    .foregroundStyle(AuspexPalette.textTertiary)
-                Spacer(minLength: 6)
+                    .foregroundStyle(AuspexPalette.text3)
             }
-            .padding(.leading, 27)
         }
     }
 
-    @ViewBuilder
-    private func serverChips(_ mcp: HarnessMCPConfig) -> some View {
-        let columns = [GridItem(.adaptive(minimum: 104, maximum: 220), spacing: 5, alignment: .leading)]
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 5) {
-            ForEach(mcp.serverNames, id: \.self) { name in
-                ServerChip(name: name, isScoped: false)
-            }
-            ForEach(mcp.scopedServerNames, id: \.self) { name in
-                ServerChip(name: name, isScoped: true)
-            }
-            AuspexSlot(isRegistered: mcp.registersAuspex)
+    /// Whether this harness pushes lifecycle events to Auspex rather than
+    /// being tailed. Nothing does yet, and an empty ring is how the board says
+    /// "expected, not yet real" everywhere else.
+    private var hooks: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .strokeBorder(AuspexPalette.text3, lineWidth: 1)
+                .frame(width: 7, height: 7)
+            Text("hooks off")
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
+                .fixedSize()
         }
+        .help(
+            "Harness hooks push a lifecycle event the moment it happens instead of on the "
+                + "next file poll. They are opt-in and land in M3; file tailing stays the "
+                + "baseline either way."
+        )
     }
 
     /// What the config amounts to, in one phrase.
@@ -291,17 +228,6 @@ private struct HarnessRackRow: View {
 
 // MARK: - Parts
 
-/// Whether the harness's store is on this Mac.
-private struct DetectionTag: View {
-    let isDetected: Bool
-
-    var body: some View {
-        Text(isDetected ? "Detected" : "Not installed")
-            .auspexLabel(AuspexType.labelSmall)
-            .foregroundStyle(isDetected ? AuspexPalette.stateWriting : AuspexPalette.textTertiary)
-    }
-}
-
 /// One configured MCP server.
 ///
 /// A scoped server — configured for one project directory rather than for the
@@ -313,20 +239,16 @@ private struct ServerChip: View {
     let isScoped: Bool
 
     var body: some View {
-        HStack(spacing: 3) {
-            if isScoped {
-                Image(systemName: "folder")
-                    .font(.system(size: 7, weight: .semibold))
+        FactChip(tint: nil, isMono: true) {
+            HStack(spacing: 3) {
+                if isScoped {
+                    Image(systemName: "folder")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                Text(name)
             }
-            Text(name)
-                .font(AuspexType.monoSmall)
-                .lineLimit(1)
-                .truncationMode(.middle)
         }
-        .foregroundStyle(isScoped ? AuspexPalette.textTertiary : AuspexPalette.textSecondary)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .overlay(Capsule().strokeBorder(AuspexPalette.hairline, lineWidth: 1))
+        .opacity(isScoped ? 0.7 : 1)
         .help(isScoped ? "Configured for one project directory" : "Configured for every session")
     }
 }
@@ -342,23 +264,26 @@ private struct AuspexSlot: View {
     let isRegistered: Bool
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: isRegistered ? "checkmark.seal.fill" : "circle.dashed")
-                .font(.system(size: 8, weight: .bold))
-            Text(HarnessMCPConfigStore.auspexServerName)
-                .font(AuspexType.monoSmall)
-            if !isRegistered {
-                Text("M3").auspexLabel(AuspexType.labelSmall)
+        HStack(spacing: 4) {
+            if isRegistered {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 8, weight: .bold))
             }
+            Text(
+                isRegistered
+                    ? HarnessMCPConfigStore.auspexServerName
+                    : "\(HarnessMCPConfigStore.auspexServerName) — add in M3"
+            )
+            .font(AuspexType.caption)
+            .lineLimit(1)
         }
-        .foregroundStyle(isRegistered ? AuspexPalette.stateWriting : AuspexPalette.textTertiary)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
+        .foregroundStyle(isRegistered ? AuspexPalette.stateWriting : AuspexPalette.text3)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .overlay(
-            Capsule().strokeBorder(
-                (isRegistered ? AuspexPalette.stateWriting : AuspexPalette.textTertiary)
-                    .opacity(0.5),
-                style: StrokeStyle(lineWidth: 1, dash: isRegistered ? [] : [2.5, 2.5])
+            RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(
+                (isRegistered ? AuspexPalette.stateWriting : AuspexPalette.line2),
+                style: StrokeStyle(lineWidth: 1, dash: isRegistered ? [] : [3, 3])
             )
         )
         .help(

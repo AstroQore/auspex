@@ -16,18 +16,32 @@ struct BoardHeader: View {
     @Bindable var model: LiveBoardModel
     let section: BoardSection
 
+    @Environment(\.isSnapshotRender) private var isSnapshotRender
+
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             heading
             if section == .live || section == .allSessions {
-                SummaryChips(summary: model.summary)
+                // The chips are the first thing to give way. Every control to
+                // their right is a thing a person operates, and a picker
+                // squeezed to forty points is a picker nobody can hit; a chip
+                // that is not on screen is a number they can still read off
+                // the sidebar and the cards.
+                ViewThatFits(in: .horizontal) {
+                    SummaryChips(summary: model.summary)
+                    SummaryChips(summary: model.summary, limit: 3)
+                    SummaryChips(summary: model.summary, limit: 2)
+                    SummaryChips(summary: model.summary, limit: 1)
+                    Color.clear.frame(width: 0, height: 0)
+                }
                 Spacer(minLength: 8)
                 SegmentedPicker(
                     selection: $model.viewMode,
                     options: BoardViewMode.pickerOrder.map { ($0, $0.title) }
                 )
+                .fixedSize()
                 .help("Read the same board as a wall of cards or as a room")
-                groupMenu
+                groupMenu.fixedSize()
                 searchField
             } else {
                 Text(subtitle)
@@ -112,13 +126,28 @@ struct BoardHeader: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(AuspexPalette.text3)
-            TextField("Search sessions", text: $model.searchQuery)
-                .textFieldStyle(.plain)
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.text)
+            // `ImageRenderer` cannot draw an `NSTextField`, and a screenshot
+            // with a system placeholder box where the search field should be
+            // says nothing true about the app. The offscreen render gets the
+            // field's resting state, which is what it looks like anyway.
+            if isSnapshotRender {
+                Text(model.searchQuery.isEmpty ? "Search sessions" : model.searchQuery)
+                    .font(AuspexType.body)
+                    .foregroundStyle(
+                        model.searchQuery.isEmpty ? AuspexPalette.text3 : AuspexPalette.text
+                    )
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            } else {
+                TextField("Search sessions", text: $model.searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(AuspexType.body)
+                    .foregroundStyle(AuspexPalette.text)
+            }
         }
         .padding(.horizontal, 10)
-        .frame(width: 190, height: 28)
+        .frame(minWidth: 110, idealWidth: 150, maxWidth: 150)
+        .frame(height: 28)
         .background(fieldBackground)
         .help("Search every transcript")
     }
@@ -140,26 +169,34 @@ struct BoardHeader: View {
 /// on screen is a red chip nobody looks at.
 struct SummaryChips: View {
     let summary: BoardSummary
+    /// How many chips to draw, most urgent first. `nil` draws every chip that
+    /// has something to say.
+    var limit: Int?
 
     var body: some View {
-        HStack(spacing: 12) {
-            ForEach(summary.chips, id: \.kind) { chip in
-                HStack(spacing: 6) {
+        HStack(spacing: 9) {
+            ForEach(shown, id: \.kind) { chip in
+                HStack(spacing: 5) {
                     StateDot(color: Self.color(for: chip.kind), glows: chip.kind == .needsYou)
                     Text("\(chip.value)")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 11.5, weight: .bold))
                         .auspexTabularDigits()
                         .foregroundStyle(
                             chip.kind == .done ? AuspexPalette.text3 : AuspexPalette.text
                         )
                     Text(chip.kind.label)
-                        .font(AuspexType.body)
+                        .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 }
                 .fixedSize()
                 .accessibilityElement(children: .combine)
             }
         }
+    }
+
+    private var shown: [(kind: BoardSummary.Kind, value: Int)] {
+        guard let limit else { return summary.chips }
+        return Array(summary.chips.prefix(limit))
     }
 
     /// One colour per kind, from the state palette — so the chip that says

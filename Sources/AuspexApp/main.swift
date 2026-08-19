@@ -92,6 +92,41 @@ if let flag = arguments.firstIndex(of: "--render-crew") {
     }
 }
 
+// Renders the main window from the demo board, offscreen. The same bargain
+// `--render-scene` makes: a screenshot taken off a screen carries whatever was
+// on that screen, and this one carries fabricated sessions under
+// `/Users/example` instead. It is also the only way to look at the board on a
+// machine with no attached display.
+if let flag = arguments.firstIndex(of: "--render-board") {
+    let rest = arguments[arguments.index(after: flag)...]
+    guard let path = rest.first, !path.hasPrefix("-") else {
+        FileHandle.standardError.write(
+            Data("auspex: --render-board needs a destination path.\n".utf8)
+        )
+        exit(2)
+    }
+    let warmup = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 20
+    // A taller frame is how the parts of the board below the artboard's fold —
+    // the collapsed `Ended` section, most of all — get looked at.
+    let height = rest.dropFirst(2).first.flatMap(Double.init)
+        ?? WindowSnapshotRenderer.defaultSize.height
+    let section = rest.dropFirst(3).first
+        .flatMap { BoardSection(rawValue: String($0)) } ?? .live
+    do {
+        try WindowSnapshotRenderer.render(
+            to: URL(fileURLWithPath: path),
+            warmup: warmup,
+            size: CGSize(width: WindowSnapshotRenderer.defaultSize.width, height: height),
+            section: section
+        )
+        FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 if arguments.contains("--help") || arguments.contains("-h") {
     FileHandle.standardOutput.write(Data("""
         auspex — one live board for every AI coding agent on this Mac.
@@ -112,6 +147,12 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         from the demo board at `seconds` into its loop
                         (default 16), with every avatar frozen `animation
                         seconds` into its own animation (default 1.4).
+          --render-board <path> [seconds] [height] [section]
+                        Render the whole window — sidebar, board, trace — to a
+                        PNG, offscreen, after letting the demo run for
+                        `seconds` (default 20), at `height` points (default
+                        900), showing `section` (default `live`; `harnesses`
+                        draws the rack). Reads no harness store.
           --mcp-stdio   Serve the task board over MCP on stdio. (M3)
           --hook        Handle a harness hook invocation. (M3)
           --help        Show this.

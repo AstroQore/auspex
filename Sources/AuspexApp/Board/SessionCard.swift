@@ -193,8 +193,8 @@ struct SessionCard: View, Equatable {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .fixedSize()
                 .help("Open the session that spawned this one")
-                .layoutPriority(-2)
             } else if descendantCount > 0 {
                 FactChip(
                     descendantCount == 1 ? "↳ 1 child" : "↳ \(descendantCount) children",

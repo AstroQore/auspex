@@ -132,7 +132,7 @@ struct SidebarView: View {
 
             SidebarSectionLabel(BoardSection.projects.title)
 
-            ScrollView {
+            BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ProjectsSidebar(
                         tree: tree,
@@ -151,7 +151,6 @@ struct SidebarView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollContentBackground(.hidden)
 
             if mode == .demo { demoNote }
 

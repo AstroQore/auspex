@@ -108,6 +108,52 @@ extension View {
     }
 }
 
+/// `true` while the window is being drawn by ``WindowSnapshotRenderer``
+/// rather than by a real window.
+///
+/// One flag, read by the three views that scroll. `ImageRenderer` has no
+/// window and therefore no viewport, so a `ScrollView` proposes nothing to its
+/// content and every lazy stack inside it draws zero rows — a screenshot of an
+/// empty board. Laying the content out eagerly at the image's own size is what
+/// makes the render show what a person would see.
+private struct SnapshotRenderKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var isSnapshotRender: Bool {
+        get { self[SnapshotRenderKey.self] }
+        set { self[SnapshotRenderKey.self] = newValue }
+    }
+}
+
+/// A scroll view, except while the window is being rendered offscreen.
+struct BoardScroll<Content: View>: View {
+    @Environment(\.isSnapshotRender) private var isSnapshotRender
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if isSnapshotRender {
+            // An overlay, not a frame: `frame(maxHeight: .infinity)` resolves
+            // to whichever is *larger* of the proposal and the content, so a
+            // board taller than the image would grow the column and push the
+            // header off the top of it. An overlay never changes the size of
+            // what it is over.
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topLeading) {
+                    content.fixedSize(horizontal: false, vertical: true)
+                }
+                .clipped()
+        } else {
+            ScrollView {
+                content
+            }
+            .scrollContentBackground(.hidden)
+        }
+    }
+}
+
 /// An inset chip: a fact that is worth boxing but not worth colouring.
 ///
 /// Project, branch, working directory, an MCP server's name. One shape for all
@@ -124,6 +170,7 @@ struct FactChip<Content: View>: View {
             .foregroundStyle(tint ?? AuspexPalette.text2)
             .lineLimit(1)
             .truncationMode(.middle)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(

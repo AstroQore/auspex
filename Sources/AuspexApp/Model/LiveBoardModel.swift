@@ -386,6 +386,21 @@ final class LiveBoardModel {
         traceItems = items
     }
 
+    /// The row of the permission prompt nobody has answered, when there is
+    /// one.
+    ///
+    /// Answered here rather than in the row, because a row cannot tell the
+    /// difference between "Bash wants to run this" and "Bash was allowed to
+    /// run this" — both are permission rows with no duration — and outlining
+    /// both in red would make the highlight mean "something to do with
+    /// permissions" instead of "this is what the board is waiting on".
+    var pendingPermissionRowID: TraceEntry.ID? {
+        guard let session = selectedSession,
+              case .waitingPermission = session.state
+        else { return nil }
+        return trace.last { $0.glyph == .permission }?.id
+    }
+
     /// The id of the last row, for the auto-scroll to aim at.
     var traceTailID: TraceListItem.ID? {
         traceItems.last?.id

@@ -47,7 +47,7 @@ struct BoardView: View {
     }
 
     private var grid: some View {
-        ScrollView {
+        BoardScroll {
             LazyVStack(alignment: .leading, spacing: 22) {
                 ForEach(model.groups) { group in
                     VStack(alignment: .leading, spacing: 12) {
@@ -65,7 +65,6 @@ struct BoardView: View {
             .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .scrollContentBackground(.hidden)
     }
 
     /// A section is a grid of cards, unless it is a delegation tree — in which
@@ -336,6 +335,26 @@ struct BoardSectionHeader: View {
     var subtitle: String?
     var liveCount: Int?
     let harness: Harness?
+
+    init(title: String, subtitle: String? = nil, liveCount: Int? = nil, harness: Harness?) {
+        self.title = title
+        self.subtitle = subtitle
+        self.liveCount = liveCount
+        self.harness = harness
+    }
+
+    /// The header for a section the grouping produced.
+    ///
+    /// A convenience so a caller that already holds a ``BoardGroup`` — the
+    /// crew wall does — does not have to unpack the same four fields.
+    init(group: BoardGroup) {
+        self.init(
+            title: group.title,
+            subtitle: group.subtitle,
+            liveCount: group.counts.live,
+            harness: group.harness
+        )
+    }
 
     var body: some View {
         HStack(spacing: 10) {
