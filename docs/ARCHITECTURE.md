@@ -200,6 +200,53 @@ one answer rather than two answers.
 parent": the trace header names the evidence, because a spawn a log recorded
 and a shared process ancestor are not the same claim.
 
+### The user layer: `AuspexProject` and `IgnoreRule`
+
+Everything above is automatic, and automatic answers a question a person did
+not ask twice: *these six directories are one piece of work* is not written
+down anywhere on disk. So a second layer sits over the resolver's.
+
+An **`AuspexProject`** claims roots. Any session whose worktree, git root, or
+working directory is under a claimed root is placed in it, whatever git said.
+The longest claim wins, and two claims of equal length go to the older project
+— so making a project can never silently move somebody else's sessions. A
+project also carries a name, a colour, a pin, and the `HarnessProjectRef`s it
+was imported from.
+
+`ProjectClaims` — the index built from those projects — rides on
+`BoardSnapshot`. That is the load-bearing decision: `projectKey(for:)` is what
+the wall, the sidebar, a card's subtitle, the scene's floor plates and the
+trace header all ask, so a user layer applied anywhere else would be a layer
+four of the five surfaces remembered to apply. `projectDisplayName(forKey:)` is
+the matching answer for a section's title, and pinned projects are promoted to
+the front of `BoardGrouping` and `ProjectTree` alike.
+
+Projects are **imported** from the harnesses' own registries, behind
+`HarnessProjectSource` so the next one is a file rather than a branch. Claude
+Code's is in two places — the encoded directory names under `~/.claude/projects`
+(decoded against the file system by the kit's `ClaudeProjectPath`) and the
+`projects` keys of `~/.claude.json`, *only* those keys, never the account
+information beside them. Codex's is also two: the `[projects."…"]` tables in
+`~/.codex/config.toml`, read by the same section scanner the MCP page uses, and
+the distinct `cwd`s of `local_thread_catalog` in `~/.codex/sqlite/codex-dev.db`,
+opened through the kit's read-only `LiveSQLiteReader`.
+
+An **`IgnoreRule`** hides sessions: a folder and everything under it, a project
+however its sessions were placed, the opening of a prompt, a whole harness, or a
+substring of a title. `BoardFilter` applies the claims and then the rules,
+turning the registry's frame into the one the app draws — `LiveBoardModel.board`
+— and *every* surface reads that one. Nothing downstream re-applies a rule, so
+nothing downstream can forget to. Hiding a session hides what it delegated to,
+because a subagent has no directory, no process and no title of its own.
+
+Ignored is not deleted: the sessions are still ingested, still stored, and still
+in the FTS index. The board's header offers "N ignored", which puts them back
+dimmed, and every surface that writes a rule says the same sentence about it.
+
+`.promptPrefix` is the one kind the kit cannot answer yet — a snapshot carries
+no first prompt — so it matches the title, the row in Settings says so, and the
+test that pins the fallback is in `IgnoreRuleTests`.
+
 ## Harness Configuration
 
 `HarnessMCPConfigStore` reads each harness's own MCP configuration — the
@@ -283,6 +330,16 @@ deleted on the way in), 30 days of searchable text, and a per-harness list
 excluded from the index entirely. `RetentionJob.run()` deletes and then
 reclaims pages with `PRAGMA incremental_vacuum`; the database is opened in
 incremental auto-vacuum mode for it. Not scheduled yet — *M4*.
+
+Beside the database are the three files a person edits rather than the app
+fills: `character-selection.json`, `projects.json` (the user's projects and the
+folders they claim), and `settings.json` (the ignore rules, and whether the
+board is revealing them). They are JSON rather than tables because they are
+small, rare, and worth being able to open — and separate files rather than one
+because they are written by different surfaces at different rhythms, and adding
+a folder to a project should not rewrite the ignore rules. Reading any of them
+is total: a missing file is an empty value, and one unreadable entry costs that
+entry rather than the file.
 
 Every path is vended by `AuspexPaths`, which creates directories at mode 0700
 and refuses to create anything outside `~/.auspex/`. That containment check is

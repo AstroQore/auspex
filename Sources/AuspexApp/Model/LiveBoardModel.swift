@@ -571,7 +571,12 @@ final class LiveBoardModel {
     }
 
     /// Applies one frame.
-    private func apply(_ frame: BoardSnapshot) {
+    ///
+    /// Internal rather than private so the suite can hand it a frame: the only
+    /// other way in is a live `SessionRegistry` and a real event stream, which
+    /// would make a test of "what does the board do with this frame" a test of
+    /// the pipeline's timing.
+    func apply(_ frame: BoardSnapshot) {
         rawBoard = frame
         rebuildVisibleBoard()
         if !board.sessions.isEmpty { hasEverSeenSession = true }
