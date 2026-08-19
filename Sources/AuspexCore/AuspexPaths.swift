@@ -72,6 +72,27 @@ public struct AuspexPaths: Sendable {
         baseDirectory.appendingPathComponent("logs", isDirectory: true)
     }
 
+    /// `~/.auspex/characters` — user-supplied character packages.
+    ///
+    /// Read constantly and written only by the person who drops a package in.
+    /// Auspex creates it on demand — the Settings pane's "Open characters
+    /// folder" button and the watcher both need somewhere to point at — and
+    /// never puts anything inside it.
+    public var charactersDirectory: URL {
+        baseDirectory.appendingPathComponent("characters", isDirectory: true)
+    }
+
+    /// `~/.auspex/character-selection.json` — which character each harness
+    /// wears, plus any per-session overrides.
+    ///
+    /// Separate from ``settingsURL`` because it is written by a different
+    /// surface at a different rhythm: a person picking a character for one
+    /// harness should not rewrite the file that holds retention and indexing
+    /// preferences.
+    public var characterSelectionURL: URL {
+        baseDirectory.appendingPathComponent("character-selection.json", isDirectory: false)
+    }
+
     // MARK: - Lazy creation
 
     /// Creates `~/.auspex/` with 0700 if it does not exist and returns it.
@@ -88,6 +109,14 @@ public struct AuspexPaths: Sendable {
         fileManager: FileManager = .default
     ) throws -> URL {
         try ensureDirectory(logsDirectory, fileManager: fileManager)
+    }
+
+    /// Creates `~/.auspex/characters/` with 0700 if it does not exist.
+    @discardableResult
+    public func ensureCharactersDirectory(
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        try ensureDirectory(charactersDirectory, fileManager: fileManager)
     }
 
     /// Creates the parent directory of ``databaseURL`` and returns the file

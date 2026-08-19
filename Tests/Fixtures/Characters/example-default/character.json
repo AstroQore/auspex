@@ -1,0 +1,42 @@
+{
+  "id": "example-default",
+  "displayName": "Example",
+  "kind": "person",
+  "accent": "#E0785A",
+  "cell": 32,
+  "anchor": "bottomCenter",
+  "poses": {
+    "idle": {
+      "frames": 2,
+      "fps": 2
+    },
+    "thinking": {
+      "frames": 4,
+      "fps": 4
+    },
+    "typing": {
+      "frames": 6,
+      "fps": 12
+    },
+    "writing": {
+      "frames": 4,
+      "fps": 6
+    },
+    "delegating": {
+      "frames": 4,
+      "fps": 6
+    },
+    "blocked": {
+      "frames": 2,
+      "fps": 2
+    },
+    "stale": {
+      "frames": 2,
+      "fps": 1
+    },
+    "ended": {
+      "frames": 4,
+      "fps": 6
+    }
+  }
+}
