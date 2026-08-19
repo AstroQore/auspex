@@ -74,10 +74,29 @@ final class LiveBoardModel {
         didSet { if oldValue != projectFilter { rebuildGroups() } }
     }
 
+    /// The one ledger bucket the board is showing, set by clicking a summary
+    /// chip and cleared by clicking it again. `nil` shows everything.
+    ///
+    /// A chip is a count and a filter at once, which is the cheapest way to
+    /// make a number actionable: reading "3 done unseen" and then hunting for
+    /// which three is the work this saves.
+    var bucketFilter: TaskLedger.Bucket? {
+        didSet { if oldValue != bucketFilter { rebuildGroups() } }
+    }
+
+    /// When the person last opened each session — Auspex's own record, and the
+    /// other half of "done, and you have not looked at it".
+    ///
+    /// Held in memory and written through to the store, rather than read per
+    /// card: the answer changes only when somebody clicks, and a card must not
+    /// go to SQLite to find out whether it is unread.
+    private(set) var seenAt: [SessionKey: Date] = [:]
+
     /// The card the detail pane is about.
     var selectedKey: SessionKey? {
         didSet {
             guard oldValue != selectedKey else { return }
+            if let selectedKey { markSeen(selectedKey) }
             trace = []
             traceItems = []
             expandedRows = []
@@ -155,7 +174,7 @@ final class LiveBoardModel {
         for session in board.sessions { index[session.key] = session }
         sessionIndex = index
 
-        let builder = BoardRowBuilder(board: board)
+        let builder = BoardRowBuilder(board: board, seenAt: seenAt)
         let groups = BoardGrouping.groups(
             for: board,
             groupBy: groupBy,
@@ -165,15 +184,25 @@ final class LiveBoardModel {
         )
         self.groups = groups
         rowGroups = groups.map { group in
-            BoardRowGroup(
+            // A delegation tree keeps its own order: the shape *is* the
+            // information, and re-sorting it by urgency would draw a child
+            // above the parent that spawned it. Everything else is ordered by
+            // the ledger — what needs a person, then what finished while they
+            // were elsewhere.
+            let rows = group.roots.map { Self.flatten($0, builder: builder) }
+                ?? TaskLedger.sorted(builder.rows(for: group.sessions))
+            return BoardRowGroup(
                 id: group.id,
                 title: group.title,
                 harness: group.harness,
                 liveCount: group.counts.live,
-                rows: group.roots.map { Self.flatten($0, builder: builder) }
-                    ?? builder.rows(for: group.sessions)
+                rows: bucketFilter.map { bucket in TaskLedger.rows(rows, in: bucket) } ?? rows
             )
         }
+        // A section header with nothing under it is a filter's leftovers. Only
+        // possible while a bucket filter is on; the grouping never produces an
+        // empty group of its own.
+        .filter { !$0.rows.isEmpty }
 
         let kept = BoardGrouping.filtered(
             board.sessions,
@@ -182,8 +211,51 @@ final class LiveBoardModel {
             in: board
         )
         let ended = EndedSessions.mostRecentFirst(EndedSessions.split(kept).ended)
-        endedRows = builder.rows(for: ended)
-        summary = BoardSummary(counts: BoardSnapshot.Counts(sessions: kept))
+        let endedRows = TaskLedger.sorted(builder.rows(for: ended))
+        self.endedRows = bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows
+        // Counted before the bucket filter, on purpose: a chip that zeroed the
+        // others when clicked would leave no way back to them.
+        summary = BoardSummary(sessions: kept, seenAt: seenAt)
+    }
+
+    /// Turns the bucket filter on, or off if it is already on this bucket.
+    func toggleBucketFilter(_ bucket: TaskLedger.Bucket) {
+        bucketFilter = bucketFilter == bucket ? nil : bucket
+    }
+
+    // MARK: What has been read
+
+    /// Records that the person has now looked at a session.
+    ///
+    /// Called when a card is selected, which is the only way its trace opens —
+    /// so "seen" means "the transcript was on screen" rather than "the card
+    /// was on the wall". The write goes through the store off the main actor;
+    /// the in-memory map is updated first so the dot clears on the same frame
+    /// as the click rather than a persist interval later.
+    func markSeen(_ key: SessionKey, at date: Date = Date()) {
+        if let existing = seenAt[key], existing >= date { return }
+        seenAt[key] = date
+        rebuildGroups()
+        guard let repository else { return }
+        Task.detached(priority: .utility) {
+            try? repository.markSeen(key: key, at: date)
+        }
+    }
+
+    /// Reloads what has already been read, so a relaunch does not mark a
+    /// week of finished sessions unread.
+    func loadSeen() {
+        guard let repository else { return }
+        Task { [weak self] in
+            let stored = await Task.detached(priority: .utility) { () -> [SessionKey: Date] in
+                (try? repository.allLastSeen()) ?? [:]
+            }.value
+            guard let self, !stored.isEmpty else { return }
+            for (key, date) in stored where (self.seenAt[key] ?? .distantPast) < date {
+                self.seenAt[key] = date
+            }
+            self.rebuildGroups()
+        }
     }
 
     /// A delegation forest as a flat run of rows carrying their depth.
@@ -220,6 +292,16 @@ final class LiveBoardModel {
     /// pane — which on a board of several hundred sessions is a scan per
     /// child per body.
     private var sessionIndex: [SessionKey: SessionSnapshot] = [:]
+
+    /// One session's live snapshot, when the current frame still has it.
+    ///
+    /// A lookup into the per-frame index, for the handful of places that need
+    /// the whole snapshot rather than the row derived from it — a resume
+    /// command needs the session id, the variant, and the working directory,
+    /// none of which a card carries.
+    func session(for key: SessionKey) -> SessionSnapshot? {
+        sessionIndex[key]
+    }
 
     /// The selected session's live snapshot, when the board still has one.
     var selectedSession: SessionSnapshot? {
@@ -333,6 +415,7 @@ final class LiveBoardModel {
     ///     it just has no history behind it.
     func start(registry: SessionRegistry, repository: SessionRepository?) {
         self.repository = repository
+        loadSeen()
         consumeTask?.cancel()
         consumeTask = Task { [weak self] in
             // The registry publishes up to 20 frames a second; a wall of a few

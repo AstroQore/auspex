@@ -1,3 +1,4 @@
+import AgentSessionLive
 import AuspexCore
 import SwiftUI
 
@@ -27,11 +28,15 @@ struct BoardHeader: View {
                 // squeezed to forty points is a picker nobody can hit; a chip
                 // that is not on screen is a number they can still read off
                 // the sidebar and the cards.
+                // Written out rather than looped: `ViewThatFits` picks between
+                // its *static* children, and a `ForEach` inside it is one
+                // child whose contents it cannot choose among.
                 ViewThatFits(in: .horizontal) {
-                    SummaryChips(summary: model.summary)
-                    SummaryChips(summary: model.summary, limit: 3)
-                    SummaryChips(summary: model.summary, limit: 2)
-                    SummaryChips(summary: model.summary, limit: 1)
+                    chips(limit: nil)
+                    chips(limit: 4)
+                    chips(limit: 3)
+                    chips(limit: 2)
+                    chips(limit: 1)
                     Color.clear.frame(width: 0, height: 0)
                 }
                 Spacer(minLength: 8)
@@ -59,6 +64,15 @@ struct BoardHeader: View {
     }
 
     // MARK: Pieces
+
+    private func chips(limit: Int?) -> some View {
+        SummaryChips(
+            summary: model.summary,
+            limit: limit,
+            selected: model.bucketFilter,
+            onSelect: { model.toggleBucketFilter($0) }
+        )
+    }
 
     private var heading: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -170,34 +184,67 @@ struct BoardHeader: View {
     }
 }
 
-/// The four numbers, each with a dot in its state's colour.
+/// The numbers, each with a dot in its state's colour, and each a filter.
 ///
-/// Zeroes are dropped for the three live kinds and kept for `done`, which is
+/// Zeroes are dropped for the live kinds and kept for `done`, which is
 /// ``BoardSummary/chips``' rule and not this view's: a red chip that is always
 /// on screen is a red chip nobody looks at.
+///
+/// Clicking one shows only that bucket, and clicking it again shows everything.
+/// A count a person cannot act on sends them hunting through the wall for the
+/// three cards it was about; a count that filters answers the question it
+/// raised. The selected chip is drawn lit rather than merely outlined, because
+/// a filtered board looks like a quiet one and the reason has to be visible
+/// from the same glance.
 struct SummaryChips: View {
     let summary: BoardSummary
     /// How many chips to draw, most urgent first. `nil` draws every chip that
     /// has something to say.
     var limit: Int?
+    /// The bucket the board is filtered to, if any.
+    var selected: TaskLedger.Bucket?
+    var onSelect: (TaskLedger.Bucket) -> Void = { _ in }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 6) {
             ForEach(shown, id: \.kind) { chip in
-                HStack(spacing: 5) {
-                    StateDot(color: Self.color(for: chip.kind), glows: chip.kind == .needsYou)
-                    Text("\(chip.value)")
-                        .font(.system(size: 11.5, weight: .bold))
-                        .auspexTabularDigits()
-                        .foregroundStyle(
-                            chip.kind == .done ? AuspexPalette.text3 : AuspexPalette.text
+                let isOn = selected == chip.kind
+                Button { onSelect(chip.kind) } label: {
+                    HStack(spacing: 5) {
+                        StateDot(
+                            color: Self.color(for: chip.kind),
+                            glows: chip.kind == .needsYou || isOn
                         )
-                    Text(chip.kind.label)
-                        .font(AuspexType.caption)
-                        .foregroundStyle(AuspexPalette.text3)
+                        Text("\(chip.value)")
+                            .font(.system(size: 11.5, weight: .bold))
+                            .auspexTabularDigits()
+                            .foregroundStyle(
+                                chip.kind == .done && !isOn
+                                    ? AuspexPalette.text3
+                                    : AuspexPalette.text
+                            )
+                        Text(chip.kind.label)
+                            .font(AuspexType.caption)
+                            .foregroundStyle(isOn ? AuspexPalette.text2 : AuspexPalette.text3)
+                    }
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+                    .frame(height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(isOn ? AuspexPalette.bg3 : .clear)
+                    )
+                    .contentShape(Rectangle())
                 }
-                .fixedSize()
+                .buttonStyle(.plain)
+                .help(
+                    isOn
+                        ? "Show every session again"
+                        : "Show only the \(chip.kind.label) sessions"
+                )
                 .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(chip.value) \(chip.kind.label)")
+                .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
             }
         }
     }
@@ -209,9 +256,14 @@ struct SummaryChips: View {
 
     /// One colour per kind, from the state palette — so the chip that says
     /// "needs you" is the same red as the pill on the card it is counting.
+    ///
+    /// `doneUnseen` borrows the writing green at 80 %: it is the same
+    /// "something was made" the board uses everywhere, held back a step
+    /// because a finished session is good news rather than live news.
     static func color(for kind: BoardSummary.Kind) -> Color {
         switch kind {
         case .needsYou: AuspexPalette.statePermission
+        case .doneUnseen: AuspexPalette.stateWriting.opacity(0.8)
         case .working: AuspexPalette.stateTool
         case .idle: AuspexPalette.stateIdle
         case .done: AuspexPalette.stateEnded

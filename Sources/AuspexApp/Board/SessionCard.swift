@@ -64,6 +64,7 @@ struct SessionCard: View, Equatable {
         VStack(alignment: .leading, spacing: 10) {
             header(style: style, isOver: isOver)
             identityLine
+            ledgerLines
             activityLine(style: style)
             chips
             ActivityStrip(motion: style.motion, color: style.color, isStale: row.isStale)
@@ -108,18 +109,44 @@ struct SessionCard: View, Equatable {
 
     /// The mark, the headline, and the state — the only line that has to be
     /// readable from across the room.
+    ///
+    /// Two lines of headline rather than one, because the headline is often
+    /// the assignment: a session whose harness never named it shows what it was
+    /// asked to do, and one line of that is a sentence cut off mid-clause.
     private func header(style: StateStyle, isOver: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             HarnessBadge(harness: row.harness, size: 22, isMuted: isOver)
             Text(row.title)
                 .font(AuspexType.cardTitle)
                 .foregroundStyle(isOver ? AuspexPalette.text3 : AuspexPalette.text)
-                .lineLimit(1)
+                .lineLimit(2)
                 .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if row.isUnseenDone { UnseenDot() }
             if row.isStale, !isOver { StaleTag() }
             StatePill(state: row.state, isStale: row.isStale)
                 .fixedSize()
+        }
+    }
+
+    /// The ledger: what was asked last, and what came back.
+    ///
+    /// Only the lines that say something new. The title already carries the
+    /// harness's name for the session or, failing that, the assignment, so
+    /// ``BoardRow/latestPrompt`` is `nil` whenever repeating it would be the
+    /// same sentence twice — see ``BoardRowBuilder``.
+    @ViewBuilder
+    private var ledgerLines: some View {
+        if row.latestPrompt != nil || row.latestAssistant != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                if let asked = row.latestPrompt {
+                    LedgerLine(key: "asked", text: asked, tint: AuspexPalette.text2)
+                }
+                if let said = row.latestAssistant {
+                    LedgerLine(key: "said", text: said, tint: AuspexPalette.text3)
+                }
+            }
         }
     }
 
@@ -200,19 +227,28 @@ struct SessionCard: View, Equatable {
     }
 
     /// The counters, in the order they are asked for.
+    ///
+    /// A finished-and-unread session trades the stopwatch for the sentence a
+    /// person came for: *done · 12 min ago · unseen*. How long it ran matters
+    /// while it is running; once it has stopped, when it stopped is the number
+    /// that decides whether to go and look.
     private var footer: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 5) {
-                Text(elapsedLabel)
-                    .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.text3)
-                ElapsedLabel(
-                    since: row.elapsedSince,
-                    until: row.endedAt,
-                    tint: row.state.style.isAlarming
-                        ? row.state.style.color
-                        : AuspexPalette.text
-                )
+            if row.isUnseenDone, let endedAt = row.lastTurnEndedAt {
+                DoneLabel(at: endedAt)
+            } else {
+                HStack(spacing: 5) {
+                    Text(elapsedLabel)
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text3)
+                    ElapsedLabel(
+                        since: row.elapsedSince,
+                        until: row.endedAt,
+                        tint: row.state.style.isAlarming
+                            ? row.state.style.color
+                            : AuspexPalette.text
+                    )
+                }
             }
             MetaField(key: "turns", value: "\(row.turnCount)")
             MetaField(key: "tools", value: "\(row.toolCallCount)")
@@ -247,6 +283,73 @@ struct SessionCard: View, Equatable {
         case .idle: "quiet"
         default: "elapsed"
         }
+    }
+}
+
+/// One line of the ledger: a short key, then what was said.
+///
+/// The key is a word and not a label — no colon, no capital — because the
+/// board is dense and the reader is scanning for the *text*, not for the
+/// heading over it. Two lines maximum: enough for a sentence, few enough that
+/// a card of four prompts cannot become the tallest thing on the wall.
+private struct LedgerLine: View {
+    let key: String
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(key)
+                .font(AuspexType.labelSmall)
+                .foregroundStyle(AuspexPalette.text3.opacity(0.75))
+                .frame(width: 30, alignment: .leading)
+            Text(text)
+                .font(AuspexType.caption)
+                .foregroundStyle(tint)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// The dot that says a session finished something nobody has read.
+///
+/// The board's "something was made" green, held back a step. It is good news,
+/// not live news, and it must not compete with the red that means a person is
+/// being waited on.
+struct UnseenDot: View {
+    var body: some View {
+        Circle()
+            .fill(AuspexPalette.stateWriting.opacity(0.8))
+            .frame(width: 7, height: 7)
+            .padding(.top, 4)
+            .accessibilityLabel("Finished, and you have not looked at it")
+    }
+}
+
+/// *done · 12 min ago · unseen*, in place of the stopwatch.
+private struct DoneLabel: View {
+    let at: Date
+    @Environment(BoardClock.self) private var clock
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text("done")
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
+            // Reads the shared clock rather than owning one, so this label
+            // re-renders on the board's own tick and nothing above it does.
+            Text(RelativeTimeText.since(at, now: clock.now))
+                .font(AuspexType.monoClock)
+                .auspexTabularDigits()
+                .foregroundStyle(AuspexPalette.stateWriting.opacity(0.8))
+            Text("· unseen")
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.stateWriting.opacity(0.8))
+        }
+        .fixedSize()
     }
 }
 

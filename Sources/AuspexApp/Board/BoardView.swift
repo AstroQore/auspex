@@ -99,7 +99,20 @@ struct BoardView: View {
         )
         .equatable()
         .onTapGesture { model.selectedKey = row.key }
+        .contextMenu { actions(for: row) }
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// The handoff menu, built from the live identity rather than from the
+    /// row: a resume command needs the session id, the variant, and the
+    /// working directory, and putting three more strings on every row of a
+    /// four-hundred-card board to save one dictionary lookup on right-click is
+    /// the wrong way round.
+    @ViewBuilder
+    private func actions(for row: BoardRow) -> some View {
+        if let session = model.session(for: row.key) {
+            SessionActionsMenu(identity: session.identity)
+        }
     }
 
     /// The finished sessions, as one-line rows under one header.
@@ -115,6 +128,7 @@ struct BoardView: View {
                     EndedSessionRow(row: row, isSelected: model.selectedKey == row.key)
                         .equatable()
                         .onTapGesture { model.selectedKey = row.key }
+                        .contextMenu { actions(for: row) }
                 }
             }
             .panelChrome()
@@ -152,6 +166,11 @@ struct BoardView: View {
 /// Everything a card says about *activity* is gone, because there is none.
 /// What is left is what a person looks for in history: whose session it was,
 /// what it was called, where it ran, and when it stopped.
+///
+/// One exception, and it is the reason this section is worth scrolling to: a
+/// row nobody has read since it finished keeps its mark bright, gains a green
+/// dot, and says `unseen` where the others say how they ended. A finished
+/// session is history; a finished session nobody has read is an errand.
 struct EndedSessionRow: View, Equatable {
     let row: BoardRow
     let isSelected: Bool
@@ -162,10 +181,11 @@ struct EndedSessionRow: View, Equatable {
 
     var body: some View {
         HStack(spacing: 10) {
-            HarnessBadge(harness: row.harness, size: 16, isMuted: true)
+            HarnessBadge(harness: row.harness, size: 16, isMuted: !row.isUnseenDone)
+            if row.isUnseenDone { UnseenDot().padding(.top, 0) }
             Text(row.title)
                 .font(AuspexType.caption)
-                .foregroundStyle(AuspexPalette.text2)
+                .foregroundStyle(row.isUnseenDone ? AuspexPalette.text : AuspexPalette.text2)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if let project = row.project {
@@ -176,9 +196,13 @@ struct EndedSessionRow: View, Equatable {
                     .layoutPriority(-1)
             }
             Spacer(minLength: 8)
-            Text(reason)
+            Text(row.isUnseenDone ? "unseen" : reason)
                 .font(AuspexType.monoSmall)
-                .foregroundStyle(AuspexPalette.text3)
+                .foregroundStyle(
+                    row.isUnseenDone
+                        ? AuspexPalette.stateWriting.opacity(0.8)
+                        : AuspexPalette.text3
+                )
                 .fixedSize()
             Text(RelativeTimeText.since(row.endedAt ?? row.lastEventAt))
                 .font(AuspexType.monoSmall)

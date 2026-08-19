@@ -1,3 +1,4 @@
+import AgentSessionKit
 import AgentSessionLive
 import AppKit
 import AuspexCore
@@ -69,8 +70,20 @@ struct MenuBarLabel: View {
 
     var body: some View {
         let summary = board.summary
+        // The board's own order: what is stuck on me, what finished while I
+        // was elsewhere, what is in flight, what is sitting open. The menu bar
+        // and the header answer the same questions in the same sequence, so
+        // one glance teaches the other.
         HStack(spacing: 3) {
             Image(systemName: "eye")
+            if summary.needsYou > 0 {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("\(summary.needsYou)")
+            }
+            if summary.doneUnseen > 0 {
+                Image(systemName: "checkmark.circle")
+                Text("\(summary.doneUnseen)")
+            }
             if summary.working > 0 {
                 Image(systemName: "play.fill")
                 Text("\(summary.working)")
@@ -79,19 +92,16 @@ struct MenuBarLabel: View {
                 Image(systemName: "hourglass")
                 Text("\(summary.idle)")
             }
-            if summary.needsYou > 0 {
-                Image(systemName: "exclamationmark.triangle.fill")
-                Text("\(summary.needsYou)")
-            }
         }
         .accessibilityLabel(accessibilityLabel(summary))
     }
 
     private func accessibilityLabel(_ summary: BoardSummary) -> String {
         var parts = ["Auspex"]
+        if summary.needsYou > 0 { parts.append("\(summary.needsYou) needs you") }
+        if summary.doneUnseen > 0 { parts.append("\(summary.doneUnseen) done unseen") }
         if summary.working > 0 { parts.append("\(summary.working) working") }
         if summary.idle > 0 { parts.append("\(summary.idle) idle") }
-        if summary.needsYou > 0 { parts.append("\(summary.needsYou) needs you") }
         if parts.count == 1 { parts.append("nothing running") }
         return parts.joined(separator: ", ")
     }
@@ -111,11 +121,20 @@ struct MenuBarContent: View {
     private static let listLimit = 10
 
     var body: some View {
-        let sessions = environment.board.board.sessions.filter { !$0.state.isEnded }
-        let summary = environment.board.summary
+        let board = environment.board
+        let seenAt = board.seenAt
+        // Live sessions, plus the finished ones nobody has read. A session
+        // that ended and was looked at is history and belongs on the board's
+        // collapsed section; one that ended and was not is the errand this
+        // panel exists to hand over.
+        let sessions = TaskLedger.sorted(
+            board.board.sessions.filter { TaskLedger.wantsAttention($0, lastSeenAt: seenAt[$0.key]) },
+            seenAt: seenAt
+        )
+        let summary = board.summary
 
         VStack(alignment: .leading, spacing: 2) {
-            header(count: summary.live, needsYou: summary.needsYou)
+            header(count: summary.live, needsYou: summary.needsYou, doneUnseen: summary.doneUnseen)
 
             if sessions.isEmpty {
                 Text(environment.mode == .demo ? "Demo starting…" : "No live sessions")
@@ -125,7 +144,14 @@ struct MenuBarContent: View {
                     .padding(.vertical, 10)
             } else {
                 ForEach(sessions.prefix(Self.listLimit), id: \.key) { session in
-                    MenuBarRow(session: session) { open(session.key) }
+                    MenuBarRow(
+                        session: session,
+                        isUnseenDone: TaskLedger.isUnseenDone(
+                            state: session.state,
+                            lastTurnEndedAt: session.brief.lastTurnEndedAt,
+                            lastSeenAt: seenAt[session.key]
+                        )
+                    ) { open(session.key) }
                 }
                 if sessions.count > Self.listLimit {
                     Text("and \(sessions.count - Self.listLimit) more")
@@ -156,7 +182,7 @@ struct MenuBarContent: View {
         .background(AuspexPalette.bg1)
     }
 
-    private func header(count: Int, needsYou: Int) -> some View {
+    private func header(count: Int, needsYou: Int, doneUnseen: Int) -> some View {
         HStack(spacing: 8) {
             Text("Live")
                 .font(.system(size: 13, weight: .bold))
@@ -166,6 +192,14 @@ struct MenuBarContent: View {
                 .auspexTabularDigits()
                 .foregroundStyle(AuspexPalette.text3)
             Spacer(minLength: 4)
+            if doneUnseen > 0 {
+                HStack(spacing: 5) {
+                    StateDot(color: AuspexPalette.stateWriting.opacity(0.8), glows: false)
+                    Text("\(doneUnseen) done unseen")
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.stateWriting.opacity(0.8))
+                }
+            }
             if needsYou > 0 {
                 HStack(spacing: 5) {
                     StateDot(color: AuspexPalette.statePermission, glows: true)
@@ -195,6 +229,7 @@ struct MenuBarContent: View {
 /// menu.
 private struct MenuBarRow: View {
     let session: SessionSnapshot
+    var isUnseenDone = false
     let action: () -> Void
 
     var body: some View {
@@ -214,6 +249,7 @@ private struct MenuBarRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 6)
+                if isUnseenDone { UnseenDot() }
                 StatePill(state: session.state, isStale: session.isStale)
                     .fixedSize()
             }
@@ -225,14 +261,24 @@ private struct MenuBarRow: View {
         .help("\(session.key.harness.displayName) — \(session.state.label)")
     }
 
+    /// What the harness called it, or what it was told to do. A project name
+    /// is the last resort: on a machine with four sessions in one checkout it
+    /// is the same row four times.
     private var title: String {
         if let title = session.identity.title, !title.isEmpty { return title }
+        if let task = session.brief.firstPrompt, !task.isEmpty { return task }
         return BoardGrouping.projectName(for: session) ?? session.key.sessionID
     }
 
-    /// Where it is, and what it is doing right now — the two facts that fit
-    /// under a title at this width.
+    /// What it last said, or failing that where it is and what it is doing.
+    ///
+    /// The reply first, because this panel is read to decide whether to open
+    /// the window — and "two of them are not in the changelog" decides that,
+    /// while "storefront-web · idle" does not.
     private var subtitle: String {
+        if isUnseenDone, let said = session.brief.latestAssistant, !said.isEmpty {
+            return said
+        }
         var parts: [String] = []
         if let project = BoardGrouping.projectName(for: session) { parts.append(project) }
         if let activity = session.state.activityDescription {

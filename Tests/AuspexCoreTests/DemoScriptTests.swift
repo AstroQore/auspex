@@ -140,6 +140,69 @@ struct DemoScriptTests {
         #expect(!titles.contains(BoardGrouping.noProjectTitle))
     }
 
+    // MARK: - The ledger
+
+    /// Every session the script produces, folded exactly as the registry
+    /// would fold it.
+    private func demoSnapshots(upTo offset: TimeInterval = .infinity) -> [SessionSnapshot] {
+        let script = DemoScript.make(startedAt: epoch)
+        let reducer = SessionStateReducer()
+        var snapshots: [SessionKey: SessionSnapshot] = [:]
+        for step in script.steps where step.offset <= offset {
+            let key = step.event.session
+            let previous = snapshots[key] ?? {
+                if case .sessionStarted(let identity) = step.event.kind {
+                    return SessionStateReducer.initialSnapshot(identity: identity)
+                }
+                return SessionStateReducer.initialSnapshot(
+                    identity: SessionIdentity(key: key, sourcePath: "")
+                )
+            }()
+            snapshots[key] = reducer.reduce(previous, event: step.event)
+        }
+        return Array(snapshots.values).sorted { $0.key.sessionID < $1.key.sessionID }
+    }
+
+    @Test("every demo session was asked for something and answered in prose")
+    func everySessionCarriesABrief() {
+        // The board's ledger lines draw these. A demo whose prompts were
+        // placeholders would screenshot as a wall of cards with two empty
+        // rows on each.
+        let sessions = demoSnapshots()
+        #expect(sessions.allSatisfy { $0.brief.firstPrompt?.isEmpty == false })
+        #expect(sessions.count { $0.brief.latestAssistant?.isEmpty == false } >= 6)
+        #expect(sessions.count { $0.brief.followUpPrompt != nil } >= 6)
+    }
+
+    @Test("the demo board has something finished that nobody has read")
+    func theBoardHasADoneUnseenSession() {
+        let sessions = demoSnapshots()
+        let unseen = sessions.filter {
+            TaskLedger.isUnseenDone(
+                state: $0.state,
+                lastTurnEndedAt: $0.brief.lastTurnEndedAt,
+                lastSeenAt: nil
+            )
+        }
+        #expect(!unseen.isEmpty, "the board's own feature should be visible in a screenshot")
+        // Both shapes: one that exited, and one still sitting open in its
+        // editor. They read very differently on a card and both have to work.
+        #expect(unseen.contains { $0.state.isEnded })
+        #expect(unseen.contains { !$0.state.isEnded })
+    }
+
+    @Test("a session opened stops being unseen")
+    func openingClearsTheFlag() throws {
+        let sessions = demoSnapshots()
+        let session = try #require(
+            sessions.first { $0.brief.lastTurnEndedAt != nil && !$0.state.isActive }
+        )
+        let after = try #require(session.brief.lastTurnEndedAt).addingTimeInterval(1)
+        #expect(TaskLedger.isUnseenDone(
+            state: session.state, lastTurnEndedAt: session.brief.lastTurnEndedAt, lastSeenAt: after
+        ) == false)
+    }
+
     @Test("the two harnesses that share a store are still separate sessions")
     func sharedStoresStaySeparateSessions() {
         let script = DemoScript.make(startedAt: epoch)

@@ -73,6 +73,21 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     public let parent: Parent?
     /// How far below its root the tree grouping draws it. `0` everywhere else.
     public let depth: Int
+    /// What the person asked this session to do — the first real instruction
+    /// in its transcript. `nil` for a session whose store recorded none, or
+    /// one Auspex met after the fact.
+    public let assignedTask: String?
+    /// The most recent instruction, when it says something ``title`` and
+    /// ``assignedTask`` do not. `nil` when the assignment is still the whole
+    /// story.
+    public let latestPrompt: String?
+    /// The last thing the model said in prose.
+    public let latestAssistant: String?
+    /// When a turn last closed. What "done · 12 min ago" is measured from.
+    public let lastTurnEndedAt: Date?
+    /// `true` when a turn closed after the card was last opened — see
+    /// ``TaskLedger/isUnseenDone(state:lastTurnEndedAt:lastSeenAt:)``.
+    public let isUnseenDone: Bool
 
     public var id: SessionKey { key }
 
@@ -112,7 +127,12 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         lastEventAt: Date?,
         descendantCount: Int,
         parent: Parent?,
-        depth: Int
+        depth: Int,
+        assignedTask: String? = nil,
+        latestPrompt: String? = nil,
+        latestAssistant: String? = nil,
+        lastTurnEndedAt: Date? = nil,
+        isUnseenDone: Bool = false
     ) {
         self.key = key
         self.harness = harness
@@ -136,6 +156,11 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         self.descendantCount = descendantCount
         self.parent = parent
         self.depth = depth
+        self.assignedTask = assignedTask
+        self.latestPrompt = latestPrompt
+        self.latestAssistant = latestAssistant
+        self.lastTurnEndedAt = lastTurnEndedAt
+        self.isUnseenDone = isUnseenDone
     }
 }
 
@@ -169,22 +194,29 @@ public struct BoardRowGroup: Identifiable, Sendable, Equatable {
 public struct BoardRowBuilder: Sendable {
     private let board: BoardSnapshot
     private let bySession: [SessionKey: SessionSnapshot]
+    /// When the person last opened each session. Auspex's own state, held in
+    /// memory by the board model and passed in whole, so that deciding whether
+    /// a card is unread is a dictionary lookup rather than a query per card.
+    private let seenAt: [SessionKey: Date]
 
-    public init(board: BoardSnapshot) {
+    public init(board: BoardSnapshot, seenAt: [SessionKey: Date] = [:]) {
         self.board = board
         var index: [SessionKey: SessionSnapshot] = [:]
         index.reserveCapacity(board.sessions.count)
         for session in board.sessions { index[session.key] = session }
         self.bySession = index
+        self.seenAt = seenAt
     }
 
     /// The row for one session.
     public func row(for session: SessionSnapshot, depth: Int = 0) -> BoardRow {
         let project = board.projectKey(for: session).map(BoardGrouping.projectName(forPath:))
+        let brief = session.brief
+        let title = Self.title(for: session, project: project)
         return BoardRow(
             key: session.key,
             harness: session.key.harness,
-            title: Self.title(for: session, project: project),
+            title: title,
             shortID: String(session.key.sessionID.prefix(8)),
             pid: session.identity.pid,
             modelName: session.identity.model,
@@ -203,7 +235,19 @@ public struct BoardRowBuilder: Sendable {
             lastEventAt: session.lastEventAt,
             descendantCount: board.tree.descendants(of: session.key).count,
             parent: parent(of: session),
-            depth: depth
+            depth: depth,
+            assignedTask: brief.firstPrompt,
+            // The card already carries the assignment on its title line or
+            // right under it. Repeating it as "asked:" spends a row of pixels
+            // to say the same thing twice.
+            latestPrompt: brief.latestPrompt == title ? nil : brief.followUpPrompt,
+            latestAssistant: brief.latestAssistant,
+            lastTurnEndedAt: brief.lastTurnEndedAt,
+            isUnseenDone: TaskLedger.isUnseenDone(
+                state: session.state,
+                lastTurnEndedAt: brief.lastTurnEndedAt,
+                lastSeenAt: seenAt[session.key]
+            )
         )
     }
 
@@ -224,13 +268,20 @@ public struct BoardRowBuilder: Sendable {
         return BoardRow.Parent(key: key, title: String(key.sessionID.prefix(10)))
     }
 
-    /// The headline: what the harness called this session, or the project it
-    /// is in, or its own id.
+    /// The headline: what the harness called this session, or what it was
+    /// asked to do, or the project it is in, or its own id.
     ///
-    /// Never invented. A session whose adapter recorded none of the three
-    /// shows its own id, which at least identifies it.
+    /// The assignment sits above the project on purpose. A harness title is a
+    /// name somebody — or something — chose for this session; the first
+    /// instruction is the closest thing to one when nobody did. A project name
+    /// is neither: on a board where five sessions share a checkout it is the
+    /// same headline five times, which is a wall a person cannot read.
+    ///
+    /// Never invented. A session whose store recorded none of the three shows
+    /// its own id, which at least identifies it.
     public static func title(for session: SessionSnapshot, project: String?) -> String {
         if let title = session.identity.title, !title.isEmpty { return title }
+        if let task = session.brief.firstPrompt, !task.isEmpty { return task }
         if let project { return project }
         return String(session.key.sessionID.prefix(12))
     }

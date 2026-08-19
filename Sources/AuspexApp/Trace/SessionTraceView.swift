@@ -266,9 +266,13 @@ struct SessionHeaderView: View {
     var projectName: String?
     let onSelect: (SessionKey) -> Void
 
+    /// Whether the reader has opened the assignment out past its fold.
+    @State private var showsWholeTask = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             identity
+            assignment
             chips
             stats
         }
@@ -305,6 +309,88 @@ struct SessionHeaderView: View {
         }
     }
 
+    /// What this session was told to do.
+    ///
+    /// The one thing the pane could not say before, and the reason a person
+    /// opened it: the trace below is a list of what happened, which answers
+    /// nothing on its own if the instruction that caused it scrolled off the
+    /// top an hour ago.
+    ///
+    /// Folded at four lines with a control to open it, rather than truncated:
+    /// a brief is a paragraph a person wrote, and the half of it that matters
+    /// is as often at the end as at the start.
+    @ViewBuilder
+    private var assignment: some View {
+        if let task = session.brief.firstPrompt, !task.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("asked for")
+                    .font(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.text3.opacity(0.75))
+                    .tracking(AuspexType.labelTracking)
+                Text(task)
+                    .font(AuspexType.body)
+                    .foregroundStyle(AuspexPalette.text2)
+                    .lineLimit(showsWholeTask ? nil : 4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if task.count > Self.foldedTaskLength {
+                    Button(showsWholeTask ? "less" : "more") {
+                        showsWholeTask.toggle()
+                    }
+                    .buttonStyle(.link)
+                    .font(AuspexType.caption)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AuspexPalette.bg1)
+            )
+        }
+    }
+
+    /// Roughly four lines at this width. A guess, deliberately: `lineLimit`
+    /// knows how many lines were drawn and will not say, so the control
+    /// appears when the text is long enough to plausibly need it rather than
+    /// exactly when it was clipped. Offering it once too often is a click;
+    /// withholding it once too often is text nobody can read.
+    private static let foldedTaskLength = 220
+
+    /// The way back into the terminal this session came from.
+    ///
+    /// A button rather than only a context menu because it is the last step of
+    /// the errand the board exists to remind a person of, and an action that
+    /// only exists on right-click is an action most people never find.
+    /// Disabled with the reason for the harnesses that have no way back.
+    @ViewBuilder
+    private var resumeButton: some View {
+        let resume = SessionHandoff.resume(for: session.identity)
+        Menu {
+            SessionActionsMenu(identity: session.identity)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Resume")
+                    .font(AuspexType.pill)
+            }
+            .foregroundStyle(resume.isAvailable ? AuspexPalette.text2 : AuspexPalette.text3)
+            .fixedSize()
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .padding(.horizontal, 9)
+        .frame(height: 22)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(AuspexPalette.line, lineWidth: 1)
+        )
+        .help(resume.reason ?? "Open this session again in its own CLI")
+    }
+
     /// The full name, never an abbreviation, and the three identifiers a
     /// person needs to find this session in their own terminal.
     private var identityLine: String {
@@ -316,6 +402,7 @@ struct SessionHeaderView: View {
 
     private var title: String {
         if let title = session.identity.title, !title.isEmpty { return title }
+        if let task = session.brief.firstPrompt, !task.isEmpty { return task }
         return session.key.sessionID
     }
 
@@ -371,10 +458,18 @@ struct SessionHeaderView: View {
         return String(session.key.sessionID.prefix(10))
     }
 
-    /// How much of this there has been. One row, four numbers, no keys longer
-    /// than the values they label.
+    /// How much of this there has been, and the way back to it.
+    ///
+    /// A flow rather than an `HStack`: the pane is resizable down to 360 points
+    /// and four numbers plus a button do not fit there. Wrapping puts the
+    /// button on its own line; compressing would squeeze `00:25` into three.
+    ///
+    /// The button belongs on this row and not beside the title, because the
+    /// title line already carries the harness, the id, the pid, and the model
+    /// — and a control squeezed in there truncates the one line whose exact
+    /// characters a person came to read.
     private var stats: some View {
-        HStack(spacing: 16) {
+        FlowLayout(spacing: 16, lineSpacing: 8) {
             HStack(spacing: 5) {
                 Text("elapsed")
                     .font(AuspexType.caption)
@@ -385,14 +480,17 @@ struct SessionHeaderView: View {
                     font: AuspexType.monoClock
                 )
             }
-            MetaField(key: "turns", value: "\(session.turnCount)")
-            MetaField(key: "tools", value: "\(session.toolCallCount)")
+            .fixedSize()
+            MetaField(key: "turns", value: "\(session.turnCount)").fixedSize()
+            MetaField(key: "tools", value: "\(session.toolCallCount)").fixedSize()
             MetaField(
                 key: "tokens",
                 value: "\(TokenFormat.compact(session.tokensIn)) / "
                     + "\(TokenFormat.compact(session.tokensOut))"
             )
-            Spacer(minLength: 0)
+            .fixedSize()
+            resumeButton
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

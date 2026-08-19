@@ -207,8 +207,14 @@ extension DemoScript.Blueprint {
     ///
     /// Chosen to cover all eight featured harnesses, every state the card can
     /// be in, both grouping axes (five directories, two of them shared by
-    /// different harnesses, plus the one pseudo project), and a parent/child
-    /// pair.
+    /// different harnesses, plus the one pseudo project), a parent/child pair,
+    /// and both shapes of *done unseen* — one session that closed a turn and
+    /// exited (6), and one that closed a turn and is still sitting open (8).
+    ///
+    /// Every blueprint opens with a real instruction and answers with real
+    /// prose, because that is what the board's ledger lines draw: a demo whose
+    /// prompts were placeholders would screenshot as a board with two empty
+    /// rows on every card.
     ///
     /// Claude Cowork, ChatGPT Work, and Grok Bot are here for a reason beyond
     /// coverage: each shares a vendor mark with a sibling, so a demo board
@@ -407,6 +413,11 @@ extension DemoScript.Blueprint {
             ],
             live: [
                 .say("Fixed: the split was truncating instead of distributing the remainder."),
+                // The turn closes *before* the session does, which is what
+                // makes this the board's `done unseen` card: something
+                // finished, nobody has read it, and the process going away
+                // afterwards does not change either fact.
+                .endTurn,
                 .idle(9.0),
                 .end(.exited)
             ],
@@ -440,7 +451,10 @@ extension DemoScript.Blueprint {
             startDelay: 2.8
         ),
 
-        // 8. Cursor, idle the whole loop. Every wall has one.
+        // 8. Cursor, idle the whole loop. Every wall has one — and for the
+        //    first forty-eight seconds it is also the ledger's other shape:
+        //    a session that is still open in the editor, closed its turn, and
+        //    is sitting there waiting to be read. Idle, not ended, and unseen.
         DemoScript.Blueprint(
             harness: .cursor,
             sessionID: "e07c4a91b2d8635f",
