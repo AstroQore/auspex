@@ -84,6 +84,47 @@ The demo runs entirely in memory. It opens no harness store, creates no
 The board is dark-first and follows the system appearance
 ([light mode](docs/screenshots/board-light.png)).
 
+## Scene view
+
+The same board, read as a room. Every live session is a little person at a
+desk; every project is a room they share; a sub-agent sits at a smaller desk
+beside the agent that spawned it, with a dotted line back to it. Switch with
+the **Board / Scene** control above the grid.
+
+![The scene view: six project rooms, each with pixel agents at desks, their monitors lit by what they are doing](docs/screenshots/scene.png)
+
+It exists because the two views answer different questions. The wall of cards
+answers *what is this session doing* precisely — tool name, target file,
+elapsed, tokens. The office answers *what is the whole machine doing* without
+being read at all: the loudest channel is light, so a monitor's colour is its
+session's state and its rhythm is that state's motion, and the spill lands on
+the desk and the agent. Six rooms of lighting resolve as a pattern before any
+shape does.
+
+| State | The desk | The agent |
+| --- | --- | --- |
+| Thinking | screen breathes, blue | head bobs |
+| Tool call | screen flickers, amber | hands alternate, fast |
+| Writing a file | steady green, paper on the desk | hands alternate, half speed |
+| Delegating | steady violet, the tether pulses | stands, holds a note toward the sub-agent |
+| Waiting for permission | strobes red | hand up, red `!` bubble |
+| Idle | dim | slumped, still |
+| Stale | dim | `zzz` |
+| Ended | dark | the agent leaves, the desk stays |
+
+Exactly one of those is allowed to shout, and it is the one that will never
+resolve itself without a person.
+
+Scroll to pan, pinch or ⌘-scroll to zoom, **Fit** to frame everything. Click a
+desk to fill the trace inspector — the same selection clicking a card makes, in
+both directions. Hover for a nameplate; double-click to centre. Under Reduce
+Motion every rhythm collapses to a static pose. A session keeps its desk for as
+long as it is on the board, so nothing moves under the pointer; when it goes,
+the desk stays empty until something else takes it.
+
+The people are placeholders drawn in code, not art. Real sprites drop in per
+harness and per pose without a rebuild — [`docs/SPRITES.md`](docs/SPRITES.md)
+is the specification.
 ## Projects and Trees
 
 Two questions cut across a board that no harness records: **where** a session is

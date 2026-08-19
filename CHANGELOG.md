@@ -82,6 +82,40 @@ Auspex is pre-alpha; there are no released versions yet.
   sessions across all five harnesses, seeded and reproducible — out of an
   in-memory store, so the UI can be developed and demonstrated before any
   adapter exists. It reads no harness store and writes nothing to disk.
+- **The scene view.** The same board read as a room: every session is a pixel
+  agent at a desk, every project is a room they share, and a sub-agent sits at
+  a smaller desk beside its parent with a dotted tether back to it. A
+  **Board / Scene** control above the grid switches between them, and the
+  choice is remembered. The two answer different questions — the wall says what
+  one session is doing, the office says what the whole machine is doing without
+  being read — so the loudest channel here is light: a monitor's colour is its
+  session's state, its rhythm is that state's motion, and the spill lands on
+  the desk and the agent. Blocked sessions strobe red, raise a hand, and put an
+  exclamation over the desk; everything else stays quiet. Camera pans on
+  scroll, zooms on pinch or ⌘-scroll, and frames the whole building on
+  **Fit**. Clicking a desk sets the same selection clicking a card does, in
+  both directions. Every rhythm collapses to a static pose under Reduce Motion.
+- **`SceneLayout`** in `AuspexCore` — the pure, tested seating plan behind it.
+  Keeps an allocation table rather than laying out from the board's own order,
+  which sorts by urgency: a desk is held for as long as its session is on the
+  board, a newcomer takes the lowest free slot, and nothing already seated
+  moves when somebody arrives or leaves. Vacated desks in the middle of a row
+  stay on the plan as empty workstations and are reused; trailing ones are
+  trimmed. Rooms are shelved left to right and wrap, so four small projects
+  read as one building rather than a column four screens tall.
+- **`SceneDirector`** diffs the SpriteKit graph against each frame instead of
+  rebuilding it — a node recreated twenty times a second is a node whose
+  `repeatForever` restarts twenty times a second — and the view runs at 30 fps
+  and pauses itself when its window is occluded or hidden.
+- **Procedural placeholder sprites and `SpriteLibrary`.** The agents are drawn
+  in code today, in their harness's own accent hue, from small RGBA buffers
+  rendered with nearest-neighbour filtering. Real frame strips drop in per
+  harness, variant, and pose from `~/.auspex/sprites/` or the app bundle, with
+  the procedural rig as the fallback for anything nobody has drawn yet.
+  [`docs/SPRITES.md`](docs/SPRITES.md) specifies the atlas.
+- **`--render-scene <path> [seconds]`** renders the office to a PNG offscreen
+  from the demo board, so the README's screenshot is a reproducible build
+  artefact containing no real session, path, or name.
   a person, and grouped by harness and by project. Carries the delegation
   forest as `tree`, and groups a child that recorded no directory of its own
   under its nearest ancestor's project rather than leaving it homeless.
