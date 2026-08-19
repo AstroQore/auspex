@@ -1,0 +1,505 @@
+import AgentSessionKit
+import AgentSessionLive
+import AppKit
+import SpriteKit
+import SwiftUI
+
+/// Every colour the office is built from, resolved against one appearance.
+///
+/// SpriteKit has no equivalent of SwiftUI's dynamic colour: a texture is bytes,
+/// and bytes cannot re-resolve themselves when a person switches to light mode.
+/// So the scene resolves the whole palette once, keeps it as concrete sRGB
+/// values, and throws its texture cache away when the appearance changes. The
+/// shared colours come from ``AuspexPalette`` rather than from copies, because
+/// a harness whose hue differs between the board and the scene is not an
+/// identity — it is two decorations that happen to be near each other.
+///
+/// The furniture tones are the only colours defined here, and they are defined
+/// here because nothing else in the app has furniture.
+struct SceneTheme: Equatable {
+    /// The appearance this was resolved for. Keys the texture cache.
+    let id: String
+    let isDark: Bool
+
+    let canvas: NSColor
+    let grid: NSColor
+    let panel: NSColor
+    let hairline: NSColor
+    let hairlineStrong: NSColor
+    let textPrimary: NSColor
+    let textSecondary: NSColor
+    let textTertiary: NSColor
+
+    /// The lit surface of a desk.
+    let deskTop: NSColor
+    /// Its front panel, in shadow.
+    let deskFront: NSColor
+    /// Legs and the shadow they cast.
+    let deskLeg: NSColor
+    /// An office chair.
+    let chair: NSColor
+    /// A face. Deliberately a warm neutral rather than any particular skin
+    /// tone: these are placeholder agents, not people, and the harness hue is
+    /// what identifies them.
+    let face: NSColor
+    /// Outlines and eyes.
+    let ink: NSColor
+    /// A dark monitor, before any state lights it.
+    let screenOff: NSColor
+
+    private let harnessAccents: [Harness: NSColor]
+    private let stateColors: [String: NSColor]
+
+    /// This harness's accent, the same hue the board's rail uses.
+    func accent(_ harness: Harness) -> NSColor {
+        harnessAccents[harness] ?? textSecondary
+    }
+
+    /// This state's colour, the same hue the board's pulse line uses.
+    func color(for state: SessionState) -> NSColor {
+        stateColors[Self.stateKey(state)] ?? textSecondary
+    }
+
+    /// A stable name for a state, ignoring its payload. Two `toolCalling`
+    /// states with different tool names are the same colour and the same
+    /// animation, and treating them as one is what keeps the director from
+    /// restarting an animation every time a tool name changes.
+    static func stateKey(_ state: SessionState) -> String {
+        switch state {
+        case .idle: "idle"
+        case .thinking: "thinking"
+        case .toolCalling: "tool"
+        case .writingFile: "writing"
+        case .delegating: "delegating"
+        case .waitingPermission: "permission"
+        case .ended: "ended"
+        }
+    }
+
+    /// Resolves the palette for `appearance`.
+    static func resolved(for appearance: NSAppearance) -> SceneTheme {
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        func resolve(_ color: Color) -> NSColor {
+            var out = NSColor.gray
+            appearance.performAsCurrentDrawingAppearance {
+                out = NSColor(color).usingColorSpace(.sRGB) ?? .gray
+            }
+            return out
+        }
+        func furniture(dark: Int, light: Int) -> NSColor {
+            NSColor(sceneRGB: isDark ? dark : light)
+        }
+
+        var accents: [Harness: NSColor] = [:]
+        for harness in Harness.allCases { accents[harness] = resolve(harness.style.accent) }
+
+        var states: [String: NSColor] = [:]
+        for state: SessionState in [
+            .idle, .thinking, .toolCalling(name: ""), .writingFile(path: nil),
+            .delegating(children: 1), .waitingPermission(tool: nil), .ended(reason: .exited)
+        ] {
+            states[stateKey(state)] = resolve(state.style.color)
+        }
+
+        return SceneTheme(
+            id: appearance.name.rawValue,
+            isDark: isDark,
+            canvas: resolve(AuspexPalette.canvas),
+            grid: resolve(AuspexPalette.grid),
+            panel: resolve(AuspexPalette.panel),
+            hairline: resolve(AuspexPalette.hairline),
+            hairlineStrong: resolve(AuspexPalette.hairlineStrong),
+            textPrimary: resolve(AuspexPalette.textPrimary),
+            textSecondary: resolve(AuspexPalette.textSecondary),
+            textTertiary: resolve(AuspexPalette.textTertiary),
+            deskTop: furniture(dark: 0x39405A, light: 0xB6BFD2),
+            deskFront: furniture(dark: 0x252B3D, light: 0x9CA6BC),
+            deskLeg: furniture(dark: 0x1A1F2D, light: 0x7F8AA2),
+            chair: furniture(dark: 0x2C3247, light: 0x8E98AE),
+            face: furniture(dark: 0xD3C3B4, light: 0xC0AE9E),
+            ink: furniture(dark: 0x0A0B10, light: 0x1B2030),
+            screenOff: furniture(dark: 0x11141D, light: 0x6E7891),
+            harnessAccents: accents,
+            stateColors: states
+        )
+    }
+}
+
+/// A tiny indexed canvas for hand-placed pixels.
+///
+/// Pixel art wants to be authored one pixel at a time, and every drawing API on
+/// this platform wants to anti-alias. So the art is composed into a plain RGBA
+/// buffer, handed to Core Graphics as an image without interpolation, and drawn
+/// by SpriteKit with nearest-neighbour filtering. Three steps, and none of them
+/// can soften an edge.
+///
+/// The origin is the **top left** and `y` increases downward, which is the
+/// convention every pixel-art tool uses and the order the rows are stored in.
+struct PixelCanvas {
+    let width: Int
+    let height: Int
+    private var bytes: [UInt8]
+
+    init(width: Int, height: Int) {
+        self.width = width
+        self.height = height
+        self.bytes = [UInt8](repeating: 0, count: width * height * 4)
+    }
+
+    /// Paints one pixel. Out-of-bounds coordinates are ignored, so a pose can
+    /// reach past the edge of the sprite without the caller checking.
+    mutating func set(_ x: Int, _ y: Int, _ color: NSColor, alpha: CGFloat = 1) {
+        guard x >= 0, y >= 0, x < width, y < height, alpha > 0 else { return }
+        let (red, green, blue) = Self.components(color)
+        let a = UInt8(clamping: Int((alpha * 255).rounded()))
+        let index = (y * width + x) * 4
+        // Premultiplied, because that is what the bitmap info promises.
+        bytes[index] = UInt8(clamping: Int(CGFloat(red) * alpha))
+        bytes[index + 1] = UInt8(clamping: Int(CGFloat(green) * alpha))
+        bytes[index + 2] = UInt8(clamping: Int(CGFloat(blue) * alpha))
+        bytes[index + 3] = a
+    }
+
+    /// Paints a filled rectangle.
+    mutating func fill(
+        _ x: Int, _ y: Int, _ w: Int, _ h: Int, _ color: NSColor, alpha: CGFloat = 1
+    ) {
+        guard w > 0, h > 0 else { return }
+        for row in y..<(y + h) {
+            for column in x..<(x + w) { set(column, row, color, alpha: alpha) }
+        }
+    }
+
+    /// Clears a rectangle back to transparent. Distinct from filling with a
+    /// clear colour, which would write opaque black: the buffer is
+    /// premultiplied, so "no colour" and "no coverage" are the same four zero
+    /// bytes and neither can be expressed as a paint.
+    mutating func erase(_ x: Int, _ y: Int, _ w: Int, _ h: Int) {
+        guard w > 0, h > 0 else { return }
+        for row in max(0, y)..<min(height, y + h) {
+            for column in max(0, x)..<min(width, x + w) {
+                let index = (row * width + column) * 4
+                bytes[index] = 0
+                bytes[index + 1] = 0
+                bytes[index + 2] = 0
+                bytes[index + 3] = 0
+            }
+        }
+    }
+
+    /// The finished sprite, at one texel per pixel and no interpolation.
+    func texture() -> SKTexture {
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let image = CGImage(
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bitsPerPixel: 32,
+                  bytesPerRow: width * 4,
+                  space: space,
+                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  provider: provider,
+                  decode: nil,
+                  shouldInterpolate: false,
+                  intent: .defaultIntent
+              )
+        else { return SKTexture() }
+        let texture = SKTexture(cgImage: image)
+        texture.filteringMode = .nearest
+        return texture
+    }
+
+    private static func components(_ color: NSColor) -> (UInt8, UInt8, UInt8) {
+        let srgb = color.usingColorSpace(.sRGB) ?? .gray
+        return (
+            UInt8(clamping: Int((srgb.redComponent * 255).rounded())),
+            UInt8(clamping: Int((srgb.greenComponent * 255).rounded())),
+            UInt8(clamping: Int((srgb.blueComponent * 255).rounded()))
+        )
+    }
+}
+
+/// What an agent's body is doing. One texture per pose, per harness.
+///
+/// Poses, not frames: the placeholder rig animates by swapping between two
+/// poses and by moving whole nodes, which is enough for the six rhythms the
+/// board's state language already defines and costs nothing to author. Real
+/// frame strips, when they arrive, replace the whole rig — see ``SpriteLibrary``.
+enum AgentPose: String, CaseIterable, Hashable {
+    /// Hands on the desk. The resting pose, and the one half of typing.
+    case rest
+    /// Hands lifted a pixel. The other half of typing.
+    case type
+    /// One hand up. Blocked on a person, and the loudest pose there is.
+    case raise
+    /// Reaching sideways with a note. Handing work to a subagent.
+    case offer
+    /// Sunk into the chair. Nothing outstanding.
+    case slump
+}
+
+/// A speech bubble's contents.
+enum BubbleKind: String, Hashable {
+    /// A person is needed. The only glyph on screen allowed to shout.
+    case alert
+    /// Working, but silent for longer than it should be.
+    case asleep
+    /// Work being handed over.
+    case note
+}
+
+/// The procedural sprite sheet: everything the office is made of, drawn in
+/// code, cached per appearance.
+///
+/// Nothing here is loaded from disk. That is a temporary state — the atlas
+/// convention in `docs/SPRITES.md` describes the art that will replace it —
+/// but it is also the fallback that has to keep working forever, because a
+/// harness whose sprites nobody has drawn yet still has to appear on the wall.
+@MainActor
+final class PlaceholderArt {
+    static let shared = PlaceholderArt()
+
+    private var theme: SceneTheme?
+    private var cache: [String: SKTexture] = [:]
+
+    private init() {}
+
+    /// Points per art pixel. Two, so that on a Retina display one art pixel is
+    /// exactly four device pixels and the grid stays square at rest.
+    static let pixelScale: CGFloat = 2
+
+    /// Adopts `theme`, discarding every texture baked for the previous one.
+    func use(theme: SceneTheme) {
+        guard self.theme?.id != theme.id else { return }
+        self.theme = theme
+        cache.removeAll(keepingCapacity: true)
+    }
+
+    private func current() -> SceneTheme {
+        if let theme { return theme }
+        let resolved = SceneTheme.resolved(for: NSApplication.shared.effectiveAppearance)
+        theme = resolved
+        return resolved
+    }
+
+    private func cached(_ key: String, _ build: (SceneTheme) -> PixelCanvas) -> SKTexture {
+        if let hit = cache[key] { return hit }
+        let texture = build(current()).texture()
+        cache[key] = texture
+        return texture
+    }
+
+    // MARK: - The agent
+
+    /// The head: hair, a face, and one eye looking at the monitor.
+    func head(harness: Harness) -> SKTexture {
+        cached("head.\(harness.rawValue)") { theme in
+            let accent = theme.accent(harness)
+            let hair = accent.blended(withFraction: 0.55, of: theme.ink) ?? accent
+            var canvas = PixelCanvas(width: 10, height: 8)
+            canvas.fill(1, 0, 8, 3, hair)          // crown
+            canvas.fill(1, 3, 8, 4, theme.face)    // face
+            canvas.fill(1, 3, 3, 2, hair)          // fringe, swept back
+            canvas.fill(0, 4, 1, 2, theme.face)    // ear
+            canvas.set(7, 4, theme.ink)            // eye, on the monitor
+            canvas.fill(6, 6, 3, 1, theme.face.blended(withFraction: 0.35, of: theme.ink) ?? theme.face)
+            canvas.fill(3, 7, 4, 1, theme.face)    // neck
+            return canvas
+        }
+    }
+
+    /// The torso and one arm, in a pose. The lower half is drawn even though
+    /// the desk hides it, so a person leaning over a zoomed-in desk does not
+    /// find their agent cut off at the waist.
+    func body(harness: Harness, pose: AgentPose) -> SKTexture {
+        cached("body.\(harness.rawValue).\(pose.rawValue)") { theme in
+            let accent = theme.accent(harness)
+            let shirt = accent
+            let shade = accent.blended(withFraction: 0.4, of: theme.ink) ?? accent
+            let light = accent.blended(withFraction: 0.3, of: .white) ?? accent
+            let drop = pose == .slump ? 1 : 0
+
+            var canvas = PixelCanvas(width: 18, height: 15)
+            canvas.fill(4, 0 + drop, 10, 2, shirt)       // shoulders
+            canvas.fill(3, 2 + drop, 12, 8, shirt)       // torso
+            canvas.fill(8, 0 + drop, 2, 2, light)        // collar
+            canvas.fill(3, 6 + drop, 12, 1, shade)       // belt shadow
+            canvas.fill(4, 10 + drop, 10, 5, shade)      // legs, behind the desk
+
+            switch pose {
+            case .rest, .slump:
+                canvas.fill(13, 4 + drop, 4, 2, shade)
+                canvas.fill(16, 5 + drop, 2, 1, theme.face)
+            case .type:
+                canvas.fill(13, 3 + drop, 4, 2, shade)
+                canvas.fill(16, 3 + drop, 2, 1, theme.face)
+            case .raise:
+                canvas.fill(13, 0, 2, 5, shade)          // forearm, vertical
+                canvas.fill(13, -1, 2, 2, theme.face)    // hand, clipped at the top
+                canvas.fill(12, 4, 2, 2, shade)
+            case .offer:
+                canvas.fill(13, 3, 5, 2, shade)          // arm extended sideways
+                canvas.fill(16, 2, 2, 1, theme.face)
+            }
+            return canvas
+        }
+    }
+
+    // MARK: - The workstation
+
+    /// A desk: a lit top, a front panel in shadow, and two legs.
+    func desk() -> SKTexture {
+        cached("desk") { theme in
+            var canvas = PixelCanvas(width: 44, height: 11)
+            canvas.fill(0, 0, 44, 1, theme.deskTop.blended(withFraction: 0.25, of: .white) ?? theme.deskTop)
+            canvas.fill(0, 1, 44, 2, theme.deskTop)
+            canvas.fill(1, 3, 42, 5, theme.deskFront)
+            canvas.fill(2, 8, 3, 3, theme.deskLeg)
+            canvas.fill(39, 8, 3, 3, theme.deskLeg)
+            return canvas
+        }
+    }
+
+    /// An office chair, seen from behind the agent.
+    func chair() -> SKTexture {
+        cached("chair") { theme in
+            let back = theme.chair
+            let seat = theme.chair.blended(withFraction: 0.2, of: theme.ink) ?? theme.chair
+            var canvas = PixelCanvas(width: 12, height: 13)
+            canvas.fill(2, 0, 8, 7, back)
+            canvas.fill(3, 1, 6, 5, back.blended(withFraction: 0.18, of: .white) ?? back)
+            canvas.fill(0, 7, 12, 2, seat)
+            canvas.fill(5, 9, 2, 2, theme.deskLeg)
+            canvas.fill(2, 11, 8, 1, theme.deskLeg)
+            canvas.fill(1, 12, 10, 1, theme.deskLeg)
+            return canvas
+        }
+    }
+
+    /// A monitor shell with the screen cut out of it, so the lit rectangle
+    /// behind it can be any colour without a second texture per state.
+    func monitor() -> SKTexture {
+        cached("monitor") { theme in
+            let shell = theme.deskLeg
+            var canvas = PixelCanvas(width: 18, height: 15)
+            canvas.fill(0, 0, 18, 12, shell)
+            canvas.erase(2, 2, 14, 8)                 // the window the screen shows through
+            canvas.fill(1, 1, 16, 1, shell.blended(withFraction: 0.3, of: .white) ?? shell)
+            canvas.fill(8, 12, 2, 1, shell)           // neck
+            canvas.fill(5, 13, 8, 2, shell)           // foot
+            return canvas
+        }
+    }
+
+    /// A sheet of paper on the desk, for a session that is writing files.
+    func paper() -> SKTexture {
+        cached("paper") { theme in
+            let sheet = NSColor(sceneRGB: theme.isDark ? 0xC9D2E4 : 0xFAFBFF)
+            var canvas = PixelCanvas(width: 7, height: 9)
+            canvas.fill(0, 0, 7, 9, sheet)
+            for row in stride(from: 2, to: 8, by: 2) {
+                canvas.fill(1, row, 5, 1, theme.deskLeg, alpha: 0.55)
+            }
+            return canvas
+        }
+    }
+
+    // MARK: - Bubbles
+
+    /// A speech bubble. Baked in its own colour rather than tinted, because
+    /// there are three of them and they never change hue.
+    func bubble(_ kind: BubbleKind) -> SKTexture {
+        cached("bubble.\(kind.rawValue)") { theme in
+            let fill: NSColor
+            switch kind {
+            case .alert: fill = theme.color(for: .waitingPermission(tool: nil))
+            case .asleep: fill = NSColor(sceneRGB: theme.isDark ? 0xB39755 : 0x7C6420)
+            case .note: fill = theme.color(for: .delegating(children: 1))
+            }
+
+            var canvas = PixelCanvas(width: 13, height: 14)
+            canvas.fill(1, 0, 11, 10, fill)
+            canvas.fill(0, 1, 13, 8, fill)
+            canvas.fill(4, 10, 4, 2, fill)      // tail
+            canvas.fill(5, 12, 2, 1, fill)
+
+            switch kind {
+            case .alert:
+                canvas.fill(6, 2, 2, 4, theme.ink)
+                canvas.fill(6, 7, 2, 2, theme.ink)
+            case .asleep:
+                // Three z's, largest first, because that is how a comic reads.
+                Self.drawZ(&canvas, x: 2, y: 5, size: 3, color: theme.ink)
+                Self.drawZ(&canvas, x: 6, y: 3, size: 3, color: theme.ink)
+                Self.drawZ(&canvas, x: 9, y: 1, size: 2, color: theme.ink)
+            case .note:
+                canvas.fill(4, 3, 5, 5, theme.ink)
+                canvas.fill(5, 4, 3, 1, fill)
+                canvas.fill(5, 6, 3, 1, fill)
+            }
+            return canvas
+        }
+    }
+
+    private static func drawZ(_ canvas: inout PixelCanvas, x: Int, y: Int, size: Int, color: NSColor) {
+        canvas.fill(x, y, size, 1, color)
+        canvas.fill(x, y + size - 1, size, 1, color)
+        for step in 0..<size { canvas.set(x + size - 1 - step, y + step, color) }
+    }
+
+    // MARK: - Light
+
+    /// The monitor's spill: a soft radial falloff, drawn white and tinted at
+    /// use, added rather than blended.
+    ///
+    /// The one thing in the scene that is not pixel art. Light is what the
+    /// board's state colours actually are here — a room read at a glance is
+    /// read by its lighting — and a hard-edged pixel disc would read as an
+    /// object instead.
+    func glow() -> SKTexture {
+        if let hit = cache["glow"] { return hit }
+        let side = 96
+        var canvas = PixelCanvas(width: side, height: side)
+        let centre = CGFloat(side - 1) / 2
+        for y in 0..<side {
+            for x in 0..<side {
+                let dx = (CGFloat(x) - centre) / centre
+                let dy = (CGFloat(y) - centre) / centre
+                let distance = min(1, sqrt(dx * dx + dy * dy))
+                let falloff = pow(1 - distance, 2.6)
+                canvas.set(x, y, .white, alpha: falloff)
+            }
+        }
+        let texture = canvas.texture()
+        texture.filteringMode = .linear
+        cache["glow"] = texture
+        return texture
+    }
+
+    /// The backdrop tile: the same measured grid the board draws, so switching
+    /// between the two views does not feel like switching applications.
+    func gridTile(spacing: Int = 26) -> SKTexture {
+        cached("grid.\(spacing)") { theme in
+            var canvas = PixelCanvas(width: spacing, height: spacing)
+            canvas.fill(0, 0, spacing, spacing, theme.canvas)
+            canvas.fill(0, 0, spacing, 1, theme.grid)
+            canvas.fill(0, 0, 1, spacing, theme.grid)
+            return canvas
+        }
+    }
+}
+
+extension NSColor {
+    /// Builds a colour from `0xRRGGBB` in sRGB, matching ``AuspexPalette``'s
+    /// own convention so a furniture tone and an accent are mixed in the same
+    /// space.
+    convenience init(sceneRGB rgb: Int) {
+        self.init(
+            srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+}
