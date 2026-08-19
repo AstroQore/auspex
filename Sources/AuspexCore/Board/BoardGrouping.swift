@@ -6,8 +6,8 @@ import Foundation
 ///
 /// A wall of forty cards is only readable if the reader can choose the axis
 /// they are scanning along: "what is every agent doing" (``none``), "what is
-/// Codex up to" (``harness``), or "who is touching this repository"
-/// (``project``).
+/// Codex up to" (``harness``), "who is touching this repository"
+/// (``project``), or "what did this one session set in motion" (``tree``).
 public enum BoardGroupBy: String, CaseIterable, Identifiable, Sendable, Codable {
     /// One flat grid in board order.
     case none
@@ -15,6 +15,9 @@ public enum BoardGroupBy: String, CaseIterable, Identifiable, Sendable, Codable 
     case harness
     /// One section per git root, falling back to the working directory.
     case project
+    /// One section per delegation tree that has any delegation in it, with
+    /// children nested under the session that spawned them.
+    case tree
 
     public var id: String { rawValue }
 
@@ -24,7 +27,40 @@ public enum BoardGroupBy: String, CaseIterable, Identifiable, Sendable, Codable 
         case .none: "None"
         case .harness: "Harness"
         case .project: "Project"
+        case .tree: "Tree"
         }
+    }
+}
+
+/// One session and everything it spawned, ready to render as nested rows.
+///
+/// ``SessionTree/Node`` already carries this shape in keys; this carries it in
+/// snapshots, so a view can draw a subtree without a lookup per row on a board
+/// that redraws twenty times a second.
+public struct BoardTreeNode: Identifiable, Sendable, Equatable {
+    /// The session this node is.
+    public let session: SessionSnapshot
+    /// How far below its root it sits. `0` for a root.
+    public let depth: Int
+    /// What it spawned, in board order.
+    public let children: [BoardTreeNode]
+    /// How many sessions are below this one, transitively — the "N children"
+    /// badge on a card.
+    public let descendantCount: Int
+
+    public var id: SessionKey { session.key }
+
+    public init(session: SessionSnapshot, depth: Int, children: [BoardTreeNode]) {
+        self.session = session
+        self.depth = depth
+        self.children = children
+        self.descendantCount = children.reduce(children.count) { $0 + $1.descendantCount }
+    }
+
+    /// This node and every node below it, depth first — the flat list a
+    /// section's counts are tallied from.
+    public var flattened: [SessionSnapshot] {
+        [session] + children.flatMap(\.flattened)
     }
 }
 
@@ -52,13 +88,20 @@ public struct BoardGroup: Identifiable, Sendable, Equatable {
     public let sessions: [SessionSnapshot]
     /// The tallies for ``sessions``.
     public let counts: BoardSnapshot.Counts
+    /// The delegation shape of ``sessions``, when the section has one.
+    ///
+    /// Non-`nil` only under ``BoardGroupBy/tree``. Everywhere else a section is
+    /// a flat set of cards and a view that asked for nesting would be asking
+    /// the wrong question.
+    public let roots: [BoardTreeNode]?
 
     public init(
         id: String,
         title: String,
         subtitle: String? = nil,
         harness: Harness? = nil,
-        sessions: [SessionSnapshot]
+        sessions: [SessionSnapshot],
+        roots: [BoardTreeNode]? = nil
     ) {
         self.id = id
         self.title = title
@@ -66,6 +109,7 @@ public struct BoardGroup: Identifiable, Sendable, Equatable {
         self.harness = harness
         self.sessions = sessions
         self.counts = BoardSnapshot.Counts(sessions: sessions)
+        self.roots = roots
     }
 }
 
@@ -83,8 +127,13 @@ public enum BoardGrouping {
     /// nor a working directory. Always last: it is a residue, not a project.
     public static let noProjectTitle = "No project"
 
-    /// Groups `snapshot` along `groupBy`, keeping only the harnesses in
-    /// `harnessFilter`.
+    /// The section holding the roots that delegated to nobody. Always last
+    /// under ``BoardGroupBy/tree``: a session that started nothing is not a
+    /// tree, and giving each one its own header would bury the trees that are.
+    public static let standaloneTitle = "Not delegating"
+
+    /// Groups `snapshot` along `groupBy`, keeping only what survives the
+    /// filters.
     ///
     /// - Parameters:
     ///   - snapshot: the frame to divide. Its sessions are already in board
@@ -93,15 +142,25 @@ public enum BoardGrouping {
     ///   - harnessFilter: harnesses to keep. **Empty means keep everything** —
     ///     a filter that excluded all eight when nothing was ticked would make
     ///     the default state of the UI an empty board.
+    ///   - projectFilter: the one project to keep, as the key
+    ///     ``BoardSnapshot/projectKey(for:)`` answers with. `nil` keeps every
+    ///     project. Applied on every axis, because a person who clicked a
+    ///     project in the sidebar meant it whatever the board is grouped by.
     /// - Returns: the sections, in display order. Empty when nothing survives
-    ///   the filter, so a caller can distinguish "no sessions" from "one empty
+    ///   the filters, so a caller can distinguish "no sessions" from "one empty
     ///   section".
     public static func groups(
         for snapshot: BoardSnapshot,
         groupBy: BoardGroupBy,
-        harnessFilter: Set<Harness> = []
+        harnessFilter: Set<Harness> = [],
+        projectFilter: String? = nil
     ) -> [BoardGroup] {
-        let sessions = filtered(snapshot.sessions, harnessFilter: harnessFilter)
+        let sessions = filtered(
+            snapshot.sessions,
+            harnessFilter: harnessFilter,
+            projectFilter: projectFilter,
+            in: snapshot
+        )
         guard !sessions.isEmpty else { return [] }
 
         switch groupBy {
@@ -110,18 +169,36 @@ public enum BoardGrouping {
         case .harness:
             return harnessGroups(sessions)
         case .project:
-            return projectGroups(sessions)
+            return projectGroups(sessions, in: snapshot)
+        case .tree:
+            return treeGroups(sessions)
         }
     }
 
-    /// Applies the harness filter. Separate so the counts in a toolbar can be
-    /// taken from the same rule the grid uses.
+    /// Applies the filters. Separate so the counts in a toolbar can be taken
+    /// from the same rule the grid uses.
+    ///
+    /// The project filter is answered against `snapshot` rather than against
+    /// each session alone, because a delegated session frequently has no
+    /// directory of its own and belongs to whatever its parent belongs to —
+    /// filtering it out would empty a tree of everything below its root.
     public static func filtered(
         _ sessions: [SessionSnapshot],
-        harnessFilter: Set<Harness>
+        harnessFilter: Set<Harness>,
+        projectFilter: String? = nil,
+        in snapshot: BoardSnapshot? = nil
     ) -> [SessionSnapshot] {
-        guard !harnessFilter.isEmpty else { return sessions }
-        return sessions.filter { harnessFilter.contains($0.key.harness) }
+        var kept = sessions
+        if !harnessFilter.isEmpty {
+            kept = kept.filter { harnessFilter.contains($0.key.harness) }
+        }
+        if let projectFilter {
+            kept = kept.filter { session in
+                (snapshot?.projectKey(for: session) ?? BoardSnapshot.projectKey(for: session))
+                    == projectFilter
+            }
+        }
+        return kept
     }
 
     /// Harness sections in `Harness.allCases` order — the declaration order,
@@ -151,13 +228,22 @@ public enum BoardGrouping {
     /// alphabetical wall would bury the blocked session under `zzz-scratch` —
     /// and the order is still deterministic because the board order it is
     /// derived from is.
-    private static func projectGroups(_ sessions: [SessionSnapshot]) -> [BoardGroup] {
+    ///
+    /// The key comes from the *snapshot*, not from the session: a delegated
+    /// session often records no directory at all — a subagent has no process
+    /// and no cwd line — and it is unambiguously working on whatever its parent
+    /// is working on. Asking the frame is what puts it under its parent's
+    /// project instead of into the residue.
+    private static func projectGroups(
+        _ sessions: [SessionSnapshot],
+        in snapshot: BoardSnapshot
+    ) -> [BoardGroup] {
         var order: [String] = []
         var byProject: [String: [SessionSnapshot]] = [:]
         var ungrouped: [SessionSnapshot] = []
 
         for session in sessions {
-            guard let path = BoardSnapshot.projectKey(for: session) else {
+            guard let path = snapshot.projectKey(for: session) else {
                 ungrouped.append(session)
                 continue
             }
@@ -182,6 +268,81 @@ public enum BoardGrouping {
             )
         }
         return groups
+    }
+
+    /// Delegation sections: one per root that actually delegated, then one
+    /// holding every root that did not.
+    ///
+    /// The forest is rebuilt from the filtered sessions rather than taken from
+    /// ``BoardSnapshot/tree``, because a harness filter can remove a parent
+    /// while leaving its children — and a child whose parent is no longer on
+    /// the board is a root, not a hidden row.
+    ///
+    /// Sections are ordered by the board rank of their root, so the tree that
+    /// needs a person is at the top of the wall. A tree of one is not a tree,
+    /// which is why the standalone roots share a single section instead of
+    /// getting a header each.
+    private static func treeGroups(_ sessions: [SessionSnapshot]) -> [BoardGroup] {
+        let forest = SessionTreeBuilder.build(sessions)
+        var bySession: [SessionKey: SessionSnapshot] = [:]
+        for session in sessions { bySession[session.key] = session }
+
+        var groups: [BoardGroup] = []
+        var standalone: [SessionSnapshot] = []
+
+        for root in forest.roots {
+            guard let node = node(root, in: bySession) else { continue }
+            guard !node.children.isEmpty else {
+                standalone.append(node.session)
+                continue
+            }
+            let flattened = node.flattened
+            groups.append(
+                BoardGroup(
+                    id: "tree:\(node.session.key.description)",
+                    title: treeTitle(for: node.session),
+                    subtitle: "\(node.descendantCount) below",
+                    sessions: flattened,
+                    roots: [node]
+                )
+            )
+        }
+
+        if !standalone.isEmpty {
+            groups.append(
+                BoardGroup(
+                    id: "tree:standalone",
+                    title: standaloneTitle,
+                    sessions: standalone,
+                    roots: standalone.map { BoardTreeNode(session: $0, depth: 0, children: []) }
+                )
+            )
+        }
+        return groups
+    }
+
+    /// Rebuilds one subtree in snapshots. Total: a node naming a session that
+    /// is not in the set is dropped along with everything under it, which
+    /// cannot happen for a forest built from that same set.
+    private static func node(
+        _ node: SessionTree.Node,
+        in sessions: [SessionKey: SessionSnapshot]
+    ) -> BoardTreeNode? {
+        guard let session = sessions[node.key] else { return nil }
+        return BoardTreeNode(
+            session: session,
+            depth: node.depth,
+            children: node.children.compactMap { self.node($0, in: sessions) }
+        )
+    }
+
+    /// What a delegation section is called: the root's own title, or the
+    /// project it is in, or its session id — the same ladder a card climbs, so
+    /// a header and the card under it never disagree.
+    private static func treeTitle(for session: SessionSnapshot) -> String {
+        if let title = session.identity.title, !title.isEmpty { return title }
+        if let project = projectName(for: session) { return project }
+        return session.key.sessionID
     }
 
     /// The short name a card and a section header show for a project: the
