@@ -253,7 +253,7 @@ enum BubbleKind: String, Hashable {
 /// code, cached per appearance.
 ///
 /// Nothing here is loaded from disk. That is a temporary state — the atlas
-/// convention in `docs/SPRITES.md` describes the art that will replace it —
+/// package format in `docs/CHARACTERS.md` describes the art that replaces it —
 /// but it is also the fallback that has to keep working forever, because a
 /// harness whose sprites nobody has drawn yet still has to appear on the wall.
 @MainActor

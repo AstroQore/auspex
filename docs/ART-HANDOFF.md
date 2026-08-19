@@ -269,4 +269,6 @@ docs/art/ contact-<harness>.png ×8  contact-tiles.png  contact-fx.png  contact-
 - 每个 atlas 的 JSON 与 PNG 尺寸一致，`columns = width/height` 成立。
 
 ## 12. 说明
-- 现有 `docs/SPRITES.md` 是侧视版旧约定；改为角色包后我会重写它与 `SpriteLibrary`（读取 `character.json` + 姿势帧条），姿势名不变，不影响出图。
+- **角色包 loader 已经做好了**（app 侧）：`docs/SPRITES.md` 已被 `docs/CHARACTERS.md` 取代，`SpriteLibrary` 读 `character.json` + 姿势帧条，缺哪个姿势就那个姿势退回程序占位；cell 32 / 48 都支持且屏幕高度一致；`~/.auspex/characters/` 热加载，不用重编不用重启；**Settings → Characters** 列出所有角色包（idle 第 0 帧 4× 预览、来源、校验问题）并可按 harness 设默认。所以出图时只要按 §4 交，丢进 `~/.auspex/characters/<id>/` 就能直接在跑着的 app 里看到。
+- `Scripts/validate_character.py` 已经在仓库里：`python3 Scripts/validate_character.py <包目录>`，检查 manifest 字段、cell、帧条宽高与帧数、透明底与灰边、左右留白、第 0 帧非空；warning 不算失败（一姿势一姿势交是正常状态），`--strict` 才算。没装 Pillow 也能跑完整像素检查。
+- 参考样例包：`Tests/Fixtures/Characters/example-default/`（八个姿势齐全，格式与 §4 一致）。

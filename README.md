@@ -123,9 +123,11 @@ Motion every rhythm collapses to a static pose. A session keeps its desk for as
 long as it is on the board, so nothing moves under the pointer; when it goes,
 the desk stays empty until something else takes it.
 
-The people are placeholders drawn in code, not art. Real sprites drop in per
-harness and per pose without a rebuild — [`docs/SPRITES.md`](docs/SPRITES.md)
-is the specification.
+The people are placeholders drawn in code until art exists for them. Real
+characters are folders — a manifest and one frame strip per pose — dropped into
+`~/.auspex/characters/` and picked up without a rebuild or a relaunch, one pose
+at a time. [`docs/CHARACTERS.md`](docs/CHARACTERS.md) is the specification, and
+Settings → Characters is where they are chosen.
 ## Projects and Trees
 
 Two questions cut across a board that no harness records: **where** a session is
