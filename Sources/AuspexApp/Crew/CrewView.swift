@@ -281,7 +281,10 @@ private struct CrewCardChrome: View, @MainActor Equatable {
             }
             .frame(maxWidth: .infinity)
 
-            StatePill(state: state, isStale: isStale)
+            // The count is off here: the card already draws it as a badge on
+            // the avatar's corner, and the same number twice on one card reads
+            // as two facts.
+            StatePill(state: state, isStale: isStale, showsChildCount: false)
 
             if let said {
                 Text(said)

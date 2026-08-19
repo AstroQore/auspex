@@ -78,7 +78,8 @@ public enum CrewMoodMap {
     public static func avatarState(
         for state: SessionState,
         isStale: Bool = false,
-        isNotifying: Bool = false
+        isNotifying: Bool = false,
+        isSpawning: Bool = false
     ) -> (state: BloubStateID, expression: BloubExpressionID) {
         switch state {
         case .ended:
@@ -99,18 +100,42 @@ public enum CrewMoodMap {
             return (.play, .attentive)
         case .delegating:
             if isStale { return (.wink, .sleepy) }
-            return (.burst, .excited)
+            // Delegating is two beats, not one. The burst is the *act* of
+            // spawning — the body flies apart and the children come out of the
+            // particles — and it resolves in 2.4 s. Holding it after that
+            // leaves the avatar as a lone dot, which is what `sleep` looks
+            // like, so a card that had just handed work out read as one that
+            // had finished. Once the body has re-formed the session goes to
+            // `wide`: eyes open on a body that is the harness's own shape
+            // again, watching. Both halves are bloub's; only the cut is ours.
+            if isSpawning { return (.burst, .excited) }
+            return (.wide, .attentive)
         }
     }
+
+    /// How long the burst runs before the body re-forms.
+    ///
+    /// Read off the state, not chosen: `minDuration` is "the date at which the
+    /// animation resolves", and `burst` puts it at 1.7 + 0.7 — the moment the
+    /// body has finished growing back and the eyes are open again. Cutting
+    /// earlier would leave the body in pieces; later is padding.
+    public static let spawnBurst: TimeInterval =
+        BloubStates.state(.burst).minDuration ?? BloubStates.state(.burst).duration
 
     /// The whole mood for a session.
     public static func mood(
         harness: Harness,
         state: SessionState,
         isStale: Bool = false,
-        isNotifying: Bool = false
+        isNotifying: Bool = false,
+        isSpawning: Bool = false
     ) -> CrewMood {
-        let resolved = avatarState(for: state, isStale: isStale, isNotifying: isNotifying)
+        let resolved = avatarState(
+            for: state,
+            isStale: isStale,
+            isNotifying: isNotifying,
+            isSpawning: isSpawning
+        )
         return CrewMood(
             shape: shape(for: harness),
             state: resolved.state,
@@ -120,11 +145,14 @@ public enum CrewMoodMap {
 
     /// How often a held state replays itself, or `nil` when it needs no help.
     ///
-    /// bloub's states are montage blocks of a couple of seconds. Five of them
-    /// tell a story that finishes — the "!" travels and comes back, the rings
-    /// fade in and out, the body bursts and recomposes — and then have nothing
-    /// left to show. Auspex holds a state for as long as the work takes, so
-    /// those five are replayed.
+    /// bloub's states are montage blocks of a couple of seconds. Several tell a
+    /// story that finishes — the "!" travels and comes back, the rings fade in
+    /// and out — and then have nothing left to show. Auspex holds a state for as
+    /// long as the work takes, so those are replayed.
+    ///
+    /// `burst` is deliberately **not** among them: it is played once per act of
+    /// spawning and then handed to `wide`, so looping it would turn one event
+    /// into a nervous tic.
     ///
     /// The period is the state's own **resolve** time (`minDuration`, "the date
     /// at which the animation resolves", read off its constants), falling back
@@ -138,10 +166,11 @@ public enum CrewMoodMap {
     /// loop that does not have one.
     public static func replayPeriod(for state: BloubStateID) -> Double? {
         switch state {
-        case .alert, .play, .orbit, .burst, .comet:
+        case .alert, .play, .orbit, .comet:
             let def = BloubStates.state(state)
             return def.minDuration ?? def.duration
-        case .idle, .thinking, .wink, .wide, .notify, .exclaim, .sleep, .egg, .hexagon, .swirl:
+        case .idle, .thinking, .wink, .wide, .notify, .exclaim, .sleep, .egg, .hexagon,
+             .swirl, .burst:
             return nil
         }
     }
@@ -164,6 +193,10 @@ public struct CrewAvatarDriver: Sendable {
     public private(set) var mood: CrewMood
     /// When the soft notification stops, on the same clock.
     private var notifyUntil: Double?
+    /// When the spawning burst stops and the body re-forms.
+    private var spawnUntil: Double?
+    /// How many children the session had last time, so a *new* one can be seen.
+    private var lastChildren: Int?
     /// The last session state seen, to spot the edge a turn ending makes.
     private var lastSessionState: SessionState?
 
@@ -174,7 +207,20 @@ public struct CrewAvatarDriver: Sendable {
         at now: Double,
         scale: Double = BloubFrameOfReference.radius
     ) {
-        let mood = CrewMoodMap.mood(harness: harness, state: state, isStale: isStale)
+        // A session first seen already delegating has, from the wall's point of
+        // view, just done it: it gets the burst like any other.
+        var spawning = false
+        if case .delegating(let children) = state, !isStale {
+            spawnUntil = now + CrewMoodMap.spawnBurst
+            lastChildren = children
+            spawning = true
+        }
+        let mood = CrewMoodMap.mood(
+            harness: harness,
+            state: state,
+            isStale: isStale,
+            isSpawning: spawning
+        )
         self.harness = harness
         self.mood = mood
         lastSessionState = state
@@ -196,8 +242,9 @@ public struct CrewAvatarDriver: Sendable {
     /// Feeds the driver the session's current state and the clock.
     ///
     /// Call it on every frame: it is what starts a soft notification when a
-    /// turn ends, ends it four seconds later, and replays a held state. Idempotent
-    /// for a given `now`, so calling it twice in one frame changes nothing.
+    /// turn ends, ends it four seconds later, fires the spawning burst, and
+    /// replays a held state. Idempotent for a given `now`, so calling it twice
+    /// in one frame changes nothing.
     public mutating func update(state: SessionState, isStale: Bool, at now: Double) {
         // A turn that just ended: the session was doing something and is now
         // idle. Not `ended` — a finished session is not news, it is history.
@@ -208,11 +255,27 @@ public struct CrewAvatarDriver: Sendable {
 
         if let until = notifyUntil, now >= until { notifyUntil = nil }
 
+        // The burst is an event, not a condition: it fires when the session
+        // starts delegating and again whenever it hands out *more* work. A
+        // count that stays put, or drops as children finish, is the same act
+        // still in progress and must not restart it.
+        if case .delegating(let children) = state, !isStale {
+            if lastChildren == nil || children > (lastChildren ?? 0) {
+                spawnUntil = now + CrewMoodMap.spawnBurst
+            }
+            lastChildren = children
+        } else {
+            lastChildren = nil
+            spawnUntil = nil
+        }
+        if let until = spawnUntil, now >= until { spawnUntil = nil }
+
         let next = CrewMoodMap.mood(
             harness: harness,
             state: state,
             isStale: isStale,
-            isNotifying: notifyUntil != nil
+            isNotifying: notifyUntil != nil,
+            isSpawning: spawnUntil != nil
         )
         if next.state != mood.state {
             // Every state change is hidden by a blink — the engine does that
@@ -236,4 +299,7 @@ public struct CrewAvatarDriver: Sendable {
 
     /// Whether a soft notification is showing.
     public var isNotifying: Bool { notifyUntil != nil }
+
+    /// Whether the spawning burst is still playing.
+    public var isSpawning: Bool { spawnUntil != nil }
 }

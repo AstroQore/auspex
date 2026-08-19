@@ -91,9 +91,11 @@ extension SessionState {
         case .delegating(let children):
             StateStyle(
                 color: AuspexPalette.stateDelegating,
-                // The child count rides in the pill's badge, so the word does
-                // not have to carry it.
-                label: "Children",
+                // The state, not its count. "Children 2" reads as a quantity of
+                // things rather than as something the session is doing, and the
+                // pill's job is the second one; the number rides in the badge
+                // beside the word.
+                label: "Delegating",
                 symbolName: "arrow.triangle.branch",
                 motion: .ticks(count: max(1, min(children, 8))),
                 isAlarming: false
@@ -158,6 +160,12 @@ extension SessionState {
 struct StatePill: View {
     let state: SessionState
     var isStale = false
+    /// Whether the delegating pill carries its child count.
+    ///
+    /// On the board it does, because nothing else on the card says how many.
+    /// A surface that already draws the count somewhere of its own turns it
+    /// off rather than showing the same number twice.
+    var showsChildCount = true
 
     var body: some View {
         let style = state.style
@@ -167,7 +175,7 @@ struct StatePill: View {
                 .font(.system(size: 8, weight: .bold))
             Text(style.label)
                 .auspexLabel(AuspexType.labelSmall)
-            if let children = state.childCount {
+            if showsChildCount, let children = state.childCount {
                 Text("\(children)")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 3)

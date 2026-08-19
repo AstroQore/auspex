@@ -54,13 +54,27 @@ struct CrewMoodTests {
             (.thinking, .thinking),
             (.toolCalling(name: "Bash"), .orbit),
             (.writingFile(path: "/tmp/x.swift"), .play),
-            (.delegating(children: 2), .burst),
+            (.delegating(children: 2), .wide),
             (.waitingPermission(tool: "Bash"), .alert),
             (.ended(reason: .exited), .sleep)
         ]
         for (state, expected) in cases {
             #expect(CrewMoodMap.avatarState(for: state).state == expected)
         }
+    }
+
+    /// Delegating is two beats: the act of spawning, then the waiting. Holding
+    /// the burst instead would leave the avatar as a lone dot, which is what an
+    /// ended session looks like.
+    @Test("delegating bursts while it spawns and opens its eyes afterwards")
+    func delegatingIsTwoBeats() {
+        let spawning = CrewMoodMap.avatarState(for: .delegating(children: 1), isSpawning: true)
+        #expect(spawning.state == .burst)
+        let waiting = CrewMoodMap.avatarState(for: .delegating(children: 1), isSpawning: false)
+        #expect(waiting.state == .wide)
+        // and the second beat wears the harness's own body again
+        #expect(BloubStates.state(.wide).usesBaseBody)
+        #expect(!BloubStates.state(.burst).usesBaseBody)
     }
 
     @Test("a stale working session winks instead of showing its work")
@@ -104,14 +118,16 @@ struct CrewMoodTests {
     /// state that already loops would put a seam in a loop that has none.
     @Test("only the one-shot states are replayed")
     func replayPolicy() {
-        for state: BloubStateID in [.alert, .play, .orbit, .burst, .comet] {
+        for state: BloubStateID in [.alert, .play, .orbit, .comet] {
             let period = CrewMoodMap.replayPeriod(for: state)
             #expect(period != nil)
             // never shorter than the state's own entry morph, or the replay
             // would land inside the previous one
             #expect((period ?? 0) > BloubStates.state(state).morph)
         }
-        for state: BloubStateID in [.idle, .thinking, .wink, .notify, .sleep] {
+        // `burst` is played once per act of spawning and then handed to `wide`,
+        // so looping it would turn one event into a tic.
+        for state: BloubStateID in [.idle, .thinking, .wink, .wide, .notify, .sleep, .burst] {
             #expect(CrewMoodMap.replayPeriod(for: state) == nil)
         }
     }
@@ -167,6 +183,54 @@ struct CrewMoodTests {
             driver.update(state: .toolCalling(name: "Bash"), isStale: false, at: now)
         }
         #expect(!driver.sample(now).arcs.isEmpty)
+    }
+
+    /// The burst fires on entering `delegating` and again when the session
+    /// hands out more work — but not while a count merely holds or falls as
+    /// children finish, which is the same act still in progress.
+    @Test("the spawning burst fires on the act, not on the condition")
+    func spawningBurst() {
+        var driver = CrewAvatarDriver(harness: .claudeCode, state: .thinking, at: 0)
+        driver.update(state: .delegating(children: 1), isStale: false, at: 10)
+        #expect(driver.isSpawning)
+        #expect(driver.mood.state == .burst)
+
+        // it resolves, and the body comes back as the harness's own shape
+        driver.update(state: .delegating(children: 1), isStale: false, at: 10 + CrewMoodMap.spawnBurst)
+        #expect(!driver.isSpawning)
+        #expect(driver.mood.state == .wide)
+        #expect(driver.engine.bodyShape == .circle)
+
+        // holding at one child does not restart it
+        driver.update(state: .delegating(children: 1), isStale: false, at: 20)
+        #expect(driver.mood.state == .wide)
+        // nor does a child finishing
+        driver.update(state: .delegating(children: 1), isStale: false, at: 21)
+        #expect(driver.mood.state == .wide)
+
+        // a new child does
+        driver.update(state: .delegating(children: 3), isStale: false, at: 22)
+        #expect(driver.isSpawning)
+        #expect(driver.mood.state == .burst)
+    }
+
+    /// And it never rests as a lone dot, which is what `sleep` is.
+    @Test("a long delegation never settles on the ended pose")
+    func delegationDoesNotLookEnded() {
+        var driver = CrewAvatarDriver(harness: .codex, state: .delegating(children: 2), at: 0)
+        var now = 0.0
+        var sawWide = false
+        while now < 30 {
+            now += 1.0 / 30
+            driver.update(state: .delegating(children: 2), isStale: false, at: now)
+            #expect(driver.mood.state != .sleep)
+            if driver.mood.state == .wide { sawWide = true }
+        }
+        #expect(sawWide)
+        // the body is the harness's silhouette at full size, not a collapsed core
+        let reach = driver.sample(now).body.curves
+            .map { hypot($0.end.x, $0.end.y) }.max() ?? 0
+        #expect(reach > BloubFrameOfReference.radius * 0.8)
     }
 
     /// Every state change goes through the engine, so the ones bloub measured a

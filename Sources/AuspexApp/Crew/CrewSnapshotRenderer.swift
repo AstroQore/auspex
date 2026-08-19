@@ -40,13 +40,18 @@ enum CrewSnapshotRenderer {
         guard !board.sessions.isEmpty else { throw RenderError.emptyBoard }
 
         let roster = CrewRoster()
-        // Two passes: the first one gives every avatar its engine at t = 0, the
-        // second samples them `avatarTime` into the animation. Sampling once
-        // would create the engine and read it at the same instant, so every
-        // avatar would be frozen on its own first frame — an orbit before its
-        // rings have come in, which is the least informative moment there is.
-        for session in board.sessions {
-            _ = roster.frame(for: session, at: 0, frozen: false)
+        // The wall is stepped at its real rate up to `avatarTime` rather than
+        // sampled once. Sampling once would create every engine and read it at
+        // the same instant, so each avatar would be frozen on its own first
+        // frame — and it would skip the montage entirely: the burst would never
+        // hand over to the waiting pose, and a held state would never replay.
+        // The picture has to be of the wall the app actually draws.
+        var now = 0.0
+        while now < avatarTime {
+            for session in board.sessions {
+                _ = roster.frame(for: session, at: now, frozen: false)
+            }
+            now += 1.0 / 30
         }
         let cards = board.sessions.map { session in
             CrewSnapshotCard(
