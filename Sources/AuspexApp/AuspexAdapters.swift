@@ -10,22 +10,23 @@ import Foundation
 /// adapters means the empty state can tell the truth about both without a
 /// second table to keep in sync.
 enum AuspexAdapters {
-    /// Every adapter the ingest coordinator should tail.
+    /// Every adapter the ingest coordinator should tail — one per harness
+    /// Auspex observes. Order is display order for the empty state and for
+    /// tie-breaks; the coordinator itself does not care.
     ///
-    /// Empty today. `AgentSessionLive` defines `SourceAdapter` and the whole
-    /// tailing pipeline, but the concrete Claude Code and Codex adapters are
-    /// still landing in the kit; an empty array is legal and produces a
-    /// coordinator that watches nothing, which is exactly the pre-adapter
-    /// behaviour we want — the app runs, the board is honestly empty, and
-    /// nothing pretends to observe a harness it cannot read.
-    ///
-    /// TODO(M1): append `ClaudeLiveAdapter()` and `CodexLiveAdapter()` here
-    /// once they are on `agent-session-kit`'s main branch. Nothing else in
-    /// the app has to change: `installed` is derived from this list, the empty
-    /// state reads `installed`, and the coordinator discovers, tails, and
-    /// re-seeds on its own.
-    /// TODO(M2): Cursor, Grok Build, and AntiGravity follow.
-    static var all: [any SourceAdapter] { [] }
+    /// Each adapter owns its own discovery, tailing, and liveness probing.
+    /// Nothing else in the app names a harness: `installed` is derived from
+    /// this list, the empty state reads `installed`, and the coordinator
+    /// discovers, tails, and re-seeds on its own.
+    static var all: [any SourceAdapter] {
+        [
+            ClaudeLiveAdapter(),
+            CodexLiveAdapter(),
+            CursorLiveAdapter(),
+            GrokLiveAdapter(),
+            AntigravityLiveAdapter(),
+        ]
+    }
 
     /// The harnesses ``all`` actually covers. Derived rather than declared, so
     /// the empty state cannot claim to be watching something no adapter reads.
