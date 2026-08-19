@@ -24,12 +24,12 @@ public struct ProjectTree: Sendable, Equatable {
     /// Kept rather than hidden: a subagent whose parent has aged off the board
     /// is still running, and a sidebar that silently dropped it would be
     /// lying about what the machine is doing.
-    public let ungrouped: [SessionSnapshot]
+    public let ungrouped: [BoardRow]
 
     /// An empty tree, for a view's initial state.
     public static let empty = ProjectTree(projects: [], ungrouped: [])
 
-    public init(projects: [Project], ungrouped: [SessionSnapshot]) {
+    public init(projects: [Project], ungrouped: [BoardRow]) {
         self.projects = projects
         self.ungrouped = ungrouped
     }
@@ -92,8 +92,9 @@ public struct ProjectTree: Sendable, Equatable {
         public let agentWorktreeTask: String?
         /// `true` when this is a linked worktree rather than the main checkout.
         public let isWorktree: Bool
-        /// The sessions in it, in board order.
-        public let sessions: [SessionSnapshot]
+        /// The sessions in it, in board order with delegated ones nested
+        /// under whoever spawned them — see ``BoardRow/depth``.
+        public let sessions: [BoardRow]
         /// How many of them are believed to be running.
         public let liveCount: Int
 
@@ -103,7 +104,7 @@ public struct ProjectTree: Sendable, Equatable {
             branch: String?,
             agentWorktreeTask: String?,
             isWorktree: Bool,
-            sessions: [SessionSnapshot]
+            sessions: [BoardRow]
         ) {
             self.id = id
             self.path = path
@@ -111,7 +112,7 @@ public struct ProjectTree: Sendable, Equatable {
             self.agentWorktreeTask = agentWorktreeTask
             self.isWorktree = isWorktree
             self.sessions = sessions
-            self.liveCount = sessions.count { $0.isAlive && !$0.state.isEnded }
+            self.liveCount = sessions.count { !$0.isEnded }
         }
 
         /// The row's headline: the agent worktree's task, the branch, or the
@@ -155,8 +156,12 @@ public struct ProjectTree: Sendable, Equatable {
     ///     what the resolver would have called it anyway.
     public static func build(
         board: BoardSnapshot,
-        names: [String: String] = [:]
+        names: [String: String] = [:],
+        builder: BoardRowBuilder? = nil
     ) -> ProjectTree {
+        // One builder for the whole tree: it holds the index that turns "what
+        // is my parent called" from a scan of the board into a lookup.
+        let builder = builder ?? BoardRowBuilder(board: board)
         var order: [String] = []
         var byProject: [String: [SessionSnapshot]] = [:]
         var ungrouped: [SessionSnapshot] = []
@@ -175,17 +180,64 @@ public struct ProjectTree: Sendable, Equatable {
 
         let projects = order.map { key -> Project in
             let sessions = byProject[key] ?? []
+            // In catalog order, and in one pass: asking `allCases.filter` here
+            // walked every session once per harness, on a sidebar that is
+            // rebuilt on every frame.
+            var seen: Set<Harness> = []
+            for session in sessions { seen.insert(session.key.harness) }
             return Project(
                 key: key,
                 name: names[key] ?? BoardGrouping.projectName(forPath: key),
-                checkouts: checkouts(in: sessions, projectKey: key),
-                harnesses: Harness.allCases.filter { harness in
-                    sessions.contains { $0.key.harness == harness }
-                },
+                checkouts: checkouts(in: sessions, projectKey: key, builder: builder),
+                harnesses: Harness.allCases.filter(seen.contains),
                 isRepository: sessions.contains { $0.identity.gitRoot != nil }
             )
         }
-        return ProjectTree(projects: projects, ungrouped: ungrouped)
+        return ProjectTree(projects: projects, ungrouped: nested(ungrouped, builder: builder))
+    }
+
+    /// A run of sessions as rows, with delegated ones placed under whoever
+    /// spawned them.
+    ///
+    /// The frame's order already puts the session that most needs a person at
+    /// the top, and that is the order roots keep. What this adds is that a
+    /// subagent appears *under* its parent rather than several rows above it,
+    /// which is the only thing that makes an indent mean anything.
+    ///
+    /// Done here rather than in the sidebar's body because it is O(sessions)
+    /// and a body may run many times for one change.
+    static func nested(
+        _ sessions: [SessionSnapshot],
+        builder: BoardRowBuilder
+    ) -> [BoardRow] {
+        let present = Set(sessions.map(\.key))
+        var childrenOf: [SessionKey: [SessionSnapshot]] = [:]
+        var roots: [SessionSnapshot] = []
+        for session in sessions {
+            if let parent = session.identity.parent, parent != session.key, present.contains(parent) {
+                childrenOf[parent, default: []].append(session)
+            } else {
+                roots.append(session)
+            }
+        }
+
+        var rows: [BoardRow] = []
+        rows.reserveCapacity(sessions.count)
+        var visited: Set<SessionKey> = []
+        func walk(_ session: SessionSnapshot, depth: Int) {
+            guard visited.insert(session.key).inserted else { return }
+            rows.append(builder.row(for: session, depth: depth))
+            // Capped so a ten-deep chain does not push a title off a 232 pt
+            // column; the tree's full shape is the trace pane's job to show.
+            for child in childrenOf[session.key] ?? [] { walk(child, depth: min(depth + 1, 2)) }
+        }
+        for root in roots { walk(root, depth: 0) }
+        // A cycle in the recorded parent links would strand its members;
+        // appending whatever is left keeps the tree total.
+        for session in sessions where !visited.contains(session.key) {
+            rows.append(builder.row(for: session, depth: 0))
+        }
+        return rows
     }
 
     /// Divides a project's sessions by the checkout each is working in.
@@ -198,7 +250,8 @@ public struct ProjectTree: Sendable, Equatable {
     /// checkout its nearest placed ancestor is in.
     private static func checkouts(
         in sessions: [SessionSnapshot],
-        projectKey: String
+        projectKey: String,
+        builder: BoardRowBuilder
     ) -> [Checkout] {
         var order: [String] = []
         var byCheckout: [String: [SessionSnapshot]] = [:]
@@ -228,7 +281,7 @@ public struct ProjectTree: Sendable, Equatable {
                 isWorktree: attribute.path.map { $0 != projectKey } ?? false,
                 // Already in board order: the sessions were appended in the
                 // order the frame listed them.
-                sessions: byCheckout[id] ?? []
+                sessions: nested(byCheckout[id] ?? [], builder: builder)
             )
         }
     }

@@ -87,23 +87,34 @@ final class LiveBoardModel {
         }
     }
 
-    /// The sections the grid draws, in display order.
+    /// The sections the grid draws, in display order, as rows.
     ///
-    /// Stored rather than computed. A SwiftUI body may run many times for one
-    /// change, and grouping walks every session and tallies every group; at
-    /// twenty frames a second with a few hundred sessions that is work done
-    /// over and over for an answer that only changes when the board, the axis,
-    /// or the filter does.
-    private(set) var groups: [BoardGroup] = []
+    /// Stored rather than computed, and made of ``BoardRow`` rather than of
+    /// snapshots. Both are performance properties and both are load-bearing:
+    ///
+    /// - A SwiftUI body may run many times for one change, and grouping walks
+    ///   every session and tallies every group. At eight frames a second with
+    ///   a few hundred sessions that is work redone for an answer that only
+    ///   changes when the board, the axis, or the filter does.
+    /// - SwiftUI compares view values to decide what to re-render, so anything
+    ///   a view holds gets compared. A `SessionSnapshot` carries a dictionary
+    ///   of open tool calls, a set of open children, and fifteen optionals of
+    ///   identity; comparing a few hundred of those is the most expensive
+    ///   thing the old board did, and a profile of it was
+    ///   `SessionSnapshot.__derived_struct_equals` most of the way down.
+    ///
+    /// So the derivation happens here, once per applied frame, and the views
+    /// hold flat values of scalars and strings.
+    private(set) var rowGroups: [BoardRowGroup] = []
 
     /// The finished sessions the collapsed section at the bottom draws from,
     /// most recently finished first.
     ///
-    /// Held apart from ``groups`` rather than filtered out in the view, because
-    /// keeping them out of the grid is the board's main performance property —
-    /// see ``EndedSessions`` — and a policy that lived in a view body would be
-    /// one refactor away from being lost.
-    private(set) var endedSessions: [SessionSnapshot] = []
+    /// Held apart from ``rowGroups`` rather than filtered out in the view,
+    /// because keeping them out of the grid is the board's main performance
+    /// property — see ``EndedSessions`` — and a policy that lived in a view
+    /// body would be one refactor away from being lost.
+    private(set) var endedRows: [BoardRow] = []
 
     /// Whether the reader has asked for every finished session rather than the
     /// most recent handful.
@@ -112,31 +123,73 @@ final class LiveBoardModel {
     /// The four numbers across the top of the board.
     private(set) var summary = BoardSummary(counts: BoardSnapshot.Counts())
 
+    /// Called after each applied frame, so the sidebar's tree is rebuilt once
+    /// per frame rather than once per body.
+    var onFrame: ((BoardSnapshot) -> Void)?
+
     /// The finished rows actually drawn, and how many are left out.
-    var visibleEndedSessions: [SessionSnapshot] {
-        EndedSessions.visible(endedSessions, showingAll: showsAllEnded)
+    var visibleEndedRows: [BoardRow] {
+        showsAllEnded ? endedRows : Array(endedRows.prefix(EndedSessions.collapsedLimit))
     }
 
     var hiddenEndedCount: Int {
-        EndedSessions.hiddenCount(endedSessions, showingAll: showsAllEnded)
+        showsAllEnded ? 0 : max(0, endedRows.count - EndedSessions.collapsedLimit)
     }
 
     private func rebuildGroups() {
-        groups = BoardGrouping.groups(
+        // One builder for the whole frame: it holds the index that turns "what
+        // is my parent called" from a scan of every session on the board, once
+        // per card, into a lookup.
+        var index: [SessionKey: SessionSnapshot] = [:]
+        index.reserveCapacity(board.sessions.count)
+        for session in board.sessions { index[session.key] = session }
+        sessionIndex = index
+
+        let builder = BoardRowBuilder(board: board)
+        let groups = BoardGrouping.groups(
             for: board,
             groupBy: groupBy,
             harnessFilter: harnessFilter,
             projectFilter: projectFilter,
             includesEnded: false
         )
+        rowGroups = groups.map { group in
+            BoardRowGroup(
+                id: group.id,
+                title: group.title,
+                harness: group.harness,
+                liveCount: group.counts.live,
+                rows: group.roots.map { Self.flatten($0, builder: builder) }
+                    ?? builder.rows(for: group.sessions)
+            )
+        }
+
         let kept = BoardGrouping.filtered(
             board.sessions,
             harnessFilter: harnessFilter,
             projectFilter: projectFilter,
             in: board
         )
-        endedSessions = EndedSessions.mostRecentFirst(EndedSessions.split(kept).ended)
+        let ended = EndedSessions.mostRecentFirst(EndedSessions.split(kept).ended)
+        endedRows = builder.rows(for: ended)
         summary = BoardSummary(counts: BoardSnapshot.Counts(sessions: kept))
+    }
+
+    /// A delegation forest as a flat run of rows carrying their depth.
+    ///
+    /// Flat rather than nested: the shape is carried by ``BoardRow/depth``, and
+    /// a flat array is what a `LazyVStack` can be lazy about.
+    private static func flatten(
+        _ roots: [BoardTreeNode],
+        builder: BoardRowBuilder
+    ) -> [BoardRow] {
+        var rows: [BoardRow] = []
+        func walk(_ node: BoardTreeNode) {
+            rows.append(builder.row(for: node.session, depth: node.depth))
+            for child in node.children { walk(child) }
+        }
+        for root in roots { walk(root) }
+        return rows
     }
 
     /// Turns the project filter on, or off if it is already on this project.
@@ -149,15 +202,23 @@ final class LiveBoardModel {
         projectFilter.map(BoardGrouping.projectName(forPath:))
     }
 
+    /// Every session on the current frame, by key.
+    ///
+    /// Rebuilt with the frame. `BoardSnapshot.session(for:)` is a linear scan,
+    /// and the three selection lookups below run on every render of the trace
+    /// pane — which on a board of several hundred sessions is a scan per
+    /// child per body.
+    private var sessionIndex: [SessionKey: SessionSnapshot] = [:]
+
     /// The selected session's live snapshot, when the board still has one.
     var selectedSession: SessionSnapshot? {
-        selectedKey.flatMap { board.session(for: $0) }
+        selectedKey.flatMap { sessionIndex[$0] }
     }
 
     /// The parent of the selected session, when it has one and the board
     /// knows it. Drives the "spawned by" link in the trace header.
     var selectedParent: SessionSnapshot? {
-        selectedSession?.identity.parent.flatMap { board.session(for: $0) }
+        selectedSession?.identity.parent.flatMap { sessionIndex[$0] }
     }
 
     /// What the selected session spawned, direct children only, in board
@@ -170,12 +231,7 @@ final class LiveBoardModel {
     /// child the same way.
     var selectedChildren: [SessionSnapshot] {
         guard let key = selectedKey else { return [] }
-        return board.tree.node(for: key)?.children.compactMap { board.session(for: $0.key) } ?? []
-    }
-
-    /// How many sessions the selected one has below it, at any depth.
-    func descendantCount(of key: SessionKey) -> Int {
-        board.tree.descendants(of: key).count
+        return board.tree.node(for: key)?.children.compactMap { sessionIndex[$0.key] } ?? []
     }
 
     /// Whether any session has ever been seen. Distinguishes "watching, and
@@ -315,6 +371,7 @@ final class LiveBoardModel {
     private func apply(_ frame: BoardSnapshot) {
         board = frame
         rebuildGroups()
+        onFrame?(frame)
         if !frame.sessions.isEmpty { hasEverSeenSession = true }
 
         if autoSelectsFirstSession, selectedKey == nil, let first = frame.sessions.first {

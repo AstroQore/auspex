@@ -20,6 +20,19 @@ import Observation
 @MainActor
 @Observable
 final class ProjectsModel {
+    /// The tree the sidebar draws, rebuilt once per applied frame.
+    ///
+    /// Stored rather than derived in `SidebarView.body`. Building it walks
+    /// every session on the board, and a body may run many times for one
+    /// change — a profile of the old sidebar had `ProjectTree.build` inside
+    /// `SidebarView.body` as one of the hot paths. It is also what makes the
+    /// auto-expand below happen once per frame rather than once per render.
+    private(set) var tree: ProjectTree = .empty
+
+    /// The frame the tree was last built from, so a change of names can
+    /// rebuild it without waiting for the next one.
+    private var lastBoard: BoardSnapshot = .empty
+
     /// Project display names by root path, from the store.
     private(set) var names: [String: String] = [:]
 
@@ -87,17 +100,23 @@ final class ProjectsModel {
         for summary in summaries { mapped[summary.rootPath] = summary.name }
         guard mapped != names else { return }
         names = mapped
+        rebuild(board: lastBoard)
     }
 
-    /// Builds the tree for one frame and opens any project that is live for
+    /// Rebuilds the tree for one frame and opens any project that is live for
     /// the first time.
-    func tree(for board: BoardSnapshot) -> ProjectTree {
+    ///
+    /// Called from ``LiveBoardModel/onFrame``, which is the one place a frame
+    /// arrives. A view must not call this: writing observable state from a
+    /// body is what turns a render into a loop.
+    func rebuild(board: BoardSnapshot) {
+        lastBoard = board
         let tree = ProjectTree.build(board: board, names: names)
         for project in tree.projects where project.liveCount > 0 {
             guard didAutoExpand.insert(project.key).inserted else { continue }
             expandedProjects.insert(project.key)
         }
-        return tree
+        self.tree = tree
     }
 
     // MARK: Disclosure

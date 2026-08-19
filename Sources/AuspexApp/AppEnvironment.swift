@@ -124,6 +124,9 @@ public final class AppEnvironment {
         let registry = SessionRegistry(store: store)
         self.registry = registry
         board.autoSelectsFirstSession = mode == .demo
+        // The sidebar's tree is derived from the same frame the board is, and
+        // once per frame rather than once per render.
+        board.onFrame = { [projects] frame in projects.rebuild(board: frame) }
         board.start(registry: registry, repository: SessionRepository(store: store))
         projects.start(repository: ProjectRepository(store: store))
         harnesses.start(

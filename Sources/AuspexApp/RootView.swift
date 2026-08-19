@@ -120,7 +120,11 @@ struct SidebarView: View {
     let mode: AppEnvironment.Mode
 
     var body: some View {
-        let tree = projects.tree(for: model.board)
+        // Read, never built: the tree is rebuilt once per applied frame by the
+        // model that receives it. Building it here would walk every session on
+        // the board on every render, and would write observable state from a
+        // body while doing it.
+        let tree = projects.tree
 
         VStack(alignment: .leading, spacing: 2) {
             titleRow

@@ -54,13 +54,12 @@ struct ProjectsSidebar: View {
             }
             if !tree.ungrouped.isEmpty {
                 UngroupedRow(count: tree.ungrouped.count)
-                ForEach(ordered(tree.ungrouped), id: \.session.key) { row in
+                ForEach(tree.ungrouped) { row in
                     SessionRow(
-                        session: row.session,
+                        row: row,
                         depth: 1 + row.depth,
-                        isChild: row.depth > 0,
-                        isSelected: selectedKey == row.session.key,
-                        onSelect: { onSelectSession(row.session.key) }
+                        isSelected: selectedKey == row.key,
+                        onSelect: { onSelectSession(row.key) }
                     )
                 }
             }
@@ -86,57 +85,15 @@ struct ProjectsSidebar: View {
             )
         }
         if isImplied || model.isExpanded(checkout: checkout) {
-            ForEach(ordered(checkout.sessions), id: \.session.key) { row in
+            ForEach(checkout.sessions) { row in
                 SessionRow(
-                    session: row.session,
+                    row: row,
                     depth: (isImplied ? 1 : 2) + row.depth,
-                    isChild: row.depth > 0,
-                    isSelected: selectedKey == row.session.key,
-                    onSelect: { onSelectSession(row.session.key) }
+                    isSelected: selectedKey == row.key,
+                    onSelect: { onSelectSession(row.key) }
                 )
             }
         }
-    }
-
-    /// A checkout's sessions with delegated ones nested under whoever spawned
-    /// them, parents first.
-    ///
-    /// The frame's order already puts the session that most needs a person at
-    /// the top, and that is the order roots keep. What this adds is that a
-    /// subagent appears *under* its parent rather than several rows above it,
-    /// which is the only way the `↳` prefix means anything.
-    private func ordered(
-        _ sessions: [SessionSnapshot]
-    ) -> [(session: SessionSnapshot, depth: Int)] {
-        var childrenOf: [SessionKey: [SessionSnapshot]] = [:]
-        let present = Set(sessions.map(\.key))
-        var roots: [SessionSnapshot] = []
-        for session in sessions {
-            if let parent = session.identity.parent, present.contains(parent), parent != session.key {
-                childrenOf[parent, default: []].append(session)
-            } else {
-                roots.append(session)
-            }
-        }
-
-        var rows: [(session: SessionSnapshot, depth: Int)] = []
-        rows.reserveCapacity(sessions.count)
-        var visited: Set<SessionKey> = []
-        func walk(_ session: SessionSnapshot, depth: Int) {
-            guard visited.insert(session.key).inserted else { return }
-            rows.append((session, depth))
-            // Depth is capped so a ten-deep chain does not push a title off a
-            // 232 pt column; the tree's shape is the trace pane's job to show
-            // in full.
-            for child in childrenOf[session.key] ?? [] { walk(child, depth: min(depth + 1, 2)) }
-        }
-        for root in roots { walk(root, depth: 0) }
-        // A cycle in the recorded parent links would strand its members;
-        // appending whatever is left keeps the tree total.
-        for session in sessions where !visited.contains(session.key) {
-            rows.append((session, 0))
-        }
-        return rows
     }
 
     private var emptyNote: some View {
@@ -253,22 +210,21 @@ private struct CheckoutRow: View {
 /// A dot rather than a pill. The pill is a card's device and needs 80 points;
 /// at this width the colour alone carries the state, and the full name is one
 /// hover or one VoiceOver stop away.
-private struct SessionRow: View {
-    let session: SessionSnapshot
+private struct SessionRow: View, Equatable {
+    let row: BoardRow
     let depth: Int
-    let isChild: Bool
     let isSelected: Bool
     let onSelect: () -> Void
 
+    nonisolated static func == (lhs: SessionRow, rhs: SessionRow) -> Bool {
+        lhs.row == rhs.row && lhs.depth == rhs.depth && lhs.isSelected == rhs.isSelected
+    }
+
     var body: some View {
-        let style = session.state.style
+        let style = row.state.style
         TreeRow(depth: depth, isLit: isSelected, action: onSelect) {
-            HarnessBadge(
-                harness: session.key.harness,
-                size: 16,
-                isMuted: session.state.isEnded
-            )
-            Text(isChild ? "↳ \(title)" : title)
+            HarnessBadge(harness: row.harness, size: 16, isMuted: row.isEnded)
+            Text(row.depth > 0 ? "↳ \(row.title)" : row.title)
                 .font(AuspexType.row)
                 .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
                 .lineLimit(1)
@@ -276,15 +232,7 @@ private struct SessionRow: View {
             Spacer(minLength: 4)
             StateDot(color: style.color, glows: style.motion.isAnimated)
         }
-        .help("\(title) — \(session.state.label)")
-    }
-
-    /// The same ladder a card climbs — title, project, id — so a session is
-    /// never called one thing in the sidebar and another on the wall.
-    private var title: String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        if let project = BoardGrouping.projectName(for: session) { return project }
-        return String(session.key.sessionID.prefix(10))
+        .help("\(row.title) — \(row.state.label)")
     }
 }
 

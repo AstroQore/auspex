@@ -22,31 +22,27 @@ import SwiftUI
 /// A card is mostly data, and that is what keeps it dense without becoming a
 /// wall of text.
 ///
-/// ## Equatable on purpose
+/// ## Why it holds a row and not a snapshot
 ///
-/// The board replaces its whole frame several times a second, so every card's
-/// body would otherwise be re-evaluated several times a second whether or not
-/// that card changed. Conforming to `Equatable` and rendering through
-/// `.equatable()` lets SwiftUI skip the ones whose session is byte-identical
-/// to the last frame's — which, on a wall where three sessions are busy and
-/// forty are not, is nearly all of them.
+/// SwiftUI compares view values to decide what to re-render, so everything a
+/// card stores is compared — several hundred times per graph update on a busy
+/// machine. A `SessionSnapshot` carries a dictionary of open tool calls, a set
+/// of open children, and fifteen optionals of identity, and comparing those was
+/// the single most expensive thing the board did: a profile of it was
+/// `SessionSnapshot.__derived_struct_equals` most of the way down.
+///
+/// A ``BoardRow`` is flat — scalars, small enums, and strings the model copied
+/// out of the snapshot once per frame — so `.equatable()` decides in a handful
+/// of instructions whether this card changed. On a wall where three sessions
+/// are busy and forty are not, that skips nearly all of them.
 ///
 /// The two things on the card that move — the strip and the stopwatch — are
-/// leaves that read ``BoardClock`` themselves, precisely so that they can keep
+/// leaves that read ``BoardClock`` themselves, precisely so they can keep
 /// moving without anything above them being re-evaluated. Nothing time-varying
-/// is a stored property here, and nothing here reads the clock.
+/// is stored here, and nothing here reads the clock.
 struct SessionCard: View, Equatable {
-    let session: SessionSnapshot
+    let row: BoardRow
     let isSelected: Bool
-    /// How many sessions are below this one in the delegation forest.
-    ///
-    /// Not the same number as `state.childCount`, which counts only the
-    /// children *still running* and only the ones this session's own log
-    /// recorded. This is what the board can see: every descendant, including a
-    /// `codex exec` the process table linked up and a child that has finished.
-    var descendantCount: Int = 0
-    /// The session that spawned this one, when the board still holds it.
-    var parentTitle: (key: SessionKey, title: String)?
     var onSelectParent: (SessionKey) -> Void = { _ in }
 
     /// Equality is over the values that are drawn. The closure is not one of
@@ -57,24 +53,20 @@ struct SessionCard: View, Equatable {
     /// itself main-actor isolated, and `.equatable()` calls it from wherever
     /// SwiftUI's diff runs. Nothing it touches is mutable state.
     nonisolated static func == (lhs: SessionCard, rhs: SessionCard) -> Bool {
-        lhs.session == rhs.session
-            && lhs.isSelected == rhs.isSelected
-            && lhs.descendantCount == rhs.descendantCount
-            && lhs.parentTitle?.key == rhs.parentTitle?.key
-            && lhs.parentTitle?.title == rhs.parentTitle?.title
+        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
     }
 
     var body: some View {
-        let style = session.state.style
-        let harnessStyle = session.key.harness.style
-        let isOver = session.state.isEnded
+        let style = row.state.style
+        let accent = row.harness.style.accent
+        let isOver = row.isEnded
 
         VStack(alignment: .leading, spacing: 10) {
             header(style: style, isOver: isOver)
             identityLine
             activityLine(style: style)
             chips
-            ActivityStrip(motion: style.motion, color: style.color, isStale: session.isStale)
+            ActivityStrip(motion: style.motion, color: style.color, isStale: row.isStale)
             footer
         }
         .padding(.horizontal, 14)
@@ -98,7 +90,7 @@ struct SessionCard: View, Equatable {
                 topTrailingRadius: 0,
                 style: .continuous
             )
-            .fill(isOver ? AuspexPalette.stateEnded : harnessStyle.accent)
+            .fill(isOver ? AuspexPalette.stateEnded : accent)
             .frame(width: 2)
             .padding(1)
         }
@@ -106,10 +98,10 @@ struct SessionCard: View, Equatable {
         // something: `.opacity(1)` is an identity to look at and not to the
         // renderer.
         .opacity(isOver ? 0.62 : 1)
-        .modifier(Desaturate(isOn: session.isStale))
+        .modifier(Desaturate(isOn: row.isStale))
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(harnessStyle.displayName), \(title), \(session.state.label)")
+        .accessibilityLabel("\(row.harness.displayName), \(row.title), \(row.state.label)")
     }
 
     // MARK: Rows
@@ -118,15 +110,15 @@ struct SessionCard: View, Equatable {
     /// readable from across the room.
     private func header(style: StateStyle, isOver: Bool) -> some View {
         HStack(spacing: 10) {
-            HarnessBadge(harness: session.key.harness, size: 22, isMuted: isOver)
-            Text(title)
+            HarnessBadge(harness: row.harness, size: 22, isMuted: isOver)
+            Text(row.title)
                 .font(AuspexType.cardTitle)
                 .foregroundStyle(isOver ? AuspexPalette.text3 : AuspexPalette.text)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if session.isStale, !isOver { StaleTag() }
-            StatePill(state: session.state, isStale: session.isStale)
+            if row.isStale, !isOver { StaleTag() }
+            StatePill(state: row.state, isStale: row.isStale)
                 .fixedSize()
         }
     }
@@ -136,15 +128,15 @@ struct SessionCard: View, Equatable {
     /// they need it exactly.
     private var identityLine: some View {
         HStack(spacing: 6) {
-            Text(shortID)
-            if let pid = session.identity.pid {
+            Text(row.shortID)
+            if let pid = row.pid {
                 separator
                 // `verbatim` because a pid is an identifier, not a quantity:
                 // an interpolated `Int` would go through the locale's number
                 // formatter and get a thousands separator in the middle of it.
                 Text(verbatim: "pid \(pid)").fixedSize()
             }
-            if let model = session.identity.model {
+            if let model = row.modelName {
                 separator
                 Text(model).lineLimit(1).truncationMode(.tail).layoutPriority(-1)
             }
@@ -156,16 +148,17 @@ struct SessionCard: View, Equatable {
 
     /// What is happening, in the harness's own words, behind the state's mark.
     private func activityLine(style: StateStyle) -> some View {
-        HStack(spacing: 8) {
+        let text = PathDisplay.condense(row.activity, limit: 64)
+        return HStack(spacing: 8) {
             Text(style.glyph)
                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                 .foregroundStyle(style.color)
                 .frame(width: 16)
-            Text(activityText)
+            Text(text)
                 .font(AuspexType.mono)
                 .foregroundStyle(AuspexPalette.text2)
                 .lineLimit(1)
-                .truncationMode(PathDisplay.truncation(for: activityText))
+                .truncationMode(PathDisplay.truncation(for: text))
             Spacer(minLength: 0)
         }
     }
@@ -178,14 +171,14 @@ struct SessionCard: View, Equatable {
     /// the board, and thirteen chips would be a card nobody can read.
     private var chips: some View {
         HStack(spacing: 6) {
-            if let project = BoardGrouping.projectName(for: session) {
+            if let project = row.project {
                 FactChip(placeLabel(project: project))
             }
-            if let cwd = session.identity.cwd ?? session.identity.gitRoot {
-                FactChip(PathDisplay.abbreviate(cwd), isMono: true)
+            if let directory = row.directory {
+                FactChip(PathDisplay.abbreviate(directory), isMono: true)
                     .layoutPriority(-1)
             }
-            if let parent = parentTitle {
+            if let parent = row.parent {
                 Button { onSelectParent(parent.key) } label: {
                     FactChip(tint: AuspexPalette.stateDelegating) {
                         Text("↑ \(parent.title)")
@@ -195,9 +188,9 @@ struct SessionCard: View, Equatable {
                 .buttonStyle(.plain)
                 .fixedSize()
                 .help("Open the session that spawned this one")
-            } else if descendantCount > 0 {
+            } else if row.descendantCount > 0 {
                 FactChip(
-                    descendantCount == 1 ? "↳ 1 child" : "↳ \(descendantCount) children",
+                    row.descendantCount == 1 ? "↳ 1 child" : "↳ \(row.descendantCount) children",
                     tint: AuspexPalette.stateDelegating
                 )
                 .fixedSize()
@@ -214,24 +207,22 @@ struct SessionCard: View, Equatable {
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                 ElapsedLabel(
-                    since: elapsedSince,
-                    until: session.endedAt,
-                    tint: session.state.style.isAlarming
-                        ? session.state.style.color
+                    since: row.elapsedSince,
+                    until: row.endedAt,
+                    tint: row.state.style.isAlarming
+                        ? row.state.style.color
                         : AuspexPalette.text
                 )
             }
-            MetaField(key: "turns", value: "\(session.turnCount)")
-            MetaField(key: "tools", value: "\(session.toolCallCount)")
+            MetaField(key: "turns", value: "\(row.turnCount)")
+            MetaField(key: "tools", value: "\(row.toolCallCount)")
             Spacer(minLength: 4)
-            Text(
-                "\(TokenFormat.compact(session.tokensIn))/\(TokenFormat.compact(session.tokensOut))"
-            )
-            .font(AuspexType.monoSmall)
-            .auspexTabularDigits()
-            .foregroundStyle(AuspexPalette.text3)
-            .fixedSize()
-            .help("Tokens in / out")
+            Text("\(TokenFormat.compact(row.tokensIn))/\(TokenFormat.compact(row.tokensOut))")
+                .font(AuspexType.monoSmall)
+                .auspexTabularDigits()
+                .foregroundStyle(AuspexPalette.text3)
+                .fixedSize()
+                .help("Tokens in / out")
         }
     }
 
@@ -243,72 +234,18 @@ struct SessionCard: View, Equatable {
 
     // MARK: Content
 
-    /// The card's headline: what the harness called this session, or failing
-    /// that the project it is in, or failing that the session id.
-    ///
-    /// Never invented. A session whose adapter recorded none of the three
-    /// shows its own id, which at least identifies it.
-    private var title: String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        if let project = BoardGrouping.projectName(for: session) { return project }
-        return shortID
-    }
-
-    /// The first eight characters of the session id — enough to recognise one
-    /// in a terminal, short enough to sit beside a pid.
-    private var shortID: String {
-        String(session.key.sessionID.prefix(8))
-    }
-
     /// The project chip's text: the project, and the branch when one is known.
     private func placeLabel(project: String) -> String {
-        guard let branch = session.identity.gitBranch, !branch.isEmpty else { return project }
+        guard let branch = row.branch, !branch.isEmpty else { return project }
         return "\(project) · \(branch)"
     }
 
-    private var activityText: String {
-        if let description = session.state.activityDescription {
-            if case .writingFile(let path) = session.state, let path {
-                return PathDisplay.abbreviate(path)
-            }
-            if case .toolCalling = session.state,
-               let target = session.pending.mostRecentOpenToolCall?.target {
-                return "\(description)  \(PathDisplay.condense(target))"
-            }
-            return description
-        }
-        switch session.state {
-        case .ended(let reason): return "exited · \(reason.rawValue)"
-        case .idle: return "quiet"
-        case .thinking: return "reasoning"
-        default: return "—"
-        }
-    }
-
     private var elapsedLabel: String {
-        switch session.state {
+        switch row.state {
         case .ended: "ran for"
         case .waitingPermission: "waiting"
         case .idle: "quiet"
         default: "elapsed"
-        }
-    }
-
-    /// When the current state began, as precisely as the snapshot allows.
-    ///
-    /// An open tool call records its own start, which is exact. Everything
-    /// else uses the last event, which is exact too — a state change is always
-    /// caused by an event — except while a session keeps emitting events that
-    /// do not change its state, where it reads as "time since anything
-    /// happened". That is the more useful number of the two anyway.
-    private var elapsedSince: Date? {
-        switch session.state {
-        case .toolCalling, .writingFile:
-            session.pending.mostRecentOpenToolCall?.startedAt ?? session.lastEventAt
-        case .ended:
-            session.startedAt ?? session.lastEventAt
-        default:
-            session.lastEventAt ?? session.startedAt
         }
     }
 }

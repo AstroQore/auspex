@@ -19,6 +19,14 @@ import SwiftUI
 /// grid entirely — see ``EndedSessions`` — and the board's cost scales with
 /// what is *running*.
 ///
+/// ## Why it renders rows and not snapshots
+///
+/// Every value a view holds is a value SwiftUI compares to decide what to
+/// re-render, and a `SessionSnapshot` is expensive to compare: a dictionary of
+/// open tool calls, a set of open children, fifteen optionals of identity. So
+/// this view holds ``BoardRow``s, derived once per frame by the model — see
+/// ``LiveBoardModel/rowGroups``.
+///
 /// The grid is adaptive rather than a fixed column count: a card is legible
 /// somewhere between 300 and 520 points wide, and letting the window decide
 /// how many fit is what makes the same view work on a laptop and on the second
@@ -37,7 +45,7 @@ struct BoardView: View {
                     model.projectFilter = nil
                 }
             }
-            if model.groups.isEmpty, model.endedSessions.isEmpty {
+            if model.rowGroups.isEmpty, model.endedRows.isEmpty {
                 BoardEmptyState(model: model)
             } else {
                 grid
@@ -49,17 +57,17 @@ struct BoardView: View {
     private var grid: some View {
         BoardScroll {
             LazyVStack(alignment: .leading, spacing: 22) {
-                ForEach(model.groups) { group in
+                ForEach(model.rowGroups) { group in
                     VStack(alignment: .leading, spacing: 12) {
                         BoardSectionHeader(
                             title: group.title,
-                            liveCount: group.counts.live,
+                            liveCount: group.liveCount,
                             harness: group.harness
                         )
                         body(of: group)
                     }
                 }
-                if !model.endedSessions.isEmpty { endedSection }
+                if !model.endedRows.isEmpty { endedSection }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 18)
@@ -71,28 +79,26 @@ struct BoardView: View {
     /// case it is a column, because a tree drawn across an adaptive grid is a
     /// tree whose shape depends on the window width.
     @ViewBuilder
-    private func body(of group: BoardGroup) -> some View {
-        if let roots = group.roots, roots.contains(where: { !$0.children.isEmpty }) {
-            BoardTreeColumn(roots: roots) { card(for: $0) }
+    private func body(of group: BoardRowGroup) -> some View {
+        if group.rows.contains(where: { $0.depth > 0 }) {
+            BoardTreeColumn(rows: group.rows) { card(for: $0) }
         } else {
             LazyVGrid(columns: columns, spacing: 14) {
-                ForEach(group.sessions, id: \.key) { session in
-                    card(for: session)
+                ForEach(group.rows) { row in
+                    card(for: row)
                 }
             }
         }
     }
 
-    private func card(for session: SessionSnapshot) -> some View {
+    private func card(for row: BoardRow) -> some View {
         SessionCard(
-            session: session,
-            isSelected: model.selectedKey == session.key,
-            descendantCount: model.descendantCount(of: session.key),
-            parentTitle: parentTitle(of: session),
+            row: row,
+            isSelected: model.selectedKey == row.key,
             onSelectParent: { key in model.selectedKey = key }
         )
         .equatable()
-        .onTapGesture { model.selectedKey = session.key }
+        .onTapGesture { model.selectedKey = row.key }
         .accessibilityAddTraits(.isButton)
     }
 
@@ -101,17 +107,14 @@ struct BoardView: View {
         VStack(alignment: .leading, spacing: 12) {
             BoardSectionHeader(
                 title: "Ended",
-                subtitle: "\(model.endedSessions.count)",
+                subtitle: "\(model.endedRows.count)",
                 harness: nil
             )
             LazyVStack(spacing: 0) {
-                ForEach(model.visibleEndedSessions, id: \.key) { session in
-                    EndedSessionRow(
-                        session: session,
-                        isSelected: model.selectedKey == session.key
-                    )
-                    .equatable()
-                    .onTapGesture { model.selectedKey = session.key }
+                ForEach(model.visibleEndedRows) { row in
+                    EndedSessionRow(row: row, isSelected: model.selectedKey == row.key)
+                        .equatable()
+                        .onTapGesture { model.selectedKey = row.key }
                 }
             }
             .panelChrome()
@@ -128,7 +131,7 @@ struct BoardView: View {
             Text(
                 model.showsAllEnded
                     ? "Show the most recent \(EndedSessions.collapsedLimit)"
-                    : "Show all \(model.endedSessions.count)"
+                    : "Show all \(model.endedRows.count)"
             )
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.text2)
@@ -142,41 +145,30 @@ struct BoardView: View {
         .buttonStyle(.plain)
         .help("Finished sessions are collapsed so the board's cost tracks what is running")
     }
-
-    /// The parent's headline, for the card's "spawned by" chip. `nil` when the
-    /// session has no parent, or when the board no longer holds it — a chip
-    /// naming a card that is not there would be a dead link.
-    private func parentTitle(of session: SessionSnapshot) -> (key: SessionKey, title: String)? {
-        guard let parent = session.identity.parent,
-              let snapshot = model.board.session(for: parent)
-        else { return nil }
-        if let title = snapshot.identity.title, !title.isEmpty { return (parent, title) }
-        return (parent, String(parent.sessionID.prefix(10)))
-    }
 }
 
-/// One finished session, as a row rather than a card.
+/// One finished session, as a row rather than as a card.
 ///
 /// Everything a card says about *activity* is gone, because there is none.
 /// What is left is what a person looks for in history: whose session it was,
 /// what it was called, where it ran, and when it stopped.
 struct EndedSessionRow: View, Equatable {
-    let session: SessionSnapshot
+    let row: BoardRow
     let isSelected: Bool
 
     nonisolated static func == (lhs: EndedSessionRow, rhs: EndedSessionRow) -> Bool {
-        lhs.session == rhs.session && lhs.isSelected == rhs.isSelected
+        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
     }
 
     var body: some View {
         HStack(spacing: 10) {
-            HarnessBadge(harness: session.key.harness, size: 16, isMuted: true)
-            Text(title)
+            HarnessBadge(harness: row.harness, size: 16, isMuted: true)
+            Text(row.title)
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text2)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if let project = BoardGrouping.projectName(for: session) {
+            if let project = row.project {
                 Text(project)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
@@ -188,7 +180,7 @@ struct EndedSessionRow: View, Equatable {
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize()
-            Text(RelativeTimeText.since(session.endedAt ?? session.lastEventAt))
+            Text(RelativeTimeText.since(row.endedAt ?? row.lastEventAt))
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
                 .frame(width: 74, alignment: .trailing)
@@ -200,75 +192,50 @@ struct EndedSessionRow: View, Equatable {
         .accessibilityElement(children: .combine)
     }
 
-    private var title: String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        return String(session.key.sessionID.prefix(12))
-    }
-
     private var reason: String {
-        if case .ended(let reason) = session.state { return reason.rawValue }
+        if case .ended(let reason) = row.state { return reason.rawValue }
         return "ended"
     }
 }
 
 /// A section drawn as a delegation tree rather than as a grid.
 ///
-/// Its own type so that anything which has to draw this shape — the board, and
-/// the renderer that produces the documentation screenshots — draws it with one
-/// set of measurements rather than two that drift.
+/// The rows arrive flat, each carrying the depth the model worked out, and the
+/// inset is drawn from that. Flat rather than recursive because a `LazyVStack`
+/// can only be lazy about a flat collection — and because a recursive view over
+/// nested snapshots is exactly the shape that made the old board compare arrays
+/// of them on every graph update.
 struct BoardTreeColumn<Card: View>: View {
-    let roots: [BoardTreeNode]
-    @ViewBuilder let card: (SessionSnapshot) -> Card
+    let rows: [BoardRow]
+    @ViewBuilder let card: (BoardRow) -> Card
+
+    /// One step per level. A card is legible from about 300 points, so the
+    /// inset has to be small enough that three levels still leave one room.
+    private static var step: CGFloat { 22 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(roots) { root in
-                TreeBranch(node: root, card: card)
+            ForEach(rows) { row in
+                card(row)
+                    .frame(maxWidth: 480, alignment: .leading)
+                    .padding(.leading, Self.step * CGFloat(row.depth))
+                    .overlay(alignment: .leading) {
+                        // A rail per level, the same hairline device the
+                        // sidebar's tree uses, so one idiom means one thing
+                        // across the window.
+                        HStack(spacing: 0) {
+                            ForEach(0..<row.depth, id: \.self) { _ in
+                                Rectangle()
+                                    .fill(AuspexPalette.stateDelegating.opacity(0.35))
+                                    .frame(width: 1)
+                                    .frame(width: Self.step, alignment: .center)
+                            }
+                        }
+                        .frame(maxHeight: .infinity)
+                    }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// One node of a delegation tree and everything under it.
-///
-/// Children are inset behind a rail rather than drawn in a grid: the whole
-/// content of this view is *who spawned whom*, and a layout that reflowed with
-/// the window would lose it. The rail is the same hairline device the sidebar's
-/// tree uses, so one idiom means one thing across the window.
-private struct TreeBranch<Card: View>: View {
-    let node: BoardTreeNode
-    /// How to draw one session. A closure rather than a stored `BoardView`,
-    /// because a view held as a value keeps whatever environment it was built
-    /// with — and a card that stopped noticing "reduce motion" would be a card
-    /// that animates at someone who asked it not to.
-    @ViewBuilder let card: (SessionSnapshot) -> Card
-
-    /// A card is legible from about 300 points and stops gaining anything past
-    /// 520. Fixing the width here keeps a root and a grandchild the same size,
-    /// which is what makes the inset read as depth rather than as importance.
-    private static var cardWidth: CGFloat { 440 }
-    private static var inset: CGFloat { 22 }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            card(node.session)
-                .frame(maxWidth: Self.cardWidth, alignment: .leading)
-
-            if !node.children.isEmpty {
-                HStack(alignment: .top, spacing: 0) {
-                    Rectangle()
-                        .fill(AuspexPalette.stateDelegating.opacity(0.35))
-                        .frame(width: 1)
-                        .frame(width: Self.inset, alignment: .center)
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(node.children) { child in
-                            TreeBranch(node: child, card: card)
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
