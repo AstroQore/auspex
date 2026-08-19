@@ -133,20 +133,31 @@ Resources/Pets/<pet-id>/          app 内置（一 harness 一只默认）
 ```
 帧条规则见 §0.1：横向单行、无间距无边距、透明底、逐像素、**第 0 帧可单独当静态图**。缺哪个姿势 app 就退回程序占位，所以可以一只一只、一姿势一姿势地交。
 
-**硬性要求（重复）：全部是非人类小生物**——小龙、小机器人、小猫、史莱姆、幽灵……绝不出现人形。每个 harness 一个固定物种 + 主色（Crew 视图的团子表情会沿用同一物种/主色/眼睛设定）：
+**硬性要求（重复）：全部是非人类小生物，而且要抽象、简洁**——参照 Claude Code Buddy 的抽象度（几笔就是一只鸭/龙/幽灵：一个剪影 + 两颗眼 + 至多一个小特征），不要具象写实的解剖细节。可以有自己的小细节（一顶小帽、一撮呆毛、一条围巾），但**每只 ≤ 3 个辨识特征、≤ 6 种颜色、无渐变无毛发无鳞片**；如果一个特征要用超过 ~40 个像素才画得清，就是太具象了。
 
-| harness（全名） | 文件夹 / 默认 pet id | 主色 | 物种 & 特征（固定） |
-|---|---|---|---|
-| Claude Code | `claudeCode` / `claudeCode-dragon` | `#E0785A` | **珊瑚色小龙**：两只小角、两片小翅膀、圆肚子、两颗大眼 |
-| Claude Cowork | `claudeCowork` / `claudeCowork-dragon` | `#CE8F6E` | 同款小龙，浅棕色，戴一条小围巾 |
-| Codex | `codex` / `codex-robot` | `#2DD4BF` | **青绿色小机器人**：方圆身体、天线顶一颗小球（球随状态变色）、方圆眼、侧耳 |
-| ChatGPT Work | `chatgptWork` / `chatgptWork-robot` | `#22A06B` | 同款小机器人，绿色，胸口一枚小徽章 |
-| Cursor | `cursor` / `cursor-cat` | `#4C8DFF` | **蓝色小猫**：尖耳朵、长尾巴、细长眼 |
-| Grok Build | `grokBuild` / `grokBuild-slime` | `#F45FA0` | **品红小史莱姆/团子**：无四肢，靠形变表达 |
-| Grok Bot | `grokBot` / `grokBot-slime` | `#F98BBE` | 同款团子，浅粉，头顶一小撮呆毛 |
-| AntiGravity | `antigravity` / `antigravity-ghost` | `#B4E048` | **黄绿小幽灵**：波浪下摆、悬浮 |
+```
+Claude Buddy 抽象度参考（它是 ASCII，我们是像素，但"几笔一只"的克制感一样）：
+    __              /^\  /^\            .----.
+  <(· )___        <  ·  ·  >          / ·  · \
+   (  ._>          (   ~~   )         |      |
+    `--´            `-vvvv-´          ~`~``~`~
+    duck              dragon             ghost
+```
 
-风格：可爱、圆润、**大眼睛占脸约 1/3**（深瞳 `#0F0F12` + 1 px 白高光）、腮红两点、小嘴；Claude Code / Codex 内置 pets 那种质感；每只都要有清晰剪影，在 64 pt 大小下一眼分辨。cell 32×32，生物 ≤ 22×22 px，底边贴 cell 底边（bottom-center 锚点），左右各留 ≥ 5 px；**默认背对/侧背观众面向显示器**（看得出它在"看屏幕"），桌子与显示器由 app 画在生物上方，生物上方 8 px 不要画东西。**没有手就不画打字动作**——身体前倾、触角/翅膀/尾巴敲击等物种化动作表达"忙"。
+每个 harness 一个固定物种 + 主色（Crew 视图的团子表情会沿用同一物种/主色/眼睛设定）：
+
+| harness（全名） | 文件夹 / 默认 pet id | 主色 | 物种（抽象剪影） | 允许的 ≤3 个特征 |
+|---|---|---|---|---|
+| Claude Code | `claudeCode` / `claudeCode-dragon` | `#E0785A` | 圆团身体的小龙 | 头顶两个小尖角、身侧两片小翅膀 |
+| Claude Cowork | `claudeCowork` / `claudeCowork-dragon` | `#CE8F6E` | 同款小龙（浅棕） | 同上 + 一条小围巾（浅色一横） |
+| Codex | `codex` / `codex-robot` | `#2DD4BF` | 圆角方块小机器人 | 头顶一根天线 + 小球（球随状态变色） |
+| ChatGPT Work | `chatgptWork` / `chatgptWork-robot` | `#22A06B` | 同款小机器人（绿） | 同上 + 胸口一颗方点 |
+| Cursor | `cursor` / `cursor-cat` | `#4C8DFF` | 圆团小猫 | 两只尖耳、一条尾巴 |
+| Grok Build | `grokBuild` / `grokBuild-slime` | `#F45FA0` | 史莱姆/团子 | 无四肢，只靠形变；眼睛偏大 |
+| Grok Bot | `grokBot` / `grokBot-slime` | `#F98BBE` | 同款团子（浅粉） | 头顶一撮呆毛 |
+| AntiGravity | `antigravity` / `antigravity-ghost` | `#B4E048` | 小幽灵 | 波浪下摆、悬浮 |
+
+风格：可爱、圆润、**大眼睛占脸约 1/3**（深瞳 `#0F0F12` + 1 px 白高光；眼睛是主要表情通道）、可选两点腮红、小嘴一笔；平涂色块（主色 + 深一档描边 + 高光/腮红即可）；每只都要有清晰剪影，在 64 pt 大小下一眼分辨。cell 32×32，生物 ≤ 22×22 px，底边贴 cell 底边（bottom-center 锚点），左右各留 ≥ 5 px；**默认背对/侧背观众面向显示器**（看得出它在"看屏幕"），桌子与显示器由 app 画在生物上方，生物上方 8 px 不要画东西。**没有手就不画打字动作**——身体前倾、触角/翅膀/尾巴敲击等物种化动作表达"忙"。
 
 | 文件 | 帧 | fps | 画什么（物种化表达） |
 |---|---|---|---|
