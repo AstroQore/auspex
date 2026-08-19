@@ -37,9 +37,44 @@ import Observation
 final class LiveBoardModel {
     // MARK: Board
 
-    /// The current frame. Starts empty so the first render has something to
-    /// draw before any event arrives.
+    /// The frame every view renders: the one the registry produced, with the
+    /// person's own projects applied and the ignored sessions taken out.
+    ///
+    /// Views read this and never ``rawBoard``. That is the whole of how "an
+    /// ignored session disappears everywhere" is true — the board, the scene,
+    /// the crew, the sidebar's tree, the summary chips and the menu bar are
+    /// six readers of this one value, and none of them knows a rule exists.
+    ///
+    /// Starts empty so the first render has something to draw before any event
+    /// arrives.
     private(set) var board: BoardSnapshot = .empty
+
+    /// The frame as it arrived, before the user layer.
+    ///
+    /// Kept because the header has to say how many rows the rules are hiding,
+    /// and because turning "show ignored" on must not have to wait for the
+    /// next frame to put them back.
+    private(set) var rawBoard: BoardSnapshot = .empty
+
+    /// The sessions an ignore rule matched on the current frame — empty unless
+    /// something is being hidden, and still filled while ``showsIgnored`` is
+    /// on, so the rows it reveals can be drawn dimmed.
+    private(set) var ignoredKeys: Set<SessionKey> = []
+
+    /// How many sessions the rules are hiding. The number in the header's
+    /// toggle.
+    var ignoredCount: Int { ignoredKeys.count }
+
+    /// Whether the ignored sessions are on the board, dimmed, rather than gone.
+    var showsIgnored = false {
+        didSet { if oldValue != showsIgnored { rebuildVisibleBoard() } }
+    }
+
+    /// The person's own projects, as an index the frame carries.
+    private(set) var claims: ProjectClaims = .empty
+
+    /// What not to show.
+    private(set) var ignoreRules: IgnoreRules = .none
 
     /// How the live sessions are drawn: the grid of cards, or the scene.
     ///
@@ -62,16 +97,22 @@ final class LiveBoardModel {
         didSet { if oldValue != harnessFilter { rebuildGroups() } }
     }
 
-    /// The one project the wall is showing, as the key
+    /// The one project every surface is bound to, as the key
     /// ``BoardSnapshot/projectKey(for:)`` answers with. `nil` shows all of
     /// them.
     ///
     /// Set by clicking a project in the sidebar and cleared by clicking it
-    /// again, which is why it is a single value rather than a set: the sidebar
-    /// row is a place to *go*, and a multi-select there would need a control of
-    /// its own to be discoverable at all.
-    var projectFilter: String? {
-        didSet { if oldValue != projectFilter { rebuildGroups() } }
+    /// again, by the crumb over the wall, or by Escape — which is why it is a
+    /// single value rather than a set: the sidebar row is a place to *go*, and
+    /// a multi-select there would need a control of its own to be discoverable
+    /// at all.
+    ///
+    /// One property for every surface. The wall keeps that project's sections,
+    /// the crew wall filters the same way, and the scene pans its camera to
+    /// that room; three properties would be three chances for the sidebar and
+    /// the scene to be looking at different projects.
+    var focusedProjectKey: String? {
+        didSet { if oldValue != focusedProjectKey { rebuildGroups() } }
     }
 
     /// The one ledger bucket the board is showing, set by clicking a summary
@@ -179,7 +220,7 @@ final class LiveBoardModel {
             for: board,
             groupBy: groupBy,
             harnessFilter: harnessFilter,
-            projectFilter: projectFilter,
+            projectFilter: focusedProjectKey,
             includesEnded: false
         )
         self.groups = groups
@@ -207,7 +248,7 @@ final class LiveBoardModel {
         let kept = BoardGrouping.filtered(
             board.sessions,
             harnessFilter: harnessFilter,
-            projectFilter: projectFilter,
+            projectFilter: focusedProjectKey,
             in: board
         )
         // `EndedSessions.split` and not `mostRecentFirst`: the ledger's order
@@ -279,14 +320,23 @@ final class LiveBoardModel {
         return rows
     }
 
-    /// Turns the project filter on, or off if it is already on this project.
-    func toggleProjectFilter(_ key: String) {
-        projectFilter = projectFilter == key ? nil : key
+    /// Binds every surface to a project, or unbinds if it is already bound to
+    /// this one.
+    func toggleFocusedProject(_ key: String) {
+        focusedProjectKey = focusedProjectKey == key ? nil : key
     }
 
-    /// What the filtered project is called, for the bar over the wall.
-    var projectFilterName: String? {
-        projectFilter.map(BoardGrouping.projectName(forPath:))
+    /// Binds to the project a session is in — what selecting a session row in
+    /// the sidebar does, so the card, the trace and the wall all end up in the
+    /// same place.
+    func focusProject(of key: SessionKey) {
+        guard let session = sessionIndex[key] else { return }
+        focusedProjectKey = board.projectKey(for: session)
+    }
+
+    /// What the focused project is called, for the crumb over the wall.
+    var focusedProjectName: String? {
+        focusedProjectKey.map(board.projectDisplayName(forKey:))
     }
 
     /// Every session on the current frame, by key.
@@ -329,6 +379,16 @@ final class LiveBoardModel {
     var selectedChildren: [SessionSnapshot] {
         guard let key = selectedKey else { return [] }
         return board.tree.node(for: key)?.children.compactMap { sessionIndex[$0.key] } ?? []
+    }
+
+    /// The directory a session is actually working in, unabbreviated.
+    ///
+    /// ``BoardRow/directory`` is shortened to `~` for the card; a rule needs
+    /// the path the session reported, and the worktree before the repository
+    /// because that is the directory a person pointing at this row means.
+    func directoryPath(of key: SessionKey) -> String? {
+        guard let identity = sessionIndex[key]?.identity else { return nil }
+        return identity.worktreePath ?? identity.gitRoot ?? identity.cwd
     }
 
     /// How many sessions the given one has below it, at any depth.
@@ -473,14 +533,50 @@ final class LiveBoardModel {
         if notices.count > 24 { notices.removeFirst(notices.count - 24) }
     }
 
+    /// Replaces the user layer — the projects a person has made and the rules
+    /// they have written — and redraws from the frame already in hand.
+    ///
+    /// Called when the catalog changes, which is when somebody edits a project
+    /// or a rule. Redrawing from ``rawBoard`` rather than waiting for the next
+    /// frame is what makes adding a rule feel like a switch instead of a
+    /// request.
+    func setUserLayer(claims: ProjectClaims, rules: IgnoreRules, showsIgnored: Bool) {
+        guard claims != self.claims || rules != ignoreRules || showsIgnored != self.showsIgnored
+        else { return }
+        self.claims = claims
+        ignoreRules = rules
+        if self.showsIgnored != showsIgnored {
+            self.showsIgnored = showsIgnored  // the `didSet` rebuilds
+        } else {
+            rebuildVisibleBoard()
+        }
+    }
+
+    /// Turns the frame in hand into the one the views draw.
+    ///
+    /// One pass per applied frame, next to the row derivation that was already
+    /// happening there. The fast path when nothing is claimed and no rule is
+    /// on is a pointer copy: ``BoardFilter`` hands back the frame it was given.
+    private func rebuildVisibleBoard() {
+        let visible = BoardFilter.apply(
+            to: rawBoard,
+            claims: claims,
+            rules: ignoreRules,
+            showsIgnored: showsIgnored
+        )
+        board = visible.board
+        ignoredKeys = visible.ignored
+        rebuildGroups()
+        onFrame?(board)
+    }
+
     /// Applies one frame.
     private func apply(_ frame: BoardSnapshot) {
-        board = frame
-        rebuildGroups()
-        onFrame?(frame)
-        if !frame.sessions.isEmpty { hasEverSeenSession = true }
+        rawBoard = frame
+        rebuildVisibleBoard()
+        if !board.sessions.isEmpty { hasEverSeenSession = true }
 
-        if autoSelectsFirstSession, selectedKey == nil, let first = frame.sessions.first {
+        if autoSelectsFirstSession, selectedKey == nil, let first = board.sessions.first {
             selectedKey = first.key
             return  // the `didSet` already scheduled the load
         }
@@ -488,7 +584,7 @@ final class LiveBoardModel {
         // A frame that did not move the selected session cannot have added a
         // row to its trace, and re-reading on every tick would query four
         // times a second for a session nobody is touching.
-        guard let key = selectedKey, let session = frame.session(for: key) else { return }
+        guard let key = selectedKey, let session = board.session(for: key) else { return }
         guard session.lastEventAt != lastTraceEventAt else { return }
         lastTraceEventAt = session.lastEventAt
         reloadTrace()

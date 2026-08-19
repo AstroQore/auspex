@@ -10,11 +10,16 @@ import SwiftUI
 /// tab later should not move the first one.
 struct AuspexSettingsView: View {
     let library: SpriteLibrary
+    /// The user layer, for the Ignore pane. The pane writes through it, so the
+    /// board reacts to a rule the moment it is added.
+    let catalog: ProjectCatalogModel
 
     var body: some View {
         TabView {
             CharactersSettingsView(library: library)
                 .tabItem { Label("Characters", systemImage: "person.and.background.dotted") }
+            IgnoreSettingsView(catalog: catalog)
+                .tabItem { Label("Ignore", systemImage: "eye.slash") }
         }
         .frame(width: 660, height: 620)
     }

@@ -27,6 +27,7 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = environment.board
+        @Bindable var environment = environment
 
         NavigationSplitView {
             SidebarView(
@@ -43,6 +44,11 @@ struct RootView: View {
         }
         .preferredColorScheme(.dark)
         .environment(clock)
+        .sheet(item: $environment.ignoreDraft) { draft in
+            IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
+                environment.ignoreDraft = nil
+            }
+        }
         .task { environment.start() }
         .task { await clock.run() }
         .onReceive(
@@ -61,13 +67,18 @@ struct RootView: View {
             Group {
                 if section == .harnesses {
                     HarnessesView(model: environment.harnesses, board: model.board)
+                } else if section == .projects {
+                    ProjectsPageView(
+                        catalog: environment.catalog,
+                        tree: environment.projects.tree
+                    )
                 } else if section == .settings {
                     // The same pane the Settings window shows. Two ways in
                     // rather than two panes: a person who found the row in the
                     // sidebar should not be told to go and press a shortcut
                     // instead, and a second implementation would be a second
                     // place for a setting to go missing.
-                    SettingsSectionView()
+                    SettingsSectionView(catalog: environment.catalog)
                 } else if let section, section.isAvailable {
                     // The mode picker lives in the header, so the container is
                     // a plain switch: adding a way of looking at the board is
@@ -92,6 +103,10 @@ struct RootView: View {
                     .padding(.top, 8)
             }
         }
+        // Escape is the way back out of a project, wherever the pointer is.
+        // The same key that closes a sheet unbinds the window from one
+        // project, because both are "I am done looking at this".
+        .onExitCommand { model.focusedProjectKey = nil }
         .onChange(of: section) { _, new in
             // "All sessions" is the same board with its history opened out, so
             // selecting it is what opens the collapsed section rather than a
@@ -134,7 +149,14 @@ struct SidebarView: View {
                 title: BoardSection.live.title,
                 count: model.summary.live,
                 isSelected: section == .live
-            ) { section = .live }
+            ) {
+                // The Live row is the way back to the whole board: it clears
+                // the project binding as well as selecting the section, so
+                // "show me everything again" is one click rather than a click
+                // and a hunt for the crumb.
+                section = .live
+                model.focusedProjectKey = nil
+            }
 
             SidebarRow(
                 title: BoardSection.allSessions.title,
@@ -142,21 +164,27 @@ struct SidebarView: View {
                 isSelected: section == .allSessions
             ) { section = .allSessions }
 
-            SidebarSectionLabel(BoardSection.projects.title)
+            projectsHeader
 
             BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ProjectsSidebar(
                         tree: tree,
                         model: projects,
-                        projectFilter: model.projectFilter,
+                        focusedProjectKey: model.focusedProjectKey,
                         selectedKey: model.selectedKey,
+                        ignoredKeys: model.ignoredKeys,
                         onSelectProject: { key in
-                            model.toggleProjectFilter(key)
+                            model.toggleFocusedProject(key)
                             section = .live
                         },
                         onSelectSession: { key in
+                            // A session row selects the card *and* binds the
+                            // window to its project: the trace, the wall and
+                            // the scene then all agree about what is being
+                            // looked at.
                             model.selectedKey = key
+                            model.focusProject(of: key)
                             section = .live
                         }
                     )
@@ -183,8 +211,42 @@ struct SidebarView: View {
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(AuspexPalette.canvas)
-        .navigationSplitViewColumnWidth(min: 208, ideal: 232, max: 320)
+        // Draggable, and further than it used to be. 180 is where a project
+        // name and its live badge still both fit — the tree truncates in the
+        // middle, so a long path keeps its ends — and 480 is where somebody
+        // who reads the tree rather than the wall can see a whole branch name.
+        .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 480)
         .toolbar(removing: .sidebarToggle)
+    }
+
+    /// The rule over the tree, with the way into the Projects page on it.
+    ///
+    /// A button on the header rather than a row of its own: the tree below it
+    /// *is* the list of projects, and a second row saying "Projects" above a
+    /// list of projects would be a row that says nothing.
+    private var projectsHeader: some View {
+        HStack(spacing: 6) {
+            Text(BoardSection.projects.title)
+                .auspexLabel(AuspexType.labelLarge)
+                .foregroundStyle(AuspexPalette.text3)
+            Spacer(minLength: 4)
+            Button {
+                section = .projects
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(
+                        section == .projects ? AuspexPalette.text : AuspexPalette.text3
+                    )
+                    .frame(width: 20, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Manage projects: make one, import from a harness, pin or rename")
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
     }
 
     /// The app's own mark and name, at the top of the column where a person
@@ -324,8 +386,10 @@ struct AuspexMark: View {
 /// the coming-soon panel do, so a person who has seen one of those knows what
 /// they are looking at.
 struct SettingsSectionView: View {
+    let catalog: ProjectCatalogModel
+
     var body: some View {
-        AuspexSettingsView(library: SpriteLibrary.shared)
+        AuspexSettingsView(library: SpriteLibrary.shared, catalog: catalog)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(BoardSurfaceBackground())
     }

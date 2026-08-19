@@ -25,18 +25,22 @@ import SwiftUI
 struct ProjectsSidebar: View {
     let tree: ProjectTree
     let model: ProjectsModel
-    /// The project whose sessions the wall is currently showing.
-    let projectFilter: String?
+    /// The project every surface is currently bound to.
+    let focusedProjectKey: String?
     let selectedKey: SessionKey?
+    /// The sessions a rule matched, drawn dimmed while "show ignored" is on.
+    var ignoredKeys: Set<SessionKey> = []
     let onSelectProject: (String) -> Void
     let onSelectSession: (SessionKey) -> Void
+
+    @Environment(AppEnvironment.self) private var environment
 
     var body: some View {
         if tree.isEmpty {
             emptyNote
         } else {
             ForEach(tree.projects) { project in
-                let isFocused = projectFilter == project.key
+                let isFocused = focusedProjectKey == project.key
                 ProjectRow(project: project, isFocused: isFocused) {
                     // One meaning per click: *show me this project*. It opens
                     // the row and focuses the wall together, because a sidebar
@@ -46,6 +50,7 @@ struct ProjectsSidebar: View {
                     model.toggle(project: project)
                     onSelectProject(project.key)
                 }
+                .contextMenu { projectMenu(project) }
                 if model.isExpanded(project: project) || isFocused {
                     ForEach(project.checkouts) { checkout in
                         checkoutBlock(project: project, checkout: checkout)
@@ -55,15 +60,54 @@ struct ProjectsSidebar: View {
             if !tree.ungrouped.isEmpty {
                 UngroupedRow(count: tree.ungrouped.count)
                 ForEach(tree.ungrouped) { row in
-                    SessionRow(
-                        row: row,
-                        depth: 1 + row.depth,
-                        isSelected: selectedKey == row.key,
-                        onSelect: { onSelectSession(row.key) }
-                    )
+                    sessionRow(row, depth: 1 + row.depth)
                 }
             }
         }
+    }
+
+    private func sessionRow(_ row: BoardRow, depth: Int) -> some View {
+        SessionRow(
+            row: row,
+            depth: depth,
+            isSelected: selectedKey == row.key,
+            isIgnored: ignoredKeys.contains(row.key),
+            onSelect: { onSelectSession(row.key) }
+        )
+        .contextMenu { sessionMenu(row) }
+    }
+
+    // MARK: - Menus
+
+    /// What can be done to a project without opening a page: pin it, make it a
+    /// real project, or stop looking at it.
+    @ViewBuilder
+    private func projectMenu(_ project: ProjectTree.Project) -> some View {
+        let catalog = environment.catalog
+        if let owned = catalog.claims.project(forKey: project.key) {
+            Button(owned.isPinned ? "Unpin" : "Pin to the top") {
+                catalog.togglePin(owned)
+            }
+        } else if !PseudoProject.isPseudo(project.key) {
+            Button("Make this an Auspex project") {
+                catalog.addProject(name: project.name, roots: [project.key])
+            }
+        }
+        Divider()
+        Button("Ignore project…") {
+            environment.composeIgnore(.project, value: project.key)
+        }
+        if !PseudoProject.isPseudo(project.key) {
+            Button("Ignore this folder…") {
+                environment.composeIgnore(.pathPrefix, value: project.key)
+            }
+        }
+    }
+
+    /// The same offers a card makes, so a person who found the session in the
+    /// tree does not have to go and find its card to act on it.
+    private func sessionMenu(_ row: BoardRow) -> some View {
+        SessionRowMenu(row: row, model: environment.board, environment: environment)
     }
 
     @ViewBuilder
@@ -86,12 +130,7 @@ struct ProjectsSidebar: View {
         }
         if isImplied || model.isExpanded(checkout: checkout) {
             ForEach(checkout.sessions) { row in
-                SessionRow(
-                    row: row,
-                    depth: (isImplied ? 1 : 2) + row.depth,
-                    isSelected: selectedKey == row.key,
-                    onSelect: { onSelectSession(row.key) }
-                )
+                sessionRow(row, depth: (isImplied ? 1 : 2) + row.depth)
             }
         }
     }
@@ -153,6 +192,17 @@ private struct ProjectRow: View {
 
     var body: some View {
         TreeRow(depth: 0, isLit: isFocused, action: action) {
+            if project.isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(AuspexPalette.text3)
+                    .help("Pinned to the top")
+            }
+            if let colour = ProjectColour.color(project.colorHex) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(colour)
+                    .frame(width: 3, height: 14)
+            }
             Text(project.name)
                 .font(isFocused ? AuspexType.rowStrong : AuspexType.row)
                 .foregroundStyle(isFocused ? AuspexPalette.text : AuspexPalette.text2)
@@ -214,10 +264,13 @@ private struct SessionRow: View, Equatable {
     let row: BoardRow
     let depth: Int
     let isSelected: Bool
+    /// A rule matches this session and the board is showing it anyway.
+    var isIgnored = false
     let onSelect: () -> Void
 
     nonisolated static func == (lhs: SessionRow, rhs: SessionRow) -> Bool {
         lhs.row == rhs.row && lhs.depth == rhs.depth && lhs.isSelected == rhs.isSelected
+            && lhs.isIgnored == rhs.isIgnored
     }
 
     var body: some View {
@@ -232,7 +285,42 @@ private struct SessionRow: View, Equatable {
             Spacer(minLength: 4)
             StateDot(color: style.color, glows: style.motion.isAnimated)
         }
-        .help("\(row.title) — \(row.state.label)")
+        .opacity(isIgnored ? 0.45 : 1)
+        .help(
+            isIgnored
+                ? "\(row.title) — \(row.state.label) · ignored by a rule"
+                : "\(row.title) — \(row.state.label)"
+        )
+    }
+}
+
+/// A project's chosen colour, as the board draws it.
+///
+/// The palette a person picks from is the harness accents plus the state
+/// colours — the colours this app already uses, so a project cannot be given a
+/// hue that belongs to no part of the design.
+enum ProjectColour {
+    /// Every colour offered, as `#RRGGBB` with the name shown beside it.
+    static let choices: [(name: String, hex: String)] = [
+        ("Coral", "#E0785A"), ("Teal", "#2DD4BF"), ("Blue", "#4C8DFF"),
+        ("Violet", "#B48CFF"), ("Green", "#4FD08A"), ("Amber", "#F2B544"),
+        ("Magenta", "#F45FA0"), ("Lime", "#B4E048"), ("Sky", "#7DD3FC"),
+    ]
+
+    /// Parses `#RRGGBB`. `nil` for no colour and for anything unparseable —
+    /// a project with a bad colour is a project drawn in the board's own.
+    static func color(_ hex: String?) -> Color? {
+        guard let hex else { return nil }
+        var text = hex.trimmingCharacters(in: .whitespaces)
+        if text.hasPrefix("#") { text.removeFirst() }
+        guard text.count == 6, let value = Int(text, radix: 16) else { return nil }
+        return Color(
+            .sRGB,
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255,
+            opacity: 1
+        )
     }
 }
 

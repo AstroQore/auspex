@@ -18,6 +18,7 @@ struct BoardHeader: View {
     let section: BoardSection
 
     @Environment(\.isSnapshotRender) private var isSnapshotRender
+    @Environment(AppEnvironment.self) private var environment
 
     var body: some View {
         HStack(spacing: 12) {
@@ -40,6 +41,9 @@ struct BoardHeader: View {
                     Color.clear.frame(width: 0, height: 0)
                 }
                 Spacer(minLength: 8)
+                if model.ignoredCount > 0 {
+                    ignoredToggle.fixedSize()
+                }
                 SegmentedPicker(
                     selection: $model.viewMode,
                     options: BoardViewMode.pickerOrder.map { ($0, $0.title) }
@@ -109,6 +113,48 @@ struct BoardHeader: View {
         default:
             ""
         }
+    }
+
+    /// What the rules are hiding, and the switch that reveals it.
+    ///
+    /// Only on screen when a rule is actually catching something, because a
+    /// control that always says "0 ignored" is a control that teaches a person
+    /// to stop reading that corner of the header. The count is of *sessions*,
+    /// not rules: what a person wants to know before trusting a quiet board is
+    /// how much of it is not being shown.
+    private var ignoredToggle: some View {
+        Button {
+            environment.catalog.setShowsIgnored(!model.showsIgnored)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: model.showsIgnored ? "eye" : "eye.slash")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("\(model.ignoredCount) ignored")
+                    .font(AuspexType.caption)
+                    .auspexTabularDigits()
+            }
+            .foregroundStyle(
+                model.showsIgnored ? AuspexPalette.text : AuspexPalette.text3
+            )
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(model.showsIgnored ? AuspexPalette.bg3 : AuspexPalette.bg1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(
+            model.showsIgnored
+                ? "Hide the ignored sessions again. " + IgnoreCopy.stillRecorded
+                : "Show the \(model.ignoredCount) sessions your rules hide, dimmed. "
+                    + IgnoreCopy.stillRecorded
+        )
     }
 
     /// The grouping axis, as a menu rather than a segmented control: there are

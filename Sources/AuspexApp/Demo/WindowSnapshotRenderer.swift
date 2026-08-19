@@ -34,12 +34,22 @@ enum WindowSnapshotRenderer {
     /// fabricated snapshot: the demo replays against the wall clock, so the
     /// board at *t* is the board a person would see at *t*, stopwatches and
     /// all.
+    /// - Parameters:
+    ///   - focus: a project key to bind the window to, as the sidebar would —
+    ///     so the picture can show what the board looks like *inside* a
+    ///     project rather than only across all of them.
+    ///   - ignore: rules to apply first. Both exist so the user layer can be
+    ///     photographed without writing anything into somebody's `~/.auspex/`:
+    ///     the demo's catalog has no stores behind it, so these live and die
+    ///     with the process.
     static func render(
         to url: URL,
         warmup: TimeInterval = 20,
         size: CGSize = defaultSize,
         section: BoardSection = .live,
-        scale: CGFloat = 2
+        scale: CGFloat = 2,
+        focus: String? = nil,
+        ignore: [IgnoreRule.Kind] = []
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
         // policy keeps it out of the Dock and off the menu bar while it does.
@@ -48,6 +58,8 @@ enum WindowSnapshotRenderer {
         let environment = AppEnvironment(mode: .demo)
         environment.board.autoSelectsFirstSession = true
         environment.start()
+        for kind in ignore { environment.catalog.add(rule: IgnoreRule(kind: kind)) }
+        environment.board.focusedProjectKey = focus
         defer { Task { await environment.shutdown() } }
 
         // The pipeline runs on detached tasks; spinning the main run loop is
@@ -108,14 +120,20 @@ private struct WindowSnapshot: View {
             divider
             VStack(spacing: 0) {
                 BoardHeader(model: environment.board, section: section)
-                if section == .harnesses {
+                switch section {
+                case .harnesses:
                     HarnessesView(model: environment.harnesses, board: environment.board.board)
-                } else {
+                case .projects:
+                    ProjectsPageView(
+                        catalog: environment.catalog,
+                        tree: environment.projects.tree
+                    )
+                default:
                     BoardView(model: environment.board)
                 }
             }
             .frame(maxWidth: .infinity)
-            if section != .harnesses {
+            if section != .harnesses, section != .projects {
                 divider
                 SessionTraceView(model: environment.board)
                     .frame(width: 420)

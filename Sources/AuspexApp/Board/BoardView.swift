@@ -38,11 +38,13 @@ struct BoardView: View {
         GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 14, alignment: .top)
     ]
 
+    @Environment(AppEnvironment.self) private var environment
+
     var body: some View {
         VStack(spacing: 0) {
-            if let name = model.projectFilterName {
-                ProjectFilterBar(name: name, path: model.projectFilter ?? "") {
-                    model.projectFilter = nil
+            if let name = model.focusedProjectName {
+                ProjectFilterBar(name: name, path: model.focusedProjectKey ?? "") {
+                    model.focusedProjectKey = nil
                 }
             }
             if model.rowGroups.isEmpty, model.endedRows.isEmpty {
@@ -92,14 +94,26 @@ struct BoardView: View {
     }
 
     private func card(for row: BoardRow) -> some View {
-        SessionCard(
+        let isIgnored = model.ignoredKeys.contains(row.key)
+        return SessionCard(
             row: row,
             isSelected: model.selectedKey == row.key,
             onSelectParent: { key in model.selectedKey = key }
         )
         .equatable()
+        // Dimmed rather than removed while "show ignored" is on: the point of
+        // revealing them is to see which rows a rule is catching, and a row
+        // that looks exactly like the others would not answer that.
+        .opacity(isIgnored ? 0.4 : 1)
         .onTapGesture { model.selectedKey = row.key }
-        .contextMenu { actions(for: row) }
+        .contextMenu {
+            // What to do *with* this session, then what to do about seeing
+            // it: the handoff is about the agent, the rules are about the
+            // board, and one divider is cheaper than two menus.
+            actions(for: row)
+            Divider()
+            SessionRowMenu(row: row, model: model, environment: environment)
+        }
         .accessibilityAddTraits(.isButton)
     }
 
@@ -279,7 +293,19 @@ struct ProjectFilterBar: View {
             Image(systemName: "line.3.horizontal.decrease")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(AuspexPalette.stateThinking)
-            Text("Showing")
+            // A crumb rather than a label: the way out of a project is the
+            // first thing on the bar, in the place a person already looks for
+            // it, and it is the same gesture as clicking "Live" in the sidebar
+            // or pressing Escape.
+            Button(action: onClear) {
+                Text("All projects")
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text2)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Show every project on the board again — or press Escape")
+            Text("›")
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
             Text(name)
@@ -292,9 +318,9 @@ struct ProjectFilterBar: View {
                 .truncationMode(.head)
             Spacer(minLength: 8)
             Button(action: onClear) {
-                Text("Show all")
-                    .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.text2)
+                Text("Esc")
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
                     .padding(.horizontal, 8)
                     .frame(height: 22)
                     .background(
@@ -303,7 +329,7 @@ struct ProjectFilterBar: View {
                     )
             }
             .buttonStyle(.plain)
-            .help("Show every project on the board")
+            .help("Escape shows every project again")
         }
         .padding(.horizontal, 20)
         .frame(height: 34)

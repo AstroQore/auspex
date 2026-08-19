@@ -112,12 +112,26 @@ if let flag = arguments.firstIndex(of: "--render-board") {
         ?? WindowSnapshotRenderer.defaultSize.height
     let section = rest.dropFirst(3).first
         .flatMap { BoardSection(rawValue: String($0)) } ?? .live
+    // The user layer, as `focus=<project key>` and `ignore=<kind>:<value>`
+    // among the trailing arguments. Keyword rather than positional because
+    // they are the two knobs that are usually absent, and because a picture of
+    // the board bound to a project — or with a rule hiding something — is
+    // otherwise impossible to take without writing into somebody's ~/.auspex/.
+    let focus = rest.first { $0.hasPrefix("focus=") }.map { String($0.dropFirst(6)) }
+    let ignore = rest.filter { $0.hasPrefix("ignore=") }.compactMap { argument -> IgnoreRule.Kind? in
+        let body = argument.dropFirst(7)
+        guard let separator = body.firstIndex(of: ":") else { return nil }
+        guard let tag = IgnoreRule.Kind.Tag(rawValue: String(body[..<separator])) else { return nil }
+        return IgnoreRule.Kind.make(tag: tag, value: String(body[body.index(after: separator)...]))
+    }
     do {
         try WindowSnapshotRenderer.render(
             to: URL(fileURLWithPath: path),
             warmup: warmup,
             size: CGSize(width: WindowSnapshotRenderer.defaultSize.width, height: height),
-            section: section
+            section: section,
+            focus: focus,
+            ignore: ignore
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
         exit(0)
@@ -148,11 +162,17 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         (default 16), with every avatar frozen `animation
                         seconds` into its own animation (default 1.4).
           --render-board <path> [seconds] [height] [section]
+                        [focus=<project>] [ignore=<kind>:<value>]
                         Render the whole window — sidebar, board, trace — to a
                         PNG, offscreen, after letting the demo run for
                         `seconds` (default 20), at `height` points (default
                         900), showing `section` (default `live`; `harnesses`
-                        draws the rack). Reads no harness store.
+                        draws the rack, `projects` the projects page).
+                        `focus=` binds the window to one project the way
+                        clicking it in the sidebar does; `ignore=` applies an
+                        ignore rule (`pathPrefix`, `project`, `promptPrefix`,
+                        `harness`, `titleContains`) for this render only.
+                        Reads no harness store and writes nothing.
           --mcp-stdio   Serve the task board over MCP on stdio. (M3)
           --hook        Handle a harness hook invocation. (M3)
           --help        Show this.

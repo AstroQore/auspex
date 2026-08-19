@@ -48,9 +48,9 @@ struct CrewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let name = model.projectFilterName {
-                ProjectFilterBar(name: name, path: model.projectFilter ?? "") {
-                    model.projectFilter = nil
+            if let name = model.focusedProjectName {
+                ProjectFilterBar(name: name, path: model.focusedProjectKey ?? "") {
+                    model.focusedProjectKey = nil
                 }
             }
             if model.groups.isEmpty {

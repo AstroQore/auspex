@@ -70,6 +70,24 @@ public final class AppEnvironment {
     /// The sidebar's project tree.
     let projects = ProjectsModel()
 
+    /// The projects a person made and the rules they wrote — the user layer
+    /// the board places and filters with.
+    let catalog: ProjectCatalogModel
+
+    /// The prefilled "ignore this…" sheet, when one is open.
+    ///
+    /// Held here rather than in the view that opened it: the menu items that
+    /// start one are on cards, on sidebar rows and on the Projects page, and a
+    /// sheet presented from three places is three sheets that can be open at
+    /// once.
+    var ignoreDraft: IgnoreDraft?
+
+    /// Offers a rule rather than writing one — the `…` in every "Ignore this…"
+    /// menu item.
+    func composeIgnore(_ tag: IgnoreRule.Kind.Tag, value: String) {
+        ignoreDraft = IgnoreDraft(tag: tag, value: value)
+    }
+
     private var registry: SessionRegistry?
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
@@ -87,6 +105,10 @@ public final class AppEnvironment {
     public init(paths: AuspexPaths = .default, mode: Mode = .live) {
         self.paths = paths
         self.mode = mode
+        // The demo may not read or write `~/.auspex/`, so its catalog has no
+        // stores behind it: whatever it is given lives in memory for as long
+        // as the process does.
+        self.catalog = ProjectCatalogModel(paths: paths, persists: mode == .live)
         do {
             // The demo must not create `~/.auspex/` or touch a database a live
             // instance may be using, so it gets a store that exists only for
@@ -112,6 +134,14 @@ public final class AppEnvironment {
     func start() {
         guard !didStart else { return }
         didStart = true
+
+        // Before the pipeline: the first frame should already be placed by the
+        // person's projects and filtered by their rules, rather than showing
+        // everything for a moment and then settling.
+        catalog.onChange = { [board] claims, rules, showsIgnored in
+            board.setUserLayer(claims: claims, rules: rules, showsIgnored: showsIgnored)
+        }
+        catalog.load()
 
         guard let store else {
             board.record(

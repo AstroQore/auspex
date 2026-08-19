@@ -190,10 +190,18 @@ public struct HarnessProjectRef: Codable, Sendable, Hashable, Identifiable {
 public enum ProjectPath {
     /// Trims whitespace, expands a leading `~`, resolves `.`/`..`, and drops a
     /// trailing slash so `/a/b/` and `/a/b` are the same claim.
+    ///
+    /// The `~` is expanded through ``AuspexPaths/realHomeDirectory()`` rather
+    /// than through `NSString.expandingTildeInPath`, which reads `$HOME` — a
+    /// stray `HOME` in a spawned agent's environment would otherwise turn a
+    /// person's claim into a claim on somebody else's directory.
     public static func normalize(_ path: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        let expanded = (trimmed as NSString).expandingTildeInPath
+        var expanded = trimmed
+        if trimmed == "~" || trimmed.hasPrefix("~/") {
+            expanded = AuspexPaths.realHomeDirectory().path + trimmed.dropFirst(1)
+        }
         let standardized = (expanded as NSString).standardizingPath
         guard standardized.count > 1, standardized.hasSuffix("/") else { return standardized }
         return String(standardized.dropLast())

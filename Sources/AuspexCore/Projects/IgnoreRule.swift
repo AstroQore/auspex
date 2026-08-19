@@ -79,6 +79,92 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
             }
         }
 
+        /// A kind without its payload — what a picker offers and what a
+        /// prefilled sheet is opened with.
+        ///
+        /// In Core rather than in the settings pane because the same five
+        /// choices appear in three places (the pane's add row, the card's
+        /// context menu, the sidebar's), and three lists of five would be
+        /// three chances for one of them to be missing a kind.
+        public enum Tag: String, CaseIterable, Sendable, Identifiable, Codable {
+            case pathPrefix, project, promptPrefix, harness, titleContains
+
+            public var id: String { rawValue }
+
+            /// The picker's label.
+            public var label: String {
+                Kind.example(for: self).label
+            }
+
+            /// What the text field says when it is empty.
+            public var placeholder: String {
+                switch self {
+                case .pathPrefix: "/Users/you/Code/vendor"
+                case .project: "A project's name"
+                case .promptPrefix: "chore:"
+                case .harness: "A harness's name"
+                case .titleContains: "nightly"
+                }
+            }
+
+            /// One line saying what the rule will do, under the field.
+            public var explanation: String {
+                switch self {
+                case .pathPrefix:
+                    "Hides every session working in that folder or under it."
+                case .project:
+                    "Hides a whole project, however its sessions were placed."
+                case .promptPrefix:
+                    "Hides sessions whose first prompt starts with this."
+                case .harness:
+                    "Hides every session of one harness."
+                case .titleContains:
+                    "Hides sessions whose title contains this, ignoring case."
+                }
+            }
+        }
+
+        /// Which tag this kind is.
+        public var tag: Tag {
+            switch self {
+            case .pathPrefix: .pathPrefix
+            case .project: .project
+            case .promptPrefix: .promptPrefix
+            case .harness: .harness
+            case .titleContains: .titleContains
+            }
+        }
+
+        /// Builds a kind from a tag and a typed value. `nil` when the value is
+        /// empty, or when a harness rule names a harness Auspex does not know.
+        public static func make(tag: Tag, value: String) -> Kind? {
+            let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { return nil }
+            switch tag {
+            case .pathPrefix: return .pathPrefix(ProjectPath.normalize(value))
+            case .project: return .project(value)
+            case .promptPrefix: return .promptPrefix(value)
+            case .titleContains: return .titleContains(value)
+            case .harness:
+                if let harness = Harness(rawValue: value) { return .harness(harness) }
+                guard let harness = Harness.allCases.first(where: {
+                    $0.displayName.caseInsensitiveCompare(value) == .orderedSame
+                }) else { return nil }
+                return .harness(harness)
+            }
+        }
+
+        /// A kind of each tag, for the label. Never shown.
+        private static func example(for tag: Tag) -> Kind {
+            switch tag {
+            case .pathPrefix: .pathPrefix("")
+            case .project: .project("")
+            case .promptPrefix: .promptPrefix("")
+            case .harness: .harness(.claudeCode)
+            case .titleContains: .titleContains("")
+            }
+        }
+
         var storedValue: String {
             switch self {
             case .pathPrefix(let value), .project(let value),

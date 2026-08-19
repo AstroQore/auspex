@@ -38,7 +38,7 @@ struct AuspexApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
 
         Settings {
-            AuspexSettingsView(library: SpriteLibrary.shared)
+            AuspexSettingsView(library: SpriteLibrary.shared, catalog: environment.catalog)
         }
 
         MenuBarExtra {
