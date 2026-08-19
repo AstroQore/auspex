@@ -42,7 +42,7 @@ struct CrewView: View {
     /// characters at or under 15 % process CPU), and it does, because the cost
     /// per frame did not change and the wall still stops dead the moment it is
     /// off screen.
-    private static let frameInterval = 1.0 / 60.0
+    static let frameInterval = 1.0 / 60.0
 
     /// How a card arrives and how it leaves.
     ///
@@ -72,7 +72,7 @@ struct CrewView: View {
             if model.groups.isEmpty {
                 BoardEmptyState(model: model)
             } else {
-                clocked
+                grid
             }
         }
         .background(BoardSurfaceBackground())
@@ -93,29 +93,14 @@ struct CrewView: View {
         }
     }
 
-    /// One clock for the whole wall.
-    ///
-    /// Every avatar samples the same instant, which is what keeps a morph that
-    /// starts on two sessions at once from drifting apart. What is *not* shared
-    /// is the phase: each avatar is offset by a fixed fraction of a second
-    /// derived from its session id, so a wall of sixty does not blink in
-    /// unison — which reads as a glitch rather than as life.
-    private var clocked: some View {
-        TimelineView(
-            .animation(minimumInterval: Self.frameInterval, paused: !isOnScreen || reduceMotion)
-        ) { context in
-            grid(at: roster.seconds(since: context.date))
-        }
-    }
-
-    private func grid(at now: TimeInterval) -> some View {
+    private var grid: some View {
         ScrollView {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                 ForEach(model.groups) { group in
                     Section {
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(group.sessions, id: \.key) { session in
-                                card(for: session, at: now)
+                                card(for: session)
                                     .transition(Self.cardTransition)
                             }
                         }
@@ -140,23 +125,99 @@ struct CrewView: View {
         .scrollContentBackground(.hidden)
     }
 
-    private func card(for session: SessionSnapshot, at now: TimeInterval) -> some View {
-        // Sampling happens here, inside the lazy grid's builder, so a session
-        // scrolled off the wall costs nothing at all.
-        let instant = roster.instant(for: session, at: now, frozen: reduceMotion)
-        return CrewCard(
+    private func card(for session: SessionSnapshot) -> some View {
+        // Built inside the lazy grid's builder, so a session scrolled off the
+        // wall costs nothing at all — and clocked one level further down, so a
+        // frame costs a Canvas and not a grid.
+        CrewCard(
             session: session,
-            frame: instant.frame,
-            pop: instant.pop,
-            // One breath for the whole wall, off the shared clock: cards that
-            // are waiting on you should pulse together, the way a row of
-            // indicator lamps does. Reduce Motion holds it at rest.
-            glowStrength: reduceMotion ? 0.5 : 0.5 - 0.5 * cos(now * (bloubTau / 2.4)),
             isSelected: model.selectedKey == session.key,
             descendantCount: model.descendantCount(of: session.key)
-        )
+        ) {
+            CrewLiveAvatar(
+                session: session,
+                roster: roster,
+                paused: !isOnScreen || reduceMotion,
+                frozen: reduceMotion
+            )
+        }
         .onTapGesture { model.selectedKey = session.key }
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// One avatar, drawn at one instant. Everything the wall's clock feeds it.
+///
+/// Separate from ``CrewLiveAvatar`` because the offscreen renderers hand it a
+/// frame they sampled themselves: the still and the filmstrip must go through
+/// exactly the drawing the app uses, and neither of them has a clock.
+struct CrewStillAvatar: View {
+    let harness: Harness
+    let state: SessionState
+    let frame: BloubFrame
+    /// The eased pop the driver plays on a state change. 1 when at rest.
+    var pop: Double = 1
+    /// How bright a needs-you halo is right now.
+    var glowStrength: Double = 1
+
+    var body: some View {
+        let style = state.style
+        return CrewAvatarView(
+            frame: frame,
+            ink: harness.style.accent,
+            paper: AuspexPalette.panel,
+            glow: style.isAlarming ? style.color : nil,
+            glowStrength: glowStrength
+        )
+        .scaleEffect(pop)
+    }
+}
+
+/// The same avatar, with the wall's clock behind it.
+///
+/// The clock sits here — around one `Canvas` — and not around the grid. Sixty
+/// of these are still **one** clock in the sense the performance budget means:
+/// `TimelineView(.animation)` schedules run off the display link, so they all
+/// tick together on the same date, every avatar samples the same instant, and a
+/// morph starting on two sessions at once cannot drift apart. What sixty
+/// separate timelines buy is that a tick invalidates sixty `Canvas`es instead
+/// of the whole wall's view list and layout. Measured, that is the difference
+/// between the budget and four times it.
+struct CrewLiveAvatar: View {
+    let session: SessionSnapshot
+    let roster: CrewRoster
+    let paused: Bool
+    let frozen: Bool
+
+    /// One breath for the whole wall, off the shared clock: cards that are
+    /// waiting on you pulse together, the way a row of indicator lamps does.
+    ///
+    /// Held at a **constant** on every card that has no halo, rather than
+    /// computed and then multiplied away. The halo is two `.shadow`s, and a
+    /// shadow whose radius changes is one SwiftUI reconsiders every frame even
+    /// when its colour is clear, so there is no reason to hand a moving number
+    /// to the ten cards that are not shouting. On a machine loaded by other
+    /// work the saving could not be separated from the noise; it is kept
+    /// because it cannot cost anything and the intent is clearer. Reduce Motion
+    /// holds the other two still as well.
+    private func breath(at now: TimeInterval) -> Double {
+        guard !frozen, session.state.style.isAlarming else { return 1 }
+        return 0.5 - 0.5 * cos(now * (bloubTau / 2.4))
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: CrewView.frameInterval, paused: paused)) {
+            context in
+            let now = roster.seconds(since: context.date)
+            let instant = roster.instant(for: session, at: now, frozen: frozen)
+            CrewStillAvatar(
+                harness: session.key.harness,
+                state: session.state,
+                frame: instant.frame,
+                pop: instant.pop,
+                glowStrength: breath(at: now)
+            )
+        }
     }
 }
 
@@ -170,32 +231,29 @@ struct CrewView: View {
 /// The chrome is deliberately thin. The avatar is the content here — a card
 /// that repeated in text everything the body is already showing would be a
 /// board card drawn twice.
-struct CrewCard: View {
+struct CrewCard<Avatar: View>: View {
     let session: SessionSnapshot
-    let frame: BloubFrame
-    /// The avatar's own scale: the eased pop the driver plays on a state
-    /// change. 1 when nothing is happening.
-    var pop: Double = 1
-    /// How bright a needs-you halo is right now.
-    var glowStrength: Double = 1
     let isSelected: Bool
     let descendantCount: Int
+    /// The moving half, handed in rather than built here.
+    ///
+    /// This is the seam that keeps a frame cheap. The card — its background,
+    /// its border, its badge, its pill, its two lines of text — is a view list
+    /// SwiftUI makes when the *board* changes, a few times a minute. Only what
+    /// goes in this slot is rebuilt sixty times a second, and on the wall that
+    /// is one `Canvas`. Build the avatar inside `body` instead and the clock
+    /// invalidates the card, the grid row, the section and the layout with it,
+    /// which is what a profile of the first version was almost entirely made
+    /// of.
+    @ViewBuilder var avatar: Avatar
 
     private var isOver: Bool { session.state.isEnded }
 
     var body: some View {
-        let style = session.state.style
-        return VStack(spacing: 12) {
-            CrewAvatarView(
-                frame: frame,
-                ink: session.key.harness.style.accent,
-                paper: AuspexPalette.panel,
-                glow: style.isAlarming ? style.color : nil,
-                glowStrength: glowStrength
-            )
-            .frame(width: 120, height: 120)
-            .scaleEffect(pop)
-            .overlay(alignment: .bottomTrailing) { childrenBadge }
+        VStack(spacing: 12) {
+            avatar
+                .frame(width: 120, height: 120)
+                .overlay(alignment: .bottomTrailing) { childrenBadge }
 
             chrome
         }

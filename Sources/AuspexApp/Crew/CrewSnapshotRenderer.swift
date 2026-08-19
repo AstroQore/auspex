@@ -130,10 +130,15 @@ struct CrewSnapshotSheet: View {
             ForEach(cards) { card in
                 CrewCard(
                     session: card.session,
-                    frame: card.frame,
                     isSelected: false,
                     descendantCount: card.descendants
-                )
+                ) {
+                    CrewStillAvatar(
+                        harness: card.session.key.harness,
+                        state: card.session.state,
+                        frame: card.frame
+                    )
+                }
             }
         }
         .padding(24)
