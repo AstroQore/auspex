@@ -141,8 +141,13 @@ struct BoardView: View {
                 ForEach(model.visibleEndedRows) { row in
                     EndedSessionRow(row: row, isSelected: model.selectedKey == row.key)
                         .equatable()
+                        .opacity(model.ignoredKeys.contains(row.key) ? 0.4 : 1)
                         .onTapGesture { model.selectedKey = row.key }
-                        .contextMenu { actions(for: row) }
+                        .contextMenu {
+                            actions(for: row)
+                            Divider()
+                            SessionRowMenu(row: row, model: model, environment: environment)
+                        }
                 }
             }
             .panelChrome()

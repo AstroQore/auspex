@@ -192,11 +192,30 @@ private struct ProjectRow: View {
 
     var body: some View {
         TreeRow(depth: 0, isLit: isFocused, action: action) {
+            // The dots are the first thing to give way, the same bargain the
+            // board header makes with its chips: at 180 points a long project
+            // name and four accents cannot both be read, and the name is the
+            // one a person is scanning for. The accents come back the moment
+            // the column is dragged wider.
+            ViewThatFits(in: .horizontal) {
+                content(showsDots: true)
+                content(showsDots: false)
+            }
+        }
+        .help(
+            isFocused
+                ? "Show every project on the board again"
+                : "Show only \(project.name) on the board"
+        )
+    }
+
+    @ViewBuilder
+    private func content(showsDots: Bool) -> some View {
+        HStack(spacing: 8) {
             if project.isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(AuspexPalette.text3)
-                    .help("Pinned to the top")
             }
             if let colour = ProjectColour.color(project.colorHex) {
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
@@ -208,17 +227,14 @@ private struct ProjectRow: View {
                 .foregroundStyle(isFocused ? AuspexPalette.text : AuspexPalette.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            HarnessDots(harnesses: project.harnesses)
+            if showsDots {
+                HarnessDots(harnesses: project.harnesses)
+            }
             Spacer(minLength: 4)
             if project.liveCount > 0 {
                 LivePill(count: project.liveCount)
             }
         }
-        .help(
-            isFocused
-                ? "Show every project on the board again"
-                : "Show only \(project.name) on the board"
-        )
     }
 }
 
