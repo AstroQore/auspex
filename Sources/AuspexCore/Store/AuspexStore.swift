@@ -1,3 +1,4 @@
+import AgentSessionLive
 import Foundation
 import GRDB
 
@@ -86,6 +87,12 @@ public final class AuspexStore: Sendable {
             try createSearchTables(db)
             try createTaskTables(db)
             try createHousekeepingTables(db)
+        }
+
+        migrator.registerMigration("v2_task_ledger") { db in
+            try addBriefColumns(db)
+            try createSessionViewTables(db)
+            try migrateSnapshotsToSchema2(db)
         }
 
         return migrator
@@ -373,6 +380,104 @@ public final class AuspexStore: Sendable {
         }
     }
 
+    // MARK: - v2 schema: the task ledger
+
+    /// The brief, projected out of `snapshot_json` into columns.
+    ///
+    /// The same bargain every other projection on `sessions` makes: the blob
+    /// stays authoritative and `SessionRepository` writes both from one place,
+    /// so they cannot drift, while a query can answer *what was this session
+    /// told to do* without decoding a few hundred snapshots. M3's task board
+    /// asks exactly that question over MCP.
+    private static func addBriefColumns(_ db: Database) throws {
+        try db.alter(table: "sessions") { table in
+            table.add(column: "first_prompt", .text)
+            table.add(column: "latest_prompt", .text)
+            table.add(column: "latest_assistant", .text)
+            table.add(column: "last_turn_ended_at", .double)
+        }
+    }
+
+    /// When the person last looked at a session.
+    ///
+    /// A table of its own rather than a column on `sessions`, for three
+    /// reasons and each of them would have been a bug:
+    ///
+    /// - It is *Auspex's* state, not a projection of a harness's. Every column
+    ///   on `sessions` is derived from a snapshot, and one that was not would
+    ///   be the exception a future writer forgets about.
+    /// - `SessionRepository.upsert(snapshots:)` writes `sessions` from a
+    ///   record type. A column it does not encode survives — but only for as
+    ///   long as nobody makes the projection exhaustive.
+    /// - Retention deletes session rows. What a person has already read about
+    ///   a session should outlive the row, so a transcript that comes back
+    ///   does not come back marked unread.
+    ///
+    /// No foreign key, for the same reason: a view is recorded the moment a
+    /// card is clicked, which can be before the first flush has written the
+    /// session it is about.
+    private static func createSessionViewTables(_ db: Database) throws {
+        try db.create(table: "session_views") { table in
+            table.primaryKey("session_key", .text)
+            table.column("last_seen_at", .double).notNull()
+        }
+    }
+
+    /// Brings every stored snapshot up to event schema 2.
+    ///
+    /// `SessionSnapshot` gained a non-optional `brief`, so a blob written
+    /// before it cannot be decoded at all — the synthesized decoder asks for a
+    /// key that is not there, and one such row would otherwise sink the whole
+    /// bootstrap. Adding `"brief": {}` to the JSON is the migration; every
+    /// field of a brief is optional, so an empty one is a valid — and honest —
+    /// "we were not recording this yet".
+    ///
+    /// Rows that are not JSON objects at all are left exactly as they are.
+    /// They cannot be rescued here, and `SessionRepository.fetchAll` skips
+    /// what it cannot decode rather than failing the launch.
+    private static func migrateSnapshotsToSchema2(_ db: Database) throws {
+        let rows = try Row.fetchAll(db, sql: "SELECT key, snapshot_json FROM sessions")
+        guard !rows.isEmpty else {
+            try recordEventSchemaVersion(db)
+            return
+        }
+        let decoder = StoreJSON.makeDecoder()
+        let update = try db.makeStatement(sql: """
+            UPDATE sessions
+               SET snapshot_json = ?, first_prompt = ?, latest_prompt = ?,
+                   latest_assistant = ?, last_turn_ended_at = ?
+             WHERE key = ?
+            """)
+        for row in rows {
+            let key: String = row["key"]
+            let stored: String = row["snapshot_json"]
+            let json = SnapshotBriefMigration.addingBrief(to: stored) ?? stored
+            let brief = (try? StoreJSON.decode(SessionSnapshot.self, from: json, using: decoder))?
+                .brief
+            update.setUncheckedArguments([
+                json,
+                brief?.firstPrompt,
+                brief?.latestPrompt,
+                brief?.latestAssistant,
+                brief?.lastTurnEndedAt?.timeIntervalSince1970,
+                key
+            ])
+            try update.execute()
+        }
+        try recordEventSchemaVersion(db)
+    }
+
+    /// Stamps the schema the stored snapshots were written by.
+    private static func recordEventSchemaVersion(_ db: Database) throws {
+        try db.execute(
+            sql: """
+                INSERT INTO meta (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+            arguments: [StoreMetaKey.eventSchemaVersion, String(AgentSessionLive.eventSchemaVersion)]
+        )
+    }
+
     // MARK: - Meta accessors
 
     /// Reads a value from the `meta` table.
@@ -397,6 +502,17 @@ public final class AuspexStore: Sendable {
                 arguments: [key, value]
             )
         }
+    }
+
+    /// The ``AgentSessionLive/eventSchemaVersion`` the stored snapshots were
+    /// written by, or `nil` for a store that predates the stamp.
+    ///
+    /// Equal to the running version on any store this build opened, because
+    /// the migration that changed the shape also stamped it. A difference
+    /// means a build wrote rows this one does not speak — which is a thing to
+    /// say out loud rather than to discover as a decode error.
+    public var storedEventSchemaVersion: Int? {
+        (try? metaValue(forKey: StoreMetaKey.eventSchemaVersion)).flatMap { $0 }.flatMap(Int.init)
     }
 
     // MARK: - Convenience

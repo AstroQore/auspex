@@ -63,6 +63,23 @@ enum Fixtures {
         )
     }
 
+    /// A stored-shaped snapshot: an identity, a state, and counters, with an
+    /// empty brief unless a caller fills one in.
+    static func snapshot(
+        key: SessionKey = Fixtures.key(),
+        state: SessionState = .idle
+    ) -> SessionSnapshot {
+        var snapshot = SessionStateReducer.initialSnapshot(identity: identity(key: key))
+        snapshot.state = state
+        snapshot.startedAt = Fixtures.date(0)
+        snapshot.lastEventAt = Fixtures.date(60)
+        snapshot.turnCount = 2
+        snapshot.toolCallCount = 5
+        snapshot.tokensIn = 100
+        snapshot.tokensOut = 20
+        return snapshot
+    }
+
     /// One complete turn, start to finish, in the order a reducer expects:
     /// the session appears, a person asks for something, one tool runs, the
     /// turn closes, the session exits.

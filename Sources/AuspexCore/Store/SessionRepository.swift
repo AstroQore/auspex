@@ -88,7 +88,86 @@ public struct SessionRepository: Sendable {
         return try dbWriter.read { db in
             let json = try String.fetchAll(db, sql: sql, arguments: arguments)
             let decoder = StoreJSON.makeDecoder()
-            return try json.map { try StoreJSON.decode(SessionSnapshot.self, from: $0, using: decoder) }
+            // Lenient on purpose. A blob written by a build whose event model
+            // this one no longer speaks is one row of history, and throwing
+            // here would trade the whole board for it: `bootstrap()` is the
+            // only caller, it runs before the first event, and a failure there
+            // means Auspex launches empty and fills in one harness at a time.
+            // Migrations bring blobs forward — see `SnapshotBriefMigration` —
+            // and whatever they could not rescue is skipped rather than fatal.
+            return json.compactMap {
+                try? StoreJSON.decode(SessionSnapshot.self, from: $0, using: decoder)
+            }
+        }
+    }
+
+    /// How many stored snapshots this build cannot decode.
+    ///
+    /// `0` on a healthy store. Anything else is the count ``fetchAll(activeOnly:limit:)``
+    /// silently skipped, and the number a diagnostic should show rather than
+    /// leaving a person to wonder why yesterday's sessions are missing.
+    public func undecodableSnapshotCount() throws -> Int {
+        try dbWriter.read { db in
+            let json = try String.fetchAll(db, sql: "SELECT snapshot_json FROM sessions")
+            let decoder = StoreJSON.makeDecoder()
+            return json.count { (try? StoreJSON.decode(SessionSnapshot.self, from: $0, using: decoder)) == nil }
+        }
+    }
+
+    // MARK: - What the person has looked at
+
+    /// Records that the person opened a session, so "done, and you have not
+    /// looked at it" can stop being true.
+    ///
+    /// Upserted into `session_views`, which has no foreign key to `sessions`:
+    /// a card is clicked the instant it appears on the board, which can be
+    /// before the flush that writes the session it is about. Monotonic — a
+    /// stamp older than the one on record is dropped, so a frame replayed out
+    /// of order cannot un-read something.
+    public func markSeen(key: SessionKey, at date: Date = Date()) throws {
+        try dbWriter.write { db in
+            try markSeen(key: key, at: date, in: db)
+        }
+    }
+
+    /// Seen-marking inside a caller-owned transaction.
+    public func markSeen(key: SessionKey, at date: Date, in db: Database) throws {
+        try db.execute(
+            sql: """
+                INSERT INTO session_views (session_key, last_seen_at) VALUES (?, ?)
+                ON CONFLICT(session_key) DO UPDATE SET
+                    last_seen_at = MAX(session_views.last_seen_at, excluded.last_seen_at)
+                """,
+            arguments: [key.description, date.timeIntervalSince1970]
+        )
+    }
+
+    /// When the person last opened one session, or `nil` if they never have.
+    public func lastSeen(key: SessionKey) throws -> Date? {
+        try dbWriter.read { db in
+            try Double.fetchOne(
+                db,
+                sql: "SELECT last_seen_at FROM session_views WHERE session_key = ?",
+                arguments: [key.description]
+            ).map(Date.init(timeIntervalSince1970:))
+        }
+    }
+
+    /// Every session the person has opened, keyed by session.
+    ///
+    /// Read once at bootstrap and held in memory by the board model: the
+    /// answer changes only when somebody clicks, and a card must not go to
+    /// SQLite to find out whether it is unread.
+    public func allLastSeen() throws -> [SessionKey: Date] {
+        try dbWriter.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT session_key, last_seen_at FROM session_views")
+            var seen: [SessionKey: Date] = [:]
+            seen.reserveCapacity(rows.count)
+            for row in rows {
+                guard let key = SessionKey(string: row["session_key"]) else { continue }
+                seen[key] = Date(timeIntervalSince1970: row["last_seen_at"] as Double)
+            }
+            return seen
         }
     }
 
@@ -472,6 +551,13 @@ struct SessionRow: Codable, FetchableRecord, PersistableRecord {
     var tokensIn: Int
     var tokensOut: Int
     var tokensCached: Int
+    // The brief, projected so a query can answer "what was this told to do"
+    // without decoding the blob. Written here and nowhere else, so the
+    // projection and `snapshot_json` cannot disagree.
+    var firstPrompt: String?
+    var latestPrompt: String?
+    var latestAssistant: String?
+    var lastTurnEndedAt: Double?
     var snapshotJson: String
 
     init(snapshot: SessionSnapshot, encoder: JSONEncoder) throws {
@@ -502,6 +588,10 @@ struct SessionRow: Codable, FetchableRecord, PersistableRecord {
         self.tokensIn = snapshot.tokensIn
         self.tokensOut = snapshot.tokensOut
         self.tokensCached = snapshot.tokensCached
+        self.firstPrompt = snapshot.brief.firstPrompt
+        self.latestPrompt = snapshot.brief.latestPrompt
+        self.latestAssistant = snapshot.brief.latestAssistant
+        self.lastTurnEndedAt = snapshot.brief.lastTurnEndedAt?.timeIntervalSince1970
         self.snapshotJson = try StoreJSON.encodeToString(snapshot, using: encoder)
     }
 }
