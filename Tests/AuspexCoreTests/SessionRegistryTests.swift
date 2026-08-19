@@ -343,6 +343,66 @@ struct SessionRegistryTests {
         #expect(frames < 50)
     }
 
+    @Test("a late event for a session outside the bootstrap set does not blank it")
+    func lateEventKeepsWhatTheStoreKnew() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let repository = SessionRepository(store: store)
+        let key = Fixtures.key(.codex, "outside-the-bootstrap-set")
+        var stored = Fixtures.snapshot(key: key)
+        stored.brief = SessionBrief(
+            firstPrompt: "Make the resizer stop snapping back",
+            firstPromptAt: Fixtures.date(1),
+            lastTurnEndedAt: Fixtures.date(120)
+        )
+        stored.turnCount = 7
+        stored.tokensIn = 4_321
+        try repository.upsert(snapshot: stored)
+
+        // A cap of zero is the shape of a store with more sessions than the
+        // budget: the row exists, and the live set has never heard of it.
+        let registry = SessionRegistry(
+            store: store,
+            publishInterval: 0,
+            persistInterval: 0,
+            tickInterval: 0,
+            bootstrapLimit: 0
+        )
+        try await registry.bootstrap()
+        #expect(await registry.snapshot().sessions.isEmpty)
+
+        // One late line from a transcript nobody was tailing.
+        await registry.ingest(Fixtures.event(.note("a late line"), key: key, at: 300))
+
+        let live = try #require(await registry.session(for: key))
+        #expect(live.brief.firstPrompt == "Make the resizer stop snapping back")
+        #expect(live.brief.lastTurnEndedAt == Fixtures.date(120))
+        #expect(live.turnCount == 7)
+        #expect(live.tokensIn == 4_321)
+        #expect(live.identity.cwd == stored.identity.cwd)
+
+        // And the flush that follows must not write the blank back over it.
+        await registry.stop()
+        let after = try #require(try repository.fetch(key: key))
+        #expect(after.brief.firstPrompt == "Make the resizer stop snapping back")
+        #expect(after.turnCount == 7)
+        #expect(after.tokensIn == 4_321)
+    }
+
+    @Test("a session the store has never heard of is still seeded from its event")
+    func aGenuinelyNewSessionStillSeeds() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store: store)
+        let key = Fixtures.key(.grokBuild, "brand-new")
+
+        await registry.ingest(Fixtures.event(
+            .sessionStarted(identity: Fixtures.identity(key: key)), key: key, at: 0
+        ))
+
+        let live = try #require(await registry.session(for: key))
+        #expect(live.identity.cwd == "/Users/example/Code/widget")
+        #expect(live.brief.isEmpty)
+    }
+
     @Test("a backfilled brief reaches the board without a relaunch")
     func applyBriefsFoldsIntoTheLiveSet() async throws {
         let store = try AuspexStore(inMemory: true)

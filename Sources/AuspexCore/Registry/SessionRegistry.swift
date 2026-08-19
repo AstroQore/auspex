@@ -48,6 +48,7 @@ public actor SessionRegistry {
     private let persistInterval: TimeInterval
     private let tickInterval: TimeInterval
     private let bootstrapLimit: Int?
+    private let bootstrapWindow: TimeInterval
     private let policy: RetentionPolicy
 
     /// The live set. The reducer's output is the only thing that writes here.
@@ -92,8 +93,12 @@ public actor SessionRegistry {
     ///     ``tick(now:)`` still works when called directly.
     ///   - policy: consulted before indexing text, so an excluded harness is
     ///     never written to the search index in the first place.
-    ///   - bootstrapLimit: how many stored sessions ``bootstrap()`` reloads,
-    ///     most recently active first. `nil` reloads all of them.
+    ///   - bootstrapLimit: the most stored sessions ``bootstrap()`` holds in
+    ///     memory. A budget rather than a policy — everything alive or active
+    ///     within `bootstrapWindow` is reloaded first, and the cap falls on the
+    ///     finished tail. `nil` reloads all of them.
+    ///   - bootstrapWindow: how long after its last event a stored session is
+    ///     still reloaded whatever the cap.
     public init(
         store: AuspexStore,
         reducer: SessionStateReducer = SessionStateReducer(),
@@ -101,7 +106,8 @@ public actor SessionRegistry {
         persistInterval: TimeInterval = 0.25,
         tickInterval: TimeInterval = 1,
         policy: RetentionPolicy = .default,
-        bootstrapLimit: Int? = 500,
+        bootstrapLimit: Int? = 2_000,
+        bootstrapWindow: TimeInterval = 7 * 86_400,
         boardBufferSize: Int = 256
     ) {
         self.repository = SessionRepository(store: store)
@@ -112,6 +118,7 @@ public actor SessionRegistry {
         self.tickInterval = tickInterval
         self.policy = policy
         self.bootstrapLimit = bootstrapLimit
+        self.bootstrapWindow = bootstrapWindow
         let (stream, continuation) = AsyncStream<BoardSnapshot>.makeStream(
             bufferingPolicy: .bufferingNewest(boardBufferSize)
         )
@@ -129,7 +136,7 @@ public actor SessionRegistry {
     public func bootstrap() throws {
         guard !didBootstrap else { return }
         didBootstrap = true
-        let stored = try repository.fetchAll(activeOnly: false, limit: bootstrapLimit)
+        let stored = try repository.fetchForBootstrap(window: bootstrapWindow, cap: bootstrapLimit)
         for snapshot in stored where snapshots[snapshot.key] == nil {
             snapshots[snapshot.key] = snapshot
         }
@@ -215,12 +222,30 @@ public actor SessionRegistry {
 
     /// The snapshot an unknown session starts from.
     ///
-    /// A tail almost never begins at `sessionStarted` — it begins wherever the
-    /// transcript was when Auspex looked. When that is all we have, the
-    /// identity is just the key and whatever file the event was read from;
+    /// **The store is asked first.** "Not in memory" is not the same as "new":
+    /// ``bootstrap()`` holds a bounded set, so a session outside it that emits
+    /// one late event would otherwise be seeded blank and then *written back*
+    /// blank — losing the brief, the turn counts, the tokens and the identity
+    /// the store already had. That is a silent deletion caused by an event that
+    /// added information, which is the worst shape a bug can take.
+    ///
+    /// It costs one indexed single-row read, once per key: the very next line
+    /// puts the snapshot in `snapshots`, and this is never reached for that
+    /// session again. A miss is the same read returning nothing, which is what
+    /// a genuinely new session costs.
+    ///
+    /// Whatever comes back is then folded through the reducer like any other
+    /// snapshot — including a `sessionStarted`, which the reducer already knows
+    /// to treat as new evidence about *who* a live session is rather than as a
+    /// restart.
+    ///
+    /// Failing that: a tail almost never begins at `sessionStarted` — it begins
+    /// wherever the transcript was when Auspex looked. When that is all we have,
+    /// the identity is just the key and whatever file the event was read from;
     /// every other field stays empty until an `identityUpdated` patch fills it
     /// in, because an invented cwd is worse than a blank one.
     private func seedSnapshot(for event: AgentEvent) -> SessionSnapshot {
+        if let stored = try? repository.fetch(key: event.session) { return stored }
         if case .sessionStarted(let identity) = event.kind, identity.key == event.session {
             return SessionStateReducer.initialSnapshot(identity: identity)
         }

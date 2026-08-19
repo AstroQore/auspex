@@ -298,3 +298,74 @@ struct SessionRepositoryTests {
         #expect(try repository.search(query: "resizer").isEmpty)
     }
 }
+
+@Suite("SessionRepository · what a relaunch starts holding")
+struct BootstrapSelectionTests {
+    /// A stored session with a chosen clock and liveness.
+    private func store(
+        _ repository: SessionRepository,
+        _ id: String,
+        lastEventAt: TimeInterval,
+        isAlive: Bool = false
+    ) throws -> SessionKey {
+        let key = Fixtures.key(.claudeCode, id)
+        var snapshot = Fixtures.snapshot(key: key)
+        snapshot.lastEventAt = Fixtures.date(lastEventAt)
+        snapshot.isAlive = isAlive
+        snapshot.state = isAlive ? .thinking : .ended(reason: .exited)
+        try repository.upsert(snapshot: snapshot)
+        return key
+    }
+
+    private let day: TimeInterval = 86_400
+
+    @Test("this week's work is kept whole, and the cap falls on the history behind it")
+    func recentSessionsOutrankTheCap() throws {
+        let repository = try AuspexStore(inMemory: true).sessions
+        let now = Fixtures.date(30 * 86_400)
+        var recent: [SessionKey] = []
+        for index in 0..<4 {
+            recent.append(try store(repository, "recent-\(index)", lastEventAt: 30 * day - Double(index) * 3_600))
+        }
+        var old: [SessionKey] = []
+        for index in 0..<4 {
+            old.append(try store(repository, "old-\(index)", lastEventAt: 10 * day - Double(index) * 3_600))
+        }
+
+        let kept = try repository.fetchForBootstrap(now: now, window: 7 * 86_400, cap: 6)
+        let keys = Set(kept.map(\.key))
+
+        #expect(kept.count == 6)
+        // Every recent one, whatever the cap: a flat "newest six" would have
+        // been the same answer here only by luck, and would drop the oldest of
+        // this week's work on a busier machine.
+        #expect(recent.allSatisfy { keys.contains($0) })
+        // The rest of the budget goes to the most recent history, in order.
+        #expect(keys.contains(old[0]))
+        #expect(keys.contains(old[1]))
+        #expect(!keys.contains(old[2]))
+    }
+
+    @Test("a session still running is kept however long it has been quiet")
+    func aliveSessionsAreAlwaysKept() throws {
+        let repository = try AuspexStore(inMemory: true).sessions
+        let now = Fixtures.date(30 * 86_400)
+        // Silent for three weeks — a long `swift build` is quiet, not finished.
+        let alive = try store(repository, "long-quiet-but-alive", lastEventAt: 9 * day, isAlive: true)
+        for index in 0..<3 {
+            _ = try store(repository, "newer-but-done-\(index)", lastEventAt: 29 * day - Double(index))
+        }
+
+        let kept = try repository.fetchForBootstrap(now: now, window: 7 * 86_400, cap: 1)
+        #expect(kept.map(\.key) == [alive])
+    }
+
+    @Test("no cap means everything")
+    func noCapReturnsEverything() throws {
+        let repository = try AuspexStore(inMemory: true).sessions
+        for index in 0..<5 {
+            _ = try store(repository, "session-\(index)", lastEventAt: Double(index))
+        }
+        #expect(try repository.fetchForBootstrap(now: Fixtures.date(30 * 86_400), cap: nil).count == 5)
+    }
+}

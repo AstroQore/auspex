@@ -101,6 +101,63 @@ public struct SessionRepository: Sendable {
         }
     }
 
+    /// The sessions a relaunch should start holding in memory.
+    ///
+    /// Not simply "the newest N". A board's job is the work that is still
+    /// somebody's problem, and that set is defined by two different facts:
+    ///
+    /// - **Alive, or active within `window`.** These are kept whatever their
+    ///   number. A machine that ran three hundred sessions this week has three
+    ///   hundred sessions that might still matter, and a flat cap that dropped
+    ///   the tail of them would silently take the oldest of *this week's* work
+    ///   off the board. Sessions still running sort ahead even of those, so if
+    ///   `cap` is ever reached it is history that goes, then last week, and a
+    ///   live session last of all.
+    /// - **The most recent finished ones, to fill the rest of `cap`.** History,
+    ///   in the order a person would scroll it.
+    ///
+    /// `cap` bounds the whole result, recent sessions included: it is a memory
+    /// budget, not a policy, and a store with more live sessions than the cap
+    /// is a store where something has gone wrong upstream. 2000 snapshots is a
+    /// few tens of megabytes — far more than any real machine reaches, and
+    /// still a bound.
+    ///
+    /// - Parameters:
+    ///   - now: the clock `window` is measured back from.
+    ///   - window: how long after its last event a session is still "recent".
+    ///   - cap: the most snapshots to return. `nil` returns everything.
+    public func fetchForBootstrap(
+        now: Date = Date(),
+        window: TimeInterval = 7 * 86_400,
+        cap: Int? = 2_000
+    ) throws -> [SessionSnapshot] {
+        // One query rather than two, and the sort keys are the policy: still
+        // running first, then active within the window, then everything else by
+        // recency — so a LIMIT bites the finished tail, and a live session is
+        // the last thing it can ever reach. NULL `last_event_at` sorts lowest
+        // under DESC, which is where a session nothing is known about belongs.
+        var sql = """
+            SELECT snapshot_json FROM sessions
+             ORDER BY is_alive DESC,
+                      (COALESCE(last_event_at, 0) >= ?) DESC,
+                      last_event_at DESC, key ASC
+            """
+        var arguments: StatementArguments = [now.addingTimeInterval(-window).timeIntervalSince1970]
+        if let cap {
+            sql += "\n LIMIT ?"
+            arguments += [cap]
+        }
+        return try dbWriter.read { db in
+            let json = try String.fetchAll(db, sql: sql, arguments: arguments)
+            let decoder = StoreJSON.makeDecoder()
+            // Lenient for the same reason `fetchAll` is: one blob this build
+            // cannot read must not cost the whole board.
+            return json.compactMap {
+                try? StoreJSON.decode(SessionSnapshot.self, from: $0, using: decoder)
+            }
+        }
+    }
+
     /// How many stored snapshots this build cannot decode.
     ///
     /// `0` on a healthy store. Anything else is the count ``fetchAll(activeOnly:limit:)``
