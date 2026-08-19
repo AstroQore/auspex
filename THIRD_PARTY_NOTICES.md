@@ -7,6 +7,17 @@
 - [GRDB.swift](https://github.com/groue/GRDB.swift) — SQLite toolkit. License:
   [MIT](https://github.com/groue/GRDB.swift/blob/master/LICENSE).
 
+## Ported source
+
+`Sources/AuspexCore/Crew/` is a Swift port of the animation engine of
+[bloub](https://github.com/jeremy-prt/bloub) — MIT, © 2026 Jérémy Perret. The
+geometry, the state catalogue and every numeric constant come from that
+project, where they are measurements taken frame by frame off xAI's official
+Grok Bot video rather than settings. Auspex uses the engine to draw one
+avatar per session and supplies its own colours; bloub's own colour palette is
+carried only so a frame produced here can be compared against one produced
+there. Each ported file carries the notice in its header.
+
 ## Brand marks
 
 `Sources/AuspexApp/Resources/ProviderIcons/` carries the vendor marks Auspex uses to identify
