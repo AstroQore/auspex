@@ -171,14 +171,6 @@ struct IgnoreSettingsView: View {
 
             Spacer(minLength: 8)
 
-            if rule.kind.tag == .promptPrefix {
-                // The one rule the kit cannot answer yet. Saying so on the row
-                // is better than a rule that quietly matches something else.
-                Text("matches the title until first prompts land")
-                    .font(.system(size: 10))
-                    .foregroundStyle(AuspexPalette.stateStale)
-            }
-
             Button {
                 catalog.delete(rule: rule)
             } label: {

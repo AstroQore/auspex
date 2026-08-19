@@ -318,15 +318,20 @@ public struct IgnoreRules: Sendable, Equatable {
             return name.caseInsensitiveCompare(value) == .orderedSame
 
         case .promptPrefix(let prefix):
-            // TODO: match `SessionSnapshot.brief.firstPrompt` once the kit
-            // carries it (feat/task-ledger). Until then the title is the only
-            // thing on a snapshot that is derived from what a person typed —
-            // for most harnesses it *is* the opening of the first prompt,
-            // truncated — so the rule matches on that and says so in the UI
-            // rather than matching nothing at all.
+            // The assignment as the person typed it. The title is the
+            // fallback and not the answer: a harness that names its own
+            // threads writes a summary there, and a session whose transcript
+            // has not been read far enough yet has no brief at all — matching
+            // its title is still the closest thing to what was asked, and it
+            // stops being used the moment the first prompt arrives.
             let value = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty, let title = session.identity.title else { return false }
-            return title.lowercased().hasPrefix(value.lowercased())
+            guard !value.isEmpty else { return false }
+            guard let asked = session.brief.firstPrompt ?? session.identity.title
+            else { return false }
+            return asked
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .hasPrefix(value.lowercased())
 
         case .titleContains(let needle):
             let value = needle.trimmingCharacters(in: .whitespacesAndNewlines)

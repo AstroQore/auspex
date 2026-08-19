@@ -243,9 +243,10 @@ Ignored is not deleted: the sessions are still ingested, still stored, and still
 in the FTS index. The board's header offers "N ignored", which puts them back
 dimmed, and every surface that writes a rule says the same sentence about it.
 
-`.promptPrefix` is the one kind the kit cannot answer yet — a snapshot carries
-no first prompt — so it matches the title, the row in Settings says so, and the
-test that pins the fallback is in `IgnoreRuleTests`.
+`.promptPrefix` matches `SessionBrief.firstPrompt` — the assignment as the
+person typed it, the same string the card's `asked:` line shows — and falls
+back to the title for a session whose transcript has not been read far enough
+to have a brief yet.
 
 ## Harness Configuration
 

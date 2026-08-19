@@ -18,6 +18,7 @@ struct IgnoreRuleTests {
         gitRoot: String? = nil,
         parent: SessionKey? = nil,
         title: String? = nil,
+        firstPrompt: String? = nil,
         state: SessionState = .thinking
     ) -> SessionSnapshot {
         let key = SessionKey(harness: harness, sessionID: id)
@@ -34,6 +35,7 @@ struct IgnoreRuleTests {
         snapshot.state = state
         snapshot.isAlive = true
         snapshot.lastEventAt = Fixtures.date(0)
+        snapshot.brief.firstPrompt = firstPrompt
         return snapshot
     }
 
@@ -131,22 +133,36 @@ struct IgnoreRuleTests {
         #expect(result.board.sessions.map(\.key) == [real.key])
     }
 
-    /// The rule the kit cannot answer yet. It matches the title until
-    /// `SessionSnapshot.brief.firstPrompt` lands, and this is the test that
-    /// says so — when the field arrives, this becomes a first-prompt test and
-    /// the title case moves to `titleContains`.
-    @Test("A prompt-prefix rule matches the opening of the title, for now")
-    func promptPrefixRuleFallsBackToTheTitle() {
-        let scripted = session("1", title: "chore: sync the changelog")
-        let human = session("2", title: "Fix the cart total")
+    @Test("A prompt-prefix rule matches what the person actually asked for")
+    func promptPrefixMatchesTheFirstPrompt() {
+        let scripted = session(
+            "1",
+            title: "Changelog sync",
+            firstPrompt: "chore: sync the changelog and push"
+        )
+        let human = session("2", title: "chore: something", firstPrompt: "Fix the cart total")
+        let result = visible([scripted, human], [IgnoreRule(kind: .promptPrefix("chore:"))])
+
+        // The brief wins over the title in both directions: the scripted
+        // session is caught by its prompt even though its title says nothing,
+        // and the human one survives even though its *title* starts the same
+        // way.
+        #expect(result.ignored == [scripted.key])
+        #expect(result.board.sessions.map(\.key) == [human.key])
+    }
+
+    @Test("With no brief yet, a prompt-prefix rule falls back to the title")
+    func promptPrefixFallsBackToTheTitle() {
+        let scripted = session("1", title: "chore: sync the changelog", firstPrompt: nil)
+        let human = session("2", title: "Fix the cart total", firstPrompt: nil)
         let result = visible([scripted, human], [IgnoreRule(kind: .promptPrefix("chore:"))])
         #expect(result.ignored == [scripted.key])
         #expect(result.board.sessions.map(\.key) == [human.key])
     }
 
-    @Test("A prompt-prefix rule matches nothing on a session with no title yet")
+    @Test("A prompt-prefix rule matches nothing on a session that has said nothing")
     func promptPrefixNeedsSomethingToMatch() {
-        let untitled = session("1", title: nil)
+        let untitled = session("1", title: nil, firstPrompt: nil)
         #expect(visible([untitled], [IgnoreRule(kind: .promptPrefix("chore:"))])
             .board.sessions.count == 1)
     }
