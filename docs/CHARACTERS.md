@@ -3,12 +3,15 @@
 How to draw the people in Auspex's [scene view](../README.md#scene-view), and
 where to put them so the app finds them.
 
-Nothing here has to exist. The office ships with a procedural placeholder rig —
+Nothing here has to exist. The office ships with a procedural rig —
 sixteen-pixel figures composed in code from the harness's own accent hue — and
 every lookup that misses falls back to it, **per pose**. So art can land one
 pose at a time: draw `blocked.png` and every session waiting on a person turns
 into a person with their hand up, while everything else keeps its rectangles.
 `blocked` is the one worth drawing first.
+
+The rig is also a look somebody may simply prefer, so it is selectable rather
+than only a fallback — see [The built-in look](#the-built-in-look).
 
 A character is a *package*: one folder, one manifest, one frame strip per pose.
 
@@ -80,7 +83,7 @@ both *typing*, they only differ in tempo and screen colour.
 | `walkDown/Right/Up.png` | Optional | Walking to a desk or to the break area |
 | `spawn.png` | Optional | A subagent arriving |
 
-A pose with no file uses the placeholder rig for that pose only. A pose listed
+A pose with no file uses the built-in rig for that pose only. A pose listed
 in `poses` with no file is a mistake and is reported.
 
 ## The strip
@@ -113,19 +116,43 @@ are drawn 64 points tall — 32-pixel art at two points per pixel, 48-pixel art
 at one and a third — so an office mixing them has one population rather than
 two.
 
+## The built-in look
+
+The procedural rig is not only the fallback — it is a character in its own
+right, listed in Settings → Characters as **Auspex built-in** and selectable
+per harness exactly the way a package is. It is composed in code from each
+harness's own accent, so it is always installed, never missing a pose, and
+never out of date with a harness Auspex has just learned about.
+
+A harness set to **Auspex built-in** keeps the little pixel people even when a
+package claims that harness. A package overrides the built-in look only when it
+is *chosen*, or when **Automatic** picks it — and Automatic means "whichever
+package names this harness, and the built-in figures while none does". That
+distinction is the reason the choice is a value rather than an optional id: no
+choice at all means *keep picking for me*, and choosing the built-in figures
+means *stop picking*.
+
 ## Which character a session wears
 
 Resolved in this order, and the first answer wins:
 
 1. A **session override**, if one was set for that exact session.
-2. The **harness default** chosen in Settings → Characters.
+2. The **harness default** chosen in Settings → Characters — a package, or
+   **Auspex built-in**.
 3. The package whose `harness` names it, preferring the conventional
    `<harness>-default` id when more than one does.
-4. The procedural placeholder rig.
+4. The procedural built-in rig.
 
 Both choices live in `~/.auspex/character-selection.json` and are written only
 by Auspex. A choice pointing at a package that has since been deleted is
-ignored, not obeyed.
+ignored, not obeyed — the harness falls back to step 3, not to the rig.
+
+The file is a flat map of harness names and session keys to character ids, with
+one reserved value: `"@built-in"` means the procedural rig. A harness with no
+entry at all is on Automatic, which is what a selection file written before the
+rig was selectable still means. `@` is reserved; a package whose id is
+`@built-in` is loaded and can be automatic for a harness, but can never be
+picked by hand, and Settings → Characters says so.
 
 ## Overriding a built-in
 
@@ -169,7 +196,7 @@ format, and is small enough to read.
 
 Nothing fails loudly. A package that cannot be read is still listed in
 Settings → Characters with what is wrong with it, and the office falls back to
-the placeholder rig for whatever could not be drawn. When `character.json`
+the built-in rig for whatever could not be drawn. When `character.json`
 disagrees with the pixels — four frames declared over a six-frame strip — the
 **pixels win** and the discrepancy is reported, because playing four frames of
 a six-frame cycle looks broken in a way that is very hard to trace back to a
