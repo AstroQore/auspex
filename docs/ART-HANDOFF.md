@@ -192,6 +192,22 @@ Resources/Characters/<character-id>/     app 内置（一 harness 一个默认�
 | `roomLabelPlate` | 32×12 | 门牌底板（项目名 app 写字） |
 | `deskNamePlate` | 24×8 | 桌前小名牌底板（app 写 harness 全名） |
 
+### 5.1 多场景（可切换的"房间主题"）
+
+场景视图不止一间办公室。同一批角色包、同一套状态机，可以在几个**像素风房间主题**之间切换（Settings / 场景右上角切换；每个项目一间房，房间主题全局选）。第一期三个主题，tileset 各自独立一张：
+
+| 主题 | 文件 | 感觉 | 每个 session 的"座位" | 该主题独有的 tile（在 §5 通用表之外） |
+|---|---|---|---|---|
+| **Office（默认，已有）** | `Resources/Tiles/office.png` + `.json` | 工位 + 显示器，现在这版 | 一桌一屏一椅 | 见 §5 |
+| **Meeting room** | `Resources/Tiles/meeting.png` + `.json` | 会议室：长桌、围坐、地毯、投影幕；像"项目组开会"，适合看一个项目下的多 session | 长桌边一把椅子（`seatLeft/Right/Top/Bottom` 四朝向）；状态显示在每个人面前的**笔记本/便签**上而不是显示器 | `tableLong 96×40`（可拼接：`tableLongLeft/Mid/Right` 各 32×40）、`chairN/S/E/W 16×16`、`laptop 16×10`（屏幕挖空同 monitor）、`projectorScreen 48×32`、`projectorScreenLit`、`rugBig 96×64`、`waterJug 8×12`、`whiteboardWide 64×24`、`floorCarpetDark 16×16`、`glassWallTop 16×24` |
+| **Garden** | `Resources/Tiles/garden.png` + `.json` | 户外花园/庭院：草地、小径、长椅、树、花坛、小池塘；轻松的"大家在院子里各忙各的" | 一把长椅或一块野餐垫（`bench 32×16`，`picnicBlanket 32×24`）；状态显示在**膝上的笔记本**或头顶气泡（§8） | `grass 16×16`（4 变体无缝）、`pathStone 16×16`（直/转角/丁字）、`treeSmall 24×32`、`treeBig 32×48`、`bush 16×12`、`flowerBed 32×16`、`pond 48×32`（水面两帧闪）、`bench`、`picnicBlanket`、`lantern 8×20`（夜晚亮）、`fence 16×16`、`fenceCorner`、`gazebo 64×48`（可选） |
+
+规则：
+- 三个主题**共用** §4 角色包、§6 屏幕 atlas（meeting 的 laptop / garden 的笔记本复用 monitor 屏幕挖空规则，尺寸按各自 tile）、§7 fx、§8 气泡；主题只换地面 / 墙 / 家具 / 座位形态。
+- 每个主题仍然"一个项目一块区域"（office 是一间房，meeting 是一张桌，garden 是一块草坪 + 围栏），区域左上角放 `roomLabelPlate` 写项目名。
+- 所有 tile 同样 16 px 网格、3/4 俯视、无抗锯齿、透明底；地面类 tile 必须四方连续无缝。
+- 优先级：office 已有 → meeting → garden。先出 office 的 §5 通用表，再按主题出独有 tile；每个主题先交一张 contact sheet 我 QA 再铺全量。
+
 ---
 
 ## 6. 显示器画面 atlas（`Resources/Tiles/screens.png` + `screens.json`）
