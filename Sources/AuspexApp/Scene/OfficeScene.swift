@@ -282,18 +282,6 @@ final class OfficeScene: SKScene {
         onOverview?(overview)
     }
 
-    /// Renders the building offscreen, with no window involved.
-    ///
-    /// `SKView.texture(from:)` renders the scene the way the view would show
-    /// it — through the camera, clipped to the view's bounds — so a snapshot is
-    /// arranged by pointing the camera rather than by cropping afterwards: the
-    /// view is made the size of the building, the camera is centred on it at
-    /// exactly `scale`, and the backdrop is pulled in from its usual overhang
-    /// so the grid stops where the building does.
-    ///
-    /// Two is the only scale worth using: nearest-neighbour filtering doubles
-    /// an art pixel into four exactly, and anything fractional puts seams
-    /// through the grid.
     /// Renders the office as a window `window` points across would show it,
     /// framed on one project.
     ///
@@ -325,6 +313,18 @@ final class OfficeScene: SKScene {
         return view.texture(from: self)?.cgImage()
     }
 
+    /// Renders the building offscreen, with no window involved.
+    ///
+    /// `SKView.texture(from:)` renders the scene the way the view would show
+    /// it — through the camera, clipped to the view's bounds — so a snapshot is
+    /// arranged by pointing the camera rather than by cropping afterwards: the
+    /// view is made the size of the building, the camera is centred on it at
+    /// exactly `scale`, and the backdrop is pulled in from its usual overhang
+    /// so the grid stops where the building does.
+    ///
+    /// Two is the only scale worth using: nearest-neighbour filtering doubles
+    /// an art pixel into four exactly, and anything fractional puts seams
+    /// through the grid.
     func render(view: SKView, scale: CGFloat) -> CGImage? {
         let rect = director.contentRect
         rebuildBackdrop(padding: 0)

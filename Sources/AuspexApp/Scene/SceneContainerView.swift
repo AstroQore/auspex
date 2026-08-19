@@ -556,7 +556,7 @@ final class OfficeSKView: SKView {
             if event.hasPreciseScrollingDeltas {
                 let magnification = event.scrollingDeltaY / Self.pointsPerDoubling
                 scene.magnify(by: magnification, atViewPoint: point)
-                if event.phase == .ended || event.momentumPhase == .ended {
+                if event.phase.contains(.ended) || event.momentumPhase.contains(.ended) {
                     scene.settle(atViewPoint: point)
                 }
             } else {
@@ -573,11 +573,14 @@ final class OfficeSKView: SKView {
         )
         // Fingers down means the map may be pulled past its edge; momentum and
         // wheels stop at it.
-        let touching = event.phase == .began || event.phase == .changed
+        let touching = event.phase.contains(.began) || event.phase.contains(.changed)
         scene.pan(by: delta, isTouching: touching)
-        if event.phase == .ended || event.phase == .cancelled {
-            scene.settle()
-        }
+        // The gesture is over twice: once when the fingers lift, and again
+        // when the momentum they left behind runs out. Settling at both is
+        // what stops a flick from being left hanging off the edge.
+        let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+            || event.momentumPhase.contains(.ended)
+        if ended { scene.settle() }
     }
 
     /// A pinch, continuously, around the point between the fingers.
@@ -585,7 +588,7 @@ final class OfficeSKView: SKView {
         guard let scene = officeScene else { return }
         let point = convert(event.locationInWindow, from: nil)
         scene.magnify(by: event.magnification, atViewPoint: point)
-        if event.phase == .ended || event.phase == .cancelled {
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
             // The pixel grid comes back when the fingers lift, not while they
             // are still moving.
             scene.settle(atViewPoint: point)
