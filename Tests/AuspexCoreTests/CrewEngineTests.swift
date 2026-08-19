@@ -195,22 +195,30 @@ struct CrewEngineTests {
 
     // MARK: The forced blink
 
-    /// In the video every shape change is hidden by a blink. The engine forces
-    /// one on entering a state that carries `blinkIn`, over 0.2 s, and the eye
-    /// is fully shut at the midpoint.
-    @Test("a state change into a blinking state shuts the eyes at its midpoint")
+    /// A state change into a `blinkIn` state still blinks — but the blink is
+    /// centred on the **morph's** midpoint, not fired at its start.
+    ///
+    /// bloub uses the blink to hide the shape change; Auspex wants the change
+    /// seen, so the blink lands in the middle of it as punctuation and the
+    /// morph runs on either side with the eyes open. ``BloubTransition``
+    /// carries the reasoning.
+    @Test("a state change into a blinking state shuts the eyes at the morph's midpoint")
     func forcedBlink() {
         // 11.5 s sits between two scheduled blinks, so what is measured here is
         // the forced one and nothing else.
         var engine = BloubEngine(state: .idle, shape: .circle, expression: .neutral)
         let open = engine.sample(11.5).eyes[0]
         engine.setState(.wide, at: 11.5)
-        let mid = engine.sample(11.6).eyes[0]
-        let after = engine.sample(11.75).eyes[0]
+
+        let midpoint = 11.5 + BloubTransition.duration(BloubStates.state(.wide).morph) / 2
+        let shut = engine.sample(midpoint).eyes[0]
+        let opening = engine.sample(midpoint + 0.09).eyes[0]
 
         // The blink is a vertical squash: only the y outputs shrink.
-        #expect(abs(mid.d) < abs(open.d) * 0.2)
-        #expect(abs(after.d) > abs(mid.d) * 3)
+        #expect(abs(shut.d) < abs(open.d) * 0.2)
+        #expect(abs(opening.d) > abs(shut.d) * 3)
+        // and the morph starts and ends with the eyes open, which is the point
+        #expect(abs(engine.sample(11.53).eyes[0].d) > abs(open.d) * 0.7)
     }
 
     @Test("a state change into a non-blinking state does not force one")
@@ -218,8 +226,8 @@ struct CrewEngineTests {
         var engine = BloubEngine(state: .idle, shape: .circle, expression: .neutral)
         let open = engine.sample(11.5).eyes[0]
         engine.setState(.orbit, at: 11.5)
-        let mid = engine.sample(11.6).eyes[0]
-        #expect(abs(mid.d) > abs(open.d) * 0.5)
+        let midpoint = 11.5 + BloubTransition.duration(BloubStates.state(.orbit).morph) / 2
+        #expect(abs(engine.sample(midpoint).eyes[0].d) > abs(open.d) * 0.5)
     }
 
     /// Which states carry the blink is measured, not chosen: it is the list of

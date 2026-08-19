@@ -152,12 +152,40 @@ public enum BloubFace {
         for start in blinks {
             if t < start { break }
             let k = (t - start) / blinkDuration
-            if k >= 0, k <= 1 {
-                // fast shut, slightly slower reopen
-                return k < 0.45 ? 1 - k / 0.45 : (k - 0.45) / 0.55
-            }
+            if k >= 0, k <= 1 { return lidCurve(k) }
         }
         return 1
+    }
+
+    /// A lid's travel over one blink, `k` in 0…1.
+    ///
+    /// Asymmetric in both halves, which is what a lid actually does and what
+    /// the previous straight-line version could not say:
+    ///
+    /// - **shutting** takes 45 % of the blink on an ease-*in*, so the lid
+    ///   leaves the open eye at rest and arrives shut at speed;
+    /// - **opening** takes the other 55 % on an ease-*out*, so it leaves shut
+    ///   at speed and settles back open.
+    ///
+    /// The consequence worth naming: both *ends* of the blink have zero
+    /// velocity, so nothing kinks where the blink begins or finishes, while the
+    /// bottom keeps its corner — the lid really does hit and rebound there.
+    static func lidCurve(_ k: Double) -> Double {
+        k < 0.45
+            ? 1 - BloubMath.easeInCubic(k / 0.45)
+            : BloubMath.easeOutCubic((k - 0.45) / 0.55)
+    }
+
+    /// The lid of the blink that punctuates a state change, `k` in 0…1.
+    ///
+    /// Same easings as ``lidCurve(_:)`` but shut exactly half-way, because this
+    /// one is placed so that its midpoint is the morph's midpoint. Moving the
+    /// shut point would move the accent off the beat it was put on.
+    public static func forcedLid(_ k: Double) -> Double {
+        if k <= 0 || k >= 1 { return 1 }
+        return k < 0.5
+            ? 1 - BloubMath.easeInCubic(k / 0.5)
+            : BloubMath.easeOutCubic((k - 0.5) / 0.5)
     }
 
     /// Resting life: slow gaze drift, saccades, blinks.

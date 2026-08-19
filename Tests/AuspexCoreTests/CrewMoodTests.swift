@@ -234,8 +234,9 @@ struct CrewMoodTests {
     }
 
     /// Every state change goes through the engine, so the ones bloub measured a
-    /// blink on get one here too.
-    @Test("changing state through the driver still hides the change in a blink")
+    /// blink on get one here too — at the midpoint of the morph, which is where
+    /// this port puts it.
+    @Test("changing state through the driver still punctuates it with a blink")
     func driverBlinks() {
         var driver = CrewAvatarDriver(harness: .claudeCode, state: .idle, at: 0)
         let open = driver.sample(11.5).eyes[0]
@@ -245,7 +246,7 @@ struct CrewMoodTests {
 
         driver.update(state: .thinking, isStale: true, at: 11.5)
         #expect(driver.mood.state == .wink)
-        let mid = driver.sample(11.6).eyes[0]
-        #expect(abs(mid.d) < abs(open.d) * 0.2)
+        let midpoint = 11.5 + BloubTransition.duration(BloubStates.state(.wink).morph) / 2
+        #expect(abs(driver.sample(midpoint).eyes[0].d) < abs(open.d) * 0.2)
     }
 }

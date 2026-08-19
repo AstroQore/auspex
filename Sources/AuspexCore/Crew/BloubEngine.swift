@@ -144,6 +144,10 @@ public struct BloubEngine: Sendable {
     /// How long a change of body shape takes to morph.
     public static let shapeMorph = 0.45
 
+    /// The shape and expression axes ride the same curve as a state change, so
+    /// a mood that moves both at once moves as one thing.
+    private static func morphCurve(_ k: Double) -> Double { BloubTransition.curve(k) }
+
     /// How long the gaze takes to catch up with a target. Shorter than
     /// ``shapeMorph``: a following gaze should look attentive, not viscous.
     public static let lookMorphDefault = 0.24
@@ -253,15 +257,30 @@ public struct BloubEngine: Sendable {
     /// displayed frame.
     public mutating func setState(_ id: BloubStateID, at now: Double) {
         if id == current { return }
-        let morph = BloubStates.state(current).morph
-        let midFade = previous != nil && now - currentAt < morph
+        let span = BloubTransition.span(BloubStates.state(current).morph)
+        let midFade = previous != nil && now - currentAt < span
         frozenStart = midFade ? composedPose(now) : nil
         previous = current
         previousAt = currentAt
         current = id
         currentAt = now
-        // In the video, every shape change is hidden by a blink.
-        if BloubStates.state(id).blinkIn { blinkAt = now }
+        scheduleBlink(for: id, at: now)
+    }
+
+    /// The blink that goes with a morph, on the states bloub measured one on.
+    ///
+    /// It is **centred on the morph's midpoint** rather than fired at its
+    /// start. In the video the blink is the damping mechanism: the eye is shut
+    /// over the fastest part of the change, and the change is never really
+    /// seen. On a wall of cards that reads as a snap, so here the blink is a
+    /// punctuation mark inside a morph the viewer is meant to watch — 0.2 s of
+    /// it out of 0.42 to 0.60. See ``BloubTransition``.
+    private mutating func scheduleBlink(for id: BloubStateID, at now: Double) {
+        guard BloubStates.state(id).blinkIn else { return }
+        blinkAt = now + BloubTransition.blinkStart(
+            BloubStates.state(id).morph,
+            blinkDuration: BloubFace.forcedBlinkDuration
+        )
     }
 
     /// Restarts the **current** state at `now`, morphing out of whatever is on
@@ -285,7 +304,7 @@ public struct BloubEngine: Sendable {
         previous = current
         previousAt = currentAt
         currentAt = now
-        if BloubStates.state(current).blinkIn { blinkAt = now }
+        scheduleBlink(for: current, at: now)
     }
 
     /// How long the current state has been running at `now`.
@@ -302,7 +321,7 @@ public struct BloubEngine: Sendable {
         return BloubExpressions.blend(
             BloubExpressions.expression(from),
             BloubExpressions.expression(to),
-            BloubMath.easeOutQuint(BloubMath.clamp(k))
+            Self.morphCurve(k)
         )
     }
 
@@ -319,7 +338,7 @@ public struct BloubEngine: Sendable {
         let target = BloubSkins.radii(to)
         if k >= 1 { return target }
         let source = BloubSkins.radii(from)
-        let t = BloubMath.easeOutQuint(BloubMath.clamp(k))
+        let t = Self.morphCurve(k)
         return target.enumerated().map { i, r in BloubMath.lerp(i < source.count ? source[i] : r, r, t) }
     }
 
@@ -360,14 +379,25 @@ public struct BloubEngine: Sendable {
 
     /// Interpolates two poses. The decor cross-fades in opacity, not in
     /// geometry.
-    private func blendPose(_ a: BloubPose, _ b: BloubPose, _ t: Double) -> BloubPose {
+    ///
+    /// `t` drives the body and everything anchored to it; `face` drives the
+    /// gaze and the eyes, and runs ``BloubTransition/eyeLag`` behind. Keeping
+    /// them as two ratios rather than two calls matters: the eyes are placed on
+    /// the silhouette at render time, so a face blended in a second pass would
+    /// have to be re-seated against a body it never saw.
+    private func blendPose(
+        _ a: BloubPose,
+        _ b: BloubPose,
+        _ t: Double,
+        face: Double
+    ) -> BloubPose {
         let out = 1 - t
         func lerpEye(_ x: BloubEyeConfig, _ y: BloubEyeConfig) -> BloubEyeConfig {
             BloubEyeConfig(
-                width: BloubMath.lerp(x.width, y.width, t),
-                height: BloubMath.lerp(x.height, y.height, t),
-                open: BloubMath.lerp(x.open, y.open, t),
-                tilt: BloubMath.lerp(x.tilt, y.tilt, t)
+                width: BloubMath.lerp(x.width, y.width, face),
+                height: BloubMath.lerp(x.height, y.height, face),
+                open: BloubMath.lerp(x.open, y.open, face),
+                tilt: BloubMath.lerp(x.tilt, y.tilt, face)
             )
         }
         return BloubPose(
@@ -375,13 +405,13 @@ public struct BloubEngine: Sendable {
             offsetX: BloubMath.lerp(a.offsetX, b.offsetX, t),
             offsetY: BloubMath.lerp(a.offsetY, b.offsetY, t),
             gaze: BloubGaze(
-                yaw: BloubMath.lerp(a.gaze.yaw, b.gaze.yaw, t),
-                pitch: BloubMath.lerp(a.gaze.pitch, b.gaze.pitch, t),
-                roll: BloubMath.lerp(a.gaze.roll, b.gaze.roll, t)
+                yaw: BloubMath.lerp(a.gaze.yaw, b.gaze.yaw, face),
+                pitch: BloubMath.lerp(a.gaze.pitch, b.gaze.pitch, face),
+                roll: BloubMath.lerp(a.gaze.roll, b.gaze.roll, face)
             ),
-            split: BloubMath.lerp(a.split, b.split, t),
+            split: BloubMath.lerp(a.split, b.split, face),
             eyes: (lerpEye(a.eyes.0, b.eyes.0), lerpEye(a.eyes.1, b.eyes.1)),
-            eyeAlpha: BloubMath.lerp(a.eyeAlpha, b.eyeAlpha, t),
+            eyeAlpha: BloubMath.lerp(a.eyeAlpha, b.eyeAlpha, face),
             bodyAlpha: BloubMath.lerp(a.bodyAlpha, b.bodyAlpha, t),
             dots: a.dots.map { var d = $0; d.opacity *= out; return d }
                 + b.dots.map { var d = $0; d.opacity *= t; return d },
@@ -419,9 +449,15 @@ public struct BloubEngine: Sendable {
         let expression = expressionAtTime(now)
         let pose = posed(def, max(0, now - currentAt), radii, expression)
         let since = now - currentAt
-        if since >= def.morph { return pose }
+        if since >= BloubTransition.span(def.morph) { return pose }
         guard let start = origin(now, radii, expression) else { return pose }
-        return blendPose(start, pose, BloubMath.easeOutQuint(BloubMath.clamp(since / def.morph)))
+        let duration = BloubTransition.duration(def.morph)
+        return blendPose(
+            start,
+            pose,
+            BloubTransition.body(since, duration),
+            face: BloubTransition.face(since, duration)
+        )
     }
 
     /// The eye offset at `now` for a given state, in ball-radius units.
@@ -448,7 +484,7 @@ public struct BloubEngine: Sendable {
             if a == b { return b }
             let k = (now - start) / duration
             if k >= 1 { return b }
-            let t = BloubMath.easeOutQuint(BloubMath.clamp(k))
+            let t = Self.morphCurve(k)
             return (BloubMath.lerp(a.x, b.x, t), BloubMath.lerp(a.y, b.y, t))
         }
 
@@ -485,23 +521,28 @@ public struct BloubEngine: Sendable {
 
         // --- transition ---------------------------------------------------
         let since = now - currentAt
-        // The previous state is never purged: `since < def.morph` is enough to
-        // ignore it once the fade is over, and forgetting it would make the
-        // engine non-replayable — re-reading a date from before the end of the
-        // fade would no longer find it.
-        let start = since < def.morph ? origin(now, radii, expression) : nil
+        // The previous state is never purged: comparing against the span is
+        // enough to ignore it once the fade is over, and forgetting it would
+        // make the engine non-replayable — re-reading a date from before the
+        // end of the fade would no longer find it. The span, not the duration:
+        // the eyes are still arriving after the body has settled.
+        let span = BloubTransition.span(def.morph)
+        let start = since < span ? origin(now, radii, expression) : nil
         if let start {
-            // Exponential ease-out: the curve measured on the video. The body
-            // has no overshoot. The ratio is clamped: re-reading a date BEFORE
-            // the state change would give a negative ratio, which the ease-out
-            // extrapolates — the silhouette would fly thirty times too far.
-            let ratio = BloubMath.easeOutQuint(BloubMath.clamp(since / def.morph))
-            pose = blendPose(start, pose, ratio)
+            // An ease-in-out over a chosen 420–600 ms, not bloub's measured
+            // exponential ease-out — ``BloubTransition`` says why. Both ratios
+            // are clamped inside `curve`: re-reading a date BEFORE the state
+            // change would give a negative one, and an unclamped cubic
+            // extrapolates it into a silhouette thirty times too far.
+            let duration = BloubTransition.duration(def.morph)
+            let ratio = BloubTransition.body(since, duration)
+            let faceRatio = BloubTransition.face(since, duration)
+            pose = blendPose(start, pose, ratio, face: faceRatio)
             if let left = previous {
                 let before = eyeOffsetAtTime(now, left)
                 offset = (
-                    BloubMath.lerp(before.x, offset.x, ratio),
-                    BloubMath.lerp(before.y, offset.y, ratio)
+                    BloubMath.lerp(before.x, offset.x, faceRatio),
+                    BloubMath.lerp(before.y, offset.y, faceRatio)
                 )
             }
         }
@@ -529,9 +570,8 @@ public struct BloubEngine: Sendable {
         )
 
         // the blink triggered by the state change, on top of the schedule
-        let forced = BloubMath.clamp((now - blinkAt) / BloubFace.forcedBlinkDuration)
-        let forcedLid = forced < 1 ? abs(forced * 2 - 1) : 1
-        let lid = min(life.lid, forcedLid)
+        let forced = (now - blinkAt) / BloubFace.forcedBlinkDuration
+        let lid = min(life.lid, BloubFace.forcedLid(forced))
 
         let offX = pose.offsetX + life.driftX
         let offY = pose.offsetY + life.driftY
