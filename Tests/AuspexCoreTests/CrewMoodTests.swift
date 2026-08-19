@@ -350,4 +350,65 @@ struct CrewMoodTests {
         // three chances to notice
         #expect(CrewCadence.blinkLead > CrewCadence.low * 3)
     }
+
+    /// What the tiers are actually worth, measured on the demo script rather
+    /// than argued from the table.
+    ///
+    /// The wall's cost is the number of avatar-frames it asks for, so that is
+    /// what is counted: replay the demo for a minute, step every 1/60 s, and
+    /// sum 1/interval over every session on the board. At the time of writing
+    /// that is 396 frames a second against 705 for sixty-everywhere — 56 %,
+    /// with the avatar-ticks falling 42 % at 60, 16 % at 30, 25 % at 15 and
+    /// 17 % not drawn at all.
+    ///
+    /// The demo board is deliberately busy; a real one, where most sessions are
+    /// idle or finished, sits further down. The bound below is loose enough to
+    /// survive a change to the script and tight enough to fail if somebody
+    /// quietly puts a tier back to 60.
+    @Test("the tiers cut the demo wall's frames by a third or better")
+    func cadenceCutsTheDemoWall() {
+        let start = Date(timeIntervalSince1970: 1_767_225_600)
+        let steps = DemoScript.make(seed: DemoScript.defaultSeed, startedAt: start).steps
+        let reducer = SessionStateReducer()
+
+        var snapshots: [SessionKey: SessionSnapshot] = [:]
+        var drivers: [SessionKey: CrewAvatarDriver] = [:]
+        var index = 0
+        var asked = 0.0
+        var flat = 0.0
+        var now = 0.0
+
+        while now < 60 {
+            while index < steps.count, steps[index].offset <= now {
+                let event = steps[index].event
+                var current = snapshots[event.session]
+                if current == nil, case .sessionStarted(let identity) = event.kind {
+                    current = SessionStateReducer.initialSnapshot(identity: identity)
+                }
+                if let current {
+                    snapshots[event.session] = reducer.reduce(current, event: event)
+                }
+                index += 1
+            }
+            for session in snapshots.values {
+                var driver = drivers[session.key] ?? CrewAvatarDriver(
+                    harness: session.key.harness,
+                    state: session.state,
+                    isStale: session.isStale,
+                    at: now
+                )
+                driver.update(state: session.state, isStale: session.isStale, at: now)
+                drivers[session.key] = driver
+                flat += 1 / CrewCadence.full
+                asked += driver.frameInterval(at: now).map { 1 / $0 } ?? 0
+            }
+            now += CrewCadence.full
+        }
+
+        #expect(flat > 0)
+        #expect(asked < flat * 0.7, "the wall asked for \(asked / flat) of a flat 60 fps")
+        // and it is still drawing: a policy that answered `nil` everywhere
+        // would pass the line above and show a wall of frozen avatars
+        #expect(asked > flat * 0.25)
+    }
 }
