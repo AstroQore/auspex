@@ -89,6 +89,10 @@ final class TrajectoryModel {
     private(set) var isLoading = false
     /// `true` when the session has more events than one trajectory folds.
     private(set) var isTruncated = false
+    /// How many event rows have been folded in. The window is counted in
+    /// *events* rather than in steps, because that is what the store is asked
+    /// for and what the facts bar tells the reader it stopped at.
+    private(set) var loadedEventCount = 0
 
     // MARK: What the reader controls
 
@@ -218,6 +222,7 @@ final class TrajectoryModel {
         errorCount = 0
         tokens = nil
         isTruncated = false
+        loadedEventCount = 0
         followsTail = true
         isLoading = key != nil
         load()
@@ -241,7 +246,7 @@ final class TrajectoryModel {
         guard loadTask == nil else { return }
 
         let after = builder.lastEventID ?? 0
-        let limit = Self.eventWindow - steps.count
+        let limit = Self.eventWindow - loadedEventCount
         guard limit > 0 else {
             isTruncated = true
             isLoading = false
@@ -264,6 +269,8 @@ final class TrajectoryModel {
                 self.loadTask = nil
                 self.isLoading = false
                 guard !events.isEmpty else { return }
+                self.loadedEventCount += events.count
+                if self.loadedEventCount >= Self.eventWindow { self.isTruncated = true }
                 self.builder.append(events)
                 self.adopt()
             }
