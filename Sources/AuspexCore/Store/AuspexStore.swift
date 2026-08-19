@@ -406,6 +406,11 @@ public final class AuspexStore: Sendable {
         SessionRepository(dbWriter: dbWriter)
     }
 
+    /// A project repository over this store's writer.
+    public var projects: ProjectRepository {
+        ProjectRepository(dbWriter: dbWriter)
+    }
+
     /// A cursor store over this store's writer.
     public var sourceCursors: SourceCursorRepository {
         SourceCursorRepository(dbWriter: dbWriter)

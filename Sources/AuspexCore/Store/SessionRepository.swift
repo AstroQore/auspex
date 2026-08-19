@@ -43,10 +43,25 @@ public struct SessionRepository: Sendable {
     ///
     /// Callers that also write events must use this and insert the sessions
     /// first: `events.session_key` is a foreign key.
+    ///
+    /// `project_id`, `worktree_id`, and `root_key` are deliberately not part of
+    /// ``SessionRow``, so an upsert leaves whatever ``ProjectRepository`` put
+    /// there. They are resolved on a different schedule from the snapshot — a
+    /// placement needs the filesystem, a root needs the whole delegation tree —
+    /// and a projection that carried them would blank them on every event until
+    /// the resolver caught up again. A brand-new row still gets a `root_key`,
+    /// because a session with no parent is its own root and grouping should
+    /// never see NULL.
     public func upsert(snapshots: [SessionSnapshot], in db: Database) throws {
+        guard !snapshots.isEmpty else { return }
         let encoder = StoreJSON.makeEncoder()
+        let seedRoot = try db.makeStatement(sql: """
+            UPDATE sessions SET root_key = key WHERE key = ? AND root_key IS NULL
+            """)
         for snapshot in snapshots {
             try SessionRow(snapshot: snapshot, encoder: encoder).upsert(db)
+            seedRoot.setUncheckedArguments([snapshot.key.description])
+            try seedRoot.execute()
         }
     }
 
@@ -436,11 +451,8 @@ struct SessionRow: Codable, FetchableRecord, PersistableRecord {
     var sessionId: String
     var variant: String?
     var parentKey: String?
-    var rootKey: String?
     var parentLink: String?
     var cwd: String?
-    var projectId: Int64?
-    var worktreeId: Int64?
     var gitBranch: String?
     var pid: Int64?
     var procStart: Double?
@@ -469,17 +481,8 @@ struct SessionRow: Codable, FetchableRecord, PersistableRecord {
         self.sessionId = identity.key.sessionID
         self.variant = identity.variant
         self.parentKey = identity.parent?.description
-        // A session with no parent is its own root, which is the answer for
-        // most rows and costs nothing to record now. A child's root needs the
-        // whole delegation chain walked, so it stays NULL until M2's tree
-        // builder rather than being guessed at as "the parent".
-        self.rootKey = identity.parent == nil ? identity.key.description : nil
         self.parentLink = identity.parentLink?.columnValue
         self.cwd = identity.cwd
-        // Project and worktree resolution is M2; the foreign keys stay null
-        // rather than pointing at a guess.
-        self.projectId = nil
-        self.worktreeId = nil
         self.gitBranch = identity.gitBranch
         self.pid = identity.pid.map(Int64.init)
         self.procStart = identity.procStart?.timeIntervalSince1970
