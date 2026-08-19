@@ -424,7 +424,9 @@ struct BriefBackfillSeenSeedingTests {
             state: .idle,
             lastTurnEndedAt: Fixtures.date(0),
             lastSeenAt: try fixture.repository.lastSeen(key: key)
-        ))
+        ,
+            isChild: false,
+            hasAssignment: true))
     }
 
     @Test("a session that was active this week stays unread")
@@ -444,7 +446,9 @@ struct BriefBackfillSeenSeedingTests {
             state: .idle,
             lastTurnEndedAt: Fixtures.date(3 * 24 * 3600 - 3600),
             lastSeenAt: nil
-        ))
+        ,
+            isChild: false,
+            hasAssignment: true))
     }
 
     @Test("the boundary belongs to the window: exactly 48 hours old stays unread")

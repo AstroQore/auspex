@@ -182,7 +182,9 @@ struct DemoScriptTests {
                 state: $0.state,
                 lastTurnEndedAt: $0.brief.lastTurnEndedAt,
                 lastSeenAt: nil
-            )
+            ,
+            isChild: false,
+            hasAssignment: true)
         }
         #expect(!unseen.isEmpty, "the board's own feature should be visible in a screenshot")
         // Both shapes: one that exited, and one still sitting open in its
@@ -200,7 +202,9 @@ struct DemoScriptTests {
         let after = try #require(session.brief.lastTurnEndedAt).addingTimeInterval(1)
         #expect(TaskLedger.isUnseenDone(
             state: session.state, lastTurnEndedAt: session.brief.lastTurnEndedAt, lastSeenAt: after
-        ) == false)
+        ,
+            isChild: false,
+            hasAssignment: true) == false)
     }
 
     @Test("the two harnesses that share a store are still separate sessions")

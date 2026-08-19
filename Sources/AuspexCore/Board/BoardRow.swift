@@ -86,7 +86,7 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     /// When a turn last closed. What "done · 12 min ago" is measured from.
     public let lastTurnEndedAt: Date?
     /// `true` when a turn closed after the card was last opened — see
-    /// ``TaskLedger/isUnseenDone(state:lastTurnEndedAt:lastSeenAt:)``.
+    /// ``TaskLedger/isUnseenDone(state:lastTurnEndedAt:lastSeenAt:isChild:hasAssignment:)``.
     public let isUnseenDone: Bool
 
     public var id: SessionKey { key }
@@ -263,7 +263,9 @@ public struct BoardRowBuilder: Sendable {
             isUnseenDone: TaskLedger.isUnseenDone(
                 state: session.state,
                 lastTurnEndedAt: brief.lastTurnEndedAt,
-                lastSeenAt: seenAt[session.key]
+                lastSeenAt: seenAt[session.key],
+                isChild: TaskLedger.isChild(session.identity),
+                hasAssignment: brief.firstPrompt != nil
             )
         )
     }

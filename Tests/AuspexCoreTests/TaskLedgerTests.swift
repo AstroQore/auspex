@@ -66,28 +66,36 @@ struct UnseenDoneTests {
     func neverOpened() {
         #expect(TaskLedger.isUnseenDone(
             state: .idle, lastTurnEndedAt: Fixtures.date(0), lastSeenAt: nil
-        ))
+        ,
+            isChild: false,
+            hasAssignment: true))
     }
 
     @Test("opening it after the turn closed clears the flag")
     func openedAfterwards() {
         #expect(TaskLedger.isUnseenDone(
             state: .idle, lastTurnEndedAt: Fixtures.date(0), lastSeenAt: Fixtures.date(1)
-        ) == false)
+        ,
+            isChild: false,
+            hasAssignment: true) == false)
     }
 
     @Test("a turn that closed since the last look is unseen again")
     func closedAgainAfterReading() {
         #expect(TaskLedger.isUnseenDone(
             state: .idle, lastTurnEndedAt: Fixtures.date(10), lastSeenAt: Fixtures.date(5)
-        ))
+        ,
+            isChild: false,
+            hasAssignment: true))
     }
 
     @Test("a session that has never closed a turn is not done")
     func noTurnEver() {
         #expect(TaskLedger.isUnseenDone(
             state: .idle, lastTurnEndedAt: nil, lastSeenAt: nil
-        ) == false)
+        ,
+            isChild: false,
+            hasAssignment: true) == false)
     }
 
     @Test("only a session that has stopped counts as done", arguments: [
@@ -101,7 +109,9 @@ struct UnseenDoneTests {
         // not one waiting to be read.
         #expect(TaskLedger.isUnseenDone(
             state: state, lastTurnEndedAt: Fixtures.date(0), lastSeenAt: nil
-        ) == false)
+        ,
+            isChild: false,
+            hasAssignment: true) == false)
     }
 
     @Test("being blocked outranks being done")
@@ -110,7 +120,75 @@ struct UnseenDoneTests {
             state: .waitingPermission(tool: "Bash"),
             lastTurnEndedAt: Fixtures.date(0),
             lastSeenAt: nil
+        ,
+            isChild: false,
+            hasAssignment: true) == false)
+    }
+
+    @Test("a subagent's turn is a step in somebody's task, not a task")
+    func childrenAreNotAssignments() {
+        // Twelve children of one prompt would bury the one row that is
+        // actually the person's.
+        #expect(TaskLedger.isUnseenDone(
+            state: .idle,
+            lastTurnEndedAt: Fixtures.date(0),
+            lastSeenAt: nil,
+            isChild: true,
+            hasAssignment: true
         ) == false)
+    }
+
+    @Test("a session with nothing to show for itself is not flagged")
+    func noAssignmentIsNotFlagged() {
+        // "done · 3 h ago" with no line above it sends a person to look at
+        // something in order to find out what it was.
+        #expect(TaskLedger.isUnseenDone(
+            state: .idle,
+            lastTurnEndedAt: Fixtures.date(0),
+            lastSeenAt: nil,
+            isChild: false,
+            hasAssignment: false
+        ) == false)
+    }
+
+    @Test("either kind of parent evidence makes a session a child")
+    func bothLinksCount() {
+        var identity = Fixtures.identity()
+        #expect(!TaskLedger.isChild(identity))
+        identity.parent = Fixtures.key(.claudeCode, "the-parent")
+        #expect(TaskLedger.isChild(identity))
+
+        var linkOnly = Fixtures.identity()
+        // A link can be recorded before the parent's own key is known.
+        linkOnly.parentLink = .spawnedProcess
+        #expect(TaskLedger.isChild(linkOnly))
+    }
+
+    @Test("the whole-snapshot form asks all four questions")
+    func snapshotFormAppliesEveryRule() {
+        var session = Fixtures.snapshot()
+        session.brief = SessionBrief(
+            firstPrompt: "Make the resizer stop snapping back",
+            firstPromptAt: Fixtures.date(0),
+            lastTurnEndedAt: Fixtures.date(10)
+        )
+        #expect(TaskLedger.isUnseenDone(session, lastSeenAt: nil))
+        #expect(TaskLedger.bucket(of: session, lastSeenAt: nil) == .doneUnseen)
+
+        var child = session
+        child.identity.parent = Fixtures.key(.claudeCode, "the-parent")
+        #expect(!TaskLedger.isUnseenDone(child, lastSeenAt: nil))
+        #expect(TaskLedger.bucket(of: child, lastSeenAt: nil) == .idle)
+        // And it drops off the surface that asks what still wants attention.
+        #expect(TaskLedger.wantsAttention(child, lastSeenAt: nil))
+        var endedChild = child
+        endedChild.state = .ended(reason: .exited)
+        #expect(!TaskLedger.wantsAttention(endedChild, lastSeenAt: nil))
+
+        var anonymous = session
+        anonymous.brief.firstPrompt = nil
+        anonymous.brief.firstPromptAt = nil
+        #expect(!TaskLedger.isUnseenDone(anonymous, lastSeenAt: nil))
     }
 
     @Test("both shapes of done: still open, and exited", arguments: [
@@ -119,7 +197,9 @@ struct UnseenDoneTests {
     func idleAndEndedBothCount(_ state: SessionState) {
         #expect(TaskLedger.isUnseenDone(
             state: state, lastTurnEndedAt: Fixtures.date(0), lastSeenAt: nil
-        ))
+        ,
+            isChild: false,
+            hasAssignment: true))
     }
 }
 

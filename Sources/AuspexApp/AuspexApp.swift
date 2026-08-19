@@ -188,9 +188,7 @@ struct MenuBarContent: View {
                     MenuBarRow(
                         session: session,
                         isUnseenDone: TaskLedger.isUnseenDone(
-                            state: session.state,
-                            lastTurnEndedAt: session.brief.lastTurnEndedAt,
-                            lastSeenAt: seenAt[session.key]
+                            session, lastSeenAt: seenAt[session.key]
                         )
                     ) { open(session.key) }
                 }

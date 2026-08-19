@@ -74,11 +74,8 @@ public struct BoardSummary: Sendable, Equatable, Hashable {
     /// them would pay for a delegation-tree walk per session.
     public init(sessions: [SessionSnapshot], seenAt: [SessionKey: Date]) {
         var unseen = 0
-        for session in sessions where TaskLedger.isUnseenDone(
-            state: session.state,
-            lastTurnEndedAt: session.brief.lastTurnEndedAt,
-            lastSeenAt: seenAt[session.key]
-        ) {
+        for session in sessions
+        where TaskLedger.isUnseenDone(session, lastSeenAt: seenAt[session.key]) {
             unseen += 1
         }
         self.init(counts: BoardSnapshot.Counts(sessions: sessions), doneUnseen: unseen)

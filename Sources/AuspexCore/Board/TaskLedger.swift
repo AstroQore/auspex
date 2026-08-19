@@ -16,9 +16,11 @@ import Foundation
 /// agent has stopped, it is waiting to be read, and nothing else on the
 /// machine will ever mention it again.
 public enum TaskLedger {
-    /// Whether a session has finished something the person has not read.
+    /// Whether a session has finished something *the person asked for* and has
+    /// not read.
     ///
-    /// Two conditions, and both are load-bearing:
+    /// Four conditions, and every one of them is a way the bucket goes wrong
+    /// without it:
     ///
     /// - **A turn closed.** `lastTurnEndedAt` and not `endedAt`, because the
     ///   common case is a session that is still open in a terminal and has
@@ -29,21 +31,59 @@ public enum TaskLedger {
     ///   anybody, and a session blocked on a permission is already the loudest
     ///   thing on the board — calling it "done" as well would be two claims
     ///   about one card.
+    /// - **Nobody delegated it.** A subagent is a step inside somebody else's
+    ///   task, not a task. Its parent is what the person assigned and what they
+    ///   will read; flagging the twelve children a single prompt spawned buries
+    ///   the one row that is actually theirs.
+    /// - **It has an assignment.** With no ``SessionBrief/firstPrompt`` there is
+    ///   nothing to say the session finished *doing* — a card reading
+    ///   "done · 3 h ago" with no line above it tells a person to go and look at
+    ///   something in order to find out what it was.
     ///
     /// A session never opened reads as unseen, which is right: the person has
     /// not looked at it.
     public static func isUnseenDone(
         state: SessionState,
         lastTurnEndedAt: Date?,
-        lastSeenAt: Date?
+        lastSeenAt: Date?,
+        isChild: Bool,
+        hasAssignment: Bool
     ) -> Bool {
-        guard let lastTurnEndedAt else { return false }
+        guard let lastTurnEndedAt, !isChild, hasAssignment else { return false }
         switch state {
         case .idle, .ended: break
         case .thinking, .toolCalling, .writingFile, .delegating, .waitingPermission: return false
         }
         guard let lastSeenAt else { return true }
         return lastTurnEndedAt > lastSeenAt
+    }
+
+    /// The same question asked of a whole snapshot, which is how every surface
+    /// but the row builder asks it.
+    ///
+    /// The row builder is the exception because a card may be showing a brief
+    /// rebuilt from the store rather than the session's own — see
+    /// ``BoardRowBuilder/brief(for:)`` — and the flag has to agree with the
+    /// line the card actually draws.
+    public static func isUnseenDone(_ session: SessionSnapshot, lastSeenAt: Date?) -> Bool {
+        isUnseenDone(
+            state: session.state,
+            lastTurnEndedAt: session.brief.lastTurnEndedAt,
+            lastSeenAt: lastSeenAt,
+            isChild: isChild(session.identity),
+            hasAssignment: session.brief.firstPrompt != nil
+        )
+    }
+
+    /// Whether a session was started by another session rather than by a
+    /// person.
+    ///
+    /// Either kind of evidence counts. `parent` is the key of the session that
+    /// spawned it; `parentLink` is *how that was worked out*, and a link can be
+    /// recorded — an inherited environment, a spawned process — in the moment
+    /// before the parent's own key is known.
+    public static func isChild(_ identity: SessionIdentity) -> Bool {
+        identity.parent != nil || identity.parentLink != nil
     }
 
     /// Which bucket a row belongs to, for counting, filtering, and sorting.
@@ -85,11 +125,7 @@ public enum TaskLedger {
     public static func bucket(of session: SessionSnapshot, lastSeenAt: Date?) -> Bucket {
         bucket(
             state: session.state,
-            isUnseenDone: isUnseenDone(
-                state: session.state,
-                lastTurnEndedAt: session.brief.lastTurnEndedAt,
-                lastSeenAt: lastSeenAt
-            )
+            isUnseenDone: isUnseenDone(session, lastSeenAt: lastSeenAt)
         )
     }
 
@@ -231,12 +267,7 @@ public enum TaskLedger {
     /// belongs on the board's collapsed section, not in a panel a person opens
     /// to ask what is outstanding.
     public static func wantsAttention(_ session: SessionSnapshot, lastSeenAt: Date?) -> Bool {
-        !session.state.isEnded
-            || isUnseenDone(
-                state: session.state,
-                lastTurnEndedAt: session.brief.lastTurnEndedAt,
-                lastSeenAt: lastSeenAt
-            )
+        !session.state.isEnded || isUnseenDone(session, lastSeenAt: lastSeenAt)
     }
 
     // MARK: - Counting and filtering
