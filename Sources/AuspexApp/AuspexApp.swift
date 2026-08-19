@@ -9,6 +9,12 @@ import SwiftUI
 /// reachable while the window is closed — which is the normal case for this
 /// app. A person does not sit and watch the board; they glance at the menu bar
 /// and open the window when something is blocked.
+///
+/// The Settings window is a third scene rather than a page inside the main
+/// window. Everything in it is about the *app* — which character each harness
+/// wears, where packages come from — and none of it is about the board a person
+/// is watching, so it does not belong in a column that would push the board
+/// aside to show it.
 struct AuspexApp: App {
     static let mainWindowID = "auspex.main"
 
@@ -20,9 +26,17 @@ struct AuspexApp: App {
                 .environment(environment)
                 .frame(minWidth: 900, minHeight: 520)
                 .preferredColorScheme(nil)
+                // The office reads character packages out of
+                // `~/.auspex/characters/`, and a person dropping one in expects
+                // the room to change, not to be told to relaunch.
+                .task { SpriteLibrary.shared.startWatching() }
         }
         .defaultSize(width: 1_440, height: 900)
         .windowToolbarStyle(.unified(showsTitle: true))
+
+        Settings {
+            AuspexSettingsView(library: SpriteLibrary.shared)
+        }
 
         MenuBarExtra {
             MenuBarContent(environment: environment)
@@ -121,6 +135,13 @@ struct MenuBarContent: View {
 
         Button("Open Auspex") { open(nil) }
             .keyboardShortcut("o")
+
+        // The menu bar is where this app is used from, so the one window that
+        // is not the board has to be reachable from here too.
+        SettingsLink {
+            Text("Settings\u{2026}")
+        }
+        .keyboardShortcut(",")
 
         Divider()
 
