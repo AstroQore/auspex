@@ -1,15 +1,14 @@
 # Auspex 美术素材交接（给 Codex / imagegen 流水线）
 
-> ## ⛔ 硬性要求（违反即整批退回）
-> 1. **所有角色一律是非人类的像素宠物/小生物**——参考 Claude Code / Codex 自带的 pets（小怪兽、小动物、幽灵、史莱姆、小机器人、小龙、鸟、猫、章鱼……）。**不允许出现任何人类**：不要人脸、不要人手、不要发型、不要衣服/裤子/鞋、不要办公椅上坐着的人。已生成的"人物"素材全部作废重来。
-> 2. 每个 harness 一个**固定物种 + 固定主色**（见 §4 表），同门 harness 用同物种不同配饰区分。
-> 3. 全部**全名**、无缩写；harness 标识用厂商真 logo（§0.3）。
-> 4. 像素风：逐像素、无抗锯齿、透明底、横向单行帧条、第 0 帧可单独用（§0.1）。
-
-> **优先级**：§4 宠物包（8 只，先 `blocked`）→ §5 家具 → §8 气泡 → §6 显示器画面 → §1 App 图标 → §2 菜单栏 → §3 应用内图标 → §7 特效 → §9 UI 动画/空状态 → §1.4 衍生物料。
+> ## 硬性要求（违反即整批退回）
+> 1. **角色是像素小人**（Pixel Agents 那种：3/4 俯视、约 16×24 px 的 chibi 小人坐在工位上工作），**抽象、简洁、可爱**——几笔一个人：色块身体 + 圆头 + 两点眼睛，不要写实五官、不要细密纹理；每个 harness 一个固定角色（发型/肤色/上衣色固定，上衣色 = harness 主色），同门 harness 同发型不同配饰。
+> 2. 全部**全名**、无缩写；harness 标识用厂商真 logo（§0.3）。
+> 3. 像素风：逐像素、无抗锯齿、透明底、横向单行帧条、第 0 帧可单独用（§0.1）。
+> 4. 角色包格式开放（§4）：以后用户可以自定义角色（小人或宠物都行）丢进 `~/.auspex/characters/`。
+> **优先级**：§4 角色包（8 个小人，先 `blocked`）→ §5 家具 → §8 气泡 → §6 显示器画面 → §1 App 图标 → §2 菜单栏 → §3 应用内图标 → §7 特效 → §9 UI 动画/空状态 → §1.4 衍生物料。
 > 目标：一次性产出 Auspex 需要的全部视觉素材——**图标包**（App 图标全尺寸 + 分层源 + 菜单栏 + 应用内图标集）、**俯视像素办公室**（角色 / 家具 / 地板 / 显示器画面 / 环境与特效 atlas / 气泡）、**UI 小动画帧**、**空状态与发布物料**。
 > 风格标杆：Pixel Agents 那种 3/4 俯视、温暖干净的 16 位像素办公室；UI 面是深色克制的 macOS 原生风。当前程序占位画面见 `docs/screenshots/scene.png`、`board.png`。
-> 交付根目录：`auspex/Resources/`（结构见 §9）。**测试时宠物包丢到 `~/.auspex/pets/`、家具/气泡等 atlas 丢到 `~/.auspex/sprites/`，app 优先读那里，不用重编。**
+> 交付根目录：`auspex/Resources/`（结构见 §9）。**测试时角色包丢到 `~/.auspex/characters/`、家具/气泡等 atlas 丢到 `~/.auspex/sprites/`，app 优先读那里，不用重编。**
 
 ---
 
@@ -18,7 +17,7 @@
 ### 0.1 像素类（角色、家具、显示器画面、气泡、特效、空状态动画）
 | 规则 | 值 |
 |---|---|
-| 视角 | **3/4 俯视**（Stardew / Pixel Agents 同款）：小生物看见头顶+背/脸，家具看见桌面 |
+| 视角 | **3/4 俯视**（Stardew / Pixel Agents 同款）：小人看见头顶+背/脸+肩膀，家具看见桌面 |
 | 网格 | 16 px 基础网格；角色 cell 32×32；家具按 16 的倍数 |
 | 像素 | **在最终分辨率上逐像素画**（最近邻缩放）；无抗锯齿、无软阴影、无渐变、无抖动；外描边 1 px `#1A1A1E`；每 sprite ≤ 14 色 |
 | 背景 | 透明 PNG（straight alpha），**不烘焙投影**（显示器光、地面影 app 自己画） |
@@ -95,26 +94,26 @@ Auspex = 古罗马**观鸟占卜的祭司**。
 
 ---
 
-## 4. 角色 = Auspex 像素宠物包（场景核心，最先做）—— **非人类小生物**
+## 4. 角色 = Auspex 像素小人角色包（场景核心，最先做）
 
-Auspex 自己的宠物包格式（不复用任何第三方格式）。app 内置一 harness 一只默认宠物；用户以后可以自己画/生成一只，丢进 `~/.auspex/pets/` 即可选用：
+Auspex 自己的角色包格式（不复用任何第三方格式）。app 内置一 harness 一个默认小人；用户以后可以自己画/生成一个（小人或宠物都可以），丢进 `~/.auspex/characters/` 即可选用：
 
 ```
-Resources/Pets/<pet-id>/          app 内置（一 harness 一只默认）
-~/.auspex/pets/<pet-id>/          用户自定义（同 id 覆盖内置，热加载，不用重编）
-├── pet.json
+Resources/Characters/<character-id>/     app 内置（一 harness 一个默认）
+~/.auspex/characters/<character-id>/     用户自定义（同 id 覆盖内置，热加载，不用重编）
+├── character.json
 ├── idle.png  thinking.png  typing.png  writing.png  delegating.png  blocked.png  stale.png  ended.png
 └── walkDown.png  walkRight.png  walkUp.png  spawn.png      （可选）
 ```
 
-`pet.json`：
+`character.json`：
 ```json
 {
-  "id": "claudeCode-dragon",
+  "id": "claudeCode-default",
   "displayName": "Ember",
-  "species": "dragon",
+  "kind": "person",                 // person | pet（格式相同，只是画法）
   "harness": "claudeCode",          // 可选：默认绑定的 harness 文件夹名；缺省则只出现在自定义列表里
-  "accent": "#E0785A",              // 主色，Crew 视图与 UI 会用
+  "accent": "#E0785A",              // 主色（上衣色 / Crew 视图与 UI 用）
   "cell": 32,                       // 每帧正方形边长（像素）；32 或 48
   "anchor": "bottomCenter",
   "poses": {                        // 每个姿势：帧数 + fps；文件为横向单行帧条，宽 = cell × frames
@@ -131,52 +130,42 @@ Resources/Pets/<pet-id>/          app 内置（一 harness 一只默认）
   }
 }
 ```
-帧条规则见 §0.1：横向单行、无间距无边距、透明底、逐像素、**第 0 帧可单独当静态图**。缺哪个姿势 app 就退回程序占位，所以可以一只一只、一姿势一姿势地交。
+帧条规则见 §0.1：横向单行、无间距无边距、透明底、逐像素、**第 0 帧可单独当静态图**。缺哪个姿势 app 就退回程序占位，所以可以一个一个、一姿势一姿势地交。
 
-**硬性要求（重复）：全部是非人类小生物，而且要抽象、简洁**——参照 Claude Code Buddy 的抽象度（几笔就是一只鸭/龙/幽灵：一个剪影 + 两颗眼 + 至多一个小特征），不要具象写实的解剖细节。可以有自己的小细节（一顶小帽、一撮呆毛、一条围巾），但**每只 ≤ 3 个辨识特征、≤ 6 种颜色、无渐变无毛发无鳞片**；如果一个特征要用超过 ~40 个像素才画得清，就是太具象了。
+**风格：抽象、简洁、可爱的像素小人**（Pixel Agents 同级别）——头是圆的、眼睛是两个深色点（`#0F0F12`，可加 1 px 高光）、身体是一块上衣色 + 一块裤色、没有鼻子嘴巴或只有一笔；**每个角色 ≤ 8 种颜色、≤ 3 个辨识特征（发型、一件配饰、上衣色）**，平涂无渐变、无衣褶发丝细节。3/4 俯视，小人约 16 宽 × 24 高 px（cell 32×32，底边贴 cell 底边 bottom-center 锚点，左右各留 ≥ 8 px）；**默认坐姿背对/侧背观众面向显示器**（看得出在看屏幕），桌子与显示器由 app 画在小人上方，小人上方 8 px 不要画东西。
 
-```
-Claude Buddy 抽象度参考（它是 ASCII，我们是像素，但"几笔一只"的克制感一样）：
-    __              /^\  /^\            .----.
-  <(· )___        <  ·  ·  >          / ·  · \
-   (  ._>          (   ~~   )         |      |
-    `--´            `-vvvv-´          ~`~``~`~
-    duck              dragon             ghost
-```
+每个 harness 一个固定角色（Crew 视图的团子会沿用同一主色与眼睛设定）：
 
-每个 harness 一个固定物种 + 主色（Crew 视图的团子表情会沿用同一物种/主色/眼睛设定）：
-
-| harness（全名） | 文件夹 / 默认 pet id | 主色 | 物种（抽象剪影） | 允许的 ≤3 个特征 |
-|---|---|---|---|---|
-| Claude Code | `claudeCode` / `claudeCode-dragon` | `#E0785A` | 圆团身体的小龙 | 头顶两个小尖角、身侧两片小翅膀 |
-| Claude Cowork | `claudeCowork` / `claudeCowork-dragon` | `#CE8F6E` | 同款小龙（浅棕） | 同上 + 一条小围巾（浅色一横） |
-| Codex | `codex` / `codex-robot` | `#2DD4BF` | 圆角方块小机器人 | 头顶一根天线 + 小球（球随状态变色） |
-| ChatGPT Work | `chatgptWork` / `chatgptWork-robot` | `#22A06B` | 同款小机器人（绿） | 同上 + 胸口一颗方点 |
-| Cursor | `cursor` / `cursor-cat` | `#4C8DFF` | 圆团小猫 | 两只尖耳、一条尾巴 |
-| Grok Build | `grokBuild` / `grokBuild-slime` | `#F45FA0` | 史莱姆/团子 | 无四肢，只靠形变；眼睛偏大 |
-| Grok Bot | `grokBot` / `grokBot-slime` | `#F98BBE` | 同款团子（浅粉） | 头顶一撮呆毛 |
-| AntiGravity | `antigravity` / `antigravity-ghost` | `#B4E048` | 小幽灵 | 波浪下摆、悬浮 |
-
-风格：可爱、圆润、**大眼睛占脸约 1/3**（深瞳 `#0F0F12` + 1 px 白高光；眼睛是主要表情通道）、可选两点腮红、小嘴一笔；平涂色块（主色 + 深一档描边 + 高光/腮红即可）；每只都要有清晰剪影，在 64 pt 大小下一眼分辨。cell 32×32，生物 ≤ 22×22 px，底边贴 cell 底边（bottom-center 锚点），左右各留 ≥ 5 px；**默认背对/侧背观众面向显示器**（看得出它在"看屏幕"），桌子与显示器由 app 画在生物上方，生物上方 8 px 不要画东西。**没有手就不画打字动作**——身体前倾、触角/翅膀/尾巴敲击等物种化动作表达"忙"。
-
-| 文件 | 帧 | fps | 画什么（物种化表达） |
+| harness（全名） | 文件夹 / 默认 character id | 上衣色 | 角色设定（固定，≤3 个特征） |
 |---|---|---|---|
-| `idle.png` | 2 | 2 | 趴着不动，眨一次眼 |
-| `thinking.png` | 4 | 4 | 抬头看，眼睛左右转（不要人手托腮） |
-| `typing.png` | 6 | 12 | 身体快速前后蹭 / 触角、翅膀、尾巴急速敲击 |
-| `writing.png` | 4 | 6 | 节奏慢的敲击 + 面前一张小纸条 |
-| `delegating.png` | 4 | 6 | 转向右侧，从身体里"分裂/吐出"一个小号同类 |
-| `blocked.png` | 2 | 2 | **正对观众，眼睛瞪大**，身体抖动/跳一下（`!` 气泡 app 另画）——最醒目，先画 |
-| `stale.png` | 2 | 1 | 眼睛半闭，脑袋一点一点 |
-| `ended.png` | 4 | 6 | 缩小/淡出/变成一小团光飘走 |
-| `walkDown/Right/Up.png`（可选） | 4 | 8 | 蹦跳/漂浮移动（走到工位 / 去休息区） |
-| `spawn.png`（可选） | 4 | 8 | 从蛋/光点里出现（子 agent 出生） |
+| Claude Code | `claudeCode` / `claudeCode-default` | `#E0785A` | 深棕卷发、珊瑚上衣 |
+| Claude Cowork | `claudeCowork` / `claudeCowork-default` | `#CE8F6E` | 同发型、浅棕上衣、一条浅色围巾 |
+| Codex | `codex` / `codex-default` | `#2DD4BF` | 黑色短发、圆框眼镜、青绿上衣 |
+| ChatGPT Work | `chatgptWork` / `chatgptWork-default` | `#22A06B` | 同发型、绿上衣、胸口一枚方形工牌 |
+| Cursor | `cursor` / `cursor-default` | `#4C8DFF` | 蓝色鸭舌帽、蓝上衣 |
+| Grok Build | `grokBuild` / `grokBuild-default` | `#F45FA0` | 高马尾、品红上衣 |
+| Grok Bot | `grokBot` / `grokBot-default` | `#F98BBE` | 同马尾、浅粉上衣、头戴耳麦 |
+| AntiGravity | `antigravity` / `antigravity-default` | `#B4E048` | 长发、黄绿上衣 |
 
-生成建议流程（用你手头的 imagegen 即可，不依赖任何现成 pet 工具）：① 每只先出一张 **基准立绘**（正面 + 背面各一，透明底，32×32 内）定物种/配色/眼睛；② 以基准图为参考逐姿势出横向帧条（每次只出一个姿势，帧数按表）；③ 用 `Scripts/validate_pet.py`（我会放进仓库：检查 cell 尺寸、帧数、透明底、无灰边、bottom-center 留白）校验；④ 出 contact sheet（所有姿势并排 + 4× 放大）我 QA。
+肤色/发色可以各不相同以便区分，但保持同一套像素语言（同样的头身比、同样的眼睛画法、同样的描边色 `#1A1A1E`）。
+
+| 文件 | 帧 | fps | 画什么 |
+|---|---|---|---|
+| `idle.png` | 2 | 2 | 坐着不动，眨一次眼 |
+| `thinking.png` | 4 | 4 | 抬头，头轻微左右转 |
+| `typing.png` | 6 | 12 | 坐着，双手在键盘位快速交替 |
+| `writing.png` | 4 | 6 | 坐着，一手写、一手扶纸，节奏慢 |
+| `delegating.png` | 4 | 6 | 站起来侧身向右，递出一张便签 |
+| `blocked.png` | 2 | 2 | **转身面向观众，一只手举起**（`!` 气泡 app 另画）——最醒目，先画 |
+| `stale.png` | 2 | 1 | 坐着点头打盹 |
+| `ended.png` | 4 | 6 | 站起来朝右下走出画面（或 1 帧空椅） |
+| `walkDown/Right/Up.png`（可选） | 4 | 8 | 走路（走到工位 / 去休息区） |
+| `spawn.png`（可选） | 4 | 8 | 子 agent 出现（从门口跑进来 / 一闪出现） |
+
+生成建议流程：① 每个角色先出一张**基准立绘**（正面 + 背面各一，透明底，32×32 内）定发型/配色/眼睛；② 以基准图为参考逐姿势出横向帧条（每次只出一个姿势，帧数按表）；③ 用 `Scripts/validate_character.py`（我会放进仓库：检查 cell 尺寸、帧数、透明底、无灰边、bottom-center 留白）校验；④ 出 contact sheet（所有姿势并排 + 4× 放大）我 QA。
 
 ### 4.1 开放自定义（app 侧我来做，格式以本节为准）
-- Auspex 扫描 `~/.auspex/pets/` 与内置 `Resources/Pets/`，任何合法宠物包出现在 **Settings → Pets**；可按 harness 设默认宠物、也可给某个 session/项目单独指定；同 id 覆盖内置；无需重编/重启。
-- 以后可以做一个 Auspex 自己的"孵蛋"流程（在 app 里点一下就用 imagegen 生成一只），格式还是这个。
+- Auspex 扫描 `~/.auspex/characters/` 与内置 `Resources/Characters/`，任何合法角色包出现在 **Settings → Characters**；可按 harness 设默认角色、也可给某个 session/项目单独指定；同 id 覆盖内置；无需重编/重启。`kind: "pet"` 的宠物包同样合法。
 
 ## 5. 家具 / 地板 / 墙 tileset（`Resources/Tiles/office.png` + `office.json`，JSON 每项 `{name,x,y,w,h}`）
 | name | 尺寸 | 备注 |
@@ -268,16 +257,16 @@ Resources/
 ├── DocumentIcon.png  dmg-background.png  dmg-background@2x.png
 ├── MenuBar/ menubar.pdf menubar-alert.pdf menubar-off.pdf menubar-working.png menubar-alert.png
 ├── Icons/ <name>-{16,20,24}.svg + .pdf
-├── Pets/<pet-id>/{pet.json, <pose>.png…}   （Auspex 宠物包格式，§4）
+├── Characters/<character-id>/{character.json, <pose>.png…}   （Auspex 角色包格式，§4）
 ├── Tiles/ office.png office.json screens.png screens.json fx.png fx.json bubbles.png bubbles.json
 └── UI/ emptyState.png launch.png scanning.png harnessOffline.png onboarding-hero.png
 docs/art/ contact-<harness>.png ×8  contact-tiles.png  contact-fx.png  contact-icons.png  social-preview.png
 ```
 
 ## 11. 验收
-- 宠物包丢进 `~/.auspex/pets/` 跑 Scene：`blocked`（needs you）在 1:1 下必须是全屏最抓眼元素；八只 1:1 一眼可分；`validate_pet.py` 通过；contact sheet 无裁切/无白底/无人形/无抗锯齿灰边。
+- 角色包丢进 `~/.auspex/characters/` 跑 Scene：`blocked`（needs you）在 1:1 下必须是全屏最抓眼元素；八个角色 1:1 一眼可分；`validate_character.py` 通过；contact sheet 无裁切/无白底/无抗锯齿灰边。
 - 图标：16/32 两档在浅/深色 Dock 与 Finder 列表里可辨；菜单栏 template 在浅/深菜单栏都清晰。
 - 每个 atlas 的 JSON 与 PNG 尺寸一致，`columns = width/height` 成立。
 
 ## 12. 说明
-- 现有 `docs/SPRITES.md` 是侧视版旧约定；改为宠物包后我会重写它与 `SpriteLibrary`（读取 `pet.json` + 姿势帧条），路径与姿势名不变，不影响出图。
+- 现有 `docs/SPRITES.md` 是侧视版旧约定；改为角色包后我会重写它与 `SpriteLibrary`（读取 `character.json` + 姿势帧条），姿势名不变，不影响出图。
