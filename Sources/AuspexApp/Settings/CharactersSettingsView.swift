@@ -363,8 +363,18 @@ private struct ProblemList: View {
 
     private static let limit = 4
 
+    /// Errors first, and within each severity the order the loader found them
+    /// in — which is manifest fields, then poses in alphabetical order. Sorting
+    /// by message instead would scramble a list of near-identical lines into
+    /// something that reads as random.
     private var sorted: [CharacterProblem] {
-        problems.sorted { ($0.severity, $0.message) > ($1.severity, $1.message) }
+        problems.enumerated()
+            .sorted {
+                $0.element.severity == $1.element.severity
+                    ? $0.offset < $1.offset
+                    : $0.element.severity > $1.element.severity
+            }
+            .map(\.element)
     }
 
     var body: some View {

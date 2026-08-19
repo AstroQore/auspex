@@ -157,6 +157,11 @@ nobody has drawn yet, a package that names no harness — never fail the run;
 pass `--strict` when they should. Pillow is used when it is installed; without
 it a built-in PNG reader does the same checks.
 
+The validator is stricter than the loader on purpose. A `kind` or `anchor` the
+format does not define fails here and is quietly replaced with the default in
+the app: a mistake in a manifest should stop a package from being *shipped*,
+not stop an office from being *drawn*.
+
 `Tests/Fixtures/Characters/example-default/` is a complete package in this
 format, and is small enough to read.
 

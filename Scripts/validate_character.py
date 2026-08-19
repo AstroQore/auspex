@@ -302,7 +302,10 @@ def check_manifest(report: Report, directory: str):
     if accent is None:
         report.warn('No "accent"; surfaces outside the scene fall back to a neutral colour.')
     elif not is_hex_colour(accent):
-        report.error(f'accent "{accent}" is not a #RRGGBB colour.')
+        # A warning, not an error: the loader draws the character anyway and
+        # only surfaces outside the scene lose the colour. The two checkers
+        # agree on severity so a package that passes here behaves as described.
+        report.warn(f'accent "{accent}" is not a #RRGGBB colour.')
 
     cell = manifest.get("cell", 32)
     if cell not in CELL_SIZES:
