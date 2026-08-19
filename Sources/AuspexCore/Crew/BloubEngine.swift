@@ -264,6 +264,33 @@ public struct BloubEngine: Sendable {
         if BloubStates.state(id).blinkIn { blinkAt = now }
     }
 
+    /// Restarts the **current** state at `now`, morphing out of whatever is on
+    /// screen — an addition of this port, not something bloub has.
+    ///
+    /// bloub's states are montage blocks: they are held for a measured couple
+    /// of seconds and then cut to the next one, so several of them let their
+    /// decor decay on the way out (`orbit`'s rings are gone by 3.6 s). Auspex
+    /// has no montage — a session stays in one state for as long as the work
+    /// takes — so a state whose animation is a one-shot has to be played
+    /// again.
+    ///
+    /// It reuses the frozen-start mechanism ``setState(_:at:)`` already has, so
+    /// the replay blends out of the composite pose that was actually on screen:
+    /// continuous by construction, and the arcs cross-fade from the old set to
+    /// the new one rather than blinking out. What it deliberately does not do
+    /// is scale time — bloub's montage "holds or cuts, it never scales time",
+    /// and every measured duration would break at once if this did.
+    public mutating func replay(at now: Double) {
+        frozenStart = composedPose(now)
+        previous = current
+        previousAt = currentAt
+        currentAt = now
+        if BloubStates.state(current).blinkIn { blinkAt = now }
+    }
+
+    /// How long the current state has been running at `now`.
+    public func elapsed(at now: Double) -> Double { now - currentAt }
+
     // MARK: Time-resolved inputs
 
     /// The effective expression at `now`, morph included.
