@@ -129,9 +129,22 @@ private struct HarnessRackRow: View {
                     .foregroundStyle(AuspexPalette.text3)
                     .lineLimit(2)
                     .truncationMode(.head)
+                // Two harnesses read one tree; say so where the path is, or
+                // the rack shows the same store twice with no explanation.
+                if let note = AuspexAdapters.storeNote(for: status.harness) {
+                    Text(note)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(AuspexPalette.text3)
+                        .lineLimit(1)
+                }
             }
         }
-        .help(status.storePath ?? "No adapter watches a store for this harness.")
+        .help(storeHelp)
+    }
+
+    private var storeHelp: String {
+        let parts = [status.storePath, AuspexAdapters.storeNote(for: status.harness)].compactMap { $0 }
+        return parts.isEmpty ? "No adapter watches a store for this harness." : parts.joined(separator: " — ")
     }
 
     /// Whether the store is on this Mac. A `stat`, and nothing else — kept
