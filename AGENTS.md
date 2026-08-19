@@ -64,6 +64,35 @@ The `codesign` output must be an empty `<dict/>` plist with no
 `com.apple.security.app-sandbox` key. `build_app.sh` also asserts this and
 fails the build if the key appears.
 
+### 4.1 Performance budget (first priority, not a nice-to-have)
+
+Auspex runs all day next to the harnesses it watches. Rich motion is wanted;
+paying for it with CPU is not. Every change that touches the pipeline, the
+board, the scene or the crew must hold these numbers on this machine's
+real stores (~600 sessions) and say so in the PR/commit/report:
+
+| Situation | Budget |
+| --- | --- |
+| Live, window visible, no user input, ≥ 2 min after launch | ≤ 3 % process CPU, main thread idle |
+| Live, during a harness burst (a transcript growing every second) | ≤ 10 % process CPU, board updates within 0.5 s |
+| Scene or Crew view on screen, 60 animating characters | ≤ 15 % process CPU; offscreen views cost 0 (clocks stop when hidden) |
+| First launch with a cold store | discovery finishes in < 10 s, never blocks the UI |
+
+Rules that follow from it:
+
+- One clock per view (`TimelineView` at the container), ≤ 30 fps unless a
+  motion needs more; only *visible, active* cards animate; nothing animates
+  in a view that is not on screen.
+- Views never hold or compare `SessionSnapshot`s. The model derives flat,
+  `Equatable` row values once per coalesced frame (`BoardRowBuilder`); SwiftUI
+  compares those.
+- Discovery is incremental: route a changed path to the one adapter that owns
+  it; full sweeps are a slow safety net, not the mechanism.
+- Measure, don't guess: `top -l 4 -s 5 -pid <pid>` and `sample <pid> 3`
+  after a ≤ 2-minute background live launch, then kill it. Agents working on
+  this repo launch the app only briefly and in the background, and never
+  leave an instance running.
+
 ## 5. Why Auspex Is Unsandboxed
 
 Auspex's entire job is to read session stores that other tools scatter across
