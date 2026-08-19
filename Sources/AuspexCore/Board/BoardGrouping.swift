@@ -264,10 +264,16 @@ public enum BoardGrouping {
         }
 
         var groups = order.map { path in
-            BoardGroup(
+            // A pseudo project has no path to show under its title and no
+            // path to show *as* one — the harness's own name is the whole of
+            // what there is to say, and repeating it as a subtitle would be a
+            // second line saying the first line again.
+            let harness = PseudoProject.harness(forKey: path)
+            return BoardGroup(
                 id: "project:\(path)",
                 title: projectName(forPath: path),
-                subtitle: path,
+                subtitle: harness == nil ? path : nil,
+                harness: harness,
                 sessions: byProject[path] ?? []
             )
         }
@@ -366,7 +372,14 @@ public enum BoardGrouping {
 
     /// The last path component of `path`, with the path itself as the answer
     /// when it has no components worth taking — `/` most obviously.
+    ///
+    /// A ``PseudoProject`` key is not a path and is answered with the harness
+    /// name it stands for. Every surface that names a project — the section
+    /// header, the sidebar row, the trace header, the scene's floor plate —
+    /// comes through here, so teaching this one function is what keeps
+    /// `harness:grokBot` from being shown to anybody.
     public static func projectName(forPath path: String) -> String {
+        if let name = PseudoProject.name(forKey: path) { return name }
         let trimmed = path.hasSuffix("/") && path.count > 1 ? String(path.dropLast()) : path
         let name = (trimmed as NSString).lastPathComponent
         return name.isEmpty ? trimmed : name

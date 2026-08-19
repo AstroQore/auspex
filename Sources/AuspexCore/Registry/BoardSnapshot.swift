@@ -148,24 +148,34 @@ public struct BoardSnapshot: Sendable, Equatable {
         sessions.filter { projectKey(for: $0) == nil }
     }
 
-    /// The grouping key for one session, falling back to its ancestors.
+    /// The grouping key for one session, falling back to its ancestors and
+    /// then to the harness itself.
     ///
     /// A delegated session frequently records no directory at all — a Claude
     /// subagent has no process and no cwd line, and a spawned harness may not
     /// have written one yet — but it is unambiguously working on whatever its
     /// parent is working on. So an unplaceable child takes the key of the
-    /// nearest ancestor that has one, and only a chain with no directory
-    /// anywhere in it ends up ungrouped.
+    /// nearest ancestor that has one.
+    ///
+    /// What is left after that walk is of two kinds, and they are not the
+    /// same. A session whose directory is *missing* is genuinely unplaceable
+    /// and belongs in the residue. A session of a harness that records no
+    /// directory *at all* — Grok Bot, whose conversations run on xAI's
+    /// servers — is not missing anything, and filing every bot on the machine
+    /// under a heading that means "could not be placed" would say something
+    /// false about the store and bury the sessions that really could not be.
+    /// Those take a ``PseudoProject`` key instead.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let own = Self.projectKey(for: session) { return own }
         var seen: Set<SessionKey> = [session.key]
         var current = session.identity.parent
         while let key = current, seen.insert(key).inserted {
-            guard let ancestor = self.session(for: key) else { return nil }
+            guard let ancestor = self.session(for: key) else { break }
             if let inherited = Self.projectKey(for: ancestor) { return inherited }
             current = ancestor.identity.parent
         }
-        return nil
+        guard !session.key.harness.recordsWorkingDirectory else { return nil }
+        return PseudoProject.key(for: session.key.harness)
     }
 
     /// The grouping key a session carries on its own: `gitRoot ?? cwd`.
