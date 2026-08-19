@@ -10,9 +10,20 @@ import SwiftUI
 /// just did without losing sight of the other nine. `NavigationSplitView`
 /// persists its own column widths between launches, so a person who drags the
 /// trace wider gets it back tomorrow.
+///
+/// The window is dark, always. `.preferredColorScheme(.dark)` is set at the
+/// root rather than per view so that popovers, menus, and the search field's
+/// own chrome — none of which inherit a background colour — inherit the
+/// appearance instead.
 struct RootView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var section: BoardSection? = .live
+
+    /// The one ticker everything animated on the board is a function of.
+    ///
+    /// Owned by the window rather than by the board so that it survives a
+    /// switch between Board and Scene, and so there is visibly one of them.
+    @State private var clock = BoardClock()
 
     var body: some View {
         @Bindable var model = environment.board
@@ -28,9 +39,12 @@ struct RootView: View {
             boardColumn(model: model)
         } detail: {
             SessionTraceView(model: model)
-                .navigationSplitViewColumnWidth(min: 340, ideal: 460)
+                .navigationSplitViewColumnWidth(min: 360, ideal: 420)
         }
+        .preferredColorScheme(.dark)
+        .environment(clock)
         .task { environment.start() }
+        .task { await clock.run() }
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
         ) { _ in
@@ -42,151 +56,139 @@ struct RootView: View {
     private func boardColumn(model: LiveBoardModel) -> some View {
         @Bindable var model = model
 
-        Group {
-            if section == .harnesses {
-                HarnessesView(model: environment.harnesses, board: model.board)
-            } else if let section, section.isAvailable {
-                LiveSectionView(model: model)
-            } else {
-                ComingSoonView(section: section ?? .live)
+        VStack(spacing: 0) {
+            BoardHeader(model: model, section: section ?? .live)
+            Group {
+                if section == .harnesses {
+                    HarnessesView(model: environment.harnesses, board: model.board)
+                } else if let section, section.isAvailable {
+                    // The mode picker lives in the header, so the container is
+                    // a plain switch: adding a way of looking at the board is
+                    // a case in `BoardViewMode` and a line here.
+                    switch model.viewMode {
+                    case .board: BoardView(model: model)
+                    case .scene: SceneContainerView(model: model)
+                    }
+                } else {
+                    ComingSoonView(section: section ?? .live)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewColumnWidth(min: 420, ideal: 760)
-        .navigationTitle(navigationTitle)
-        .navigationSubtitle(subtitle(for: model))
-        .searchable(
-            text: $model.searchQuery,
-            placement: .toolbar,
-            prompt: "Search every transcript"
-        )
+        .background(AuspexPalette.canvas)
+        .navigationSplitViewColumnWidth(min: 460, ideal: 788)
         .overlay(alignment: .top) {
             if model.searchDidRun || !model.searchHits.isEmpty {
                 SearchResultsView(model: model)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
             }
         }
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Group by", selection: $model.groupBy) {
-                    ForEach(BoardGroupBy.allCases) { option in
-                        Text(option.title).tag(option)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 210)
-                .help("Divide the board into sections")
-            }
+        .onChange(of: section) { _, new in
+            // "All sessions" is the same board with its history opened out, so
+            // selecting it is what opens the collapsed section rather than a
+            // separate screen that would show the same cards twice.
+            if new == .allSessions { model.showsAllEnded = true }
+            if new == .live { model.showsAllEnded = false }
         }
-    }
-
-    private var navigationTitle: String {
-        environment.mode == .demo ? "Auspex — Demo" : "Auspex"
-    }
-
-    private func subtitle(for model: LiveBoardModel) -> String {
-        let counts = model.board.counts
-        guard counts.live > 0 || counts.ended > 0 else { return "Nothing running" }
-        var parts = ["\(counts.live) live"]
-        if counts.waitingPermission > 0 { parts.append("\(counts.waitingPermission) blocked") }
-        if counts.delegating > 0 { parts.append("\(counts.delegating) delegating") }
-        return parts.joined(separator: " · ")
     }
 }
 
 /// The sidebar: where the app is now, what is being worked on, and where the
 /// app is going.
 ///
-/// Two lists in one column. The destinations at the top are a table of
-/// contents and never change; the project tree under them is the live half,
-/// and it is the reason the column is wider than a list of five words needs.
-/// `Projects` is not one of the destinations — the tree *is* the projects
-/// section, and a row that pushed a second view of the same thing would be a
-/// row that has to explain itself.
+/// ## Why it is drawn rather than listed
+///
+/// `List(selection:)` binds one type, and this column has four kinds of row
+/// that mean four different things when clicked — a destination *navigates*, a
+/// project *filters the wall*, a checkout only opens, a session *selects a
+/// card*. Drawing the rows makes those behaviours explicit, and it lets the
+/// column carry the board's own chrome — flat ground, 28 pt rows, a 7 pt
+/// selection — instead of the system's translucent sidebar material, which
+/// would be the one surface in the window that is not Signal Room.
 struct SidebarView: View {
     @Binding var section: BoardSection?
     @Bindable var model: LiveBoardModel
     let projects: ProjectsModel
     let mode: AppEnvironment.Mode
 
-    /// The destinations, minus the one the tree below already is.
-    private var destinations: [BoardSection] {
-        BoardSection.allCases.filter { $0 != .projects }
-    }
-
     var body: some View {
         let tree = projects.tree(for: model.board)
 
-        List(selection: $section) {
-            Section {
-                ForEach(destinations) { item in
-                    SidebarRow(section: item, liveCount: item == .live ? model.board.counts.live : nil)
-                        .tag(item)
-                        .disabled(!item.isAvailable)
-                }
-            } header: {
-                Text("Board")
-                    .auspexLabel(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.textTertiary)
-            }
+        VStack(alignment: .leading, spacing: 2) {
+            titleRow
 
-            Section {
-                ProjectsSidebar(
-                    tree: tree,
-                    model: projects,
-                    projectFilter: model.projectFilter,
-                    selectedKey: model.selectedKey,
-                    onSelectProject: { key in
-                        model.toggleProjectFilter(key)
-                        section = .live
-                    },
-                    onSelectSession: { key in
-                        model.selectedKey = key
-                        section = .live
-                    }
-                )
-            } header: {
-                projectsHeader(tree: tree)
-            }
+            SidebarRow(
+                title: BoardSection.live.title,
+                count: model.summary.live,
+                isSelected: section == .live
+            ) { section = .live }
 
-            if mode == .demo {
-                Section {
-                    demoNote
-                } header: {
-                    Text("Mode")
-                        .auspexLabel(AuspexType.labelSmall)
-                        .foregroundStyle(AuspexPalette.textTertiary)
+            SidebarRow(
+                title: BoardSection.allSessions.title,
+                count: model.board.sessions.count,
+                isSelected: section == .allSessions
+            ) { section = .allSessions }
+
+            SidebarSectionLabel(BoardSection.projects.title)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ProjectsSidebar(
+                        tree: tree,
+                        model: projects,
+                        projectFilter: model.projectFilter,
+                        selectedKey: model.selectedKey,
+                        onSelectProject: { key in
+                            model.toggleProjectFilter(key)
+                            section = .live
+                        },
+                        onSelectSession: { key in
+                            model.selectedKey = key
+                            section = .live
+                        }
+                    )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .scrollContentBackground(.hidden)
+
+            if mode == .demo { demoNote }
+
+            SidebarRow(
+                title: BoardSection.harnesses.title,
+                isSelected: section == .harnesses
+            ) { section = .harnesses }
+
+            SidebarRow(
+                title: BoardSection.settings.title,
+                isSelected: section == .settings,
+                isEnabled: BoardSection.settings.isAvailable,
+                trailing: BoardSection.settings.arrivesIn
+            ) { section = .settings }
         }
-        .navigationSplitViewColumnWidth(min: 200, ideal: 244, max: 340)
-        .navigationTitle("Auspex")
+        .padding(.horizontal, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(AuspexPalette.canvas)
+        .navigationSplitViewColumnWidth(min: 208, ideal: 232, max: 320)
+        .toolbar(removing: .sidebarToggle)
     }
 
-    /// The tree's header, which doubles as the filter's off switch — the only
-    /// place a person who has filtered the wall can reliably find one.
-    private func projectsHeader(tree: ProjectTree) -> some View {
-        HStack(spacing: 5) {
-            Text(BoardSection.projects.title)
-                .auspexLabel(AuspexType.labelSmall)
-            Text("\(tree.projects.count)")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-            Spacer(minLength: 4)
-            if model.projectFilter != nil {
-                Button { model.projectFilter = nil } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "line.3.horizontal.decrease")
-                            .font(.system(size: 8, weight: .bold))
-                        Text("Clear").auspexLabel(AuspexType.labelSmall)
-                    }
-                    .foregroundStyle(AuspexPalette.stateThinking)
-                }
-                .buttonStyle(.plain)
-                .help("Show every project on the board")
-            }
+    /// The app's own mark and name, at the top of the column where a person
+    /// looks to find out what they are looking at.
+    private var titleRow: some View {
+        HStack(spacing: 8) {
+            AuspexMark(size: 22)
+            Text("Auspex")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(AuspexPalette.text)
+            Spacer(minLength: 0)
         }
-        .foregroundStyle(AuspexPalette.textTertiary)
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 12)
     }
 
     /// A running demo has to say so on screen. Everything on the board is
@@ -197,49 +199,110 @@ struct SidebarView: View {
             HStack(spacing: 5) {
                 Image(systemName: "theatermasks")
                     .font(.system(size: 9, weight: .semibold))
-                Text("Demo replay").auspexLabel(AuspexType.labelSmall)
+                Text("Demo replay").font(AuspexType.labelSmall)
             }
             .foregroundStyle(AuspexPalette.stateDelegating)
             Text("Fabricated sessions, in-memory store. No harness store is read.")
                 .font(.system(size: 10))
-                .foregroundStyle(AuspexPalette.textTertiary)
+                .foregroundStyle(AuspexPalette.text3)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, 3)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 }
 
-/// One sidebar row.
-private struct SidebarRow: View {
-    let section: BoardSection
-    let liveCount: Int?
+/// One destination row: a word, an optional count, and a 7 pt selection.
+struct SidebarRow: View {
+    let title: String
+    var count: Int?
+    var isSelected: Bool
+    var isEnabled = true
+    var trailing: String?
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: section.systemImage)
-                .font(.system(size: 11))
-                .frame(width: 15)
-            Text(section.title)
-                .font(AuspexType.body)
-            Spacer(minLength: 4)
-            if let liveCount, liveCount > 0 {
-                Text("\(liveCount)")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(AuspexPalette.textPrimary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(AuspexPalette.stateThinking.opacity(0.35)))
-            } else if let milestone = section.arrivesIn {
-                Text(milestone)
-                    .auspexLabel(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.textTertiary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .overlay(
-                        Capsule().strokeBorder(AuspexPalette.hairline, lineWidth: 1)
-                    )
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(isSelected ? AuspexType.rowStrong : AuspexType.row)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                if let trailing {
+                    Text(trailing)
+                        .font(AuspexType.labelSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                        )
+                } else if let count {
+                    Text("\(count)")
+                        .font(AuspexType.monoCount)
+                        .auspexTabularDigits()
+                        .foregroundStyle(AuspexPalette.text3)
+                }
             }
+            .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isSelected ? AuspexPalette.bg3 : .clear)
+            )
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.55)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The rule over a block of sidebar rows.
+struct SidebarSectionLabel: View {
+    let title: String
+
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        Text(title)
+            .auspexLabel(AuspexType.labelLarge)
+            .foregroundStyle(AuspexPalette.text3)
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+    }
+}
+
+/// Auspex's own mark: an eye on a warning-coloured tile.
+///
+/// The two colours are the board's two loudest states — a tool is open, and
+/// someone is waiting on you — because that is what the app is *for*. It is
+/// the only gradient in the window.
+struct AuspexMark: View {
+    var size: CGFloat = 22
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.32, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [AuspexPalette.stateTool, AuspexPalette.statePermission],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: size, height: size)
+            .overlay {
+                Image(systemName: "eye")
+                    .font(.system(size: size * 0.5, weight: .bold))
+                    .foregroundStyle(AuspexPalette.bg0)
+            }
+            .accessibilityLabel("Auspex")
     }
 }
 
@@ -257,22 +320,22 @@ struct ComingSoonView: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(section.title).auspexLabel(AuspexType.labelLarge)
             }
-            .foregroundStyle(AuspexPalette.textSecondary)
+            .foregroundStyle(AuspexPalette.text2)
 
             Text(headline)
                 .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.textPrimary)
+                .foregroundStyle(AuspexPalette.text)
 
             Text(explanation)
                 .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.textSecondary)
+                .foregroundStyle(AuspexPalette.text2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: 420, alignment: .leading)
         .padding(20)
         .panelChrome()
         .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(BoardSurfaceBackground())
     }
 
@@ -282,7 +345,7 @@ struct ComingSoonView: View {
 
     private var explanation: String {
         switch section {
-        case .projects:
+        case .projects, .allSessions:
             "Sessions grouped by git root and worktree, so three agents in three "
                 + "worktrees of one repository read as one project."
         case .harnesses:
@@ -313,7 +376,7 @@ struct SearchResultsView: View {
             if model.searchHits.isEmpty {
                 Text("Nothing matched.")
                     .font(AuspexType.body)
-                    .foregroundStyle(AuspexPalette.textTertiary)
+                    .foregroundStyle(AuspexPalette.text3)
                     .padding(12)
             } else {
                 ScrollView {
@@ -323,7 +386,7 @@ struct SearchResultsView: View {
                                 SearchHitRow(hit: hit)
                             }
                             .buttonStyle(.plain)
-                            Divider().overlay(AuspexPalette.hairline)
+                            Divider().overlay(AuspexPalette.line)
                         }
                     }
                 }
@@ -332,24 +395,23 @@ struct SearchResultsView: View {
         }
         .frame(maxWidth: 560)
         .panelChrome()
-        .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+        .shadow(color: .black.opacity(0.5), radius: 24, y: 10)
     }
 
     private var header: some View {
         HStack {
             Text("\(model.searchHits.count) matches")
                 .auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
+                .foregroundStyle(AuspexPalette.text3)
             Spacer()
             Text("Full text · every harness")
                 .auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
+                .foregroundStyle(AuspexPalette.text3)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(AuspexPalette.canvasDeep)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(AuspexPalette.hairline).frame(height: 1)
+            Rectangle().fill(AuspexPalette.line).frame(height: 1)
         }
     }
 }
@@ -363,16 +425,16 @@ private struct SearchHitRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(hit.snippet)
                     .font(AuspexType.body)
-                    .foregroundStyle(AuspexPalette.textPrimary)
+                    .foregroundStyle(AuspexPalette.text)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 5) {
                     Text(hit.role.rawValue)
                         .auspexLabel(AuspexType.labelSmall)
-                        .foregroundStyle(AuspexPalette.textTertiary)
+                        .foregroundStyle(AuspexPalette.text3)
                     Text(hit.session.sessionID)
                         .font(AuspexType.monoSmall)
-                        .foregroundStyle(AuspexPalette.textTertiary)
+                        .foregroundStyle(AuspexPalette.text3)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }

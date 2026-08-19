@@ -1,131 +1,158 @@
-import AppKit
 import SwiftUI
 
-/// Every colour Auspex draws with.
+/// Every colour Auspex draws with — the "Signal Room" palette.
 ///
 /// ## Why these are built in code
 ///
 /// A SwiftPM target can carry an asset catalog, but that means a resource
 /// bundle, which means `build_app.sh` has to place it inside `Contents/`
 /// before signing, and it means a colour is defined somewhere no reviewer
-/// reads. Dynamic `NSColor`s cost nothing and keep the whole palette on one
-/// screen, where the light and dark values sit next to each other and can be
-/// compared.
+/// reads. Static `NSColor`s cost nothing and keep the whole palette on one
+/// screen, where every value can be compared against its neighbours.
 ///
-/// ## Dark is the hero
+/// ## Dark only, on purpose
 ///
 /// Auspex is a wall of live sessions, usually on a second display, usually
-/// glanced at rather than read. The dark palette is built for that: a
-/// blue-black canvas so the harness accents and state colours are the only
-/// saturated things on screen, and a very small number of surface steps —
-/// canvas, panel, hairline — so the grid reads as a grid rather than as a
-/// pile of floating cards.
+/// glanced at rather than read. There is exactly one appearance, and the
+/// window forces it (`.preferredColorScheme(.dark)`): a light translation
+/// would need every state colour darkened to hold its contrast against white,
+/// and a state colour that means two slightly different things depending on
+/// the system appearance is not a signal, it is decoration.
 ///
-/// Light mode is not an afterthought, but it is a translation: the same
-/// hierarchy with the surfaces inverted and every accent darkened enough to
-/// hold its contrast against white.
+/// ## The grammar
+///
+/// Four surface steps and three text steps, and that is the whole of the
+/// neutral scale. Saturated colour is spent on two channels and no others:
+/// **state** — what a session is doing — and **harness accent** — whose
+/// session it is. Keeping them apart is what lets both be loud without
+/// competing, and it is why nothing else on the board is allowed a hue.
 enum AuspexPalette {
     // MARK: Surfaces
 
-    /// The board's ground. Near-black with a blue cast, never pure `#000`,
-    /// so a black card border still reads as an edge.
-    static let canvas = dynamic(dark: 0x0A0B10, light: 0xEFF1F5)
+    /// `bg0` — the window's ground: the board, the sidebar, the trace gutter.
+    /// Near-black with a faint warm-neutral cast, never `#000`, so a card
+    /// border still reads as an edge.
+    static let bg0 = srgb(0x10_1012)
 
-    /// The sidebar and the trace gutter — a step deeper than the canvas, so
-    /// the board is the lit surface in the window.
-    static let canvasDeep = dynamic(dark: 0x07080C, light: 0xE6E9F0)
+    /// `bg1` — a session card, a rack row, a popover. One step up from the
+    /// ground, which is all the lift a tile needs when the ground is this
+    /// dark.
+    static let bg1 = srgb(0x16_1619)
 
-    /// A session card, a section header, a popover.
-    static let panel = dynamic(dark: 0x12141B, light: 0xFFFFFF)
+    /// `bg2` — an inset well: a chip, a code block, an expanded payload.
+    static let bg2 = srgb(0x1C_1C20)
 
-    /// A card under the pointer, or the selected one.
-    static let panelRaised = dynamic(dark: 0x181C26, light: 0xFFFFFF)
-
-    /// The inset well an expanded trace row's JSON sits in.
-    static let well = dynamic(dark: 0x0C0E14, light: 0xF3F5F9)
+    /// `bg3` — a control that is *on*: the selected sidebar row, the active
+    /// segment of the view-mode picker, the selected filter tab.
+    static let bg3 = srgb(0x23_2328)
 
     // MARK: Lines
 
-    /// The default 1px border. Just visible; never a frame.
-    static let hairline = dynamic(dark: 0x232735, light: 0xD9DEE8)
+    /// The default 1 px border. Just visible; never a frame.
+    static let line = srgb(0x26_262C)
 
-    /// A divider that has to survive next to a lit card.
-    static let hairlineStrong = dynamic(dark: 0x2F3548, light: 0xC2C9D8)
-
-    /// The board's background grid. Low enough to read as texture rather
-    /// than as content, which is the whole point: it gives the wall a scale
-    /// so an empty region looks like empty space and not like a broken view.
-    static let grid = dynamic(dark: 0x171B27, light: 0xE2E6EE)
+    /// A divider that has to survive next to a lit card, and the menu bar
+    /// panel's edge.
+    static let line2 = srgb(0x33_333A)
 
     // MARK: Text
 
-    static let textPrimary = dynamic(dark: 0xE8EBF2, light: 0x131722)
-    static let textSecondary = dynamic(dark: 0x8D95AB, light: 0x59627A)
-    static let textTertiary = dynamic(dark: 0x5C6379, light: 0x8A93A6)
+    /// Titles, values, anything a person actually reads.
+    static let text = srgb(0xED_EDEF)
+    /// Supporting copy: activity lines, chip text, secondary counts.
+    static let text2 = srgb(0xA0_A0A8)
+    /// Keys, units, section labels, and everything that is scenery.
+    static let text3 = srgb(0x6C_6C75)
 
-    // MARK: State
+    // MARK: State — the only saturated colour on the board besides identity
 
     /// Cool and quiet: the model is working and nobody is needed.
-    static let stateThinking = dynamic(dark: 0x7AA2F7, light: 0x3557BE)
+    static let stateThinking = srgb(0x6E_A8FE)
     /// A tool is open. Amber because it is activity, not alarm.
-    static let stateTool = dynamic(dark: 0xF5A524, light: 0xA35F00)
+    static let stateTool = srgb(0xF2_B544)
     /// The working tree is being changed — the one tool activity a person
     /// might want to interrupt, so it gets its own colour.
-    static let stateWriting = dynamic(dark: 0x3DD68C, light: 0x0C7C46)
+    static let stateWriting = srgb(0x4F_D08A)
     /// Children are running.
-    static let stateDelegating = dynamic(dark: 0xA970FF, light: 0x6B31C4)
-    /// Blocked on a person. The only colour on the wall that is allowed to
-    /// be loud, because it is the only state that will never resolve itself.
-    static let statePermission = dynamic(dark: 0xFF5468, light: 0xC81C32)
+    static let stateDelegating = srgb(0xB4_8CFF)
+    /// Blocked on a person. The only colour on the wall that is allowed to be
+    /// loud, because it is the only state that will never resolve itself.
+    static let statePermission = srgb(0xFF_5C6C)
     /// Nothing outstanding.
-    static let stateIdle = dynamic(dark: 0x6E7590, light: 0x707A91)
-    /// Over.
-    static let stateEnded = dynamic(dark: 0x495066, light: 0x98A0B2)
+    static let stateIdle = srgb(0x7A_7A85)
     /// The "stale" tag: working, but silent for longer than it should be.
-    static let stateStale = dynamic(dark: 0xB39755, light: 0x7C6420)
+    static let stateStale = srgb(0xB3_9755)
+    /// Over.
+    static let stateEnded = srgb(0x46_464E)
 
     // MARK: Harness accents
+    //
+    // Canonical and fixed. They are spaced around the wheel so two cards are
+    // distinguishable by their marks' tint alone in peripheral vision, and
+    // they are deliberately *not* the vendors' brand colours: three of those
+    // are black or near-black, which is invisible on a black board.
 
-    static let harnessCodex = dynamic(dark: 0x2DD4BF, light: 0x0B8A7D)
-    static let harnessChatGPTWork = dynamic(dark: 0x22A06B, light: 0x0F7A53)
-    static let harnessClaudeCode = dynamic(dark: 0xE0785A, light: 0xBC4C2B)
-    static let harnessClaudeCowork = dynamic(dark: 0xCE8F6E, light: 0xA1653F)
-    static let harnessGeminiCLI = dynamic(dark: 0x7DD3FC, light: 0x0C79AE)
-    static let harnessAntiGravity = dynamic(dark: 0xB4E048, light: 0x67870F)
-    static let harnessGrokBuild = dynamic(dark: 0xF45FA0, light: 0xBC2A6D)
+    static let harnessCodex = srgb(0x2D_D4BF)
+    static let harnessChatGPTWork = srgb(0x22_A06B)
+    static let harnessClaudeCode = srgb(0xE0_785A)
+    static let harnessClaudeCowork = srgb(0xCE_8F6E)
+    static let harnessGeminiCLI = srgb(0x7D_D3FC)
+    static let harnessAntiGravity = srgb(0xB4_E048)
+    static let harnessGrokBuild = srgb(0xF4_5FA0)
     /// xAI's other harness — a lighter, softer magenta than Grok Build's, so
     /// the pair reads as one vendor and still as two harnesses.
-    static let harnessGrokBot = dynamic(dark: 0xF98BBE, light: 0xC0407F)
-    static let harnessCursor = dynamic(dark: 0x4C8DFF, light: 0x2059D0)
+    static let harnessGrokBot = srgb(0xF9_8BBE)
+    static let harnessCursor = srgb(0x4C_8DFF)
+
+    // MARK: Role aliases
+    //
+    // The names the view layer had before the palette was named. Kept as
+    // aliases rather than renamed at four dozen call sites: a role name says
+    // what a colour is *for*, which is the more useful thing to read in a
+    // view body, while the `bg0…text3` names are what the design system calls
+    // them and what a mock is checked against.
+
+    /// The board's ground. See ``bg0``.
+    static let canvas = bg0
+    /// The sidebar and the trace gutter. The same ground as the board: the
+    /// mock's window is one continuous surface divided by hairlines, not a
+    /// stack of trays.
+    static let canvasDeep = bg0
+    /// A card, a panel, a rack row. See ``bg1``.
+    static let panel = bg1
+    /// A card that is selected or under the pointer. See ``bg3``.
+    static let panelRaised = bg3
+    /// An inset well. See ``bg2``.
+    static let well = bg2
+    /// The default border. See ``line``.
+    static let hairline = line
+    /// A divider that has to survive next to a lit card. See ``line2``.
+    static let hairlineStrong = line2
+    /// The board's background grid, which is one step off the ground: enough
+    /// to give the wall a scale, not enough to read as content.
+    static let grid = bg1
+    /// See ``text``.
+    static let textPrimary = text
+    /// See ``text2``.
+    static let textSecondary = text2
+    /// See ``text3``.
+    static let textTertiary = text3
 
     // MARK: Construction
 
-    /// A colour that resolves itself against whatever appearance it is drawn
-    /// in — including the menu bar and popovers, which do not inherit the
-    /// window's.
-    private static func dynamic(dark: Int, light: Int) -> Color {
-        Color(
-            nsColor: NSColor(name: nil) { appearance in
-                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return NSColor(rgb: isDark ? dark : light)
-            }
-        )
-    }
-}
-
-private extension NSColor {
     /// Builds a colour from `0xRRGGBB` in the sRGB space.
     ///
     /// sRGB explicitly rather than `deviceRGB`: the hex values above were
     /// chosen against an sRGB reference, and letting them mean whatever the
-    /// current device profile says would shift every accent on a wide-gamut
-    /// display.
-    convenience init(rgb: Int) {
-        self.init(
-            srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255,
-            green: CGFloat((rgb >> 8) & 0xFF) / 255,
-            blue: CGFloat(rgb & 0xFF) / 255,
-            alpha: 1
+    /// current display profile says would shift every accent on a wide-gamut
+    /// screen.
+    private static func srgb(_ rgb: Int) -> Color {
+        Color(
+            .sRGB,
+            red: Double((rgb >> 16) & 0xFF) / 255,
+            green: Double((rgb >> 8) & 0xFF) / 255,
+            blue: Double(rgb & 0xFF) / 255,
+            opacity: 1
         )
     }
 }

@@ -10,33 +10,34 @@ import SwiftUI
 /// The card is built so that the three questions a person actually asks get
 /// answered at three different distances:
 ///
-/// - **Across the room** — the accent rail says which harness, the pulse line
-///   says what it is doing, and a red border says it is blocked. No reading
-///   required.
-/// - **At a glance** — the state pill, the activity line, and the elapsed
-///   stopwatch. Four words and a number.
-/// - **On purpose** — the counters and the footer: turns, tool calls, tokens,
-///   project, pid, model.
+/// - **Across the room** — the accent rail says which harness, the strip says
+///   what it is doing, and a red outline with a glow says it is blocked. No
+///   reading required.
+/// - **At a glance** — the title, the state pill, and the activity line. Four
+///   words and a mark.
+/// - **On purpose** — the identity line, the chips, and the footer: id, pid,
+///   model, where it is working, elapsed, turns, tools, tokens.
 ///
-/// Everything whose characters matter — paths, ids, numbers — is monospaced,
-/// and everything that names rather than says is condensed uppercase. A card
-/// is mostly labels, and that pairing is what keeps it dense without becoming
-/// a wall of text.
+/// Everything whose characters matter — ids, paths, numbers — is monospaced.
+/// A card is mostly data, and that is what keeps it dense without becoming a
+/// wall of text.
 ///
 /// ## Equatable on purpose
 ///
-/// The board replaces its whole frame up to twenty times a second, so every
-/// card's body would otherwise be re-evaluated twenty times a second whether
-/// or not that card changed. Conforming to `Equatable` and rendering through
+/// The board replaces its whole frame several times a second, so every card's
+/// body would otherwise be re-evaluated several times a second whether or not
+/// that card changed. Conforming to `Equatable` and rendering through
 /// `.equatable()` lets SwiftUI skip the ones whose session is byte-identical
-/// to the last frame's — which, on a wall where one session is busy and thirty
-/// are idle, is nearly all of them. That is why `reduceMotion` is a stored
-/// property rather than an `@Environment` read: a value the equality check
-/// cannot see is a value that would stop taking effect.
+/// to the last frame's — which, on a wall where three sessions are busy and
+/// forty are not, is nearly all of them.
+///
+/// The two things on the card that move — the strip and the stopwatch — are
+/// leaves that read ``BoardClock`` themselves, precisely so that they can keep
+/// moving without anything above them being re-evaluated. Nothing time-varying
+/// is a stored property here, and nothing here reads the clock.
 struct SessionCard: View, Equatable {
     let session: SessionSnapshot
     let isSelected: Bool
-    let reduceMotion: Bool
     /// How many sessions are below this one in the delegation forest.
     ///
     /// Not the same number as `state.childCount`, which counts only the
@@ -58,7 +59,6 @@ struct SessionCard: View, Equatable {
     nonisolated static func == (lhs: SessionCard, rhs: SessionCard) -> Bool {
         lhs.session == rhs.session
             && lhs.isSelected == rhs.isSelected
-            && lhs.reduceMotion == rhs.reduceMotion
             && lhs.descendantCount == rhs.descendantCount
             && lhs.parentTitle?.key == rhs.parentTitle?.key
             && lhs.parentTitle?.title == rhs.parentTitle?.title
@@ -69,37 +69,42 @@ struct SessionCard: View, Equatable {
         let harnessStyle = session.key.harness.style
         let isOver = session.state.isEnded
 
-        HStack(spacing: 0) {
-            // The rail: harness identity, full height, hard edges. It is the
-            // only place the accent is a solid fill, which is what makes it
-            // readable at the edge of vision.
-            Rectangle()
-                .fill(isOver ? AuspexPalette.textTertiary.opacity(0.5) : harnessStyle.accent)
-                .frame(width: 3)
-
-            VStack(alignment: .leading, spacing: 0) {
-                header(style: style, isOver: isOver)
-                Divider().overlay(AuspexPalette.hairline)
-                activity(style: style)
-                Spacer(minLength: 6)
-                lineage
-                footer
-                PulseLine(
-                    motion: style.motion,
-                    color: style.color,
-                    isStale: session.isStale
-                )
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            header(style: style, isOver: isOver)
+            identityLine
+            activityLine(style: style)
+            chips
+            ActivityStrip(motion: style.motion, color: style.color, isStale: session.isStale)
+            footer
         }
-        .frame(minHeight: 158, alignment: .top)
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .panelChrome(
             isSelected: isSelected,
-            isHighlighted: style.isAlarming && !reduceMotion,
+            isHighlighted: style.isAlarming,
             highlightColor: style.color
         )
-        // Both of these composite the card offscreen, so neither is applied
-        // unless it is doing something: `.saturation(1)` and `.opacity(1)` are
-        // identities to look at and not to the renderer.
+        .overlay(alignment: .leading) {
+            // The rail: harness identity, full height, and the only place the
+            // accent is a solid fill — which is what makes it readable at the
+            // edge of vision. Inset by the border's own pixel so it reads as
+            // part of the card rather than as something stuck to it.
+            UnevenRoundedRectangle(
+                topLeadingRadius: 9,
+                bottomLeadingRadius: 9,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+            .fill(isOver ? AuspexPalette.stateEnded : harnessStyle.accent)
+            .frame(width: 2)
+            .padding(1)
+        }
+        // Composited offscreen, so it is applied only when it is doing
+        // something: `.opacity(1)` is an identity to look at and not to the
+        // renderer.
         .opacity(isOver ? 0.62 : 1)
         .modifier(Desaturate(isOn: session.isStale))
         .contentShape(Rectangle())
@@ -107,219 +112,132 @@ struct SessionCard: View, Equatable {
         .accessibilityLabel("\(harnessStyle.displayName), \(title), \(session.state.label)")
     }
 
-    // MARK: Sections
+    // MARK: Rows
 
-    /// Title on its own line, pill on the line below it.
-    ///
-    /// The obvious layout puts the pill beside the title, and it costs a
-    /// hundred points of the one line a person actually reads — enough to turn
-    /// "Backfill the events table" into "Backfill the events…". The title gets
-    /// the full width; the pill sits at the end of the path line, which had
-    /// slack to give.
+    /// The mark, the headline, and the state — the only line that has to be
+    /// readable from across the room.
     private func header(style: StateStyle, isOver: Bool) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(spacing: 10) {
             HarnessBadge(harness: session.key.harness, size: 22, isMuted: isOver)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(AuspexType.cardTitle)
-                    .foregroundStyle(AuspexPalette.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 6) {
-                    Text(PathDisplay.abbreviate(session.identity.cwd ?? session.identity.sourcePath))
-                        .font(AuspexType.monoSmall)
-                        .foregroundStyle(AuspexPalette.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Spacer(minLength: 4)
-                    if session.isStale, !isOver { StaleTag() }
-                    StatePill(state: session.state, isStale: session.isStale)
-                        .fixedSize()
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 9)
-        .padding(.bottom, 8)
-    }
-
-    private func activity(style: StateStyle) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 5) {
-                Image(systemName: style.symbolName)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(style.color)
-                Text(activityText)
-                    .font(AuspexType.mono)
-                    .foregroundStyle(
-                        session.state.activityDescription == nil
-                            ? AuspexPalette.textTertiary
-                            : AuspexPalette.textPrimary.opacity(0.85)
-                    )
-                    .lineLimit(1)
-                    .truncationMode(PathDisplay.truncation(for: activityText))
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                elapsedClock
-                Spacer(minLength: 4)
-                counters
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 8)
-    }
-
-    /// The elapsed readout.
-    ///
-    /// `Text(timerInterval:)` updates itself — AppKit drives it — so a wall of
-    /// forty stopwatches costs no timers of our own. It is paused at the end
-    /// time for a session that is over, which is what makes an ended card show
-    /// how long it ran rather than how long ago it stopped.
-    private var elapsedClock: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(elapsedLabel)
-                .auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
-            Group {
-                if let since = elapsedSince {
-                    Text(
-                        timerInterval: since...since.addingTimeInterval(60 * 60 * 24),
-                        pauseTime: session.endedAt,
-                        countsDown: false
-                    )
-                } else {
-                    Text("--:--")
-                }
-            }
-            .font(AuspexType.monoClock)
-            .auspexTabularDigits()
-            .foregroundStyle(
-                session.state.style.isAlarming
-                    ? session.state.style.color
-                    : AuspexPalette.textPrimary
-            )
+            Text(title)
+                .font(AuspexType.cardTitle)
+                .foregroundStyle(isOver ? AuspexPalette.text3 : AuspexPalette.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if session.isStale, !isOver { StaleTag() }
+            StatePill(state: session.state, isStale: session.isStale)
+                .fixedSize()
         }
     }
 
-    private var counters: some View {
-        HStack(spacing: 12) {
-            counter(value: "\(session.turnCount)", label: "turns")
-            counter(value: "\(session.toolCallCount)", label: "tools")
-            counter(
-                value: "\(TokenFormat.compact(session.tokensIn))/\(TokenFormat.compact(session.tokensOut))",
-                label: "tok in/out"
-            )
-        }
-    }
-
-    private func counter(value: String, label: String) -> some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            Text(value)
-                .font(AuspexType.monoSmall)
-                .auspexTabularDigits()
-                .foregroundStyle(AuspexPalette.textSecondary)
-            Text(label)
-                .auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
-        }
-    }
-
-    /// Where this card sits in the delegation forest — up, down, or neither.
-    ///
-    /// Only drawn when there is something to say, which on most walls is a
-    /// minority of cards. Up is a *link*: a chip naming the parent, and
-    /// clicking it moves the inspector there, because "what asked for this" is
-    /// a question whose answer is another card. Down is a *count*: the children
-    /// are already on the board, and thirteen chips would be a card nobody can
-    /// read.
-    @ViewBuilder
-    private var lineage: some View {
-        if parentTitle != nil || descendantCount > 0 {
-            HStack(spacing: 5) {
-                if let parent = parentTitle {
-                    Button {
-                        onSelectParent(parent.key)
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "arrow.turn.left.up")
-                                .font(.system(size: 7, weight: .bold))
-                            Text(parent.title)
-                                .font(AuspexType.monoSmall)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                        .foregroundStyle(AuspexPalette.stateDelegating)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .overlay(
-                            Capsule().strokeBorder(
-                                AuspexPalette.stateDelegating.opacity(0.4), lineWidth: 1
-                            )
-                        )
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open the session that spawned this one")
-                }
-                if descendantCount > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.turn.down.right")
-                            .font(.system(size: 7, weight: .bold))
-                        Text(descendantCount == 1 ? "1 child" : "\(descendantCount) children")
-                            .auspexLabel(AuspexType.labelSmall)
-                    }
-                    .foregroundStyle(AuspexPalette.stateDelegating.opacity(0.85))
-                    .accessibilityLabel("\(descendantCount) sessions below this one")
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 5)
-        }
-    }
-
-    /// Project, pid, model — and nothing else.
-    ///
-    /// Three fields, because a card is about 280 points wide and a fourth turns
-    /// every one of them into `fe…–ui`. A truncated field is worse than an
-    /// absent one: it looks like data and cannot be read. The branch and the
-    /// child list live in the detail pane, where there is room for them.
-    private var footer: some View {
-        HStack(spacing: 5) {
-            if let project = BoardGrouping.projectName(for: session) {
-                Text(project)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
+    /// Who this session is: the harness's own short id, the process, and the
+    /// model. Three facts nobody reads until they need one, at which point
+    /// they need it exactly.
+    private var identityLine: some View {
+        HStack(spacing: 6) {
+            Text(shortID)
             if let pid = session.identity.pid {
                 separator
                 // `verbatim` because a pid is an identifier, not a quantity:
-                // `Text("pid \(pid)")` would run it through the locale's number
-                // formatter and put a thousands separator in the middle of it.
+                // an interpolated `Int` would go through the locale's number
+                // formatter and get a thousands separator in the middle of it.
                 Text(verbatim: "pid \(pid)").fixedSize()
             }
             if let model = session.identity.model {
                 separator
-                Text(model)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(-1)
+                Text(model).lineLimit(1).truncationMode(.tail).layoutPriority(-1)
             }
             Spacer(minLength: 0)
         }
         .font(AuspexType.monoSmall)
-        .foregroundStyle(AuspexPalette.textTertiary)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
+        .foregroundStyle(AuspexPalette.text3)
+    }
+
+    /// What is happening, in the harness's own words, behind the state's mark.
+    private func activityLine(style: StateStyle) -> some View {
+        HStack(spacing: 8) {
+            Text(style.glyph)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(style.color)
+                .frame(width: 16)
+            Text(activityText)
+                .font(AuspexType.mono)
+                .foregroundStyle(AuspexPalette.text2)
+                .lineLimit(1)
+                .truncationMode(PathDisplay.truncation(for: activityText))
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Where the work is happening, and what it is connected to.
+    ///
+    /// Up is a *link*: a chip naming the parent, and clicking it moves the
+    /// inspector there, because "what asked for this" is a question whose
+    /// answer is another card. Down is a *count*: the children are already on
+    /// the board, and thirteen chips would be a card nobody can read.
+    private var chips: some View {
+        HStack(spacing: 6) {
+            if let project = BoardGrouping.projectName(for: session) {
+                FactChip(placeLabel(project: project))
+            }
+            if let cwd = session.identity.cwd ?? session.identity.gitRoot {
+                FactChip(PathDisplay.abbreviate(cwd), isMono: true)
+                    .layoutPriority(-1)
+            }
+            if let parent = parentTitle {
+                Button { onSelectParent(parent.key) } label: {
+                    FactChip(tint: AuspexPalette.stateDelegating) {
+                        Text("↑ \(parent.title)")
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open the session that spawned this one")
+                .layoutPriority(-2)
+            } else if descendantCount > 0 {
+                FactChip(
+                    descendantCount == 1 ? "↳ 1 child" : "↳ \(descendantCount) children",
+                    tint: AuspexPalette.stateDelegating
+                )
+                .fixedSize()
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The counters, in the order they are asked for.
+    private var footer: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 5) {
+                Text(elapsedLabel)
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                ElapsedLabel(
+                    since: elapsedSince,
+                    until: session.endedAt,
+                    tint: session.state.style.isAlarming
+                        ? session.state.style.color
+                        : AuspexPalette.text
+                )
+            }
+            MetaField(key: "turns", value: "\(session.turnCount)")
+            MetaField(key: "tools", value: "\(session.toolCallCount)")
+            Spacer(minLength: 4)
+            Text(
+                "\(TokenFormat.compact(session.tokensIn))/\(TokenFormat.compact(session.tokensOut))"
+            )
+            .font(AuspexType.monoSmall)
+            .auspexTabularDigits()
+            .foregroundStyle(AuspexPalette.text3)
+            .fixedSize()
+            .help("Tokens in / out")
+        }
     }
 
     private var separator: some View {
-        Text("·")
-            .foregroundStyle(AuspexPalette.textTertiary.opacity(0.55))
+        Text(verbatim: "·")
+            .foregroundStyle(AuspexPalette.text3.opacity(0.6))
             .fixedSize()
     }
 
@@ -333,7 +251,19 @@ struct SessionCard: View, Equatable {
     private var title: String {
         if let title = session.identity.title, !title.isEmpty { return title }
         if let project = BoardGrouping.projectName(for: session) { return project }
-        return String(session.key.sessionID.prefix(12))
+        return shortID
+    }
+
+    /// The first eight characters of the session id — enough to recognise one
+    /// in a terminal, short enough to sit beside a pid.
+    private var shortID: String {
+        String(session.key.sessionID.prefix(8))
+    }
+
+    /// The project chip's text: the project, and the branch when one is known.
+    private func placeLabel(project: String) -> String {
+        guard let branch = session.identity.gitBranch, !branch.isEmpty else { return project }
+        return "\(project) · \(branch)"
     }
 
     private var activityText: String {
@@ -343,13 +273,13 @@ struct SessionCard: View, Equatable {
             }
             if case .toolCalling = session.state,
                let target = session.pending.mostRecentOpenToolCall?.target {
-                return "\(description) · \(PathDisplay.condense(target))"
+                return "\(description)  \(PathDisplay.condense(target))"
             }
             return description
         }
         switch session.state {
-        case .ended(let reason): return "ended · \(reason.rawValue)"
-        case .idle: return "nothing outstanding"
+        case .ended(let reason): return "exited · \(reason.rawValue)"
+        case .idle: return "quiet"
         case .thinking: return "reasoning"
         default: return "—"
         }
@@ -358,7 +288,7 @@ struct SessionCard: View, Equatable {
     private var elapsedLabel: String {
         switch session.state {
         case .ended: "ran for"
-        case .waitingPermission: "blocked"
+        case .waitingPermission: "waiting"
         case .idle: "quiet"
         default: "elapsed"
         }
@@ -381,7 +311,6 @@ struct SessionCard: View, Equatable {
             session.lastEventAt ?? session.startedAt
         }
     }
-
 }
 
 /// Desaturation that exists only while a session is stale.

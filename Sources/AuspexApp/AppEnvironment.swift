@@ -284,6 +284,7 @@ public final class AppEnvironment {
 /// roadmap.
 public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     case live
+    case allSessions
     case projects
     case tasks
     case harnesses
@@ -294,6 +295,7 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     public var title: String {
         switch self {
         case .live: "Live"
+        case .allSessions: "All sessions"
         case .projects: "Projects"
         case .tasks: "Tasks"
         case .harnesses: "Harnesses"
@@ -304,6 +306,7 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     public var systemImage: String {
         switch self {
         case .live: "dot.radiowaves.left.and.right"
+        case .allSessions: "square.stack.3d.up"
         case .projects: "folder"
         case .tasks: "checklist"
         case .harnesses: "cpu"
@@ -314,7 +317,7 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     /// The milestone this section arrives in, or `nil` when it is here.
     public var arrivesIn: String? {
         switch self {
-        case .live, .projects, .harnesses: nil
+        case .live, .allSessions, .projects, .harnesses: nil
         case .tasks, .settings: "M3"
         }
     }

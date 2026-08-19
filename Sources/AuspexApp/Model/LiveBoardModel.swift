@@ -41,8 +41,19 @@ final class LiveBoardModel {
     /// draw before any event arrives.
     private(set) var board: BoardSnapshot = .empty
 
+    /// How the live sessions are drawn: the grid of cards, or the scene.
+    ///
+    /// A mode rather than a destination, so switching keeps the selection, the
+    /// grouping, the filters, and the trace beside it.
+    var viewMode: BoardViewMode = .board
+
     /// How the grid is divided.
-    var groupBy: BoardGroupBy = .none {
+    ///
+    /// By project, because that is the question a person opens the board with —
+    /// *what is happening to my repositories* — and because a session's project
+    /// is the one fact that stays true while its state changes six times a
+    /// minute.
+    var groupBy: BoardGroupBy = .project {
         didSet { if oldValue != groupBy { rebuildGroups() } }
     }
 
@@ -85,13 +96,47 @@ final class LiveBoardModel {
     /// or the filter does.
     private(set) var groups: [BoardGroup] = []
 
+    /// The finished sessions the collapsed section at the bottom draws from,
+    /// most recently finished first.
+    ///
+    /// Held apart from ``groups`` rather than filtered out in the view, because
+    /// keeping them out of the grid is the board's main performance property —
+    /// see ``EndedSessions`` — and a policy that lived in a view body would be
+    /// one refactor away from being lost.
+    private(set) var endedSessions: [SessionSnapshot] = []
+
+    /// Whether the reader has asked for every finished session rather than the
+    /// most recent handful.
+    var showsAllEnded = false
+
+    /// The four numbers across the top of the board.
+    private(set) var summary = BoardSummary(counts: BoardSnapshot.Counts())
+
+    /// The finished rows actually drawn, and how many are left out.
+    var visibleEndedSessions: [SessionSnapshot] {
+        EndedSessions.visible(endedSessions, showingAll: showsAllEnded)
+    }
+
+    var hiddenEndedCount: Int {
+        EndedSessions.hiddenCount(endedSessions, showingAll: showsAllEnded)
+    }
+
     private func rebuildGroups() {
         groups = BoardGrouping.groups(
             for: board,
             groupBy: groupBy,
             harnessFilter: harnessFilter,
-            projectFilter: projectFilter
+            projectFilter: projectFilter,
+            includesEnded: false
         )
+        let kept = BoardGrouping.filtered(
+            board.sessions,
+            harnessFilter: harnessFilter,
+            projectFilter: projectFilter,
+            in: board
+        )
+        endedSessions = EndedSessions.mostRecentFirst(EndedSessions.split(kept).ended)
+        summary = BoardSummary(counts: BoardSnapshot.Counts(sessions: kept))
     }
 
     /// Turns the project filter on, or off if it is already on this project.

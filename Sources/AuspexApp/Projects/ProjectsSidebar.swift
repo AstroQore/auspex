@@ -6,22 +6,22 @@ import SwiftUI
 /// The sidebar's project tree: every repository on the board, the checkouts
 /// inside it, and the sessions inside those.
 ///
-/// ## Why it is drawn rather than outlined
+/// ## Three rows, three meanings
 ///
-/// `OutlineGroup` would build the same shape in a third of the lines, and its
-/// selection would fight the sidebar's. A `List(selection:)` binds one type,
-/// and this tree has three kinds of row that mean three different things when
-/// clicked — a project *filters the wall*, a checkout only opens, a session
-/// *selects a card*. Drawing the rows makes those three behaviours explicit,
-/// and it lets the tree carry the board's own chrome instead of the system's
-/// blue capsule.
+/// A project row *focuses* the wall on that project and opens it; a checkout
+/// row only opens; a session row *selects a card* and fills the trace. Drawing
+/// the rows rather than reaching for `OutlineGroup` is what makes those three
+/// behaviours explicit — a `List(selection:)` binds one type, and this column
+/// has three — and it lets the tree carry the board's own chrome instead of
+/// the system's blue capsule.
 ///
-/// ## The rail
+/// ## Depth is leading space, not a rail
 ///
-/// Depth is carried by a hairline dropped down the left of each nested block,
-/// not by indentation alone. It is the same device the board uses to say
-/// "these things belong together" — a rule, not a rounded container — and at
-/// 200 points wide it is the only way three levels stay readable.
+/// The mock indents by 14 points a level and draws nothing else, because at
+/// 232 points wide a rail per level costs more width than it repays. What
+/// carries the hierarchy instead is that each level looks different: a project
+/// is a name and a live badge, a checkout is a branch and a count, a session is
+/// a mark, a title, and a state dot.
 struct ProjectsSidebar: View {
     let tree: ProjectTree
     let model: ProjectsModel
@@ -36,14 +36,17 @@ struct ProjectsSidebar: View {
             emptyNote
         } else {
             ForEach(tree.projects) { project in
-                ProjectRow(
-                    project: project,
-                    isExpanded: model.isExpanded(project: project),
-                    isFiltering: projectFilter == project.key,
-                    onToggle: { model.toggle(project: project) },
-                    onSelect: { onSelectProject(project.key) }
-                )
-                if model.isExpanded(project: project) {
+                let isFocused = projectFilter == project.key
+                ProjectRow(project: project, isFocused: isFocused) {
+                    // One meaning per click: *show me this project*. It opens
+                    // the row and focuses the wall together, because a sidebar
+                    // that expanded without focusing would make the same
+                    // gesture mean two things depending on where in the row it
+                    // landed.
+                    model.toggle(project: project)
+                    onSelectProject(project.key)
+                }
+                if model.isExpanded(project: project) || isFocused {
                     ForEach(project.checkouts) { checkout in
                         checkoutBlock(project: project, checkout: checkout)
                     }
@@ -51,12 +54,13 @@ struct ProjectsSidebar: View {
             }
             if !tree.ungrouped.isEmpty {
                 UngroupedRow(count: tree.ungrouped.count)
-                ForEach(tree.ungrouped, id: \.key) { session in
+                ForEach(ordered(tree.ungrouped), id: \.session.key) { row in
                     SessionRow(
-                        session: session,
-                        depth: 1,
-                        isSelected: selectedKey == session.key,
-                        onSelect: { onSelectSession(session.key) }
+                        session: row.session,
+                        depth: 1 + row.depth,
+                        isChild: row.depth > 0,
+                        isSelected: selectedKey == row.session.key,
+                        onSelect: { onSelectSession(row.session.key) }
                     )
                 }
             }
@@ -82,30 +86,104 @@ struct ProjectsSidebar: View {
             )
         }
         if isImplied || model.isExpanded(checkout: checkout) {
-            ForEach(checkout.sessions, id: \.key) { session in
+            ForEach(ordered(checkout.sessions), id: \.session.key) { row in
                 SessionRow(
-                    session: session,
-                    depth: isImplied ? 1 : 2,
-                    isSelected: selectedKey == session.key,
-                    onSelect: { onSelectSession(session.key) }
+                    session: row.session,
+                    depth: (isImplied ? 1 : 2) + row.depth,
+                    isChild: row.depth > 0,
+                    isSelected: selectedKey == row.session.key,
+                    onSelect: { onSelectSession(row.session.key) }
                 )
             }
         }
     }
 
+    /// A checkout's sessions with delegated ones nested under whoever spawned
+    /// them, parents first.
+    ///
+    /// The frame's order already puts the session that most needs a person at
+    /// the top, and that is the order roots keep. What this adds is that a
+    /// subagent appears *under* its parent rather than several rows above it,
+    /// which is the only way the `↳` prefix means anything.
+    private func ordered(
+        _ sessions: [SessionSnapshot]
+    ) -> [(session: SessionSnapshot, depth: Int)] {
+        var childrenOf: [SessionKey: [SessionSnapshot]] = [:]
+        let present = Set(sessions.map(\.key))
+        var roots: [SessionSnapshot] = []
+        for session in sessions {
+            if let parent = session.identity.parent, present.contains(parent), parent != session.key {
+                childrenOf[parent, default: []].append(session)
+            } else {
+                roots.append(session)
+            }
+        }
+
+        var rows: [(session: SessionSnapshot, depth: Int)] = []
+        rows.reserveCapacity(sessions.count)
+        var visited: Set<SessionKey> = []
+        func walk(_ session: SessionSnapshot, depth: Int) {
+            guard visited.insert(session.key).inserted else { return }
+            rows.append((session, depth))
+            // Depth is capped so a ten-deep chain does not push a title off a
+            // 232 pt column; the tree's shape is the trace pane's job to show
+            // in full.
+            for child in childrenOf[session.key] ?? [] { walk(child, depth: min(depth + 1, 2)) }
+        }
+        for root in roots { walk(root, depth: 0) }
+        // A cycle in the recorded parent links would strand its members;
+        // appending whatever is left keeps the tree total.
+        for session in sessions where !visited.contains(session.key) {
+            rows.append((session, 0))
+        }
+        return rows
+    }
+
     private var emptyNote: some View {
         Text("Projects appear here as sessions report where they are working.")
             .font(.system(size: 10))
-            .foregroundStyle(AuspexPalette.textTertiary)
+            .foregroundStyle(AuspexPalette.text3)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
     }
 }
 
 // MARK: - Rows
 
-/// A project: name, how many of its sessions are live, and which harnesses are
-/// in it.
+/// The shape every row in the tree has: 28 points tall, indented by level,
+/// rounded to 7 when it is lit.
+private struct TreeRow<Content: View>: View {
+    let depth: Int
+    var isLit = false
+    var isEnabled = true
+    let action: () -> Void
+    @ViewBuilder let content: Content
+
+    /// One step per level. Wide enough to read as a level, narrow enough that
+    /// three of them still leave a title room in a 232 pt sidebar.
+    static var step: CGFloat { 14 }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) { content }
+                .padding(.leading, 10 + Self.step * CGFloat(depth))
+                .padding(.trailing, 10)
+                .frame(height: 28)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isLit ? AuspexPalette.bg3 : .clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+    }
+}
+
+/// A project: name, which harnesses are in it, and how many of its sessions are
+/// live.
 ///
 /// The harness dots are the row's whole reason for existing at this size. They
 /// are the same accents the cards' rails use, so "the coral one and the teal
@@ -113,56 +191,27 @@ struct ProjectsSidebar: View {
 /// anything — which is the question a person opens a sidebar to ask.
 private struct ProjectRow: View {
     let project: ProjectTree.Project
-    let isExpanded: Bool
-    let isFiltering: Bool
-    let onToggle: () -> Void
-    let onSelect: () -> Void
+    let isFocused: Bool
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
-            DisclosureChevron(isExpanded: isExpanded, action: onToggle)
-
-            Button(action: onSelect) {
-                HStack(spacing: 5) {
-                    Text(project.name)
-                        .font(.system(size: 11.5, weight: isFiltering ? .bold : .semibold))
-                        .foregroundStyle(
-                            isFiltering ? AuspexPalette.textPrimary : AuspexPalette.textSecondary
-                        )
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if !project.isRepository {
-                        Text("no git")
-                            .auspexLabel(AuspexType.labelSmall)
-                            .foregroundStyle(AuspexPalette.textTertiary)
-                    }
-                    Spacer(minLength: 3)
-                    HarnessDots(harnesses: project.harnesses)
-                    LiveBadge(live: project.liveCount, total: project.sessionCount)
-                }
-                .contentShape(Rectangle())
+        TreeRow(depth: 0, isLit: isFocused, action: action) {
+            Text(project.name)
+                .font(isFocused ? AuspexType.rowStrong : AuspexType.row)
+                .foregroundStyle(isFocused ? AuspexPalette.text : AuspexPalette.text2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            HarnessDots(harnesses: project.harnesses)
+            Spacer(minLength: 4)
+            if project.liveCount > 0 {
+                LivePill(count: project.liveCount)
             }
-            .buttonStyle(.plain)
-            .help(
-                isFiltering
-                    ? "Show every project on the board again"
-                    : "Show only \(project.name) on the board"
-            )
         }
-        .padding(.vertical, 2)
-        .listRowBackground(
-            isFiltering
-                ? AuspexPalette.stateThinking.opacity(0.14)
-                : Color.clear
+        .help(
+            isFocused
+                ? "Show every project on the board again"
+                : "Show only \(project.name) on the board"
         )
-        .overlay(alignment: .leading) {
-            if isFiltering {
-                Rectangle()
-                    .fill(AuspexPalette.stateThinking)
-                    .frame(width: 2)
-                    .offset(x: -8)
-            }
-        }
     }
 }
 
@@ -173,69 +222,61 @@ private struct CheckoutRow: View {
     let onToggle: () -> Void
 
     var body: some View {
-        TreeIndent(depth: 1) {
-            HStack(spacing: 4) {
-                DisclosureChevron(isExpanded: isExpanded, action: onToggle)
-                Image(systemName: checkout.isWorktree ? "arrow.triangle.branch" : "point.3.filled.connected.trianglepath.dotted")
+        TreeRow(depth: 1, action: onToggle) {
+            if checkout.isWorktree {
+                Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(AuspexPalette.textTertiary)
-                Text(checkout.title)
-                    .font(AuspexType.monoSmall)
-                    .foregroundStyle(AuspexPalette.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if let subtitle = checkout.subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(AuspexPalette.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .layoutPriority(-1)
-                }
-                Spacer(minLength: 3)
-                LiveBadge(live: checkout.liveCount, total: checkout.sessions.count)
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+            Text(checkout.title)
+                .font(AuspexType.row)
+                .foregroundStyle(AuspexPalette.text2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            if checkout.liveCount > 0 {
+                LivePill(count: checkout.liveCount)
+            } else if !checkout.sessions.isEmpty {
+                Text("\(checkout.sessions.count)")
+                    .font(AuspexType.monoCount)
+                    .auspexTabularDigits()
+                    .foregroundStyle(AuspexPalette.text3)
             }
         }
-        .padding(.vertical, 1)
+        .help(isExpanded ? "Hide these sessions" : "Show these sessions")
     }
 }
 
-/// A session: its harness, its title, and what it is doing.
+/// A session: its harness, its title, and a dot in the colour of what it is
+/// doing.
+///
+/// A dot rather than a pill. The pill is a card's device and needs 80 points;
+/// at this width the colour alone carries the state, and the full name is one
+/// hover or one VoiceOver stop away.
 private struct SessionRow: View {
     let session: SessionSnapshot
     let depth: Int
+    let isChild: Bool
     let isSelected: Bool
     let onSelect: () -> Void
 
     var body: some View {
-        TreeIndent(depth: depth + 1) {
-            Button(action: onSelect) {
-                HStack(spacing: 5) {
-                    HarnessBadge(
-                        harness: session.key.harness,
-                        size: 13,
-                        isMuted: session.state.isEnded
-                    )
-                    Text(title)
-                        .font(.system(size: 11))
-                        .foregroundStyle(
-                            isSelected ? AuspexPalette.textPrimary : AuspexPalette.textSecondary
-                        )
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 3)
-                    StatePill(state: session.state, isStale: session.isStale)
-                        .fixedSize()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Open this session's trace")
+        let style = session.state.style
+        TreeRow(depth: depth, isLit: isSelected, action: onSelect) {
+            HarnessBadge(
+                harness: session.key.harness,
+                size: 16,
+                isMuted: session.state.isEnded
+            )
+            Text(isChild ? "↳ \(title)" : title)
+                .font(AuspexType.row)
+                .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            StateDot(color: style.color, glows: style.motion.isAnimated)
         }
-        .padding(.vertical, 1)
-        .background(
-            isSelected ? AuspexPalette.panelRaised : Color.clear
-        )
+        .help("\(title) — \(session.state.label)")
     }
 
     /// The same ladder a card climbs — title, project, id — so a session is
@@ -252,77 +293,26 @@ private struct UngroupedRow: View {
     let count: Int
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "questionmark.folder")
-                .font(.system(size: 9))
+        HStack(spacing: 8) {
             Text(BoardGrouping.noProjectTitle).auspexLabel(AuspexType.labelSmall)
-            Spacer(minLength: 3)
+            Spacer(minLength: 4)
             Text("\(count)")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(AuspexType.monoCount)
+                .auspexTabularDigits()
         }
-        .foregroundStyle(AuspexPalette.textTertiary)
-        .padding(.vertical, 2)
+        .foregroundStyle(AuspexPalette.text3)
+        .padding(.horizontal, 10)
+        .frame(height: 24)
         .help("These sessions reported no working directory, and no ancestor did either.")
     }
 }
 
 // MARK: - Parts
 
-/// Nests a row behind a hairline rail, one step per level.
-///
-/// The rails are an *overlay* rather than a leading stack, so their height is
-/// the row's height. A flexible rectangle in the row's own layout would take
-/// whatever slack the container had going spare, which turns a list of short
-/// rows into a ladder of tall ones the moment it is not inside a `List`.
-private struct TreeIndent<Content: View>: View {
-    let depth: Int
-    @ViewBuilder let content: Content
-
-    /// Wide enough to read as a level, narrow enough that three of them still
-    /// leave a title room in a 200 pt sidebar.
-    private static var step: CGFloat { 11 }
-
-    var body: some View {
-        content
-            .padding(.leading, Self.step * CGFloat(depth))
-            .overlay(alignment: .leading) {
-                HStack(spacing: 0) {
-                    ForEach(0..<depth, id: \.self) { _ in
-                        Rectangle()
-                            .fill(AuspexPalette.hairline)
-                            .frame(width: 1)
-                            .frame(width: Self.step, alignment: .leading)
-                    }
-                }
-                .frame(maxHeight: .infinity)
-            }
-    }
-}
-
-/// The triangle that opens a row. A button of its own, so clicking the row's
-/// label can mean something else.
-private struct DisclosureChevron: View {
-    let isExpanded: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(AuspexPalette.textTertiary)
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                .frame(width: 10, height: 10)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(isExpanded ? "Collapse" : "Expand")
-    }
-}
-
 /// One dot per harness at work in a project, in its own accent.
 ///
-/// A dot rather than the harness's mark, and deliberately: at five points a
-/// vendor logo is a smudge, while the accent is exactly as legible at 5 pt as
+/// A dot rather than the harness's mark, and deliberately: at six points a
+/// vendor logo is a smudge, while the accent is exactly as legible at 6 pt as
 /// it is at 28. The accent is the identity channel the mark shares, so the row
 /// still agrees with every other surface — and the full names are one hover or
 /// one VoiceOver stop away.
@@ -334,18 +324,19 @@ private struct HarnessDots: View {
     private static let limit = 4
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 3) {
             ForEach(harnesses.prefix(Self.limit), id: \.self) { harness in
                 Circle()
                     .fill(harness.style.accent)
-                    .frame(width: 5, height: 5)
+                    .frame(width: 6, height: 6)
             }
             if harnesses.count > Self.limit {
                 Text("+\(harnesses.count - Self.limit)")
                     .font(.system(size: 8, weight: .bold, design: .monospaced))
-                    .foregroundStyle(AuspexPalette.textTertiary)
+                    .foregroundStyle(AuspexPalette.text3)
             }
         }
+        .fixedSize()
         .accessibilityLabel(names)
         .help(names)
     }
@@ -356,29 +347,29 @@ private struct HarnessDots: View {
     }
 }
 
-/// How many sessions are running here, or how many there have been.
+/// How many sessions are running here.
 ///
-/// Two appearances rather than one: a live count is lit, and a project with
-/// nothing running shows its total in tertiary text. A badge that looked the
-/// same either way would make a finished repository look busy.
-private struct LiveBadge: View {
-    let live: Int
-    let total: Int
+/// Green, because on this board green means *something is being made* — and a
+/// project with nothing running shows nothing at all rather than a grey zero,
+/// which would make a quiet repository look like a broken one.
+private struct LivePill: View {
+    let count: Int
 
     var body: some View {
-        if live > 0 {
-            Text("\(live)")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundStyle(AuspexPalette.textPrimary)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 0.5)
-                .background(Capsule().fill(AuspexPalette.stateThinking.opacity(0.38)))
-                .accessibilityLabel("\(live) live")
-        } else if total > 0 {
-            Text("\(total)")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(AuspexPalette.textTertiary)
-                .accessibilityLabel("\(total) sessions, none running")
-        }
+        Text("\(count) live")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(AuspexPalette.stateWriting)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(AuspexPalette.stateWriting.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(AuspexPalette.stateWriting.opacity(0.25), lineWidth: 1)
+            )
+            .fixedSize()
+            .accessibilityLabel("\(count) live")
     }
 }

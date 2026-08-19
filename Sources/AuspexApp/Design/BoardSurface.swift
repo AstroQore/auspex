@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The board's ground: a near-black field with a faint measured grid on it.
+/// The board's ground: the canvas with a faint measured grid on it.
 ///
 /// The grid is doing a job, not decorating. An unlit dark region with nothing
 /// in it is ambiguous — a person cannot tell an empty board from a view that
@@ -8,11 +8,11 @@ import SwiftUI
 /// reads as a half-full wall. It is drawn once per size into a `Canvas`, which
 /// is a single drawing pass rather than hundreds of views.
 ///
-/// The spacing is tied to the card grid's rhythm so the two never beat against
-/// each other at awkward zoom levels.
+/// 28 pt, which is the mock's rhythm and a little under half a card's row
+/// height, so the two never beat against each other.
 struct BoardSurfaceBackground: View {
     /// Distance between grid lines.
-    var spacing: CGFloat = 26
+    var spacing: CGFloat = 28
 
     var body: some View {
         Canvas { context, size in
@@ -34,34 +34,32 @@ struct BoardSurfaceBackground: View {
         .background(AuspexPalette.canvas)
         // No `drawingGroup()`: `Canvas` already rasterises, and wrapping it
         // adds a second offscreen pass that is redone whenever anything above
-        // it in the tree redraws — which, on a board that updates twenty times
-        // a second, is constantly.
+        // it in the tree redraws — which, on a board that updates several
+        // times a second, is constantly.
         .accessibilityHidden(true)
     }
 }
 
-/// The chrome shared by everything that sits on the board: a flat panel with
-/// a hairline border and a corner radius small enough to read as a cut edge
-/// rather than as a rounded rectangle.
+/// The chrome shared by everything that sits on the board: a flat panel a step
+/// above the ground, a hairline border, and a 10 pt corner.
 ///
-/// 3 pt, not 12. Rounded cards float; an operations board wants tiles that
-/// tessellate. The one thing that ever glows is a card whose session is
-/// blocked on a person, and it glows because nothing else does.
+/// The one thing that ever glows is a card whose session is blocked on a
+/// person, and it glows because nothing else does.
 struct PanelChrome: ViewModifier {
     var isSelected = false
     var isHighlighted = false
     var highlightColor: Color = .clear
-    var cornerRadius: CGFloat = 3
+    var cornerRadius: CGFloat = 10
 
     func body(content: Content) -> some View {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isSelected ? AuspexPalette.panelRaised : AuspexPalette.panel)
+                    .fill(AuspexPalette.panel)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: isSelected ? 1.5 : 1)
+                    .strokeBorder(borderColor, lineWidth: isSelected || isHighlighted ? 1.5 : 1)
             )
             // Applied only when it is actually drawn. A `shadow` with a clear
             // colour is not free — it still allocates the offscreen buffer the
@@ -71,9 +69,9 @@ struct PanelChrome: ViewModifier {
     }
 
     private var borderColor: Color {
-        if isSelected { return AuspexPalette.textSecondary.opacity(0.8) }
-        if isHighlighted { return highlightColor.opacity(0.65) }
-        return AuspexPalette.hairline
+        if isHighlighted { return highlightColor.opacity(0.45) }
+        if isSelected { return AuspexPalette.text.opacity(0.35) }
+        return AuspexPalette.line
     }
 }
 
@@ -84,7 +82,7 @@ private struct ConditionalGlow: ViewModifier {
 
     func body(content: Content) -> some View {
         if isOn {
-            content.shadow(color: color.opacity(0.35), radius: 10)
+            content.shadow(color: color.opacity(0.22), radius: 14)
         } else {
             content
         }
@@ -97,7 +95,7 @@ extension View {
         isSelected: Bool = false,
         isHighlighted: Bool = false,
         highlightColor: Color = .clear,
-        cornerRadius: CGFloat = 3
+        cornerRadius: CGFloat = 10
     ) -> some View {
         modifier(
             PanelChrome(
@@ -110,11 +108,88 @@ extension View {
     }
 }
 
-/// A key/value pair in a card footer or a session header: a condensed
-/// uppercase key over a monospaced value.
+/// An inset chip: a fact that is worth boxing but not worth colouring.
 ///
-/// The key is tertiary and tiny on purpose. A person scanning a wall reads the
-/// values; the keys are there for the first ten minutes and then never again.
+/// Project, branch, working directory, an MCP server's name. One shape for all
+/// of them, so a reader learns "boxed grey text is a fact about where this
+/// session is" once rather than four times.
+struct FactChip<Content: View>: View {
+    var tint: Color?
+    var isMono = false
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .font(isMono ? AuspexType.monoSmall : AuspexType.caption)
+            .foregroundStyle(tint ?? AuspexPalette.text2)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(tint.map { $0.opacity(0.08) } ?? AuspexPalette.bg2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(tint.map { $0.opacity(0.25) } ?? AuspexPalette.line, lineWidth: 1)
+            )
+    }
+}
+
+extension FactChip where Content == Text {
+    /// The common case: one string.
+    init(_ text: String, tint: Color? = nil, isMono: Bool = false) {
+        self.init(tint: tint, isMono: isMono) { Text(text) }
+    }
+}
+
+/// A segmented control in the board's own chrome.
+///
+/// AppKit's segmented control cannot be made to look like this — it insists on
+/// its own material, its own corner, and its own selection tint — and the
+/// header bar is the one place in the window where the app's own idiom has to
+/// win, because everything under it is drawn by hand.
+struct SegmentedPicker<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(value: Value, title: String)]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.value) { option in
+                let isOn = option.value == selection
+                Button { selection = option.value } label: {
+                    Text(option.title)
+                        .font(AuspexType.pill)
+                        .foregroundStyle(isOn ? AuspexPalette.text : AuspexPalette.text3)
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(isOn ? AuspexPalette.bg3 : .clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(AuspexPalette.bg1)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(AuspexPalette.line, lineWidth: 1)
+        )
+    }
+}
+
+/// A key/value pair in a card footer or a session header: a small tertiary key
+/// beside a monospaced value.
+///
+/// The key is tiny on purpose. A person scanning a wall reads the values; the
+/// keys are there for the first ten minutes and then never again.
 struct MetaField: View {
     let key: String
     let value: String
@@ -122,13 +197,14 @@ struct MetaField: View {
     var tint: Color?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: 5) {
             Text(key)
-                .auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
             Text(value)
-                .font(isMono ? AuspexType.monoSmall : AuspexType.body)
-                .foregroundStyle(tint ?? AuspexPalette.textSecondary)
+                .font(isMono ? AuspexType.monoSmall : AuspexType.caption)
+                .auspexTabularDigits()
+                .foregroundStyle(tint ?? AuspexPalette.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -136,21 +212,24 @@ struct MetaField: View {
     }
 }
 
-/// A count with a label under it, for section headers and the empty state's
-/// watch list.
+/// A count with a word after it: `28 live`, `457 done`.
+///
+/// The number is lit and the word is not, because the number is the thing
+/// being compared down a column and the word is the unit.
 struct CountBadge: View {
     let value: Int
     let label: String
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Text("\(value)")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(value == 0 ? AuspexPalette.textTertiary : tint)
+                .font(AuspexType.monoCount)
+                .auspexTabularDigits()
+                .foregroundStyle(value == 0 ? AuspexPalette.text3 : tint)
             Text(label)
-                .auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(value) \(label)")

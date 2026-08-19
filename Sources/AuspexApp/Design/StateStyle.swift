@@ -5,50 +5,71 @@ import SwiftUI
 ///
 /// ## Colour is one half of the answer, motion is the other
 ///
-/// Six states in six colours is a legend a person has to learn. Six states in
-/// six colours *that move differently* is something they can read without
-/// learning: a slow breath means thinking, a travelling segment means a tool
-/// is running, a hard blink means someone is waiting on you. Peripheral vision
-/// is far better at motion than at hue, which is exactly what a board on a
-/// second display needs.
+/// Eight states in eight colours is a legend a person has to learn. Eight
+/// states in eight colours *that move differently* is something they can read
+/// without learning: a slow breath means thinking, a travelling segment means
+/// a tool is running, a hard blink means someone is waiting on you. Peripheral
+/// vision is far better at motion than at hue, which is exactly what a board
+/// on a second display needs.
 ///
 /// So every state carries a ``Motion``, and it is the same mechanism in every
-/// case — one 2 pt line along the bottom edge of the card. One device,
-/// six behaviours. Adding a second animated element would make the wall busy
-/// without making it more informative.
+/// case — one strip along the bottom of the card. One device, six behaviours.
+/// A second animated element would make the wall busy without making it more
+/// informative.
 ///
 /// Sessions that are not doing anything animate nothing at all: `.idle` and
-/// `.ended` resolve to ``Motion/steady(_:)``, which renders a plain rectangle
-/// with no animation attached. A board of forty finished sessions costs the
-/// render loop nothing.
+/// `.ended` resolve to ``Motion/steady(_:)``, whose `isAnimated` is `false`,
+/// and the board never hands them a clock phase. A wall of four hundred
+/// finished sessions costs the render loop nothing.
 struct StateStyle: Sendable, Equatable {
-    /// The state's colour, used by the pill, the pulse line, and — for
-    /// `waitingPermission` only — the card's border.
+    /// The state's colour: the pill, the dot, the strip, and — for
+    /// `waitingPermission` only — the card's outline and glow.
     let color: Color
-    /// The pill's text. Uppercase at the call site; kept in title case here so
-    /// it can also be read aloud by VoiceOver.
+    /// The pill's text, in sentence case. "Needs you" rather than "Waiting for
+    /// permission": it is the phrasing the summary chips and the menu bar
+    /// already use, and it is what a person would say out loud.
     let label: String
-    /// An SF Symbol for the pill and the menu bar list.
+    /// The one-character mark on the card's activity line and in the trace
+    /// gutter. Drawn in ``color`` and set in SF Mono, so a column of them
+    /// lines up down the trace.
+    let glyph: String
+    /// An SF Symbol, for the places AppKit will only take one — the menu bar
+    /// label, and VoiceOver.
     let symbolName: String
-    /// How the pulse line behaves.
+    /// How the activity strip behaves.
     let motion: Motion
     /// Whether this state should pull the eye. Exactly one state does.
     let isAlarming: Bool
 
-    /// What the pulse line does. See the type's discussion for why this is
-    /// part of the style rather than a view detail.
+    /// What the activity strip does.
+    ///
+    /// Every case is a pure function of a phase number the board hands down,
+    /// which is what lets one clock drive the whole wall — see ``BoardClock``.
     enum Motion: Sendable, Equatable, Hashable {
-        /// A fixed bar at this opacity. No animation is attached at all.
+        /// A fixed bar at this opacity. Never redrawn.
         case steady(Double)
-        /// The whole line fades between two opacities and back. Thinking.
+        /// The whole strip fades between two opacities and back. Thinking.
         case breathe
         /// A bright segment travels left to right and wraps. A tool is open;
-        /// `period` is shorter for a file write, which is the faster activity.
-        case sweep(period: Double)
-        /// The line snaps to full and falls away. Someone is waiting.
+        /// `cells` is how many steps it takes to cross, so a file write moves
+        /// faster than a shell command.
+        case sweep(cells: Int)
+        /// The strip snaps to full and falls away. Someone is waiting.
         case strobe
         /// One tick per child, lighting in sequence.
         case ticks(count: Int)
+
+        /// Whether this motion needs the clock at all.
+        ///
+        /// The board reads this to decide whether to pass a card a live phase
+        /// or a frozen zero — and a frozen zero is what makes an ended card
+        /// compare equal to its previous self and skip its body entirely.
+        var isAnimated: Bool {
+            switch self {
+            case .steady: false
+            case .breathe, .sweep, .strobe, .ticks: true
+            }
+        }
     }
 }
 
@@ -60,14 +81,16 @@ extension SessionState {
             StateStyle(
                 color: AuspexPalette.stateIdle,
                 label: "Idle",
+                glyph: "·",
                 symbolName: "pause",
-                motion: .steady(0.16),
+                motion: .steady(0.35),
                 isAlarming: false
             )
         case .thinking:
             StateStyle(
                 color: AuspexPalette.stateThinking,
                 label: "Thinking",
+                glyph: "◌",
                 symbolName: "brain",
                 motion: .breathe,
                 isAlarming: false
@@ -76,16 +99,18 @@ extension SessionState {
             StateStyle(
                 color: AuspexPalette.stateTool,
                 label: "Tool",
+                glyph: "›_",
                 symbolName: "wrench.adjustable",
-                motion: .sweep(period: 1.7),
+                motion: .sweep(cells: 7),
                 isAlarming: false
             )
         case .writingFile:
             StateStyle(
                 color: AuspexPalette.stateWriting,
                 label: "Writing",
+                glyph: "✎",
                 symbolName: "square.and.pencil",
-                motion: .sweep(period: 1.05),
+                motion: .sweep(cells: 5),
                 isAlarming: false
             )
         case .delegating(let children):
@@ -96,6 +121,7 @@ extension SessionState {
                 // pill's job is the second one; the number rides in the badge
                 // beside the word.
                 label: "Delegating",
+                glyph: "↳",
                 symbolName: "arrow.triangle.branch",
                 motion: .ticks(count: max(1, min(children, 8))),
                 isAlarming: false
@@ -103,11 +129,8 @@ extension SessionState {
         case .waitingPermission:
             StateStyle(
                 color: AuspexPalette.statePermission,
-                // "Blocked", not "Waiting for permission": it is the word the
-                // section headers and the menu bar already use for this state,
-                // and a pill wide enough for the long form eats the card title
-                // it sits next to.
-                label: "Blocked",
+                label: "Needs you",
+                glyph: "!",
                 symbolName: "exclamationmark.triangle.fill",
                 motion: .strobe,
                 isAlarming: true
@@ -116,8 +139,9 @@ extension SessionState {
             StateStyle(
                 color: AuspexPalette.stateEnded,
                 label: "Ended",
+                glyph: "■",
                 symbolName: "stop.fill",
-                motion: .steady(0),
+                motion: .steady(0.35),
                 isAlarming: false
             )
         }
@@ -150,13 +174,18 @@ extension SessionState {
     }
 }
 
-/// The state pill: a symbol, a condensed uppercase word, and — when the
-/// session is delegating — the number of children.
+/// The state pill: a lit dot and one word.
 ///
-/// Tinted rather than filled. A filled pill at this size becomes the loudest
-/// thing on the card, and the loudest thing on a card should be its title.
-/// The exception is `waitingPermission`, which is filled on purpose: it is the
-/// one state that is allowed to shout.
+/// Tinted rather than filled — 10 % of the state colour behind it, a 25 %
+/// border around it, the word itself at full strength. A filled pill at this
+/// size becomes the loudest thing on the card, and the loudest thing on a card
+/// should be its title. The dot carries a small glow while the session is
+/// actually doing something, which is what lets `Needs you` and `Idle` be
+/// told apart across a room even though both are one short word in a box.
+///
+/// 6 pt corners rather than a capsule: the board is built out of cut edges,
+/// and a fully rounded pill next to a 10 pt card reads as a control that could
+/// be pressed.
 struct StatePill: View {
     let state: SessionState
     var isStale = false
@@ -169,34 +198,53 @@ struct StatePill: View {
 
     var body: some View {
         let style = state.style
-        let filled = style.isAlarming
-        HStack(spacing: 3) {
-            Image(systemName: style.symbolName)
-                .font(.system(size: 8, weight: .bold))
+        let isQuiet = !style.motion.isAnimated
+        HStack(spacing: 6) {
+            StateDot(color: style.color, glows: !isQuiet)
             Text(style.label)
-                .auspexLabel(AuspexType.labelSmall)
-            if showsChildCount, let children = state.childCount {
+                .font(AuspexType.pill)
+                .fixedSize()
+            if showsChildCount, let children = state.childCount, children > 1 {
                 Text("\(children)")
-                    .font(.system(size: 9, weight: .bold, design: .monospaced))
-                    .padding(.horizontal, 3)
-                    .background(
-                        Capsule().fill(style.color.opacity(filled ? 0.35 : 0.20))
-                    )
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .opacity(0.85)
             }
         }
-        .foregroundStyle(filled ? Color.white : style.color)
-        .opacity(isStale ? 0.65 : 1)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2.5)
+        .foregroundStyle(style.color)
+        .opacity(isStale ? 0.7 : 1)
+        .padding(.leading, 8)
+        .padding(.trailing, 9)
+        .frame(height: 22)
         .background(
-            Capsule()
-                .fill(filled ? style.color.opacity(0.92) : style.color.opacity(0.13))
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(style.color.opacity(0.10))
         )
         .overlay(
-            Capsule()
-                .strokeBorder(style.color.opacity(filled ? 0 : 0.30), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(style.color.opacity(0.25), lineWidth: 1)
         )
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.label)
+    }
+}
+
+/// The 6 pt dot that stands in for a state wherever a pill will not fit: the
+/// summary chips, the sidebar's session rows, the trace's Following toggle.
+///
+/// The glow is not decoration — it is the difference between "this is a colour
+/// on a legend" and "this is happening now", and it is the only thing on the
+/// board drawn with a shadow.
+struct StateDot: View {
+    let color: Color
+    var glows = false
+    var size: CGFloat = 6
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: size, height: size)
+            .shadow(color: glows ? color.opacity(0.65) : .clear, radius: glows ? 4 : 0)
+            .accessibilityHidden(true)
     }
 }
 
@@ -209,13 +257,13 @@ struct StatePill: View {
 struct StaleTag: View {
     var body: some View {
         Text("Stale")
-            .auspexLabel(AuspexType.labelSmall)
+            .font(AuspexType.pill)
             .foregroundStyle(AuspexPalette.stateStale)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
             .overlay(
-                Capsule().strokeBorder(
-                    AuspexPalette.stateStale.opacity(0.45),
+                RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(
+                    AuspexPalette.stateStale.opacity(0.35),
                     style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5])
                 )
             )

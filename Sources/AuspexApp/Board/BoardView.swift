@@ -6,20 +6,28 @@ import SwiftUI
 /// The wall.
 ///
 /// A scrolling grid of session cards, divided into sections by whatever the
-/// toolbar's group-by control says, with each section's header pinned so the
-/// counts stay on screen while its cards scroll under them.
+/// header's grouping menu says, with the finished sessions collected into one
+/// collapsed section at the bottom.
+///
+/// ## Why the finished ones are not cards
+///
+/// A machine that has run agents for a week has a few dozen live sessions and
+/// several hundred finished ones. Drawing all of them as cards is the single
+/// most expensive thing this view could do, and it would spend that cost on
+/// the rows with the least to say: a finished session has no state to watch,
+/// nothing to animate, and nothing anybody has to act on. So they leave the
+/// grid entirely — see ``EndedSessions`` — and the board's cost scales with
+/// what is *running*.
 ///
 /// The grid is adaptive rather than a fixed column count: a card is legible
-/// somewhere between 270 and 400 points wide, and letting the window decide
-/// how many fit is what makes the same view work on a laptop and on the
-/// second display it will actually live on.
+/// somewhere between 300 and 520 points wide, and letting the window decide
+/// how many fit is what makes the same view work on a laptop and on the second
+/// display it will actually live on.
 struct BoardView: View {
     @Bindable var model: LiveBoardModel
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     private let columns = [
-        GridItem(.adaptive(minimum: 272, maximum: 400), spacing: 10, alignment: .top)
+        GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 14, alignment: .top)
     ]
 
     var body: some View {
@@ -29,7 +37,7 @@ struct BoardView: View {
                     model.projectFilter = nil
                 }
             }
-            if model.groups.isEmpty {
+            if model.groups.isEmpty, model.endedSessions.isEmpty {
                 BoardEmptyState(model: model)
             } else {
                 grid
@@ -40,18 +48,22 @@ struct BoardView: View {
 
     private var grid: some View {
         ScrollView {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+            LazyVStack(alignment: .leading, spacing: 22) {
                 ForEach(model.groups) { group in
-                    Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        BoardSectionHeader(
+                            title: group.title,
+                            liveCount: group.counts.live,
+                            harness: group.harness
+                        )
                         body(of: group)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 10)
-                            .padding(.bottom, 16)
-                    } header: {
-                        BoardSectionHeader(group: group)
                     }
                 }
+                if !model.endedSessions.isEmpty { endedSection }
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollContentBackground(.hidden)
     }
@@ -64,7 +76,7 @@ struct BoardView: View {
         if let roots = group.roots, roots.contains(where: { !$0.children.isEmpty }) {
             BoardTreeColumn(roots: roots) { card(for: $0) }
         } else {
-            LazyVGrid(columns: columns, spacing: 10) {
+            LazyVGrid(columns: columns, spacing: 14) {
                 ForEach(group.sessions, id: \.key) { session in
                     card(for: session)
                 }
@@ -76,14 +88,60 @@ struct BoardView: View {
         SessionCard(
             session: session,
             isSelected: model.selectedKey == session.key,
-            reduceMotion: reduceMotion,
             descendantCount: model.descendantCount(of: session.key),
             parentTitle: parentTitle(of: session),
             onSelectParent: { key in model.selectedKey = key }
         )
-            .equatable()
-            .onTapGesture { model.selectedKey = session.key }
-            .accessibilityAddTraits(.isButton)
+        .equatable()
+        .onTapGesture { model.selectedKey = session.key }
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The finished sessions, as one-line rows under one header.
+    private var endedSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            BoardSectionHeader(
+                title: "Ended",
+                subtitle: "\(model.endedSessions.count)",
+                harness: nil
+            )
+            LazyVStack(spacing: 0) {
+                ForEach(model.visibleEndedSessions, id: \.key) { session in
+                    EndedSessionRow(
+                        session: session,
+                        isSelected: model.selectedKey == session.key
+                    )
+                    .equatable()
+                    .onTapGesture { model.selectedKey = session.key }
+                }
+            }
+            .panelChrome()
+            if model.hiddenEndedCount > 0 || model.showsAllEnded {
+                showAllToggle
+            }
+        }
+    }
+
+    private var showAllToggle: some View {
+        Button {
+            model.showsAllEnded.toggle()
+        } label: {
+            Text(
+                model.showsAllEnded
+                    ? "Show the most recent \(EndedSessions.collapsedLimit)"
+                    : "Show all \(model.endedSessions.count)"
+            )
+            .font(AuspexType.caption)
+            .foregroundStyle(AuspexPalette.text2)
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(AuspexPalette.line, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Finished sessions are collapsed so the board's cost tracks what is running")
     }
 
     /// The parent's headline, for the card's "spawned by" chip. `nil` when the
@@ -98,6 +156,62 @@ struct BoardView: View {
     }
 }
 
+/// One finished session, as a row rather than a card.
+///
+/// Everything a card says about *activity* is gone, because there is none.
+/// What is left is what a person looks for in history: whose session it was,
+/// what it was called, where it ran, and when it stopped.
+struct EndedSessionRow: View, Equatable {
+    let session: SessionSnapshot
+    let isSelected: Bool
+
+    nonisolated static func == (lhs: EndedSessionRow, rhs: EndedSessionRow) -> Bool {
+        lhs.session == rhs.session && lhs.isSelected == rhs.isSelected
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HarnessBadge(harness: session.key.harness, size: 16, isMuted: true)
+            Text(title)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text2)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let project = BoardGrouping.projectName(for: session) {
+                Text(project)
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(1)
+                    .layoutPriority(-1)
+            }
+            Spacer(minLength: 8)
+            Text(reason)
+                .font(AuspexType.monoSmall)
+                .foregroundStyle(AuspexPalette.text3)
+                .fixedSize()
+            Text(RelativeTimeText.since(session.endedAt ?? session.lastEventAt))
+                .font(AuspexType.monoSmall)
+                .foregroundStyle(AuspexPalette.text3)
+                .frame(width: 74, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .background(isSelected ? AuspexPalette.bg3 : .clear)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
+    private var title: String {
+        if let title = session.identity.title, !title.isEmpty { return title }
+        return String(session.key.sessionID.prefix(12))
+    }
+
+    private var reason: String {
+        if case .ended(let reason) = session.state { return reason.rawValue }
+        return "ended"
+    }
+}
+
 /// A section drawn as a delegation tree rather than as a grid.
 ///
 /// Its own type so that anything which has to draw this shape — the board, and
@@ -108,7 +222,7 @@ struct BoardTreeColumn<Card: View>: View {
     @ViewBuilder let card: (SessionSnapshot) -> Card
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(roots) { root in
                 TreeBranch(node: root, card: card)
             }
@@ -123,7 +237,7 @@ struct BoardTreeColumn<Card: View>: View {
 /// content of this view is *who spawned whom*, and a layout that reflowed with
 /// the window would lose it. The rail is the same hairline device the sidebar's
 /// tree uses, so one idiom means one thing across the window.
-fileprivate struct TreeBranch<Card: View>: View {
+private struct TreeBranch<Card: View>: View {
     let node: BoardTreeNode
     /// How to draw one session. A closure rather than a stored `BoardView`,
     /// because a view held as a value keeps whatever environment it was built
@@ -131,14 +245,14 @@ fileprivate struct TreeBranch<Card: View>: View {
     /// that animates at someone who asked it not to.
     @ViewBuilder let card: (SessionSnapshot) -> Card
 
-    /// A card is legible from about 270 points and stops gaining anything past
-    /// 400. Fixing the width here keeps a root and a grandchild the same size,
+    /// A card is legible from about 300 points and stops gaining anything past
+    /// 520. Fixing the width here keeps a root and a grandchild the same size,
     /// which is what makes the inset read as depth rather than as importance.
-    private static var cardWidth: CGFloat { 380 }
-    private static var inset: CGFloat { 20 }
+    private static var cardWidth: CGFloat { 440 }
+    private static var inset: CGFloat { 22 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             card(node.session)
                 .frame(maxWidth: Self.cardWidth, alignment: .leading)
 
@@ -148,7 +262,7 @@ fileprivate struct TreeBranch<Card: View>: View {
                         .fill(AuspexPalette.stateDelegating.opacity(0.35))
                         .frame(width: 1)
                         .frame(width: Self.inset, alignment: .center)
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         ForEach(node.children) { child in
                             TreeBranch(node: child, card: card)
                         }
@@ -171,125 +285,85 @@ struct ProjectFilterBar: View {
     let onClear: () -> Void
 
     var body: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal.decrease")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(AuspexPalette.stateThinking)
-            Text("Showing").auspexLabel(AuspexType.labelSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
+            Text("Showing")
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
             Text(name)
-                .auspexLabel(AuspexType.labelLarge)
-                .foregroundStyle(AuspexPalette.textPrimary)
+                .font(AuspexType.rowStrong)
+                .foregroundStyle(AuspexPalette.text)
             Text(PathDisplay.abbreviate(path))
                 .font(AuspexType.monoSmall)
-                .foregroundStyle(AuspexPalette.textTertiary)
+                .foregroundStyle(AuspexPalette.text3)
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer(minLength: 8)
             Button(action: onClear) {
-                Text("Show all").auspexLabel(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.textSecondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .overlay(Capsule().strokeBorder(AuspexPalette.hairline, lineWidth: 1))
+                Text("Show all")
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text2)
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                    )
             }
             .buttonStyle(.plain)
             .help("Show every project on the board")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(AuspexPalette.canvasDeep)
+        .padding(.horizontal, 20)
+        .frame(height: 34)
+        .background(AuspexPalette.bg1)
         .overlay(alignment: .bottom) {
             Rectangle().fill(AuspexPalette.stateThinking.opacity(0.5)).frame(height: 1)
         }
     }
 }
 
-/// A section header: what this group is, and how its sessions are doing.
+/// A section's header: what this group is, how much of it is running, and a
+/// rule out to the edge of the board.
 ///
-/// Pinned, so on a long wall the counts are always the thing at the top of the
-/// viewport. Deliberately a full-width bar rather than a floating label — it
-/// is a rule across the board, and the cards hang from it.
+/// A rule rather than a filled bar. The cards hang from it, and a header with
+/// its own background would read as a container the cards are inside — which
+/// is the wrong idea, because the grouping changes with a menu and the cards
+/// do not.
 struct BoardSectionHeader: View {
-    let group: BoardGroup
+    let title: String
+    var subtitle: String?
+    var liveCount: Int?
+    let harness: Harness?
 
     var body: some View {
-        HStack(spacing: 8) {
-            if let harness = group.harness {
+        HStack(spacing: 10) {
+            if let harness {
                 Rectangle()
                     .fill(harness.style.accent)
-                    .frame(width: 3, height: 13)
+                    .frame(width: 3, height: 12)
             }
-
-            Text(group.title)
-                .auspexLabel(AuspexType.labelLarge)
-                .foregroundStyle(AuspexPalette.textPrimary)
-
-            if let subtitle = group.subtitle {
-                Text(PathDisplay.abbreviate(subtitle))
-                    .font(AuspexType.monoSmall)
-                    .foregroundStyle(AuspexPalette.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
+            Text(title)
+                .font(AuspexType.rowStrong)
+                .foregroundStyle(AuspexPalette.text)
+                .lineLimit(1)
+            if let liveCount, liveCount > 0 {
+                Text("\(liveCount) live")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AuspexPalette.stateWriting)
+                    .fixedSize()
+            } else if let subtitle {
+                Text(subtitle)
+                    .font(AuspexType.monoCount)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .fixedSize()
             }
-
-            Text("\(group.sessions.count)")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundStyle(AuspexPalette.textTertiary)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(Capsule().fill(AuspexPalette.hairline))
-
-            Spacer(minLength: 8)
-
-            counts
+            Rectangle()
+                .fill(AuspexPalette.line)
+                .frame(height: 1)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(AuspexPalette.canvasDeep)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(AuspexPalette.hairlineStrong).frame(height: 1)
-        }
-    }
-
-    /// Only the tallies worth acting on, and only when they are non-zero. A
-    /// header that always shows seven numbers teaches a reader to ignore all
-    /// seven.
-    private var counts: some View {
-        HStack(spacing: 10) {
-            if group.counts.waitingPermission > 0 {
-                CountBadge(
-                    value: group.counts.waitingPermission,
-                    label: "blocked",
-                    tint: AuspexPalette.statePermission
-                )
-            }
-            if group.counts.delegating > 0 {
-                CountBadge(
-                    value: group.counts.delegating,
-                    label: "delegating",
-                    tint: AuspexPalette.stateDelegating
-                )
-            }
-            if group.counts.tooling > 0 {
-                CountBadge(
-                    value: group.counts.tooling,
-                    label: "tooling",
-                    tint: AuspexPalette.stateTool
-                )
-            }
-            if group.counts.thinking > 0 {
-                CountBadge(
-                    value: group.counts.thinking,
-                    label: "thinking",
-                    tint: AuspexPalette.stateThinking
-                )
-            }
-            CountBadge(
-                value: group.counts.live,
-                label: "live",
-                tint: AuspexPalette.textSecondary
-            )
-        }
+        .padding(.top, 4)
+        .accessibilityElement(children: .combine)
     }
 }
