@@ -147,7 +147,60 @@ its nearest ancestor's project.
 `GroupingCoordinator` runs both on a three-second tick, off the registry's
 actor — `sysctl` and `stat` do not belong on the path of every event — and
 feeds the answers back in through `SessionRegistry.applyPlacements(_:)` and
-`applyLinks(_:)`, which turn them into ordinary `identityUpdated` events. — *M2.*
+`applyLinks(_:)`, which turn them into ordinary `identityUpdated` events.
+`AppEnvironment` starts it beside the liveness loop and hands both the same
+`ProcessTable`, whose three-second cache then serves one read per tick instead
+of two. — *M2.*
+
+### What the UI does with both
+
+Neither axis is a view's to compute. `ProjectTree` and `BoardGrouping` are in
+Core, over a `BoardSnapshot`, so the sidebar and the wall are two renderings of
+one answer rather than two answers.
+
+- **`ProjectTree`** is the sidebar's shape: `project → checkout → session`.
+  Projects come from `BoardSnapshot.projectKey(for:)` — the *instance* method,
+  which walks a session's ancestors, so a subagent with no directory of its own
+  lands under its parent's project. Checkouts divide a project by
+  `worktreePath ?? gitRoot ?? cwd`, which is what puts three worktrees of one
+  repository side by side under one name. Only the display *names* come from
+  the store, through `ProjectRepository.fetchProjects(withCounts:)`: a project
+  outlives every session in it, and the name is the one fact a live frame
+  cannot supply. Every count is the frame's, so the sidebar and the cards
+  cannot disagree.
+- **`BoardGroupBy.tree`** is the wall's: `SessionTreeBuilder` over the sessions
+  that survived the filters — not over `snapshot.tree` — so a child whose
+  parent a harness filter removed becomes a root instead of disappearing.
+  Roots that delegated get a section each; the rest share one.
+- **The project filter** is applied on every axis and resolved against the
+  frame for the same reason the grouping is, so filtering to a project keeps
+  the children that inherited it.
+
+`ParentLink` reaches the UI intact rather than being flattened into "has a
+parent": the trace header names the evidence, because a spawn a log recorded
+and a shared process ancestor are not the same claim.
+
+## Harness Configuration
+
+`HarnessMCPConfigStore` reads each harness's own MCP configuration — the
+`mcpServers` object in `~/.claude.json`, `~/.cursor/mcp.json`, and
+`~/.gemini/config/mcp_config.json`, and the `[mcp_servers.<name>]` tables in
+`~/.codex/config.toml` and `~/.grok/config.toml` — and takes the server names
+and nothing else.
+
+It is **read-only in the strong sense**: no writes, no creation of a missing
+file, no rewriting of a file it could not fully parse. § 6 of `AGENTS.md`
+applies to a harness's configuration exactly as it applies to its transcripts.
+
+The TOML side is a section scanner, not a parser, and deliberately so. The
+question asked of the file is "which `[mcp_servers.<name>]` tables are in
+here", a full parser would be a dependency, and — worse — it would fail the
+*whole file* on a construct it disliked, which is the wrong answer for a status
+page: a config Auspex cannot fully parse still has a legible server list. So
+`[mcp_servers.foo.env]` is read as a sub-table of `foo` rather than as a server
+called `foo.env`, a quoted name is unquoted, and anything unrecognised costs
+its own table rather than the file. "No config file", "could not be read", and
+"no servers" stay three distinct answers all the way to the screen. — *M2.*
 
 ## Storage
 

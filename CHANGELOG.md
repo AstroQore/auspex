@@ -117,8 +117,55 @@ Auspex is pre-alpha; there are no released versions yet.
   registry's actor, because `sysctl` and `stat` do not belong on the path of
   every event. Sessions that are no longer running keep their session id but
   lose their pid, so a recycled pid cannot be mistaken for a live parent.
-- Empty main window (`NavigationSplitView` with Live / Projects / Tasks /
-  Harnesses / Settings) and a menu bar extra with Open and Quit.
+  `AppEnvironment` starts it alongside the liveness loop, sharing one
+  `ProcessTable` between them so a tick costs one process-table read rather
+  than two — in demo mode as well as live, so both exercise the same path.
+- **Projects sidebar** — a live tree of every project on the board, built from
+  the frame rather than from the database so it cannot disagree with the wall
+  next to it: `project → checkout → session`, with a dot per harness at work,
+  a count of what is running, and the agent worktree's *task* as the checkout's
+  label wherever the path follows the convention. A project opens itself the
+  first time something in it goes live, and never re-opens after that, so it
+  does not fight a reader who closed it. Directories in no repository are
+  listed too, marked "no git". Selecting a project filters the wall to it;
+  selecting a session selects its card. `ProjectTree` does the building, in
+  Core, where it is tested.
+- **Group by: Tree** — the wall as a delegation forest. Each root that
+  delegated gets a section with its children nested behind a rail; roots that
+  delegated to nobody share one trailing section, because a tree of one is not
+  a tree. A card carries a "↳ N children" badge for what is below it and a
+  chip naming its parent, which selects the parent when clicked. The forest is
+  rebuilt from the *filtered* sessions, so a child whose parent a harness
+  filter removed becomes a root rather than vanishing.
+- **Project filter** — applied on every grouping axis and answered against the
+  frame, so a subagent with no directory of its own stays with the project it
+  inherited. A bar above the wall says which project is showing and clears it.
+- **Trace header** now shows the project, the branch, the agent worktree's
+  task, the parent, the children, and — the point of the row — *how* the
+  parent link was established: a spawn the parent's own log recorded, an
+  inherited environment variable, a process ancestry, or a person's decision.
+  Those are claims of very different strength, and a header that showed a
+  parent without saying which invites a reader to trust a guess as a record.
+- **Harnesses page** — one rack row per harness: whether its store exists on
+  this Mac, live / idle / total sessions from the board, last activity, and
+  the MCP servers it is configured with. The three come from three different
+  places on three different schedules and are kept apart, because "no sessions
+  on the board" reading as "not installed" would be the most misleading thing
+  the page could say.
+- `HarnessMCPConfigStore` — **read-only** parsing of each harness's own MCP
+  configuration: `mcpServers` in `~/.claude.json` (global and per-project
+  scopes kept apart) and `~/.cursor/mcp.json` and
+  `~/.gemini/config/mcp_config.json`, and `[mcp_servers.<name>]` tables in
+  `~/.codex/config.toml` and `~/.grok/config.toml`. The TOML side is a
+  tolerant section scanner rather than a parser: a sub-table is not a server, a
+  quoted name is unquoted, and a construct it does not understand costs it that
+  table rather than the file. It never writes, never creates a missing file,
+  and reports "no config file", "could not be read", and "no servers" as three
+  different answers. Whether Auspex's own server is registered is shown as an
+  empty socket — it arrives in M3.
+- Main window (`NavigationSplitView`) and a menu bar extra with Open and Quit.
+  The sidebar's destinations are Live / Tasks / Harnesses / Settings; Projects
+  is not one of them, because the tree below them *is* the projects section.
 - `--mcp-stdio` and `--hook` command-line placeholders, dispatched before
   AppKit starts; both exit 2 until M3.
 - `Scripts/build_app.sh` — packages and ad-hoc signs `.build/Auspex.app`, and

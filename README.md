@@ -84,6 +84,37 @@ The demo runs entirely in memory. It opens no harness store, creates no
 The board is dark-first and follows the system appearance
 ([light mode](docs/screenshots/board-light.png)).
 
+## Projects and Trees
+
+Two questions cut across a board that no harness records: **where** a session is
+working, and **who** started it. Auspex answers both by looking at the machine —
+git's own files for the first, the process table for the second — and puts the
+answers in the sidebar and on the wall.
+
+![The projects sidebar beside a delegation tree on the board](docs/screenshots/projects.png)
+
+- **The sidebar** lists every project on the board, with a dot per harness at
+  work in it and a count of what is running. Three worktrees of one repository
+  are one project with three checkouts, and an agent worktree is labelled with
+  its task rather than its path. Clicking a project filters the wall to it.
+- **Group by: Tree** turns the wall into the delegation forest. A session that
+  spawned others gets its own section with its children nested under it; a
+  child card carries a chip naming its parent, and clicking the chip opens it.
+- **The trace header** says how a parent link was established — a spawn the
+  parent's own log recorded, an inherited environment variable, a process
+  ancestry, or a person's own decision — because those are claims of very
+  different strength.
+
+## Harnesses
+
+![The Harnesses page: detection, session counts, and MCP configuration per harness](docs/screenshots/harnesses.png)
+
+The Harnesses page answers *why is this harness not on my board* and *what can
+it reach*: whether its store exists on this Mac, how many of its sessions are
+live, when it last did anything, and which MCP servers it has been configured
+with. Every file behind that page is read and never written — including the
+configuration files, which Auspex parses for server names and nothing else.
+
 ## How Data Is Collected
 
 Auspex is a **read-only observer of local files**.
