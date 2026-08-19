@@ -82,7 +82,7 @@ struct AuspexApp: App {
     }
 }
 
-/// The menu bar's title: an eye, and the counts that matter.
+/// The menu bar's title: the bird, and the counts that matter.
 ///
 /// Three numbers at most, and only the non-zero ones. A status item that always
 /// shows `0 0 0` teaches its reader to stop looking at it, which defeats the
@@ -101,7 +101,11 @@ struct MenuBarLabel: View {
         // and the header answer the same questions in the same sequence, so
         // one glance teaches the other.
         HStack(spacing: 3) {
-            Image(systemName: "eye")
+            if let mark = MenuBarLabel.templateMark {
+                Image(nsImage: mark)
+            } else {
+                Image(systemName: "bird.fill")
+            }
             if summary.needsYou > 0 {
                 Image(systemName: "exclamationmark.triangle.fill")
                 Text("\(summary.needsYou)")
@@ -121,6 +125,17 @@ struct MenuBarLabel: View {
         }
         .accessibilityLabel(accessibilityLabel(summary))
     }
+
+    /// The menu bar glyph: the bird as a template image, so the system tints
+    /// it for light and dark menu bars the way it tints every other status
+    /// item. 18 × 18 pt, from `Resources/MenuBar/menubar.pdf`.
+    nonisolated(unsafe) static let templateMark: NSImage? = {
+        guard let url = Bundle.module.url(forResource: "menubar-template", withExtension: "pdf", subdirectory: "Brand"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
+    }()
 
     private func accessibilityLabel(_ summary: BoardSummary) -> String {
         var parts = ["Auspex"]

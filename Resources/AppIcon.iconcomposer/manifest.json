@@ -1,0 +1,38 @@
+{
+  "canvas": {
+    "width": 1024,
+    "height": 1024
+  },
+  "platform": "macOS",
+  "groupOrder": [
+    "01-Background",
+    "02-Bird",
+    "03-Status"
+  ],
+  "maxGroups": 4,
+  "appearances": [
+    "Default",
+    "Dark",
+    "Mono"
+  ],
+  "recommendations": {
+    "01-Background": {
+      "mode": "Combined",
+      "effects": false,
+      "fullBleed": true,
+      "opaque": true
+    },
+    "02-Bird": {
+      "mode": "Combined",
+      "effects": true,
+      "blur": 0,
+      "translucency": 0
+    },
+    "03-Status": {
+      "mode": "Individual",
+      "effects": true,
+      "blur": 0,
+      "translucency": 0
+    }
+  }
+}

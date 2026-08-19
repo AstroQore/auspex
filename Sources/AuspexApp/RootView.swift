@@ -353,31 +353,40 @@ struct SidebarSectionLabel: View {
     }
 }
 
-/// Auspex's own mark: an eye on a warning-coloured tile.
+/// Auspex's own mark: the pixel bird from the app icon, on its dark tile.
 ///
-/// The two colours are the board's two loudest states — a tool is open, and
-/// someone is waiting on you — because that is what the app is *for*. It is
-/// the only gradient in the window.
+/// The same drawing at every size the window shows it — the hand-pixelled
+/// 32 px icon, scaled with nearest-neighbour so the pixels stay pixels. It is
+/// the one brand mark in the window, so it has to be the icon in the Dock.
 struct AuspexMark: View {
     var size: CGFloat = 22
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.32, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [AuspexPalette.stateTool, AuspexPalette.statePermission],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+            .fill(AuspexPalette.bg3)
             .frame(width: size, height: size)
             .overlay {
-                Image(systemName: "eye")
-                    .font(.system(size: size * 0.5, weight: .bold))
-                    .foregroundStyle(AuspexPalette.bg0)
+                if let image = Self.birdImage {
+                    Image(nsImage: image)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: size, height: size)
+                        .clipShape(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
+                } else {
+                    Image(systemName: "bird.fill")
+                        .font(.system(size: size * 0.5, weight: .bold))
+                        .foregroundStyle(AuspexPalette.text)
+                }
             }
             .accessibilityLabel("Auspex")
     }
+
+    /// The 64 px render of the icon, loaded once. `nil` only if the bundle is
+    /// broken, in which case the symbol stands in.
+    nonisolated(unsafe) static let birdImage: NSImage? = {
+        guard let url = Bundle.module.url(forResource: "auspex-mark-64", withExtension: "png", subdirectory: "Brand") else { return nil }
+        return NSImage(contentsOf: url)
+    }()
 }
 
 /// Settings, in the board's column.

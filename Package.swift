@@ -40,7 +40,7 @@ let package = Package(
             // looks them up by, and `build_app.sh` moves the whole
             // `Auspex_AuspexApp.bundle` into `Contents/Resources` before
             // signing.
-            resources: [.copy("Resources/ProviderIcons")],
+            resources: [.copy("Resources/ProviderIcons"), .copy("Resources/Brand")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .target(
