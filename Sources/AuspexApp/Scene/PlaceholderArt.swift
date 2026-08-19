@@ -1,6 +1,7 @@
 import AgentSessionKit
 import AgentSessionLive
 import AppKit
+import AuspexCore
 import SpriteKit
 import SwiftUI
 
@@ -187,6 +188,55 @@ struct PixelCanvas {
         }
     }
 
+    /// Stamps `other` onto this canvas with its top-left corner at `x`, `y`.
+    ///
+    /// Only pixels the source actually covers are written, so a rig assembled
+    /// out of two canvases keeps the transparent gaps of both. Both buffers are
+    /// premultiplied and every pixel in this art is either fully opaque or
+    /// fully clear, so copying the four bytes is the whole composite.
+    mutating func blit(_ other: PixelCanvas, x: Int, y: Int) {
+        for row in 0..<other.height {
+            let destinationRow = y + row
+            guard destinationRow >= 0, destinationRow < height else { continue }
+            for column in 0..<other.width {
+                let destinationColumn = x + column
+                guard destinationColumn >= 0, destinationColumn < width else { continue }
+                let source = (row * other.width + column) * 4
+                guard other.bytes[source + 3] != 0 else { continue }
+                let destination = (destinationRow * width + destinationColumn) * 4
+                bytes[destination] = other.bytes[source]
+                bytes[destination + 1] = other.bytes[source + 1]
+                bytes[destination + 2] = other.bytes[source + 2]
+                bytes[destination + 3] = other.bytes[source + 3]
+            }
+        }
+    }
+
+    /// The finished art as a Core Graphics image, at one pixel per pixel.
+    ///
+    /// The scene never needs this — it wants a texture — but everything
+    /// *outside* the scene that has to show a procedural character does: an
+    /// `SKTexture` only becomes pixels once there is a renderer, and the
+    /// Settings pane draws characters whether or not the office is on screen.
+    func cgImage() -> CGImage? {
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let space = CGColorSpace(name: CGColorSpace.sRGB)
+        else { return nil }
+        return CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: width * 4,
+            space: space,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        )
+    }
+
     /// The finished sprite, at one texel per pixel and no interpolation.
     func texture() -> SKTexture {
         guard let provider = CGDataProvider(data: Data(bytes) as CFData),
@@ -295,18 +345,24 @@ final class PlaceholderArt {
     /// The head: hair, a face, and one eye looking at the monitor.
     func head(harness: Harness) -> SKTexture {
         cached("head.\(harness.rawValue)") { theme in
-            let accent = theme.accent(harness)
-            let hair = accent.blended(withFraction: 0.55, of: theme.ink) ?? accent
-            var canvas = PixelCanvas(width: 10, height: 8)
-            canvas.fill(1, 0, 8, 3, hair)          // crown
-            canvas.fill(1, 3, 8, 4, theme.face)    // face
-            canvas.fill(1, 3, 3, 2, hair)          // fringe, swept back
-            canvas.fill(0, 4, 1, 2, theme.face)    // ear
-            canvas.set(7, 4, theme.ink)            // eye, on the monitor
-            canvas.fill(6, 6, 3, 1, theme.face.blended(withFraction: 0.35, of: theme.ink) ?? theme.face)
-            canvas.fill(3, 7, 4, 1, theme.face)    // neck
-            return canvas
+            Self.headCanvas(accent: theme.accent(harness), theme: theme)
         }
+    }
+
+    /// The head, before it is a texture. Split out because the Settings pane
+    /// composes the rig into one still image and cannot get pixels back out of
+    /// an `SKTexture`.
+    static func headCanvas(accent: NSColor, theme: SceneTheme) -> PixelCanvas {
+        let hair = accent.blended(withFraction: 0.55, of: theme.ink) ?? accent
+        var canvas = PixelCanvas(width: 10, height: 8)
+        canvas.fill(1, 0, 8, 3, hair)          // crown
+        canvas.fill(1, 3, 8, 4, theme.face)    // face
+        canvas.fill(1, 3, 3, 2, hair)          // fringe, swept back
+        canvas.fill(0, 4, 1, 2, theme.face)    // ear
+        canvas.set(7, 4, theme.ink)            // eye, on the monitor
+        canvas.fill(6, 6, 3, 1, theme.face.blended(withFraction: 0.35, of: theme.ink) ?? theme.face)
+        canvas.fill(3, 7, 4, 1, theme.face)    // neck
+        return canvas
     }
 
     /// The torso and one arm, in a pose. The lower half is drawn even though
@@ -314,37 +370,86 @@ final class PlaceholderArt {
     /// find their agent cut off at the waist.
     func body(harness: Harness, pose: AgentPose) -> SKTexture {
         cached("body.\(harness.rawValue).\(pose.rawValue)") { theme in
-            let accent = theme.accent(harness)
-            let shirt = accent
-            let shade = accent.blended(withFraction: 0.4, of: theme.ink) ?? accent
-            let light = accent.blended(withFraction: 0.3, of: .white) ?? accent
-            let drop = pose == .slump ? 1 : 0
-
-            var canvas = PixelCanvas(width: 18, height: 15)
-            canvas.fill(4, 0 + drop, 10, 2, shirt)       // shoulders
-            canvas.fill(3, 2 + drop, 12, 8, shirt)       // torso
-            canvas.fill(8, 0 + drop, 2, 2, light)        // collar
-            canvas.fill(3, 6 + drop, 12, 1, shade)       // belt shadow
-            canvas.fill(4, 10 + drop, 10, 5, shade)      // legs, behind the desk
-
-            switch pose {
-            case .rest, .slump:
-                canvas.fill(13, 4 + drop, 4, 2, shade)
-                canvas.fill(16, 5 + drop, 2, 1, theme.face)
-            case .type:
-                canvas.fill(13, 3 + drop, 4, 2, shade)
-                canvas.fill(16, 3 + drop, 2, 1, theme.face)
-            case .raise:
-                canvas.fill(13, 0, 2, 5, shade)          // forearm, vertical
-                canvas.fill(13, -1, 2, 2, theme.face)    // hand, clipped at the top
-                canvas.fill(12, 4, 2, 2, shade)
-            case .offer:
-                canvas.fill(13, 3, 5, 2, shade)          // arm extended sideways
-                canvas.fill(16, 2, 2, 1, theme.face)
-            }
-            return canvas
+            Self.bodyCanvas(accent: theme.accent(harness), pose: pose, theme: theme)
         }
     }
+
+    /// The torso, before it is a texture.
+    static func bodyCanvas(accent: NSColor, pose: AgentPose, theme: SceneTheme) -> PixelCanvas {
+        let shirt = accent
+        let shade = accent.blended(withFraction: 0.4, of: theme.ink) ?? accent
+        let light = accent.blended(withFraction: 0.3, of: .white) ?? accent
+        let drop = pose == .slump ? 1 : 0
+
+        var canvas = PixelCanvas(width: 18, height: 15)
+        canvas.fill(4, 0 + drop, 10, 2, shirt)       // shoulders
+        canvas.fill(3, 2 + drop, 12, 8, shirt)       // torso
+        canvas.fill(8, 0 + drop, 2, 2, light)        // collar
+        canvas.fill(3, 6 + drop, 12, 1, shade)       // belt shadow
+        canvas.fill(4, 10 + drop, 10, 5, shade)      // legs, behind the desk
+
+        switch pose {
+        case .rest, .slump:
+            canvas.fill(13, 4 + drop, 4, 2, shade)
+            canvas.fill(16, 5 + drop, 2, 1, theme.face)
+        case .type:
+            canvas.fill(13, 3 + drop, 4, 2, shade)
+            canvas.fill(16, 3 + drop, 2, 1, theme.face)
+        case .raise:
+            canvas.fill(13, 0, 2, 5, shade)          // forearm, vertical
+            canvas.fill(13, -1, 2, 2, theme.face)    // hand, clipped at the top
+            canvas.fill(12, 4, 2, 2, shade)
+        case .offer:
+            canvas.fill(13, 3, 5, 2, shade)          // arm extended sideways
+            canvas.fill(16, 2, 2, 1, theme.face)
+        }
+        return canvas
+    }
+
+    /// The rig as one still image, composed into a standard character cell.
+    ///
+    /// The office never needs this: it hangs a head node off a body node and
+    /// lets SpriteKit place them. Everything *outside* the office that has to
+    /// show what the built-in look is — the Settings pane, most of all — needs
+    /// one picture, at the same proportions a drawn package would occupy, so
+    /// that the built-in figure can sit in a grid of packages as a peer rather
+    /// than as a diagram of one.
+    ///
+    /// - Parameters:
+    ///   - accent: the hue the figure is built from. The office passes a
+    ///     harness's accent; a surface naming the rig itself rather than any
+    ///     one harness passes Auspex's own.
+    ///   - pose: which pose. `slump` is the idle pose, and the one a still
+    ///     image should show.
+    ///   - cell: the square cell to compose into, in art pixels.
+    func portrait(
+        accent: NSColor,
+        pose: AgentPose = .slump,
+        cell: Int = CharacterManifest.defaultCell
+    ) -> CGImage? {
+        guard cell > 0 else { return nil }
+        let theme = current()
+        let torso = Self.bodyCanvas(accent: accent, pose: pose, theme: theme)
+        let skull = Self.headCanvas(accent: accent, theme: theme)
+        // The scene's own geometry, read back in art pixels: the head's feet
+        // sit this far above the body's. Derived rather than written down, so
+        // a change to the rig's proportions cannot leave a floating head here.
+        let lift = Int((AgentSprite.bodySize.height - 2) / Self.pixelScale)
+
+        var canvas = PixelCanvas(width: cell, height: cell)
+        // Feet on the bottom row, the same rule `docs/CHARACTERS.md` gives
+        // whoever is drawing a package.
+        canvas.blit(torso, x: (cell - torso.width) / 2, y: cell - torso.height)
+        canvas.blit(skull, x: (cell - skull.width) / 2, y: cell - lift - skull.height)
+        return canvas.cgImage()
+    }
+
+    /// The appearance the cached art was baked for.
+    ///
+    /// Anything holding an image derived from the rig has to key its cache on
+    /// this. Baked pixels cannot re-resolve themselves when somebody switches
+    /// to light mode, which is the same bargain ``SceneTheme`` makes.
+    var themeID: String { current().id }
 
     // MARK: - The workstation
 

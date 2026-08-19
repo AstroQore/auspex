@@ -475,7 +475,7 @@ def validate(directory: str) -> Report:
     missing_core = [pose for pose in CORE_POSES if pose not in present]
     if missing_core:
         report.warn(
-            "Not drawn yet, so the placeholder figure is used for: " + ", ".join(missing_core) + "."
+            "Not drawn yet, so the built-in figures are used for: " + ", ".join(missing_core) + "."
         )
 
     report.note(

@@ -73,10 +73,12 @@ struct CharactersSettingsView: View {
                 .foregroundStyle(AuspexPalette.textPrimary)
 
             Text(
-                "Every agent in the office is drawn from a character package — a folder with a "
-                    + "character.json and one frame strip per pose. Drop your own into the "
-                    + "characters folder and it appears here without a relaunch. A pose nobody "
-                    + "has drawn falls back to the built-in placeholder figure."
+                "Every agent in the office is drawn either from a character package — a folder "
+                    + "with a character.json and one frame strip per pose — or from Auspex's own "
+                    + "figures, which are composed in code from the harness's accent. Drop a "
+                    + "package into the characters folder and it appears here without a "
+                    + "relaunch. The built-in figures are always installed, never miss a pose, "
+                    + "and can be chosen for a harness exactly the way a package can."
             )
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.textSecondary)
@@ -106,10 +108,10 @@ struct CharactersSettingsView: View {
     }
 
     private var headline: String {
-        guard !packages.isEmpty else { return "No characters installed." }
+        guard !packages.isEmpty else { return "The built-in figures, and no packages yet." }
         let mine = packages.count { $0.source == .user }
-        let noun = packages.count == 1 ? "character" : "characters"
-        guard mine > 0 else { return "\(packages.count) \(noun), all built in." }
+        let noun = packages.count == 1 ? "package" : "packages"
+        guard mine > 0 else { return "\(packages.count) \(noun), all shipped with Auspex." }
         return "\(packages.count) \(noun), \(mine) of them yours."
     }
 
@@ -139,11 +141,26 @@ struct CharactersSettingsView: View {
     private var packageGrid: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Installed", detail: nil, inset: false)
+            // The built-in figures come first and are always here. They are a
+            // character one can choose, not a footnote about what happens when
+            // a character is missing, so they are shown as a card among the
+            // packages rather than as a sentence underneath them.
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 288), spacing: 12, alignment: .top)],
+                alignment: .leading,
+                spacing: 12
+            ) {
+                BuiltInCharacterCard()
+                ForEach(packages) { package in
+                    CharacterCard(package: package)
+                }
+            }
             if packages.isEmpty {
                 Text(
-                    "Nothing to show yet. A package is a folder holding character.json and "
-                        + "idle.png, thinking.png, typing.png, writing.png, delegating.png, "
-                        + "blocked.png, stale.png and ended.png — any of which may be missing."
+                    "No packages yet. One is a folder holding character.json and idle.png, "
+                        + "thinking.png, typing.png, writing.png, delegating.png, blocked.png, "
+                        + "stale.png and ended.png — any of which may be missing, because a "
+                        + "pose nobody has drawn falls back to the figures above."
                 )
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.textTertiary)
@@ -151,16 +168,6 @@ struct CharactersSettingsView: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .panelChrome()
-            } else {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 288), spacing: 12, alignment: .top)],
-                    alignment: .leading,
-                    spacing: 12
-                ) {
-                    ForEach(packages) { package in
-                        CharacterCard(package: package)
-                    }
-                }
             }
         }
     }
@@ -290,6 +297,53 @@ private struct HarnessCharacterRow: View {
     }
 }
 
+/// Auspex's own figures, as a card among the packages.
+///
+/// It is here because the procedural rig is a *look a person can choose*, not
+/// the consolation prize for an empty folder. A grid that showed only packages
+/// would say the office has nothing installed until somebody draws something,
+/// which has never been true — and would make "Auspex built-in" in the picker
+/// above a name with no picture attached to it.
+private struct BuiltInCharacterCard: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            BuiltInPreviewTile()
+            VStack(alignment: .leading, spacing: 6) {
+                Text(CharacterChoice.builtInDisplayName)
+                    .font(AuspexType.cardTitle)
+                    .foregroundStyle(AuspexPalette.textPrimary)
+                // Where a package shows its id. The rig has none: it is not a
+                // folder, and saying so is more use than an invented one.
+                Text("Built-in · drawn in code")
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 5) {
+                    CharacterChip("Person", tint: AuspexPalette.stateDelegating)
+                    CharacterChip("32 px", tint: AuspexPalette.textSecondary)
+                }
+
+                Text("All 8 poses, always.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AuspexPalette.textTertiary)
+
+                Text(
+                    "Composed from each harness's own accent — the figure above is the shape, "
+                        + "not the colour."
+                )
+                .font(.system(size: 10))
+                .foregroundStyle(AuspexPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelChrome()
+    }
+}
+
 /// One package: what it looks like, where it came from, and what is wrong.
 private struct CharacterCard: View {
     let package: CharacterPackage
@@ -308,9 +362,9 @@ private struct CharacterCard: View {
                     .truncationMode(.middle)
 
                 HStack(spacing: 5) {
-                    chip(package.manifest.kind.displayName, tint: accent)
-                    chip(package.source.displayName, tint: AuspexPalette.textSecondary)
-                    chip("\(package.cell) px", tint: AuspexPalette.textSecondary)
+                    CharacterChip(package.manifest.kind.displayName, tint: accent)
+                    CharacterChip(package.source.displayName, tint: AuspexPalette.textSecondary)
+                    CharacterChip("\(package.cell) px", tint: AuspexPalette.textSecondary)
                 }
 
                 if let harness = package.harness {
@@ -350,10 +404,22 @@ private struct CharacterCard: View {
         guard drawn > 0 else { return "No poses drawn yet." }
         guard !package.missingCorePoses.isEmpty else { return "All 8 poses drawn." }
         let missing = package.missingCorePoses.map(\.rawValue).joined(separator: ", ")
-        return "\(drawn) of 8 poses drawn. Placeholder for: \(missing)."
+        return "\(drawn) of 8 poses drawn. Built-in for: \(missing)."
     }
 
-    private func chip(_ text: String, tint: Color) -> some View {
+}
+
+/// One outlined word on a character card.
+private struct CharacterChip: View {
+    let text: String
+    let tint: Color
+
+    init(_ text: String, tint: Color) {
+        self.text = text
+        self.tint = tint
+    }
+
+    var body: some View {
         Text(text)
             .auspexLabel(AuspexType.labelSmall)
             .foregroundStyle(tint)

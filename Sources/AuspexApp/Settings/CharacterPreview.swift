@@ -38,10 +38,32 @@ enum CharacterPreview {
         return image
     }
 
+    /// Frame 0 of the built-in rig's idle pose.
+    ///
+    /// Drawn in Auspex's own hue rather than any one harness's, because this
+    /// picture stands for all nine: the office builds the same figure from
+    /// whichever accent the desk belongs to, and picking one vendor's orange to
+    /// represent "drawn in code" would say something about the rig that is not
+    /// true.
+    static func builtInImage() -> NSImage? {
+        let art = PlaceholderArt.shared
+        // Keyed on the appearance the rig was baked for. Baked pixels cannot
+        // re-resolve themselves in light mode.
+        let key = art.themeID
+        if let cached = builtInCache[key] { return cached }
+        let accent = NSColor(AuspexPalette.stateDelegating).usingColorSpace(.sRGB) ?? .systemPurple
+        let image = art.portrait(accent: accent).map { cell in
+            NSImage(cgImage: cell, size: NSSize(width: cell.width, height: cell.height))
+        }
+        builtInCache[key] = image
+        return image
+    }
+
     /// Throws every cached preview away. Not needed for correctness — the key
     /// covers an edit on its own — but it is what the Reload button means.
     static func invalidate() {
         cache.removeAll(keepingCapacity: true)
+        builtInCache.removeAll(keepingCapacity: true)
     }
 
     private static func render(_ package: CharacterPackage) -> NSImage? {
@@ -79,6 +101,7 @@ enum CharacterPreview {
     }
 
     private static var cache: [Key: NSImage?] = [:]
+    private static var builtInCache: [String: NSImage?] = [:]
 }
 
 /// A character, drawn at four times its size on the well the rest of the app
@@ -92,12 +115,44 @@ struct CharacterPreviewTile: View {
     var size: CGFloat = CharacterPreview.boxSize
 
     var body: some View {
+        PreviewTile(
+            image: CharacterPreview.image(for: package),
+            size: size,
+            label: "\(package.displayName), \(package.previewPose?.name ?? "no art")"
+        )
+    }
+}
+
+/// The built-in rig, drawn in the same box a package gets.
+///
+/// Same tile, same scale, same well. The whole point of showing the procedural
+/// figure in the grid is that it is a character one can choose, not a note
+/// about what happens when a character is missing — and a preview drawn in some
+/// other size would say the opposite.
+struct BuiltInPreviewTile: View {
+    var size: CGFloat = CharacterPreview.boxSize
+
+    var body: some View {
+        PreviewTile(
+            image: CharacterPreview.builtInImage(),
+            size: size,
+            label: "\(CharacterChoice.builtInDisplayName), idle"
+        )
+    }
+}
+
+private struct PreviewTile: View {
+    let image: NSImage?
+    let size: CGFloat
+    let label: String
+
+    var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(AuspexPalette.well)
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
-            if let image = CharacterPreview.image(for: package) {
+            if let image {
                 Image(nsImage: image)
                     .interpolation(.none)
                     .resizable()
@@ -114,6 +169,6 @@ struct CharacterPreviewTile: View {
             }
         }
         .frame(width: size, height: size)
-        .accessibilityLabel("\(package.displayName), \(package.previewPose?.name ?? "no art")")
+        .accessibilityLabel(label)
     }
 }
