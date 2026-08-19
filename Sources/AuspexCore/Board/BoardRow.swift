@@ -198,21 +198,38 @@ public struct BoardRowBuilder: Sendable {
     /// memory by the board model and passed in whole, so that deciding whether
     /// a card is unread is a dictionary lookup rather than a query per card.
     private let seenAt: [SessionKey: Date]
+    /// Briefs rebuilt from the store, for sessions whose own is still empty.
+    ///
+    /// A dictionary rather than a lookup, and that is the whole design: a row
+    /// is derived on the frame stream, several hundred times per frame, and a
+    /// builder that could go to SQLite would be a query on the path that has to
+    /// stay off it. The caller derives these once — ``BriefBackfill`` is what
+    /// derives them — and passes the same map in every frame, so the cost here
+    /// is one hash lookup for a session that has nothing else to show.
+    ///
+    /// Empty by default. A board whose sessions all carry their own brief never
+    /// reads it.
+    private let briefs: [SessionKey: SessionBrief]
 
-    public init(board: BoardSnapshot, seenAt: [SessionKey: Date] = [:]) {
+    public init(
+        board: BoardSnapshot,
+        seenAt: [SessionKey: Date] = [:],
+        briefs: [SessionKey: SessionBrief] = [:]
+    ) {
         self.board = board
         var index: [SessionKey: SessionSnapshot] = [:]
         index.reserveCapacity(board.sessions.count)
         for session in board.sessions { index[session.key] = session }
         self.bySession = index
         self.seenAt = seenAt
+        self.briefs = briefs
     }
 
     /// The row for one session.
     public func row(for session: SessionSnapshot, depth: Int = 0) -> BoardRow {
         let project = board.projectKey(for: session).map(BoardGrouping.projectName(forPath:))
-        let brief = session.brief
-        let title = Self.title(for: session, project: project)
+        let brief = brief(for: session)
+        let title = Self.title(for: session, project: project, brief: brief)
         return BoardRow(
             key: session.key,
             harness: session.key.harness,
@@ -256,6 +273,17 @@ public struct BoardRowBuilder: Sendable {
         sessions.map { row(for: $0) }
     }
 
+    /// What this session was asked to do: its own brief, or the one rebuilt
+    /// from what the store already held when it has none.
+    ///
+    /// Only an *empty* brief is substituted. A session the pipeline is folding
+    /// events for knows more than any reconstruction can, and a fallback that
+    /// second-guessed it would show a stale assignment on a live card.
+    func brief(for session: SessionSnapshot) -> SessionBrief {
+        guard session.brief.isEmpty, let derived = briefs[session.key] else { return session.brief }
+        return derived
+    }
+
     /// The parent's chip, when the board still holds the parent.
     ///
     /// `nil` when it does not: a chip naming a card that is not there would be
@@ -280,8 +308,24 @@ public struct BoardRowBuilder: Sendable {
     /// Never invented. A session whose store recorded none of the three shows
     /// its own id, which at least identifies it.
     public static func title(for session: SessionSnapshot, project: String?) -> String {
+        title(for: session, project: project, brief: session.brief)
+    }
+
+    /// The headline, against a brief that may have been rebuilt rather than
+    /// folded — see ``brief(for:)``.
+    ///
+    /// The overload exists so the title and the "asked:" line below it are read
+    /// off the *same* brief. A card whose headline came from the session's own
+    /// empty brief and whose body came from a reconstructed one would show the
+    /// assignment twice, which is the one thing
+    /// ``SessionBrief/followUpPrompt`` exists to prevent.
+    public static func title(
+        for session: SessionSnapshot,
+        project: String?,
+        brief: SessionBrief
+    ) -> String {
         if let title = session.identity.title, !title.isEmpty { return title }
-        if let task = session.brief.firstPrompt, !task.isEmpty { return task }
+        if let task = brief.firstPrompt, !task.isEmpty { return task }
         if let project { return project }
         return String(session.key.sessionID.prefix(12))
     }
