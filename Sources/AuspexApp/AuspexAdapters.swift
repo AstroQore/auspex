@@ -25,6 +25,7 @@ enum AuspexAdapters {
             CodexLiveAdapter(),
             CursorLiveAdapter(),
             GrokLiveAdapter(),
+            GrokBotLiveAdapter(),
             AntigravityLiveAdapter(),
         ]
     }
@@ -100,15 +101,19 @@ enum AuspexAdapters {
     /// The harnesses the board's empty state and the Harnesses page list, in
     /// display order.
     ///
-    /// The seven a person can actually be running on this Mac, grouped by
+    /// The eight a person can actually be running on this Mac, grouped by
     /// vendor. Claude Cowork and ChatGPT Work are here because they are
     /// harnesses in their own right — Cowork has its own store inside
     /// Claude.app, and ChatGPT Work is a different plan on a shared one — and
     /// folding either into its sibling would attribute its work to the wrong
-    /// row. Gemini CLI is the one left out: it is deprecated, it has no live
-    /// adapter, and a status panel that listed every case in the catalog would
-    /// be a specification rather than a status panel.
+    /// row. Grok Bot sits after Grok Build for the same reason and a stronger
+    /// one: they share a company, a mark, and nothing else, and a person
+    /// running the desktop bot client is running something Grok Build cannot
+    /// account for. Gemini CLI is the one left out: it is deprecated, it has
+    /// no live adapter, and a status panel that listed every case in the
+    /// catalog would be a specification rather than a status panel.
     static let featured: [Harness] = [
-        .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor, .grokBuild, .antigravity
+        .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor,
+        .grokBuild, .grokBot, .antigravity
     ]
 }

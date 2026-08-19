@@ -53,6 +53,16 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
         .testTarget(
+            name: "AuspexAppTests",
+            dependencies: [
+                "AuspexApp",
+                "AuspexCore",
+                .product(name: "AgentSessionKit", package: "agent-session-kit"),
+                .product(name: "AgentSessionLive", package: "agent-session-kit")
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
             name: "AuspexCoreTests",
             dependencies: [
                 "AuspexCore",
