@@ -193,6 +193,216 @@ struct CrewEngineTests {
         }
     }
 
+    // MARK: Easing
+
+    /// The one property that separates this port's transitions from the ones
+    /// that were called stiff: the body does not move at a constant rate.
+    ///
+    /// Measured the way an eye measures it — the distance between consecutive
+    /// frames. A linear morph gives the same gap every frame; an ease-in-out
+    /// gives a small gap, a big one, a small one. Taking the mean radius about
+    /// the outline's own centroid rather than the reach from the origin is what
+    /// makes the number mean "how much did the shape change" and not "where did
+    /// it drift to".
+    @Test("a morph accelerates through its middle and decelerates out of it")
+    func morphIsNotLinear() {
+        var engine = BloubEngine(state: .idle, shape: .circle, expression: .neutral)
+        let change = 5.0
+        engine.setState(.sleep, at: change)
+        let duration = BloubTransition.duration(BloubStates.state(.sleep).morph)
+
+        let step = 0.01
+        let count = Int((duration / step).rounded())
+        var deltas: [Double] = []
+        var previous = Self.meanRadius(engine.sample(change))
+        for i in 1...count {
+            let radius = Self.meanRadius(engine.sample(change + Double(i) * step))
+            deltas.append(abs(radius - previous))
+            previous = radius
+        }
+
+        let third = deltas.count / 3
+        func mean(_ slice: ArraySlice<Double>) -> Double {
+            slice.reduce(0, +) / Double(slice.count)
+        }
+        let first = mean(deltas[..<third])
+        let middle = mean(deltas[third..<(third * 2)])
+        let last = mean(deltas[(third * 2)...])
+
+        // accelerates in, decelerates out
+        #expect(first < middle)
+        #expect(last < middle)
+        // and by a margin nobody could mistake for sampling noise: the cubic
+        // puts about four and a half times as much travel in the middle third
+        #expect(middle > first * 2)
+        #expect(middle > last * 2)
+        // never constant, which is what a linear ramp would give
+        #expect((deltas.max() ?? 0) > (deltas.min() ?? 1) * 3)
+    }
+
+    /// The mean distance from the outline to its own centroid, in viewBox
+    /// units: "how big is this shape", with the drift divided out.
+    private static func meanRadius(_ frame: BloubFrame) -> Double {
+        let points = frame.body.curves.map(\.end)
+        guard !points.isEmpty else { return 0 }
+        let n = Double(points.count)
+        let cx = points.reduce(0) { $0 + $1.x } / n
+        let cy = points.reduce(0) { $0 + $1.y } / n
+        return points.reduce(0) { $0 + hypot($1.x - cx, $1.y - cy) } / n
+    }
+
+    /// A blink is not a triangle wave. The lid falls on an ease-in over 45 % of
+    /// the blink and rises on an ease-out over the other 55 %, so shutting is
+    /// both shorter and faster than opening.
+    @Test("the blink curve is asymmetric — shut fast, open slow")
+    func blinkIsAsymmetric() {
+        // 1.4 s is the first scheduled blink, and nothing else is happening.
+        let start = 1.4
+        let span = BloubFace.blinkDuration
+        func lid(_ k: Double) -> Double { BloubFace.liveliness(start + k * span).lid }
+
+        // Shut somewhere in the middle, open at both ends.
+        #expect(lid(0) > 0.99)
+        #expect(lid(0.45) < 0.01)
+        #expect(lid(1) > 0.99)
+
+        // How far either side of the shut point the lid is half-way.
+        func halfway(_ from: Double, _ to: Double) -> Double {
+            var k = from
+            let step = (to - from) / 4_000
+            while abs(k - to) > abs(step) {
+                if (from < to && lid(k) <= 0.5) || (from > to && lid(k) <= 0.5) { break }
+                k += step
+            }
+            return k
+        }
+        let closing = 0.45 - halfway(0, 0.45)
+        let opening = halfway(1, 0.45) - 0.45
+        #expect(closing > 0)
+        #expect(opening > closing * 1.15)
+
+        // And the fastest part of shutting is faster than the fastest part of
+        // opening — the "fast shut, slower reopen" the reference asks for.
+        func speed(_ k: Double) -> Double { abs(lid(k + 0.001) - lid(k - 0.001)) }
+        let shutting = stride(from: 0.02, to: 0.44, by: 0.005).map(speed).max() ?? 0
+        let reopening = stride(from: 0.46, to: 0.98, by: 0.005).map(speed).max() ?? 0
+        #expect(shutting > reopening)
+    }
+
+    /// The face trails the body by ``BloubTransition/eyeLag``, so the head
+    /// follows the shape rather than moving with it.
+    @Test("the eyes are still arriving when the body has settled")
+    func eyesTrailTheBody() {
+        var engine = BloubEngine(state: .idle, shape: .circle, expression: .neutral)
+        engine.setState(.wide, at: 5)
+        let duration = BloubTransition.duration(BloubStates.state(.wide).morph)
+        let settled = engine.sample(9).eyes[0].width
+
+        // The body's morph is over here; the eyes are not.
+        #expect(engine.sample(5 + duration).eyes[0].width < settled)
+        // One eye-lag later they are.
+        let arrived = engine.sample(5 + duration + BloubTransition.eyeLag + 0.001).eyes[0].width
+        #expect(abs(arrived - settled) < 1e-9)
+    }
+
+    /// Spinning something up by multiplying its *angle* by a ramp overshoots
+    /// cruise and falls back to it; integrating the ramp does not. This is the
+    /// mechanism the orbit's rotation rests on.
+    @Test("an eased spin-up leaves from rest and never overshoots cruise")
+    func easedSpinUp() {
+        let span = 0.5
+        func speed(_ t: Double) -> Double {
+            (BloubMath.easedTravel(t + 1e-6, span: span)
+                - BloubMath.easedTravel(t - 1e-6, span: span)) / 2e-6
+        }
+        #expect(speed(0.002) < 0.02)
+        #expect(abs(speed(span) - 1) < 0.01)
+        #expect(abs(speed(span * 3) - 1) < 1e-6)
+        for i in 0...200 {
+            #expect(speed(Double(i) * span / 100) <= 1.0001)
+        }
+    }
+
+    /// The thinking dots used to be a half-cosine doubled and clamped, which
+    /// dropped a dot from full brightness to nothing between two frames. A
+    /// pulse may be sharp; it may not have an edge in it.
+    @Test("the thinking dots pulse without an on/off edge")
+    func thinkingPulseHasNoEdge() {
+        let pose = BloubStates.state(.thinking).pose
+        var previous: [Double]?
+        var biggestStep = 0.0
+        for i in 0...4_000 {
+            let opacities = pose(Double(i) * 0.001).dots.map(\.opacity)
+            if let previous, previous.count == opacities.count {
+                for (a, b) in zip(previous, opacities) {
+                    biggestStep = max(biggestStep, abs(a - b))
+                }
+            }
+            previous = opacities
+        }
+        // A millisecond apart. The clamped version stepped by 0.45 here.
+        #expect(biggestStep < 0.01)
+    }
+
+    /// A blanket guard over the catalogue: nothing any state draws may change
+    /// size or place in a jump, whatever else it does.
+    @Test("no state's silhouette moves in a jump")
+    func silhouettesAreContinuous() {
+        for def in BloubStates.all {
+            var previousRadius: Double?
+            var previousCentre: Double?
+            for i in 0...Int(def.duration * 1_000) {
+                let s = def.pose(Double(i) / 1_000).silhouette
+                let radius = s.radii.reduce(0, +) / Double(s.radii.count)
+                let centre = hypot(s.centerX, s.centerY)
+                if let previousRadius {
+                    #expect(abs(radius - previousRadius) < 0.01, "\(def.id) radius at \(i) ms")
+                }
+                if let previousCentre {
+                    #expect(abs(centre - previousCentre) < 0.01, "\(def.id) centre at \(i) ms")
+                }
+                previousRadius = radius
+                previousCentre = centre
+            }
+        }
+    }
+
+    // MARK: The resting walk
+
+    /// The wall's drift model: continuous, inside bloub's own amplitudes, and
+    /// genuinely different from one avatar to the next.
+    @Test("each seed gives its own continuous resting drift")
+    func wanderIsPerAvatar() {
+        for seed in [UInt32(1), 7, 4_242, 99_991] {
+            var previous: BloubLiveliness?
+            var biggestStep = 0.0
+            var reach = 0.0
+            for i in 0...6_000 {
+                let life = BloubFace.liveliness(Double(i) * 0.01, drift: .wander(seed: seed))
+                if let previous {
+                    biggestStep = max(biggestStep, abs(life.deltaYaw - previous.deltaYaw))
+                    biggestStep = max(biggestStep, abs(life.deltaPitch - previous.deltaPitch))
+                }
+                reach = max(reach, max(abs(life.deltaYaw), abs(life.deltaPitch)))
+                previous = life
+            }
+            // 10 ms apart: a walk, not a set of teleports.
+            #expect(biggestStep < 0.5, "seed \(seed) stepped \(biggestStep)°")
+            // and it stays inside the range bloub's own noise covers
+            #expect(reach < 9, "seed \(seed) reached \(reach)°")
+            #expect(reach > 3, "seed \(seed) only reached \(reach)°")
+        }
+        // Two avatars are not looking the same way at the same moment.
+        let apart = (0...40).map { i -> Double in
+            let t = Double(i) * 0.25
+            return abs(
+                BloubFace.liveliness(t, drift: .wander(seed: 1)).deltaYaw
+                    - BloubFace.liveliness(t, drift: .wander(seed: 2)).deltaYaw
+            )
+        }
+        #expect((apart.reduce(0, +) / Double(apart.count)) > 1)
+    }
+
     // MARK: The forced blink
 
     /// A state change into a `blinkIn` state still blinks — but the blink is
