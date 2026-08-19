@@ -1,5 +1,11 @@
 // Ported from bloub — https://github.com/jeremy-prt/bloub
 // MIT License, © 2026 Jérémy Perret. See THIRD_PARTY_NOTICES.md.
+//
+// Deviation, on purpose: the *timing* of the transitions in this file is
+// Auspex's, not bloub's — a visible eased morph rather than a change hidden in
+// a blink, and no straight lines left in the catalogue. Every pose, silhouette,
+// amplitude and gaze angle is still the measurement. See BloubTransition.swift
+// and THIRD_PARTY_NOTICES.md.
 
 import Foundation
 

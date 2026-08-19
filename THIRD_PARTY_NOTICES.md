@@ -18,6 +18,18 @@ avatar per session and supplies its own colours; bloub's own colour palette is
 carried only so a frame produced here can be compared against one produced
 there. Each ported file carries the notice in its header.
 
+**Where the port deliberately leaves the measurements.** The poses, silhouettes,
+decor, gaze angles, eye capsules and amplitudes are bloub's and stay untouched.
+The *timing of the transitions between them* is Auspex's own, because bloub is a
+montage watched at illustration size and this is a wall of 200-point cards
+watched out of the corner of an eye: a state change is a visible 420–600 ms
+ease-in-out with the face trailing the body by 60 ms, rather than a 0.2 s blink
+that hides the change; the blink survives, centred on the morph's midpoint. For
+the same reason the catalogue's few straight lines — the orbit's spin-up, the
+"!"'s return, the swoosh's sweep, the thinking dots' clamped pulse and the decor
+opacity ramps — are eased here. `Sources/AuspexCore/Crew/BloubTransition.swift`
+holds the whole deviation and the reasoning for it in one place.
+
 ## Brand marks
 
 `Sources/AuspexApp/Resources/ProviderIcons/` carries the vendor marks Auspex uses to identify
