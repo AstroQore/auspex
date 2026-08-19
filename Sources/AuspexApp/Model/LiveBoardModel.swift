@@ -195,6 +195,27 @@ final class LiveBoardModel {
     /// go to SQLite to find out whether it is unread.
     private(set) var seenAt: [SessionKey: Date] = [:]
 
+    /// Briefs rebuilt from the store, for sessions the pipeline never folded
+    /// one for — see ``BriefBackfill``.
+    ///
+    /// A card reads one of these only when its own brief is empty. The map is
+    /// built once, off the main actor, and handed over whole; the row builder
+    /// then costs one hash lookup rather than a query it must never make.
+    private(set) var derivedBriefs: [SessionKey: SessionBrief] = [:]
+
+    /// Hands the board the briefs a backfill rebuilt, and redraws.
+    ///
+    /// Sessions the registry already holds get theirs through
+    /// ``SessionRegistry/applyBriefs(_:)``; this covers the ones it does not —
+    /// bootstrap loads the most recent few hundred, and a session past that
+    /// limit is seeded from its next event with a brief the store already knows
+    /// better than.
+    func setDerivedBriefs(_ briefs: [SessionKey: SessionBrief]) {
+        guard !briefs.isEmpty else { return }
+        derivedBriefs = briefs
+        rebuildGroups()
+    }
+
     /// The card the detail pane is about.
     var selectedKey: SessionKey? {
         didSet {
@@ -280,7 +301,7 @@ final class LiveBoardModel {
         for session in board.sessions { index[session.key] = session }
         sessionIndex = index
 
-        let builder = BoardRowBuilder(board: board, seenAt: seenAt)
+        let builder = BoardRowBuilder(board: board, seenAt: seenAt, briefs: derivedBriefs)
         let groups = BoardGrouping.groups(
             for: board,
             groupBy: groupBy,

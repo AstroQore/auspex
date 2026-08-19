@@ -232,7 +232,19 @@ public final class AppEnvironment {
                 let report = try BriefBackfill(store: store).runIfNeeded()
                 guard report.didRun else { return }
                 await registry.applyBriefs(report.briefs)
-                guard report.updated > 0 else { return }
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    // For the sessions the registry does not hold: bootstrap
+                    // loads the most recent few hundred, and one past that
+                    // limit is seeded from its next event with a brief the
+                    // store already knows better than.
+                    board.setDerivedBriefs(report.briefs)
+                    // The pass may have decided, on the person's behalf, that
+                    // sessions quiet for two days have been read. The board
+                    // read `session_views` before that happened.
+                    board.loadSeen()
+                }
+                guard report.updated > 0 || report.markedSeen > 0 else { return }
                 await self?.board.record(notice: "Auspex \(report.summary).")
             } catch {
                 await self?.board.record(
