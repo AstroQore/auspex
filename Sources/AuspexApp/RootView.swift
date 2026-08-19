@@ -43,7 +43,9 @@ struct RootView: View {
         @Bindable var model = model
 
         Group {
-            if let section, section.isAvailable {
+            if section == .harnesses {
+                HarnessesView(model: environment.harnesses, board: model.board)
+            } else if let section, section.isAvailable {
                 BoardView(model: model)
             } else {
                 ComingSoonView(section: section ?? .live)

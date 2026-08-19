@@ -34,6 +34,21 @@ enum AuspexAdapters {
         Set(all.map(\.harness))
     }
 
+    /// The directories each adapter actually watches, by harness.
+    ///
+    /// Asked of the adapters rather than derived from
+    /// ``storeDescription(for:)``, because the Harnesses page says whether a
+    /// store *exists on this Mac* — and a detection answer about a path no
+    /// tailer opens would be worse than no answer. A harness with several roots
+    /// keeps all of them: it counts as detected if any one is there.
+    static func watchRoots(home: String) -> [Harness: [URL]] {
+        var roots: [Harness: [URL]] = [:]
+        for adapter in all {
+            roots[adapter.harness, default: []].append(contentsOf: adapter.watchRoots(home: home))
+        }
+        return roots
+    }
+
     /// Where each harness keeps the sessions Auspex would read, for display.
     ///
     /// Descriptive, not operational: the real roots come from each adapter's

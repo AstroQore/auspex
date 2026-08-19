@@ -64,6 +64,9 @@ public final class AppEnvironment {
     /// Sidebar destinations.
     public let sections: [BoardSection] = BoardSection.allCases
 
+    /// The Harnesses page: detection, counts, and MCP configuration.
+    let harnesses = HarnessStatusModel()
+
     /// The sidebar's project tree.
     let projects = ProjectsModel()
 
@@ -123,6 +126,10 @@ public final class AppEnvironment {
         board.autoSelectsFirstSession = mode == .demo
         board.start(registry: registry, repository: SessionRepository(store: store))
         projects.start(repository: ProjectRepository(store: store))
+        harnesses.start(
+            home: paths.homeDirectory,
+            watchRoots: AuspexAdapters.watchRoots(home: paths.homeDirectory.path)
+        )
 
         // Buffered generously: a harness flushing a whole turn can put a few
         // hundred events in flight before the registry drains any of them, and
@@ -185,6 +192,7 @@ public final class AppEnvironment {
         tasks.removeAll()
         board.stop()
         projects.stop()
+        harnesses.stop()
         eventContinuation?.finish()
         eventContinuation = nil
         await coordinator?.stop()
@@ -291,8 +299,7 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     /// The milestone this section arrives in, or `nil` when it is here.
     public var arrivesIn: String? {
         switch self {
-        case .live: nil
-        case .projects, .harnesses: "M2"
+        case .live, .projects, .harnesses: nil
         case .tasks, .settings: "M3"
         }
     }
