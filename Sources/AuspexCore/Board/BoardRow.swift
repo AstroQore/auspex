@@ -248,7 +248,11 @@ public struct BoardRowBuilder: Sendable {
         case .delegating(let children):
             return children == 1 ? "1 child session" : "\(children) child sessions"
         case .waitingPermission(let tool):
-            return tool ?? "a tool"
+            // A harness that names the tool is asking about *that* call.
+            // Grok Bot's roster carries a flag and no tool name, and "a tool"
+            // would be inventing one — its bot is waiting on an answer, not on
+            // an approval.
+            return tool ?? "an answer"
         case .ended(let reason):
             return "exited · \(reason.rawValue)"
         case .idle:
