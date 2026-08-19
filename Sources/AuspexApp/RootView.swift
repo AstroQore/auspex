@@ -18,7 +18,12 @@ struct RootView: View {
         @Bindable var model = environment.board
 
         NavigationSplitView {
-            SidebarView(section: $section, model: model, mode: environment.mode)
+            SidebarView(
+                section: $section,
+                model: model,
+                projects: environment.projects,
+                mode: environment.mode
+            )
         } content: {
             boardColumn(model: model)
         } detail: {
@@ -88,16 +93,32 @@ struct RootView: View {
     }
 }
 
-/// The sidebar: where the app is now, and where it is going.
+/// The sidebar: where the app is now, what is being worked on, and where the
+/// app is going.
+///
+/// Two lists in one column. The destinations at the top are a table of
+/// contents and never change; the project tree under them is the live half,
+/// and it is the reason the column is wider than a list of five words needs.
+/// `Projects` is not one of the destinations — the tree *is* the projects
+/// section, and a row that pushed a second view of the same thing would be a
+/// row that has to explain itself.
 struct SidebarView: View {
     @Binding var section: BoardSection?
-    let model: LiveBoardModel
+    @Bindable var model: LiveBoardModel
+    let projects: ProjectsModel
     let mode: AppEnvironment.Mode
 
+    /// The destinations, minus the one the tree below already is.
+    private var destinations: [BoardSection] {
+        BoardSection.allCases.filter { $0 != .projects }
+    }
+
     var body: some View {
+        let tree = projects.tree(for: model.board)
+
         List(selection: $section) {
             Section {
-                ForEach(BoardSection.allCases) { item in
+                ForEach(destinations) { item in
                     SidebarRow(section: item, liveCount: item == .live ? model.board.counts.live : nil)
                         .tag(item)
                         .disabled(!item.isAvailable)
@@ -106,6 +127,25 @@ struct SidebarView: View {
                 Text("Board")
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.textTertiary)
+            }
+
+            Section {
+                ProjectsSidebar(
+                    tree: tree,
+                    model: projects,
+                    projectFilter: model.projectFilter,
+                    selectedKey: model.selectedKey,
+                    onSelectProject: { key in
+                        model.toggleProjectFilter(key)
+                        section = .live
+                    },
+                    onSelectSession: { key in
+                        model.selectedKey = key
+                        section = .live
+                    }
+                )
+            } header: {
+                projectsHeader(tree: tree)
             }
 
             if mode == .demo {
@@ -118,8 +158,33 @@ struct SidebarView: View {
                 }
             }
         }
-        .navigationSplitViewColumnWidth(min: 176, ideal: 200, max: 260)
+        .navigationSplitViewColumnWidth(min: 200, ideal: 244, max: 340)
         .navigationTitle("Auspex")
+    }
+
+    /// The tree's header, which doubles as the filter's off switch — the only
+    /// place a person who has filtered the wall can reliably find one.
+    private func projectsHeader(tree: ProjectTree) -> some View {
+        HStack(spacing: 5) {
+            Text(BoardSection.projects.title)
+                .auspexLabel(AuspexType.labelSmall)
+            Text("\(tree.projects.count)")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+            Spacer(minLength: 4)
+            if model.projectFilter != nil {
+                Button { model.projectFilter = nil } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.system(size: 8, weight: .bold))
+                        Text("Clear").auspexLabel(AuspexType.labelSmall)
+                    }
+                    .foregroundStyle(AuspexPalette.stateThinking)
+                }
+                .buttonStyle(.plain)
+                .help("Show every project on the board")
+            }
+        }
+        .foregroundStyle(AuspexPalette.textTertiary)
     }
 
     /// A running demo has to say so on screen. Everything on the board is

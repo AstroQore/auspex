@@ -64,6 +64,9 @@ public final class AppEnvironment {
     /// Sidebar destinations.
     public let sections: [BoardSection] = BoardSection.allCases
 
+    /// The sidebar's project tree.
+    let projects = ProjectsModel()
+
     private var registry: SessionRegistry?
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
@@ -119,6 +122,7 @@ public final class AppEnvironment {
         self.registry = registry
         board.autoSelectsFirstSession = mode == .demo
         board.start(registry: registry, repository: SessionRepository(store: store))
+        projects.start(repository: ProjectRepository(store: store))
 
         // Buffered generously: a harness flushing a whole turn can put a few
         // hundred events in flight before the registry drains any of them, and
@@ -180,6 +184,7 @@ public final class AppEnvironment {
         for task in tasks { task.cancel() }
         tasks.removeAll()
         board.stop()
+        projects.stop()
         eventContinuation?.finish()
         eventContinuation = nil
         await coordinator?.stop()

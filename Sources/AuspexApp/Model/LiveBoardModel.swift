@@ -51,6 +51,18 @@ final class LiveBoardModel {
         didSet { if oldValue != harnessFilter { rebuildGroups() } }
     }
 
+    /// The one project the wall is showing, as the key
+    /// ``BoardSnapshot/projectKey(for:)`` answers with. `nil` shows all of
+    /// them.
+    ///
+    /// Set by clicking a project in the sidebar and cleared by clicking it
+    /// again, which is why it is a single value rather than a set: the sidebar
+    /// row is a place to *go*, and a multi-select there would need a control of
+    /// its own to be discoverable at all.
+    var projectFilter: String? {
+        didSet { if oldValue != projectFilter { rebuildGroups() } }
+    }
+
     /// The card the detail pane is about.
     var selectedKey: SessionKey? {
         didSet {
@@ -77,8 +89,19 @@ final class LiveBoardModel {
         groups = BoardGrouping.groups(
             for: board,
             groupBy: groupBy,
-            harnessFilter: harnessFilter
+            harnessFilter: harnessFilter,
+            projectFilter: projectFilter
         )
+    }
+
+    /// Turns the project filter on, or off if it is already on this project.
+    func toggleProjectFilter(_ key: String) {
+        projectFilter = projectFilter == key ? nil : key
+    }
+
+    /// What the filtered project is called, for the bar over the wall.
+    var projectFilterName: String? {
+        projectFilter.map(BoardGrouping.projectName(forPath:))
     }
 
     /// The selected session's live snapshot, when the board still has one.
@@ -90,6 +113,24 @@ final class LiveBoardModel {
     /// knows it. Drives the "spawned by" link in the trace header.
     var selectedParent: SessionSnapshot? {
         selectedSession?.identity.parent.flatMap { board.session(for: $0) }
+    }
+
+    /// What the selected session spawned, direct children only, in board
+    /// order.
+    ///
+    /// Taken from the frame's own forest rather than from
+    /// ``SessionSnapshot/children``, because that list is what the *adapter*
+    /// recorded — it has no way to know about a `codex exec` the process table
+    /// linked up three seconds ago, and the header should show both kinds of
+    /// child the same way.
+    var selectedChildren: [SessionSnapshot] {
+        guard let key = selectedKey else { return [] }
+        return board.tree.node(for: key)?.children.compactMap { board.session(for: $0.key) } ?? []
+    }
+
+    /// How many sessions the selected one has below it, at any depth.
+    func descendantCount(of key: SessionKey) -> Int {
+        board.tree.descendants(of: key).count
     }
 
     /// Whether any session has ever been seen. Distinguishes "watching, and

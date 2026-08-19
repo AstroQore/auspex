@@ -37,6 +37,32 @@ struct SessionCard: View, Equatable {
     let session: SessionSnapshot
     let isSelected: Bool
     let reduceMotion: Bool
+    /// How many sessions are below this one in the delegation forest.
+    ///
+    /// Not the same number as `state.childCount`, which counts only the
+    /// children *still running* and only the ones this session's own log
+    /// recorded. This is what the board can see: every descendant, including a
+    /// `codex exec` the process table linked up and a child that has finished.
+    var descendantCount: Int = 0
+    /// The session that spawned this one, when the board still holds it.
+    var parentTitle: (key: SessionKey, title: String)?
+    var onSelectParent: (SessionKey) -> Void = { _ in }
+
+    /// Equality is over the values that are drawn. The closure is not one of
+    /// them — it is the same action on every card — and comparing functions is
+    /// not a thing Swift will do anyway.
+    ///
+    /// `nonisolated` because a synthesised `==` on a `@MainActor` view is
+    /// itself main-actor isolated, and `.equatable()` calls it from wherever
+    /// SwiftUI's diff runs. Nothing it touches is mutable state.
+    nonisolated static func == (lhs: SessionCard, rhs: SessionCard) -> Bool {
+        lhs.session == rhs.session
+            && lhs.isSelected == rhs.isSelected
+            && lhs.reduceMotion == rhs.reduceMotion
+            && lhs.descendantCount == rhs.descendantCount
+            && lhs.parentTitle?.key == rhs.parentTitle?.key
+            && lhs.parentTitle?.title == rhs.parentTitle?.title
+    }
 
     var body: some View {
         let style = session.state.style
@@ -56,6 +82,7 @@ struct SessionCard: View, Equatable {
                 Divider().overlay(AuspexPalette.hairline)
                 activity(style: style)
                 Spacer(minLength: 6)
+                lineage
                 footer
                 PulseLine(
                     motion: style.motion,
@@ -198,6 +225,60 @@ struct SessionCard: View, Equatable {
             Text(label)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.textTertiary)
+        }
+    }
+
+    /// Where this card sits in the delegation forest — up, down, or neither.
+    ///
+    /// Only drawn when there is something to say, which on most walls is a
+    /// minority of cards. Up is a *link*: a chip naming the parent, and
+    /// clicking it moves the inspector there, because "what asked for this" is
+    /// a question whose answer is another card. Down is a *count*: the children
+    /// are already on the board, and thirteen chips would be a card nobody can
+    /// read.
+    @ViewBuilder
+    private var lineage: some View {
+        if parentTitle != nil || descendantCount > 0 {
+            HStack(spacing: 5) {
+                if let parent = parentTitle {
+                    Button {
+                        onSelectParent(parent.key)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "arrow.turn.left.up")
+                                .font(.system(size: 7, weight: .bold))
+                            Text(parent.title)
+                                .font(AuspexType.monoSmall)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .foregroundStyle(AuspexPalette.stateDelegating)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .overlay(
+                            Capsule().strokeBorder(
+                                AuspexPalette.stateDelegating.opacity(0.4), lineWidth: 1
+                            )
+                        )
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open the session that spawned this one")
+                }
+                if descendantCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 7, weight: .bold))
+                        Text(descendantCount == 1 ? "1 child" : "\(descendantCount) children")
+                            .auspexLabel(AuspexType.labelSmall)
+                    }
+                    .foregroundStyle(AuspexPalette.stateDelegating.opacity(0.85))
+                    .accessibilityLabel("\(descendantCount) sessions below this one")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 5)
         }
     }
 
