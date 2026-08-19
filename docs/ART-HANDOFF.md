@@ -1,5 +1,11 @@
 # Auspex 美术素材交接（给 Codex / imagegen 流水线）
 
+> ## ⛔ 硬性要求（违反即整批退回）
+> 1. **所有角色一律是非人类的像素宠物/小生物**——参考 Claude Code / Codex 自带的 pets（小怪兽、小动物、幽灵、史莱姆、小机器人、小龙、鸟、猫、章鱼……）。**不允许出现任何人类**：不要人脸、不要人手、不要发型、不要衣服/裤子/鞋、不要办公椅上坐着的人。已生成的"人物"素材全部作废重来。
+> 2. 每个 harness 一个**固定物种 + 固定主色**（见 §4 表），同门 harness 用同物种不同配饰区分。
+> 3. 全部**全名**、无缩写；harness 标识用厂商真 logo（§0.3）。
+> 4. 像素风：逐像素、无抗锯齿、透明底、横向单行帧条、第 0 帧可单独用（§0.1）。
+
 > **优先级**：§4 角色 atlas（先 `blocked`）→ §5 家具 → §8 气泡 → §6 显示器画面 → §1 App 图标 → §2 菜单栏 → §3 应用内图标 → §7 特效 → §9 UI 动画/空状态 → §1.4 衍生物料。
 > 目标：一次性产出 Auspex 需要的全部视觉素材——**图标包**（App 图标全尺寸 + 分层源 + 菜单栏 + 应用内图标集）、**俯视像素办公室**（角色 / 家具 / 地板 / 显示器画面 / 环境与特效 atlas / 气泡）、**UI 小动画帧**、**空状态与发布物料**。
 > 风格标杆：Pixel Agents 那种 3/4 俯视、温暖干净的 16 位像素办公室；UI 面是深色克制的 macOS 原生风。当前程序占位画面见 `docs/screenshots/scene.png`、`board.png`。
@@ -89,39 +95,40 @@ Auspex = 古罗马**观鸟占卜的祭司**。
 
 ---
 
-## 4. 角色 atlas（场景核心，最先做）
+## 4. 角色 atlas（场景核心，最先做）—— **像素宠物，不是人**
 
 路径：`Resources/Sprites/<harness>/<variant>/<pose>.png`
-harness 文件夹名（严格，这是代码里的枚举原值，仅用于路径）：`claudeCode` `claudeCowork` `codex` `chatgptWork` `cursor` `grokBuild` `grokBot` `antigravity`（可选 `geminiCLI`）；variant 先只做 `default`（后续可加 `cli` 卫衣版 / `ide` 耳机版）。**界面上任何地方展示的都是全名**（Claude Code、Claude Cowork、Codex、ChatGPT Work、Cursor、Grok Build、Grok Bot、AntiGravity），不出现缩写。
+harness 文件夹名（严格，代码枚举原值，仅用于路径）：`claudeCode` `claudeCowork` `codex` `chatgptWork` `cursor` `grokBuild` `grokBot` `antigravity`（可选 `geminiCLI`）；variant 先只做 `default`。**界面上任何地方展示的都是全名**（Claude Code、Claude Cowork、Codex、ChatGPT Work、Cursor、Grok Build、Grok Bot、AntiGravity），不出现缩写。
 
-每个 harness 一个"人"，上衣用 harness 主色，皮肤/发型各异让 8 人一眼可分；同门的两位（Claude Code / Claude Cowork，Codex / ChatGPT Work，Grok Build / Grok Bot）保持家族相似但可区分（例如同发型不同配饰）：
-| harness（全名） | 文件夹 | 上衣 | 建议气质 |
+**每个 harness 一种小生物**（非人类！），主色 = harness 色，两颗大眼睛（Grok Bot / Claude pets 那种可爱感：眼睛占脸 1/3、圆润、有高光），体型≤ 22×22 px，坐在/趴在工位上：
+
+| harness（全名） | 文件夹 | 主色 | 物种 & 特征（固定，不要换） |
 |---|---|---|---|
-| Claude Code | `claudeCode` | `#E0785A` | 沉稳，卷发 |
-| Claude Cowork | `claudeCowork` | `#CE8F6E` | 与 Claude Code 同发型，戴围巾/工牌 |
-| Codex | `codex` | `#2DD4BF` | 利落，短发+眼镜 |
-| ChatGPT Work | `chatgptWork` | `#22A06B` | 与 Codex 同发型，穿马甲 |
-| Cursor | `cursor` | `#4C8DFF` | 年轻，鸭舌帽 |
-| Grok Build | `grokBuild` | `#F45FA0` | 张扬，高马尾 |
-| Grok Bot | `grokBot` | `#F98BBE` | 与 Grok Build 同发型，戴耳麦（它是聊天机器人，没有代码工位感也没关系） |
-| AntiGravity | `antigravity` | `#B4E048` | 松弛，长发 |
+| Claude Code | `claudeCode` | `#E0785A` | **珊瑚色小龙**：小翅膀、圆肚子，两颗大眼 |
+| Claude Cowork | `claudeCowork` | `#CE8F6E` | 同款小龙，浅棕色、戴一条小围巾 |
+| Codex | `codex` | `#2DD4BF` | **青绿色小机器人**：方圆身体、天线顶一颗小球、两颗方圆眼 |
+| ChatGPT Work | `chatgptWork` | `#22A06B` | 同款小机器人，绿色、胸口一枚小徽章 |
+| Cursor | `cursor` | `#4C8DFF` | **蓝色小猫**：尖耳朵、长尾巴，眼睛细长 |
+| Grok Build | `grokBuild` | `#F45FA0` | **品红小史莱姆/团子**：无四肢，靠形变表达 |
+| Grok Bot | `grokBot` | `#F98BBE` | 同款团子，浅粉、头顶一小撮呆毛 |
+| AntiGravity | `antigravity` | `#B4E048` | **黄绿小幽灵/气球生物**：悬浮、下摆飘 |
 
-cell 32×32，人物约 14 宽 × 22 高，脚底贴 cell 底边（bottom-center 锚点），左右各留 ≥ 8 px；**默认坐姿朝上（背对观众、面向显示器）**，桌子与显示器由 app 画在人物上方，人物上方 8 px 不要画东西。
+cell 32×32，生物脚底/底边贴 cell 底边（bottom-center 锚点），左右各留 ≥ 8 px；**默认朝上（背对观众、面向显示器）也可以是 3/4 侧背**——重点是能看出它在"看屏幕"；桌子与显示器由 app 画在生物上方，生物上方 8 px 不要画东西。**没有手就不用画手打字**——用身体前倾/触角敲击/尾巴拍键盘等物种化动作表达"在工作"。
 
-| 文件 | 帧 | fps | 画什么 |
+| 文件 | 帧 | fps | 画什么（物种化表达） |
 |---|---|---|---|
-| `idle.png` | 1–2 | 2 | 坐着不动，微塌肩；可 2 帧眨眼 |
-| `thinking.png` | 3–4 | 4 | 坐着，头轻微左右摆 / 摸下巴 |
-| `typing.png` | 4–6 | 12 | 坐着，双手在键盘位快速交替 |
-| `writing.png` | 4 | 6 | 坐着，一手写一手扶纸 |
-| `delegating.png` | 4 | 6 | **站起来侧身向右**，递出便签（子 agent 坐右侧小桌） |
-| `blocked.png` | 2 | 2 | **转身面向观众**，一只手举起——最醒目，先画 |
-| `stale.png` | 2 | 1 | 坐着点头打盹 |
-| `ended.png` | 4 | 6 | 站起来朝右下走出画面（或 1 帧空椅） |
-| `walkDown.png` `walkRight.png` `walkUp.png`（可选） | 4 | 8 | 走路，M3 用于"走到工位/去休息区" |
-| `spawn.png`（可选） | 4 | 8 | 子 agent 出现：从无到有的小闪现 |
+| `idle.png` | 2 | 2 | 趴着不动，眨一次眼 |
+| `thinking.png` | 4 | 4 | 抬头看，眼睛左右转，头顶可有一颗小问号/泡泡（不要人手托腮） |
+| `typing.png` | 6 | 12 | 身体快速前后蹭 / 触角、翅膀、尾巴急速敲击 |
+| `writing.png` | 4 | 6 | 节奏慢的敲击 + 面前一张小纸条 |
+| `delegating.png` | 4 | 6 | 转向右侧，从身体里"分裂/吐出"一个小号同类（子 agent） |
+| `blocked.png` | 2 | 2 | **正对观众，眼睛瞪大**，身体抖动/跳一下，头顶一个大 `!`——最醒目，先画 |
+| `stale.png` | 2 | 1 | 眼睛半闭，脑袋一点一点 |
+| `ended.png` | 4 | 6 | 缩小/淡出/变成一小团光飘走（或 1 帧空工位） |
+| `walkDown.png` `walkRight.png` `walkUp.png`（可选） | 4 | 8 | 蹦跳/漂浮移动 |
+| `spawn.png`（可选） | 4 | 8 | 从蛋/光点里出现 |
 
----
+**Crew 视图（app 内自绘的团子表情，不需要出图）** 会与这套宠物共用"物种/主色/眼睛"设定，所以眼睛画法要统一：两颗竖椭圆深色瞳（`#0F0F12`）+ 1 px 高光。
 
 ## 5. 家具 / 地板 / 墙 tileset（`Resources/Tiles/office.png` + `office.json`，JSON 每项 `{name,x,y,w,h}`）
 | name | 尺寸 | 备注 |
