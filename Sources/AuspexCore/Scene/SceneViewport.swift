@@ -222,8 +222,10 @@ public struct SceneViewport: Sendable, Equatable {
         zoomed(to: Self.rung(steps, from: zoom), around: anchor)
     }
 
-    /// Moved by a scene-space delta. Callers convert a scroll or a drag into
-    /// world units by dividing by ``zoom`` — which is what this does.
+    /// Moved by a delta measured in **view points** — a scroll or a drag as
+    /// the window reports it, in the scene's axis convention. Dividing by the
+    /// zoom is what makes a two-inch drag move two inches of screen whatever
+    /// the camera is doing.
     public func panned(by delta: CGVector) -> Self {
         guard zoom > 0 else { return self }
         var moved = self

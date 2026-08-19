@@ -43,9 +43,18 @@ final class SceneDirector {
     private var floors: [String: FloorNode] = [:]
     private var tethers: [String: TetherNode] = [:]
     private var deskBySession: [SessionKey: DeskNode] = [:]
+    /// Where each desk stands, in scene coordinates, so culling does not have
+    /// to ask a node for its position while it is animating toward one.
+    private var deskRects: [String: CGRect] = [:]
+    /// What each room tallied on the last frame. The minimap's colours.
+    private(set) var floorCounts: [Int: BoardSnapshot.Counts] = [:]
 
     private var theme: SceneTheme
     private var selected: SessionKey?
+
+    /// The rect the last cull was computed for, so a camera that has not moved
+    /// costs nothing.
+    private var culledTo: CGRect?
 
     /// Set from `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`.
     /// Pushed down rather than read per node, so one system setting cannot be
@@ -72,7 +81,7 @@ final class SceneDirector {
     var contentRect: CGRect {
         let rect = frame.contentRect
         guard rect.height > 0 else { return .zero }
-        return CGRect(x: rect.minX, y: -rect.maxY, width: rect.width, height: rect.height)
+        return SceneGeometry.scene(from: rect)
     }
 
     /// Adopts a new appearance, rebuilding everything that baked a colour in.
@@ -85,6 +94,8 @@ final class SceneDirector {
         desks.removeAll()
         floors.removeAll()
         deskBySession.removeAll()
+        deskRects.removeAll()
+        culledTo = nil
         frame = .empty
     }
 
@@ -105,6 +116,8 @@ final class SceneDirector {
         if moved {
             syncDesks()
             syncTethers()
+            // Everything the cull decided is about rectangles that just moved.
+            culledTo = nil
         }
         // Floors are synced every pass, not only when the geometry moved: a
         // header's tallies change when a session changes state, which does not
@@ -126,6 +139,7 @@ final class SceneDirector {
             byFloor[slot.floorIndex, default: []].append(session)
         }
 
+        var tallies: [Int: BoardSnapshot.Counts] = [:]
         for floor in frame.floors {
             live.insert(floor.id)
             let node = floors[floor.id] ?? {
@@ -134,13 +148,17 @@ final class SceneDirector {
                 floorLayer.addChild(created)
                 return created
             }()
+            let counts = BoardSnapshot.Counts(sessions: byFloor[floor.index] ?? [])
+            tallies[floor.index] = counts
             node.update(
                 floor: floor,
-                counts: BoardSnapshot.Counts(sessions: byFloor[floor.index] ?? []),
+                counts: counts,
                 metrics: layout.metrics,
                 theme: theme
             )
+            node.setCameraScale(lastCameraScale, width: floor.frame.width)
         }
+        floorCounts = tallies
 
         for (id, node) in floors where !live.contains(id) {
             node.removeFromParent()
@@ -153,10 +171,12 @@ final class SceneDirector {
     private func syncDesks() {
         var live: Set<String> = []
         var bySession: [SessionKey: DeskNode] = [:]
+        var rects: [String: CGRect] = [:]
 
         for slot in frame.slots {
             live.insert(slot.id)
-            let scenePoint = CGPoint(x: slot.anchor.x, y: -slot.anchor.y)
+            let scenePoint = SceneGeometry.scene(from: slot.anchor)
+            rects[slot.id] = Self.deskRect(at: scenePoint, scale: slot.scale)
             let node: DeskNode
             if let existing = desks[slot.id] {
                 node = existing
@@ -173,6 +193,7 @@ final class SceneDirector {
             } else {
                 node = DeskNode(slotID: slot.id, theme: theme)
                 node.position = scenePoint
+                node.setCameraScale(lastCameraScale)
                 desks[slot.id] = node
                 deskLayer.addChild(node)
             }
@@ -187,10 +208,25 @@ final class SceneDirector {
             if reduceMotion {
                 node.removeFromParent()
             } else {
+                node.isPaused = false
+                node.isHidden = false
                 node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
             }
         }
         deskBySession = bySession
+        deskRects = rects
+    }
+
+    /// The area one workstation occupies, in scene coordinates.
+    ///
+    /// Generous on purpose: what it is for is deciding whether a desk is close
+    /// enough to the window to keep animating, and a bubble over an agent's
+    /// head reaching into view a frame before its desk does is exactly the
+    /// kind of pop a cull is supposed to avoid.
+    private static func deskRect(at point: CGPoint, scale: CGFloat) -> CGRect {
+        let width = DeskNode.hitSize.width * scale
+        let height = DeskNode.hitSize.height * scale + 40
+        return CGRect(x: point.x - width / 2, y: point.y - 12, width: width, height: height)
     }
 
     // MARK: Tethers
@@ -233,6 +269,99 @@ final class SceneDirector {
     /// The desk `key` is sitting at.
     func desk(for key: SessionKey) -> DeskNode? { deskBySession[key] }
 
+    /// The room `key` is working in, when the board has put it in one.
+    func room(for key: SessionKey) -> SceneFloor? {
+        guard let slot = frame.slot(for: key) else { return nil }
+        return frame.floors.first { $0.index == slot.floorIndex }
+    }
+
+    /// Where `key`'s desk is, in scene coordinates.
+    func deskRect(for key: SessionKey) -> CGRect? {
+        frame.slot(for: key).flatMap { deskRects[$0.id] }
+    }
+
+    // MARK: Culling
+
+    /// Stops everything outside the window, and starts it again when it comes
+    /// back.
+    ///
+    /// ## Why this exists
+    ///
+    /// Every desk carries two or three `repeatForever` actions — a screen
+    /// pulsing, a hand typing, a bubble bobbing. SpriteKit does not render a
+    /// node that is off screen, but it does keep *stepping its actions*, so an
+    /// office of six hundred desks costs the same whether the camera is
+    /// looking at four of them or at all of them. Pausing the subtree is what
+    /// makes the cost of the scene a function of what is on screen, which is
+    /// the performance property the whole view is judged on.
+    ///
+    /// Hiding as well as pausing is not redundant: a hidden subtree is skipped
+    /// during the scene's traversal, not merely during its draw.
+    ///
+    /// - Parameters:
+    ///   - visible: the camera's rectangle, in scene coordinates.
+    ///   - margin: how much further than the window to keep things running, so
+    ///     a slow pan does not reveal a room that has to catch up.
+    func cull(to visible: CGRect, margin: CGFloat) {
+        let rect = visible.insetBy(dx: -margin, dy: -margin)
+        // A pan of a few points does not change anybody's answer, and this runs
+        // once per rendered frame.
+        if let culledTo, abs(culledTo.minX - rect.minX) < 8, abs(culledTo.minY - rect.minY) < 8,
+           abs(culledTo.width - rect.width) < 8, abs(culledTo.height - rect.height) < 8 {
+            return
+        }
+        culledTo = rect
+
+        for (id, node) in desks {
+            let onScreen = deskRects[id].map(rect.intersects) ?? true
+            if node.isHidden == onScreen {
+                node.isHidden = !onScreen
+                node.isPaused = !onScreen
+            }
+        }
+        for floor in frame.floors {
+            guard let node = floors[floor.id] else { continue }
+            let onScreen = rect.intersects(SceneGeometry.scene(from: floor.frame))
+            if node.isHidden == onScreen {
+                node.isHidden = !onScreen
+                node.isPaused = !onScreen
+            }
+        }
+        for tether in frame.tethers {
+            guard let node = tethers[tether.id] else { continue }
+            let span = CGRect(
+                x: min(tether.from.x, tether.to.x),
+                y: min(tether.from.y, tether.to.y),
+                width: abs(tether.to.x - tether.from.x),
+                height: abs(tether.to.y - tether.from.y)
+            ).insetBy(dx: -60, dy: -60)
+            let onScreen = rect.intersects(SceneGeometry.scene(from: span))
+            if node.isHidden == onScreen {
+                node.isHidden = !onScreen
+                node.isPaused = !onScreen
+            }
+        }
+    }
+
+    /// Puts everything back on screen, for the offscreen renderer — which
+    /// frames the whole building at once and would otherwise photograph
+    /// whatever the last live camera happened to be looking at.
+    func uncull() {
+        culledTo = nil
+        for node in desks.values {
+            node.isHidden = false
+            node.isPaused = false
+        }
+        for node in floors.values {
+            node.isHidden = false
+            node.isPaused = false
+        }
+        for node in tethers.values {
+            node.isHidden = false
+            node.isPaused = false
+        }
+    }
+
     /// Rings one desk and unrings the rest.
     func select(_ key: SessionKey?) {
         guard selected != key else { return }
@@ -240,10 +369,23 @@ final class SceneDirector {
         for (session, node) in deskBySession { node.setSelected(session == key) }
     }
 
-    /// Passes the camera's zoom to every desk, so nameplates stay legible.
+    /// Passes the camera's zoom to everything that writes words, so that a
+    /// label is measured in points on the screen rather than in points on the
+    /// map.
+    ///
+    /// A room's nameplate drawn in world units is unreadable the moment the
+    /// camera pulls back far enough to show why anybody wanted a map — which
+    /// is the one time the name matters most.
     func setCameraScale(_ scale: CGFloat) {
+        guard abs(scale - lastCameraScale) > 0.0001 else { return }
+        lastCameraScale = scale
         for node in desks.values { node.setCameraScale(scale) }
+        for floor in frame.floors {
+            floors[floor.id]?.setCameraScale(scale, width: floor.frame.width)
+        }
     }
+
+    private var lastCameraScale: CGFloat = 1
 }
 
 /// One project's room: a panel, a nameplate, and a floor line under each row.
@@ -335,16 +477,63 @@ private final class FloorNode: SKNode {
             }
         }
 
-        title.attributedText = SceneText.label(
-            floor.title, size: 12, weight: .bold, color: theme.textPrimary
-        )
+        // Laying out attributed text is not free and a nameplate changes about
+        // once a day, so both labels are written only when their words do.
+        if lastTitle != floor.title {
+            lastTitle = floor.title
+            title.attributedText = SceneText.label(
+                floor.title, size: 12, weight: .bold, color: theme.textPrimary
+            )
+            labelsNeedFitting = true
+        }
         if lastCounts != tally {
             lastCounts = tally
             self.counts.attributedText = SceneText.label(
                 Self.summary(tally), size: 9, color: theme.textTertiary
             )
+            labelsNeedFitting = true
         }
     }
+
+    /// Keeps the nameplate the size it is on the screen rather than the size
+    /// it is on the map, and drops what will not fit.
+    ///
+    /// A room's name drawn in world units is a smudge at the zoom that makes a
+    /// map worth having, which is exactly when knowing which room this is
+    /// matters most. So the words are scaled against the camera — and because
+    /// a room is only so wide, the tallies go first and then the name, until
+    /// the room is what it is at that distance: a coloured rectangle, which is
+    /// what the minimap in the corner is for.
+    ///
+    /// - Parameters:
+    ///   - scale: the camera node's scale, which is world points per view
+    ///     point.
+    ///   - width: how wide the room is, in world points.
+    func setCameraScale(_ scale: CGFloat, width: CGFloat) {
+        let clamped = max(1, min(2, scale))
+        guard labelsNeedFitting || clamped != lastLabelScale || width != lastLabelWidth else {
+            return
+        }
+        labelsNeedFitting = false
+        lastLabelScale = clamped
+        lastLabelWidth = width
+
+        title.setScale(clamped)
+        counts.setScale(clamped)
+        title.isHidden = false
+        counts.isHidden = false
+        // The 12-point insets the labels are positioned at, at this scale.
+        let insets = 24 * clamped
+        let titleWidth = title.frame.width
+        title.isHidden = titleWidth + insets > width
+        counts.isHidden = title.isHidden
+            || titleWidth + counts.frame.width + insets + 12 * clamped > width
+    }
+
+    private var lastLabelScale: CGFloat = 1
+    private var lastLabelWidth: CGFloat = 0
+    private var lastTitle: String?
+    private var labelsNeedFitting = true
 
     /// Only the tallies worth acting on, and only when they are non-zero — the
     /// same rule the board's section headers follow, so the two views do not

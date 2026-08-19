@@ -40,17 +40,36 @@ final class OfficeScene: SKScene {
     private var sessions: [SessionKey: SessionSnapshot] = [:]
     private var hovered: DeskNode?
     private var selected: SessionKey?
+    /// The project the camera is bound to. Held so that the echo of a focus
+    /// this scene asked for does not fly the camera a second time.
+    private var focusedProject: String??
 
     /// Called when a person clicks a desk. The container turns it into
     /// `model.selectedKey`, which is the same value clicking a card sets — one
     /// selection, two ways in.
     var onSelect: ((SessionKey?) -> Void)?
 
+    /// Called when a person clicks something that says which project they are
+    /// looking at. The container turns it into
+    /// `LiveBoardModel.focusedProjectKey`, which is the same value the sidebar
+    /// sets — one focus, two ways in.
+    var onFocusProject: ((String?) -> Void)?
+
+    /// Called with a fresh picture for the minimap, at most once per rendered
+    /// frame and only when something in it moved.
+    var onOverview: ((SceneOverview) -> Void)?
+
     /// Whether the system asked for less motion.
     private(set) var reduceMotion = false
 
-    /// How much a scroll wheel notch or a `+` button changes the zoom.
-    private static let zoomStep: CGFloat = 1.22
+    /// How much of the world beyond the window keeps animating, so that a pan
+    /// does not reveal a room in the middle of catching up.
+    private static let cullMargin: CGFloat = 240
+
+    /// How far a pinch has to travel to be worth a rung of the zoom ladder.
+    /// A trackpad reports magnification in fractions of the view's width, and
+    /// a quarter of that is about the size of a deliberate pinch.
+    private static let pinchPerStep: CGFloat = 0.25
 
     init(theme: SceneTheme) {
         self.theme = theme
@@ -79,6 +98,7 @@ final class OfficeScene: SKScene {
         super.didChangeSize(oldSize)
         cameraController.setViewSize(size)
         if !cameraController.hasFitted { fitAll() }
+        cameraDidChange()
     }
 
     // MARK: - Input from the app
@@ -87,6 +107,7 @@ final class OfficeScene: SKScene {
     func update(
         board: BoardSnapshot,
         selected: SessionKey?,
+        focusedProject: String?,
         reduceMotion: Bool,
         theme: SceneTheme
     ) {
@@ -99,6 +120,7 @@ final class OfficeScene: SKScene {
         if self.reduceMotion != reduceMotion {
             self.reduceMotion = reduceMotion
             director.reduceMotion = reduceMotion
+            cameraController.reduceMotion = reduceMotion
         }
 
         var byKey: [SessionKey: SessionSnapshot] = [:]
@@ -107,15 +129,27 @@ final class OfficeScene: SKScene {
         sessions = byKey
 
         let moved = director.apply(board)
+        overviewIsStale = true
         if moved {
             cameraController.setContentRect(director.contentRect)
             rebuildBackdrop()
             if !cameraController.hasFitted { fitAll() }
+            cameraDidChange()
+        }
+
+        // Focus before selection: a session that has just been picked in the
+        // sidebar is usually in the project that was picked with it, and
+        // framing the room first means the desk is already on screen by the
+        // time the selection asks whether it needs to be.
+        if self.focusedProject != .some(focusedProject) {
+            self.focusedProject = .some(focusedProject)
+            apply(focus: focusedProject, animated: true)
         }
 
         if self.selected != selected {
             self.selected = selected
             director.select(selected)
+            if let selected { revealDesk(of: selected) }
         }
     }
 
@@ -123,20 +157,57 @@ final class OfficeScene: SKScene {
     func fitAll(animated: Bool = false) {
         cameraController.setViewSize(size)
         cameraController.fit(animated: animated)
-        director.setCameraScale(cameraController.node.xScale)
+        cameraDidChange()
     }
 
-    /// Steps the zoom, for the overlay's buttons and the keyboard.
-    func step(zoom factor: CGFloat) {
-        cameraController.zoom(by: factor)
-        director.setCameraScale(cameraController.node.xScale)
+    /// Steps the zoom by rungs of the ladder, for the overlay's buttons and
+    /// the keyboard.
+    func step(zoom steps: Int, around anchor: CGPoint? = nil) {
+        cameraController.step(steps, around: anchor)
+        cameraDidChange()
     }
 
-    /// Puts the camera on one session, for a double-click or a selection made
-    /// on the board.
+    /// Goes to one of the named zooms, keeping the middle of the view fixed.
+    func setZoom(_ zoom: CGFloat) {
+        cameraController.setZoom(zoom, animated: true)
+        cameraDidChange()
+    }
+
+    /// Points the camera at a place on the map, for a click on the minimap.
+    /// The point arrives in layout space, which is what the minimap draws in.
+    func jump(toLayoutPoint point: CGPoint) {
+        cameraController.center(on: SceneGeometry.scene(from: point), animated: false)
+        cameraDidChange()
+    }
+
+    /// Puts the camera on one session, for a double-click.
     func focus(on key: SessionKey, animated: Bool = true) {
-        guard let desk = director.desk(for: key) else { return }
-        cameraController.center(on: desk.position, animated: animated)
+        guard let rect = director.deskRect(for: key) else { return }
+        cameraController.focus(on: rect.insetBy(dx: -110, dy: -80), animated: animated)
+        cameraDidChange()
+    }
+
+    /// Frames one project's room, or the whole building when there is no
+    /// project to frame.
+    private func apply(focus project: String?, animated: Bool) {
+        guard let project else {
+            cameraController.fit(animated: animated)
+            cameraDidChange()
+            return
+        }
+        guard let rect = director.frame.focusRect(forProject: project) else { return }
+        cameraController.focus(on: SceneGeometry.scene(from: rect), animated: animated)
+        cameraDidChange()
+    }
+
+    /// Brings a selected session's desk on screen without changing how close
+    /// the camera is — a selection is a request to see one session, not a
+    /// request to be moved somewhere else.
+    private func revealDesk(of key: SessionKey) {
+        guard let rect = director.deskRect(for: key) else { return }
+        guard !cameraController.viewport.showsAll(of: rect) else { return }
+        cameraController.center(on: CGPoint(x: rect.midX, y: rect.midY), animated: true)
+        cameraDidChange()
     }
 
     /// The current zoom, for the overlay's readout.
@@ -145,6 +216,53 @@ final class OfficeScene: SKScene {
     /// The building's bounds in scene coordinates. What an offscreen render
     /// crops to.
     var contentBounds: CGRect { director.contentRect }
+
+    // MARK: - The clock
+
+    /// Everything that has to happen because the camera moved.
+    ///
+    /// Not done inside the camera: the camera's job is to know where it is,
+    /// and what follows from that — which labels are legible, which desks are
+    /// close enough to keep animating, what the minimap should draw — belongs
+    /// to the scene that owns both halves.
+    private func cameraDidChange() {
+        director.setCameraScale(cameraController.node.xScale)
+        overviewIsStale = true
+    }
+
+    private var overviewIsStale = true
+    private var publishedOverview: SceneOverview?
+    private var overviewRect: CGRect = .null
+
+    /// Called by SpriteKit once per rendered frame — and, crucially, not at all
+    /// while the scene is paused, which is what makes an off-screen office
+    /// cost nothing at all rather than merely cost less.
+    override func update(_ currentTime: TimeInterval) {
+        super.update(currentTime)
+        // The camera keeps moving for a third of a second after a flight is
+        // started, so both questions are asked of where it actually is rather
+        // than of where it was told to go.
+        let live = cameraController.live
+        director.cull(to: live.visibleRect, margin: Self.cullMargin)
+
+        // A scene nobody is touching publishes nothing: the minimap is a
+        // SwiftUI view, and handing it an equal value thirty times a second
+        // would be thirty comparisons of every room for no redraw.
+        let rect = live.visibleRect
+        guard overviewIsStale || !rect.equalTo(overviewRect) else { return }
+        overviewIsStale = false
+        overviewRect = rect
+
+        let overview = SceneOverview(
+            frame: director.frame,
+            counts: director.floorCounts,
+            camera: live,
+            focusedProject: focusedProject ?? nil
+        )
+        guard overview != publishedOverview else { return }
+        publishedOverview = overview
+        onOverview?(overview)
+    }
 
     /// Renders the building offscreen, with no window involved.
     ///
@@ -158,17 +276,52 @@ final class OfficeScene: SKScene {
     /// Two is the only scale worth using: nearest-neighbour filtering doubles
     /// an art pixel into four exactly, and anything fractional puts seams
     /// through the grid.
+    /// Renders the office as a window `window` points across would show it,
+    /// framed on one project.
+    ///
+    /// The whole-building render above is the picture of the map; this is the
+    /// picture of the camera bound to a room, which is the other half of what
+    /// the scene does and the half a static crop cannot show. The view is made
+    /// `scale` times the window so that the art still doubles exactly, and the
+    /// camera is told the window's size rather than the view's so that "fit
+    /// this room" means what it means on a real screen.
+    func render(
+        view: SKView,
+        scale: CGFloat,
+        window: CGSize,
+        focusing project: String?
+    ) -> CGImage? {
+        director.uncull()
+        rebuildBackdrop()
+        cameraController.setViewSize(window)
+        let target: SceneViewport
+        if let project, let rect = director.frame.focusRect(forProject: project) {
+            target = cameraController.viewport.focused(on: SceneGeometry.scene(from: rect))
+        } else {
+            target = cameraController.viewport.fitted()
+        }
+        // The labels are sized for the window, not for the oversized view the
+        // pixels are rendered into.
+        director.setCameraScale(1 / target.zoom)
+        cameraController.park(at: target.center, scale: 1 / (target.zoom * scale))
+        return view.texture(from: self)?.cgImage()
+    }
+
     func render(view: SKView, scale: CGFloat) -> CGImage? {
         let rect = director.contentRect
         rebuildBackdrop(padding: 0)
         let parkedPosition = cameraController.node.position
         let parkedScale = cameraController.node.xScale
-        cameraController.node.removeAllActions()
-        cameraController.node.position = CGPoint(x: rect.midX, y: rect.midY)
-        cameraController.node.setScale(1 / scale)
+        // A render frames the whole building at once, so whatever the live
+        // camera had culled has to come back before the shutter opens — and
+        // the nameplates, which are sized for wherever the camera happened to
+        // be, go back to the one-to-one they are drawn at here.
+        director.uncull()
+        director.setCameraScale(1)
+        cameraController.park(at: CGPoint(x: rect.midX, y: rect.midY), scale: 1 / scale)
         defer {
-            cameraController.node.position = parkedPosition
-            cameraController.node.setScale(parkedScale)
+            cameraController.park(at: parkedPosition, scale: parkedScale)
+            director.setCameraScale(parkedScale)
             rebuildBackdrop()
         }
         return view.texture(from: self)?.cgImage()
@@ -180,15 +333,30 @@ final class OfficeScene: SKScene {
         // The platform convention: a plain wheel or two-finger scroll moves the
         // world, and the same gesture with a modifier zooms. Matching it
         // matters more than any argument about which is more useful here.
+        guard let view else { return }
         if event.modifierFlags.contains(.command) {
-            step(zoom: event.scrollingDeltaY > 0 ? Self.zoomStep : 1 / Self.zoomStep)
+            guard event.scrollingDeltaY != 0 else { return }
+            step(zoom: event.scrollingDeltaY > 0 ? 1 : -1, around: scenePoint(for: event, in: view))
             return
         }
         cameraController.pan(by: CGVector(dx: -event.scrollingDeltaX, dy: -event.scrollingDeltaY))
+        cameraDidChange()
     }
 
+    /// A pinch is continuous and the zoom is a ladder, so the gesture
+    /// accumulates until it has earned a rung. Resetting the accumulator on
+    /// every step is what stops a slow pinch from crawling up the ladder one
+    /// frame at a time.
+    private var pinch: CGFloat = 0
+
     override func magnify(with event: NSEvent) {
-        step(zoom: 1 + event.magnification)
+        guard let view else { return }
+        if event.phase == .began { pinch = 0 }
+        pinch += event.magnification
+        guard abs(pinch) >= Self.pinchPerStep else { return }
+        let steps = Int((pinch / Self.pinchPerStep).rounded(.towardZero))
+        pinch -= CGFloat(steps) * Self.pinchPerStep
+        step(zoom: steps, around: scenePoint(for: event, in: view))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -196,12 +364,46 @@ final class OfficeScene: SKScene {
         let point = scenePoint(for: event, in: view)
         guard let desk = desk(at: point), let key = desk.sessionKey else {
             // Clicking the floor clears the selection, the way clicking the
-            // board's background does.
-            if event.clickCount == 1 { onSelect?(nil) }
+            // board's background does. Double-clicking one frames the room,
+            // which is the fastest way from "the whole office" to "this
+            // project" without going near the sidebar.
+            if event.clickCount >= 2, let room = room(at: point) {
+                focus(room: room)
+            } else if event.clickCount == 1 {
+                onSelect?(nil)
+            }
             return
         }
         onSelect?(key)
+        // Clicking somebody says which project is being looked at, the same
+        // way clicking it in the sidebar does. The camera only moves if the
+        // room is not already on screen — a click on a desk in the room the
+        // reader is watching should not fly anywhere.
+        if let room = director.room(for: key) {
+            claimFocus(room.projectKey)
+            let rect = SceneGeometry.scene(from: room.frame)
+            if !cameraController.viewport.showsAll(of: rect) {
+                cameraController.focus(on: rect, animated: true)
+                cameraDidChange()
+            }
+        }
         if event.clickCount >= 2 { focus(on: key) }
+    }
+
+    /// Frames a room and tells the app which project that was, so the sidebar
+    /// and the scene agree about what is being looked at.
+    private func focus(room: SceneFloor) {
+        claimFocus(room.projectKey)
+        cameraController.focus(on: SceneGeometry.scene(from: room.frame), animated: true)
+        cameraDidChange()
+    }
+
+    /// Records a focus this scene is about to perform itself, so the value
+    /// coming back through the model is recognised as an echo rather than as a
+    /// second request to fly somewhere.
+    private func claimFocus(_ project: String?) {
+        focusedProject = .some(project)
+        onFocusProject?(project)
     }
 
     /// Called by the view, which owns the tracking area.
@@ -233,6 +435,13 @@ final class OfficeScene: SKScene {
             }
         }
         return nil
+    }
+
+    /// The room under a scene point. Asked of the layout rather than of the
+    /// scene graph, because a room's panel is a shape node with a hit area
+    /// that would answer for its whole bounding box either way.
+    private func room(at point: CGPoint) -> SceneFloor? {
+        director.frame.floor(at: SceneGeometry.layout(from: point))
     }
 
     /// Where an event happened, in scene coordinates.

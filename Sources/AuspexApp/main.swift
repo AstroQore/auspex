@@ -38,14 +38,25 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
         exit(2)
     }
     let elapsed = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 16
+    let focus = rest.dropFirst(2).first
     do {
         let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
-        try SceneSnapshotRenderer.render(board: board, to: URL(fileURLWithPath: path))
+        let project = focus.flatMap { SceneSnapshotRenderer.projectKey(named: $0, in: board) }
+        if let focus, project == nil {
+            FileHandle.standardError.write(
+                Data("auspex: no project on the demo board is called \(focus).\n".utf8)
+            )
+            exit(2)
+        }
+        try SceneSnapshotRenderer.render(
+            board: board, to: URL(fileURLWithPath: path), focusing: project
+        )
         // Report what was drawn. Choosing *when* in the demo loop to render is
         // the whole job of picking a good screenshot, and this tally is how it
         // is chosen.
         let counts = board.counts
-        let summary = "auspex: \(board.sessions.count) sessions at t+\(Int(elapsed))s — "
+        let framing = project.map { " framed on \(($0 as NSString).lastPathComponent)" } ?? ""
+        let summary = "auspex: \(board.sessions.count) sessions at t+\(Int(elapsed))s\(framing) — "
             + "\(counts.thinking) thinking, \(counts.tooling) tooling, "
             + "\(counts.delegating) delegating, \(counts.waitingPermission) blocked, "
             + "\(counts.idle) idle, \(counts.ended) ended\n"
@@ -152,10 +163,14 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         store is read and nothing is written to ~/.auspex/.
                         `AUSPEX_DEMO=1` does the same, for launchers such as
                         `open -a` that cannot pass arguments through.
-          --render-scene <path> [seconds]
+          --render-scene <path> [seconds] [project]
                         Render the scene view's office to a PNG, offscreen,
                         from the demo board at `seconds` into its loop
                         (default 16). Used to build the README screenshot.
+                        With `project` — a project's short name — the camera
+                        is bound to that room instead of framing the whole
+                        map, which is what the scene does when a project is
+                        picked in the sidebar.
           --render-crew <path> [seconds] [animation seconds]
                         Render the crew view's avatars to a PNG, offscreen,
                         from the demo board at `seconds` into its loop

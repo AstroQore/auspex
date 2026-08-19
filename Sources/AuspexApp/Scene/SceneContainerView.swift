@@ -107,21 +107,30 @@ struct SceneContainerView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var commands = SceneCommands()
+    @State private var overview = SceneOverview.empty
 
     var body: some View {
         // Read on this side of the representable on purpose: observation is
         // tracked in a `body`, and a value read only inside `updateNSView`
         // would never schedule the update that reads it.
+        //
+        // TODO: read `model.visibleBoard` here once the ignore rules land —
+        // the scene must draw what the board draws, and this is the one line
+        // that decides it.
         let board = model.board
         let selected = model.selectedKey
+        let focused = model.focusedProjectKey
 
         ZStack(alignment: .topTrailing) {
             OfficeSceneRepresentable(
                 board: board,
                 selected: selected,
+                focusedProject: focused,
                 reduceMotion: reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                 commands: commands,
-                onSelect: { model.selectedKey = $0 }
+                onSelect: { model.selectedKey = $0 },
+                onFocusProject: { model.focusedProjectKey = $0 },
+                onOverview: { overview = $0 }
             )
             .ignoresSafeArea()
 
@@ -135,18 +144,51 @@ struct SceneContainerView: View {
         .overlay(alignment: .bottomLeading) {
             legend.padding(12)
         }
+        .overlay(alignment: .bottomTrailing) {
+            if overview.isWorthDrawing {
+                SceneMinimapView(overview: overview) { commands.jump($0) }
+                    .padding(12)
+                    .transition(.opacity)
+            }
+        }
         .background(AuspexPalette.canvas)
     }
 
     // MARK: Chrome
 
+    /// Fit, the zoom readout, and the two steps either side of it.
+    ///
+    /// The readout is a menu rather than a label because the presets are the
+    /// only way to get to an exact zoom, and a person who has zoomed somewhere
+    /// odd wants "100 %" more than they want to count clicks back to it.
     private var controls: some View {
         VStack(spacing: 6) {
-            controlButton("Fit", systemImage: "arrow.up.left.and.arrow.down.right") {
+            controlButton("Fit all", systemImage: "arrow.up.left.and.arrow.down.right") {
                 commands.fit()
             }
+            .keyboardShortcut("0", modifiers: .command)
+
             controlButton("Zoom in", systemImage: "plus.magnifyingglass") { commands.zoomIn() }
+                .keyboardShortcut("=", modifiers: .command)
+
+            Menu {
+                ForEach(SceneViewport.zoomPresets, id: \.self) { preset in
+                    Button(Self.percent(preset)) { commands.setZoom(preset) }
+                }
+            } label: {
+                Text(Self.percent(overview.zoom))
+                    .auspexLabel(AuspexType.labelSmall)
+                    .monospacedDigit()
+                    .frame(width: 34, height: 16)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .foregroundStyle(AuspexPalette.textSecondary)
+            .help("Zoom")
+
             controlButton("Zoom out", systemImage: "minus.magnifyingglass") { commands.zoomOut() }
+                .keyboardShortcut("-", modifiers: .command)
         }
         .padding(4)
         .background(
@@ -157,6 +199,12 @@ struct SceneContainerView: View {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
         )
+    }
+
+    /// A zoom as a person reads it. Rounded, because `33 %` is what a third is
+    /// called and `33.3 %` is what a spreadsheet calls it.
+    private static func percent(_ zoom: CGFloat) -> String {
+        "\(Int((zoom * 100).rounded()))%"
     }
 
     private func controlButton(
@@ -224,6 +272,74 @@ struct SceneContainerView: View {
     }
 }
 
+/// The map of the whole office, in the corner.
+///
+/// One `Canvas`, drawn from a value the scene publishes when it changes and at
+/// no other time — a second SpriteKit view here would be a second animated
+/// scene to pay for. Dragging on it scrubs the camera around the map, which is
+/// the same gesture as clicking and is what people try first.
+private struct SceneMinimapView: View {
+    let overview: SceneOverview
+    /// Called with a point in layout space.
+    let onJump: (CGPoint) -> Void
+
+    /// How much of the window the overview may take. Small enough to be
+    /// furniture, large enough that a room is a few points across.
+    private static let maximum = CGSize(width: 168, height: 116)
+
+    var body: some View {
+        let box = SceneMinimap.frame(for: overview.world, maximum: Self.maximum)
+        Canvas(opaque: false) { context, size in
+            let map = SceneMinimap(
+                world: overview.world, in: CGRect(origin: .zero, size: size)
+            )
+            for room in overview.rooms {
+                let rect = map.rect(room.rect).insetBy(dx: 0.5, dy: 0.5)
+                guard rect.width > 0, rect.height > 0 else { continue }
+                let path = Path(roundedRect: rect, cornerRadius: 1.5)
+                context.fill(path, with: .color(room.tint.opacity(room.needsYou ? 0.85 : 0.5)))
+                if room.isFocused {
+                    context.stroke(path, with: .color(AuspexPalette.textPrimary), lineWidth: 1)
+                }
+            }
+            // The window, drawn last so it is never hidden under a room.
+            let viewport = map.rect(overview.viewport).intersection(
+                CGRect(origin: .zero, size: size)
+            )
+            if !viewport.isNull, viewport.width > 0 {
+                context.stroke(
+                    Path(viewport.insetBy(dx: 0.5, dy: 0.5)),
+                    with: .color(AuspexPalette.textPrimary.opacity(0.9)),
+                    lineWidth: 1
+                )
+            }
+        }
+        .frame(width: box.width, height: box.height)
+        .padding(4)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(AuspexPalette.panel.opacity(0.9))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let map = SceneMinimap(
+                        world: overview.world,
+                        in: CGRect(x: 4, y: 4, width: box.width, height: box.height)
+                    )
+                    onJump(map.worldPoint(value.location))
+                }
+        )
+        .help("The whole office. Click to go there.")
+        .accessibilityHidden(true)
+    }
+}
+
 /// The overlay's buttons, wired to the live scene.
 ///
 /// A box of closures rather than a binding to the scene itself: SwiftUI owns
@@ -234,15 +350,21 @@ final class SceneCommands {
     var fit: () -> Void = {}
     var zoomIn: () -> Void = {}
     var zoomOut: () -> Void = {}
+    var setZoom: (CGFloat) -> Void = { _ in }
+    /// Points the camera at a place on the map, in layout space.
+    var jump: (CGPoint) -> Void = { _ in }
 }
 
 /// The `SKView` itself.
 private struct OfficeSceneRepresentable: NSViewRepresentable {
     let board: BoardSnapshot
     let selected: SessionKey?
+    let focusedProject: String?
     let reduceMotion: Bool
     let commands: SceneCommands
     let onSelect: (SessionKey?) -> Void
+    let onFocusProject: (String?) -> Void
+    let onOverview: (SceneOverview) -> Void
 
     func makeNSView(context: Context) -> OfficeSKView {
         let theme = SceneTheme.resolved(for: NSApplication.shared.effectiveAppearance)
@@ -250,19 +372,26 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         let view = OfficeSKView(frame: CGRect(x: 0, y: 0, width: 900, height: 640))
         view.presentScene(scene)
         scene.onSelect = onSelect
+        scene.onFocusProject = onFocusProject
+        scene.onOverview = onOverview
 
         commands.fit = { [weak scene] in scene?.fitAll(animated: true) }
-        commands.zoomIn = { [weak scene] in scene?.step(zoom: 1.25) }
-        commands.zoomOut = { [weak scene] in scene?.step(zoom: 1 / 1.25) }
+        commands.zoomIn = { [weak scene] in scene?.step(zoom: 1) }
+        commands.zoomOut = { [weak scene] in scene?.step(zoom: -1) }
+        commands.setZoom = { [weak scene] zoom in scene?.setZoom(zoom) }
+        commands.jump = { [weak scene] point in scene?.jump(toLayoutPoint: point) }
         return view
     }
 
     func updateNSView(_ view: OfficeSKView, context: Context) {
         guard let scene = view.scene as? OfficeScene else { return }
         scene.onSelect = onSelect
+        scene.onFocusProject = onFocusProject
+        scene.onOverview = onOverview
         scene.update(
             board: board,
             selected: selected,
+            focusedProject: focusedProject,
             reduceMotion: reduceMotion,
             theme: SceneTheme.resolved(for: view.effectiveAppearance)
         )
@@ -378,11 +507,15 @@ enum SceneSnapshotRenderer {
     /// - Parameter scale: points per pixel. Two doubles every art pixel
     ///   exactly, which is what nearest-neighbour filtering wants; anything
     ///   fractional would put seams in the pixel grid.
+    /// The window a focused render pretends to be looking through.
+    static let windowSize = CGSize(width: 900, height: 640)
+
     @MainActor
     static func render(
         board: BoardSnapshot,
         to url: URL,
         scale: CGFloat = 2,
+        focusing project: String? = nil,
         appearance: NSAppearance = NSAppearance(named: .darkAqua) ?? NSAppearance()
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
@@ -394,26 +527,46 @@ enum SceneSnapshotRenderer {
         // The board is applied before the view exists, because the view has to
         // be made the size of the building and only the laid-out scene knows
         // what that is.
-        scene.update(board: board, selected: nil, reduceMotion: true, theme: theme)
+        scene.update(
+            board: board, selected: nil, focusedProject: nil, reduceMotion: true, theme: theme
+        )
 
         let bounds = scene.contentBounds
         guard bounds.width > 1, bounds.height > 1 else {
             throw RenderError.emptyBoard
         }
+        // Framed on one room, the picture is a window onto the map rather than
+        // a picture of the whole map, so it is drawn at a window's size.
+        let size = project == nil ? bounds.size : windowSize
         let view = SKView(
-            frame: CGRect(
-                x: 0, y: 0, width: bounds.width * scale, height: bounds.height * scale
-            )
+            frame: CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
         )
         view.appearance = appearance
         view.presentScene(scene)
-        guard let image = scene.render(view: view, scale: scale) else {
-            throw RenderError.renderFailed
-        }
+        let image = project == nil
+            ? scene.render(view: view, scale: scale)
+            : scene.render(view: view, scale: scale, window: size, focusing: project)
+        guard let image else { throw RenderError.renderFailed }
         guard let data = pngData(from: image, background: theme.canvas) else {
             throw RenderError.encodingFailed
         }
         try data.write(to: url, options: .atomic)
+    }
+
+    /// The project key a name from the command line means.
+    ///
+    /// Matched on the last path component as well as in full, so a screenshot
+    /// can be asked for by the name the sidebar shows rather than by a path
+    /// nobody wants to type.
+    @MainActor
+    static func projectKey(named name: String, in board: BoardSnapshot) -> String? {
+        var keys: [String] = []
+        for session in board.sessions {
+            guard let key = board.projectKey(for: session), !keys.contains(key) else { continue }
+            keys.append(key)
+        }
+        if let exact = keys.first(where: { $0 == name }) { return exact }
+        return keys.first { ($0 as NSString).lastPathComponent == name }
     }
 
     /// The demo board, folded to one instant.
