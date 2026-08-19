@@ -126,14 +126,47 @@ public enum TaskLedger {
     /// else — and then the key, so a board of identical rows does not reshuffle
     /// on every tick.
     public static func sorted(_ rows: [BoardRow]) -> [BoardRow] {
-        rows.sorted { lhs, rhs in
-            let lhsBucket = bucket(of: lhs)
-            let rhsBucket = bucket(of: rhs)
-            if lhsBucket != rhsBucket { return rank(lhsBucket) < rank(rhsBucket) }
-            let lhsAt = clock(of: lhs, in: lhsBucket)
-            let rhsAt = clock(of: rhs, in: rhsBucket)
-            if lhsAt != rhsAt { return lhsAt > rhsAt }
-            return lhs.key.description < rhs.key.description
+        guard rows.count > 1 else { return rows }
+        // The keys are derived once per row and the *indices* are sorted.
+        //
+        // Two costs this avoids, and the board pays them on every frame over a
+        // few hundred rows. A comparator that derives the bucket on the fly
+        // derives it twice per comparison — order n·log n times rather than n.
+        // And decorating with the row itself would copy a `BoardRow` — two
+        // dozen fields, six of them strings — once into the decoration and
+        // once back out.
+        let keys = rows.map(SortKey.init)
+        let order = rows.indices.sorted { SortKey.precedes(keys[$0], keys[$1]) }
+        return order.map { rows[$0] }
+    }
+
+    /// What a row sorts by, worked out once.
+    private struct SortKey {
+        let rank: Int
+        let clock: Date
+        /// The tie-break, so a board of otherwise identical rows does not
+        /// reshuffle between frames. Built once per row rather than per
+        /// comparison, which is where it used to be.
+        let id: String
+
+        init(_ row: BoardRow) {
+            let bucket = TaskLedger.bucket(of: row)
+            self.rank = TaskLedger.rank(bucket)
+            self.clock = TaskLedger.clock(of: row, in: bucket)
+            self.id = row.key.description
+        }
+
+        init(_ session: SessionSnapshot, lastSeenAt: Date?) {
+            let bucket = TaskLedger.bucket(of: session, lastSeenAt: lastSeenAt)
+            self.rank = TaskLedger.rank(bucket)
+            self.clock = TaskLedger.clock(of: session, in: bucket)
+            self.id = session.key.description
+        }
+
+        static func precedes(_ lhs: SortKey, _ rhs: SortKey) -> Bool {
+            if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+            if lhs.clock != rhs.clock { return lhs.clock > rhs.clock }
+            return lhs.id < rhs.id
         }
     }
 
@@ -149,7 +182,7 @@ public enum TaskLedger {
     }
 
     /// The instant a bucket is ordered by.
-    private static func clock(of row: BoardRow, in bucket: Bucket) -> Date {
+    static func clock(of row: BoardRow, in bucket: Bucket) -> Date {
         switch bucket {
         case .doneUnseen:
             row.lastTurnEndedAt ?? row.endedAt ?? row.lastEventAt ?? .distantPast
@@ -170,18 +203,17 @@ public enum TaskLedger {
         _ sessions: [SessionSnapshot],
         seenAt: [SessionKey: Date]
     ) -> [SessionSnapshot] {
-        sessions.sorted { lhs, rhs in
-            let lhsBucket = bucket(of: lhs, lastSeenAt: seenAt[lhs.key])
-            let rhsBucket = bucket(of: rhs, lastSeenAt: seenAt[rhs.key])
-            if lhsBucket != rhsBucket { return rank(lhsBucket) < rank(rhsBucket) }
-            let lhsAt = clock(of: lhs, in: lhsBucket)
-            let rhsAt = clock(of: rhs, in: rhsBucket)
-            if lhsAt != rhsAt { return lhsAt > rhsAt }
-            return lhs.key.description < rhs.key.description
-        }
+        guard sessions.count > 1 else { return sessions }
+        // Keyed once for the same reasons as the row form, and one more: the
+        // naive comparator hashes a `SessionKey` into `seenAt` twice per
+        // comparison, and a `SessionSnapshot` is the most expensive value in
+        // the package to copy.
+        let keys = sessions.map { SortKey($0, lastSeenAt: seenAt[$0.key]) }
+        let order = sessions.indices.sorted { SortKey.precedes(keys[$0], keys[$1]) }
+        return order.map { sessions[$0] }
     }
 
-    private static func clock(of session: SessionSnapshot, in bucket: Bucket) -> Date {
+    static func clock(of session: SessionSnapshot, in bucket: Bucket) -> Date {
         switch bucket {
         case .doneUnseen:
             session.brief.lastTurnEndedAt ?? session.endedAt ?? session.lastEventAt ?? .distantPast
