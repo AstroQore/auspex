@@ -61,12 +61,26 @@ enum CrewSnapshotRenderer {
             )
         }
 
-        let renderer = ImageRenderer(
-            content: CrewSnapshotSheet(cards: cards, columns: columns)
-        )
+        guard let image = wallImage(cards: cards, columns: columns, scale: scale) else {
+            throw RenderError.renderFailed
+        }
+        try writePNG(image, to: url)
+    }
+
+    /// One wall, drawn. Shared with ``CrewMotionRenderer``, which needs dozens
+    /// of these and must get them from the same drawing as the still — a
+    /// filmstrip of a second, simpler renderer would prove nothing about this
+    /// one.
+    @MainActor
+    static func wallImage(cards: [CrewSnapshotCard], columns: Int, scale: CGFloat) -> CGImage? {
+        let renderer = ImageRenderer(content: CrewSnapshotSheet(cards: cards, columns: columns))
         renderer.scale = scale
         renderer.isOpaque = true
-        guard let image = renderer.cgImage else { throw RenderError.renderFailed }
+        return renderer.cgImage
+    }
+
+    /// PNG bytes on disk, atomically.
+    static func writePNG(_ image: CGImage, to url: URL) throws {
         let rep = NSBitmapImageRep(cgImage: image)
         guard let data = rep.representation(using: .png, properties: [.compressionFactor: 1.0])
         else { throw RenderError.encodingFailed }
@@ -103,7 +117,7 @@ struct CrewSnapshotCard: Identifiable {
 /// A plain `LazyVGrid` in a fixed frame rather than the live view: the live one
 /// carries a scroll view, a timeline and a model, none of which mean anything
 /// to a renderer with no window and no clock.
-private struct CrewSnapshotSheet: View {
+struct CrewSnapshotSheet: View {
     let cards: [CrewSnapshotCard]
     let columns: Int
 

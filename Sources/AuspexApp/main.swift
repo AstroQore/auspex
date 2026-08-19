@@ -103,6 +103,80 @@ if let flag = arguments.firstIndex(of: "--render-crew") {
     }
 }
 
+// Renders one avatar's transition as a filmstrip. A still of the crew wall
+// cannot show whether a morph is eased or linear — every individual frame looks
+// the same either way — so this lays sixteen of them out in reading order with
+// the per-frame travel drawn under each. An eased morph is a row of bars that
+// rises and falls; a linear one is a row of equal bars.
+if let flag = arguments.firstIndex(of: "--render-crew-strip") {
+    let rest = arguments[arguments.index(after: flag)...]
+    let names = Array(rest.prefix(3))
+    guard names.count == 3, !names[0].hasPrefix("-"),
+          let from = BloubStateID(rawValue: names[1]),
+          let to = BloubStateID(rawValue: names[2])
+    else {
+        let known = BloubStateID.allCases.map(\.rawValue).joined(separator: ", ")
+        let usage = "auspex: --render-crew-strip needs <path> <from-state> <to-state>.\n"
+            + "        states: \(known)\n"
+        FileHandle.standardError.write(Data(usage.utf8))
+        exit(2)
+    }
+    do {
+        try CrewMotionRenderer.renderStrip(
+            from: from,
+            to: to,
+            to: URL(fileURLWithPath: names[0])
+        )
+        let morph = Int((BloubTransition.duration(BloubStates.state(to).morph) * 1000).rounded())
+        let lag = Int((BloubTransition.eyeLag * 1000).rounded())
+        let frames = CrewMotionRenderer.stripFrames
+        let summary = "auspex: \(frames) frames of \(from.rawValue) → \(to.rawValue), "
+            + "morph \(morph) ms, eyes \(lag) ms behind\n"
+        FileHandle.standardOutput.write(Data(summary.utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
+// The whole demo wall over a couple of seconds — as an animated GIF when the
+// destination ends in `.gif`, otherwise as a 4 × 4 contact sheet. The GIF is
+// assembled with ImageIO, so no ffmpeg has to exist for the evidence to be
+// reproducible.
+if let flag = arguments.firstIndex(of: "--render-crew-motion") {
+    let rest = arguments[arguments.index(after: flag)...]
+    guard let path = rest.first, !path.hasPrefix("-") else {
+        FileHandle.standardError.write(
+            Data("auspex: --render-crew-motion needs a destination path.\n".utf8)
+        )
+        exit(2)
+    }
+    let seconds = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 2
+    let elapsed = rest.dropFirst(2).first.flatMap(TimeInterval.init) ?? 16
+    do {
+        let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
+        let url = URL(fileURLWithPath: path)
+        let avatars = board.sessions.count
+        let summary: String
+        if url.pathExtension.lowercased() == "gif" {
+            try CrewMotionRenderer.renderGIF(board: board, to: url, seconds: seconds)
+            let frames = Int((seconds * 20).rounded())
+            summary = "auspex: \(frames) frames of \(avatars) avatars over "
+                + "\(seconds)s at 20 fps\n"
+        } else {
+            try CrewMotionRenderer.renderContactSheet(board: board, to: url, seconds: seconds)
+            summary = "auspex: 16 frames of \(avatars) avatars over \(seconds)s, "
+                + "as a 4x4 contact sheet\n"
+        }
+        FileHandle.standardOutput.write(Data(summary.utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 // Renders the main window from the demo board, offscreen. The same bargain
 // `--render-scene` makes: a screenshot taken off a screen carries whatever was
 // on that screen, and this one carries fabricated sessions under
@@ -213,6 +287,17 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         from the demo board at `seconds` into its loop
                         (default 16), with every avatar frozen `animation
                         seconds` into its own animation (default 1.4).
+          --render-crew-strip <path> <from-state> <to-state>
+                        Render one avatar's state → state transition as a
+                        16-frame filmstrip, with the distance the silhouette
+                        travelled between frames drawn as a bar under each.
+                        That row of bars is what tells an eased morph from a
+                        linear one; a single frame cannot.
+          --render-crew-motion <path> [seconds] [board seconds]
+                        Render the whole demo wall in motion over `seconds`
+                        (default 2). A `.gif` destination writes an animated
+                        GIF at 20 fps; anything else writes a 4×4 contact
+                        sheet of 16 frames.
           --render-board <path> [seconds] [height] [section]
                         [focus=<project>] [ignore=<kind>:<value>]
                         Render the whole window — sidebar, board, trace — to a
