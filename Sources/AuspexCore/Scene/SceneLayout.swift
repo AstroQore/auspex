@@ -282,12 +282,70 @@ public struct SceneLayout: Sendable, Equatable {
 
     // MARK: Geometry
 
+    /// One floor, measured but not yet placed.
+    private struct FloorMeasurement {
+        let index: Int
+        let floor: FloorState
+        /// Which row each bay landed on, and how far along it.
+        let placed: [(bay: Int, row: Int, x: CGFloat)]
+        let rowCount: Int
+        /// How wide the room is, in units.
+        let units: CGFloat
+        let height: CGFloat
+    }
+
+    /// Packs one floor's bays into rows. A bay that does not fit in what is
+    /// left of a row starts the next one; a bay wider than a whole row gets one
+    /// to itself rather than being split, because a subagent on the line below
+    /// its parent is not adjacent to anything.
+    private func measure(_ floor: FloorState, index: Int) -> FloorMeasurement {
+        var row = 0
+        var cursor: CGFloat = 0
+        var widest: CGFloat = 0
+        var placed: [(bay: Int, row: Int, x: CGFloat)] = []
+        placed.reserveCapacity(floor.bays.count)
+        for (bayIndex, bay) in floor.bays.enumerated() {
+            let width = bay?.width(metrics) ?? Self.vacantBayWidth
+            if cursor > 0, cursor + width > metrics.rowUnits + 0.0001 {
+                row += 1
+                cursor = 0
+            }
+            placed.append((bayIndex, row, cursor))
+            cursor += width
+            widest = max(widest, cursor)
+        }
+        let rowCount = placed.isEmpty ? 1 : row + 1
+        return FloorMeasurement(
+            index: index,
+            floor: floor,
+            placed: placed,
+            rowCount: rowCount,
+            units: max(metrics.minimumFloorUnits, widest),
+            height: metrics.floorHeaderHeight + CGFloat(rowCount) * metrics.rowHeight
+        )
+    }
+
     /// Turns the allocation table into coordinates.
     private func geometry(_ plan: Plan) -> SceneFrame {
         var outFloors: [SceneFloor] = []
         var slots: [SceneSlot] = []
         var anchors: [SessionKey: CGPoint] = [:]
         var scales: [SessionKey: CGFloat] = [:]
+
+        // Measuring every room before placing any of them is what lets the
+        // campus decide how wide to be: the shelf width is a function of how
+        // much building there is, and that is not known until the last room
+        // has been packed.
+        let measured = floors.enumerated().compactMap { index, floor in
+            floor.map { measure($0, index: index) }
+        }
+        let totalUnits = measured.reduce(0) { $0 + $1.units }
+        let averageHeight = measured.isEmpty
+            ? 0
+            : measured.reduce(0) { $0 + $1.height } / CGFloat(measured.count)
+        let shelfWidth = metrics.shelfUnits(
+            totalUnits: totalUnits, averageFloorHeight: averageHeight
+        )
 
         // Floors are shelved: they run left to right and wrap when the next one
         // will not fit, so four projects with two agents each read as one wide
@@ -299,35 +357,16 @@ public struct SceneLayout: Sendable, Equatable {
         var cursorX = metrics.margin
         var buildingRight = metrics.margin
 
-        for (floorIndex, floor) in floors.enumerated() {
-            guard let floor else { continue }
-
-            // Pack the bays into rows. A bay that does not fit in what is left
-            // of a row starts the next one; a bay wider than a whole row gets
-            // one to itself rather than being split, because a subagent on the
-            // line below its parent is not adjacent to anything.
-            var row = 0
-            var cursor: CGFloat = 0
-            var widest: CGFloat = 0
-            var placed: [(bay: Int, row: Int, x: CGFloat)] = []
-            placed.reserveCapacity(floor.bays.count)
-            for (bayIndex, bay) in floor.bays.enumerated() {
-                let width = bay?.width(metrics) ?? Self.vacantBayWidth
-                if cursor > 0, cursor + width > metrics.rowUnits + 0.0001 {
-                    row += 1
-                    cursor = 0
-                }
-                placed.append((bayIndex, row, cursor))
-                cursor += width
-                widest = max(widest, cursor)
-            }
-
-            let rowCount = placed.isEmpty ? 1 : row + 1
-            let units = max(metrics.minimumFloorUnits, widest)
-            let height = metrics.floorHeaderHeight + CGFloat(rowCount) * metrics.rowHeight
+        for measurement in measured {
+            let floorIndex = measurement.index
+            let floor = measurement.floor
+            let placed = measurement.placed
+            let rowCount = measurement.rowCount
+            let units = measurement.units
+            let height = measurement.height
             var occupancy = 0
 
-            if shelfUnits > 0, shelfUnits + units > metrics.rowUnits + 0.0001 {
+            if shelfUnits > 0, shelfUnits + units > shelfWidth + 0.0001 {
                 shelfTop += shelfHeight + metrics.floorGap
                 shelfHeight = 0
                 shelfUnits = 0

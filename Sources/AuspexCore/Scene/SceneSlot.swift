@@ -64,13 +64,52 @@ public struct SceneMetrics: Sendable, Equatable {
     /// The dimensions the scene view uses.
     public static let standard = SceneMetrics()
 
-    /// The widest the building can get: a floor filled to the wrap rule, plus
-    /// the margins. A building whose busiest floor holds three desks is
+    /// The width of a building one room wide: a floor filled to the wrap rule,
+    /// plus the margins. A building whose busiest floor holds three desks is
     /// narrower than this, because a room is drawn the size of its contents —
     /// a row of empty floor to the right of every project would say there is
     /// space nobody is using, which is not what an idle repository means.
+    ///
+    /// It is the *narrowest* the campus gets, not the widest: past a few
+    /// projects the rooms shelve sideways as well as down. See
+    /// ``shelfUnits(totalUnits:averageFloorHeight:)``.
     public var contentWidth: CGFloat {
         margin * 2 + rowUnits * cellWidth
+    }
+
+    /// How wide the campus is allowed to grow, in units, before a room wraps
+    /// onto the shelf below.
+    ///
+    /// ## Why the map widens instead of only growing down
+    ///
+    /// A fixed-width strip of rooms is fine for four projects and useless for
+    /// forty: the building becomes a column eight screens tall, "fit all"
+    /// frames a ribbon two desks wide, and the canvas the camera flies over is
+    /// mostly empty air either side. So the shelf width grows with the amount
+    /// of building there is to shelve, aiming to keep the whole map roughly as
+    /// wide as a window is — a campus rather than a tower.
+    ///
+    /// The rule is the solution of *width ÷ height = 4/3* for a greedy shelf
+    /// packing: with `U` units of room to place and a shelf `W` units wide the
+    /// building is `W · cellWidth` across and about `(U / W) · stride` tall, so
+    ///
+    /// ```
+    /// W · cellWidth       4              4 · U · stride
+    /// ───────────────  =  ─   ⟹   W  =  √──────────────
+    /// (U / W) · stride    3                3 · cellWidth
+    /// ```
+    ///
+    /// It never goes below ``rowUnits``, so a small office keeps exactly the
+    /// single-column shape it has always had and only the busy ones spread
+    /// out. The result is deliberately *not* the viewport's aspect ratio: the
+    /// map is a stable thing that a reader learns the shape of, and a
+    /// building that reflowed when somebody widened the window would be a new
+    /// building every time.
+    public func shelfUnits(totalUnits: CGFloat, averageFloorHeight: CGFloat) -> CGFloat {
+        guard totalUnits > 0, cellWidth > 0 else { return rowUnits }
+        let stride = averageFloorHeight + floorGap
+        let ideal = ((4 * totalUnits * stride) / (3 * cellWidth)).squareRoot()
+        return max(rowUnits, ideal)
     }
 }
 
@@ -233,5 +272,37 @@ public struct SceneFrame: Sendable, Equatable {
     /// The desk `key` is sitting at, when it has one.
     public func slot(for key: SessionKey) -> SceneSlot? {
         slots.first { $0.session == key }
+    }
+
+    /// Every room a project has, in drawing order.
+    ///
+    /// Plural because a project can hold more than one floor once the office
+    /// has churned — a floor is an allocation, and the layout would rather
+    /// open a second room than renumber the ones already drawn. `nil` asks for
+    /// the room that holds the sessions no directory could be found for.
+    public func floors(forProject key: String?) -> [SceneFloor] {
+        floors.filter { $0.projectKey == key }
+    }
+
+    /// What the camera frames when a project is focused: everything that
+    /// project occupies, in layout space, or `nil` when it occupies nothing.
+    ///
+    /// The union rather than the first room, because framing one of a
+    /// project's two rooms and leaving the other off screen answers the
+    /// question "where is this project" with half a lie.
+    public func focusRect(forProject key: String?) -> CGRect? {
+        let rooms = floors(forProject: key)
+        guard var union = rooms.first?.frame else { return nil }
+        for room in rooms.dropFirst() { union = union.union(room.frame) }
+        return union
+    }
+
+    /// The room under a layout-space point, for a double-click on the floor.
+    ///
+    /// Last match wins so that the answer agrees with what is drawn on top
+    /// when two rooms overlap, which they should not, but a hit test that
+    /// silently disagrees with the picture is a bug nobody can see.
+    public func floor(at point: CGPoint) -> SceneFloor? {
+        floors.last { $0.frame.contains(point) }
     }
 }
