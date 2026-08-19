@@ -11,40 +11,46 @@ import SwiftUI
 /// 28 pt, which is the mock's rhythm and a little under half a card's row
 /// height, so the two never beat against each other.
 struct BoardSurfaceBackground: View {
-    /// Distance between grid lines.
     var spacing: CGFloat = 28
 
     var body: some View {
-        Canvas { context, size in
-            var path = Path()
-            var x: CGFloat = 0
-            while x <= size.width {
-                path.move(to: CGPoint(x: x + 0.5, y: 0))
-                path.addLine(to: CGPoint(x: x + 0.5, y: size.height))
-                x += spacing
-            }
-            var y: CGFloat = 0
-            while y <= size.height {
-                path.move(to: CGPoint(x: 0, y: y + 0.5))
-                path.addLine(to: CGPoint(x: size.width, y: y + 0.5))
-                y += spacing
-            }
-            context.stroke(path, with: .color(AuspexPalette.grid), lineWidth: 1)
-        }
-        .background(AuspexPalette.canvas)
-        // No `drawingGroup()`: `Canvas` already rasterises, and wrapping it
-        // adds a second offscreen pass that is redone whenever anything above
-        // it in the tree redraws — which, on a board that updates several
-        // times a second, is constantly.
-        .accessibilityHidden(true)
+        // A tiled bitmap, not a `Canvas`. During a live window resize AppKit
+        // stretches a rasterised layer's last contents until the next draw,
+        // so a Canvas grid visibly scales and then snaps — which is exactly
+        // the non-native feel a board should never have. A tiling image is
+        // repeated by the layer itself at every size, so it is always crisp
+        // and costs nothing to resize.
+        Image(nsImage: GridTile.image(spacing: spacing))
+            .resizable(resizingMode: .tile)
+            .background(AuspexPalette.canvas)
+            .accessibilityHidden(true)
     }
 }
 
-/// The chrome shared by everything that sits on the board: a flat panel a step
-/// above the ground, a hairline border, and a 10 pt corner.
-///
-/// The one thing that ever glows is a card whose session is blocked on a
-/// person, and it glows because nothing else does.
+/// One cell of the board's grid, drawn once per spacing and cached.
+@MainActor
+private enum GridTile {
+    private static var cache: [CGFloat: NSImage] = [:]
+
+    static func image(spacing: CGFloat) -> NSImage {
+        if let cached = cache[spacing] { return cached }
+        let size = NSSize(width: spacing, height: spacing)
+        let image = NSImage(size: size, flipped: false) { _ in
+            NSColor(AuspexPalette.canvas).setFill()
+            NSRect(origin: .zero, size: size).fill()
+            NSColor(AuspexPalette.grid).setFill()
+            // One-pixel lines on the cell's left and bottom edges; tiled,
+            // they meet into a continuous grid.
+            NSRect(x: 0, y: 0, width: 1, height: spacing).fill()
+            NSRect(x: 0, y: 0, width: spacing, height: 1).fill()
+            return true
+        }
+        image.resizingMode = .tile
+        cache[spacing] = image
+        return image
+    }
+}
+
 struct PanelChrome: ViewModifier {
     var isSelected = false
     var isHighlighted = false
