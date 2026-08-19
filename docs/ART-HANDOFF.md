@@ -1,5 +1,6 @@
 # Auspex 美术素材交接（给 Codex / imagegen 流水线）
 
+> **优先级**：§4 角色 atlas（先 `blocked`）→ §5 家具 → §8 气泡 → §6 显示器画面 → §1 App 图标 → §2 菜单栏 → §3 应用内图标 → §7 特效 → §9 UI 动画/空状态 → §1.4 衍生物料。
 > 目标：一次性产出 Auspex 需要的全部视觉素材——**图标包**（App 图标全尺寸 + 分层源 + 菜单栏 + 应用内图标集）、**俯视像素办公室**（角色 / 家具 / 地板 / 显示器画面 / 环境与特效 atlas / 气泡）、**UI 小动画帧**、**空状态与发布物料**。
 > 风格标杆：Pixel Agents 那种 3/4 俯视、温暖干净的 16 位像素办公室；UI 面是深色克制的 macOS 原生风。当前程序占位画面见 `docs/screenshots/scene.png`、`board.png`。
 > 交付根目录：`auspex/Resources/`（结构见 §9）。**测试时角色/家具可先丢到 `~/.auspex/sprites/`，app 优先读那里，不用重编。**
@@ -30,8 +31,8 @@
 ### 0.3 色板（全局，所有素材共用）
 - 画布 `#101012` · 面板 `#161619` · 描边 `#26262C` · 文字 `#EDEDEF` / `#A0A0A8` / `#6C6C75`
 - 状态色（唯一的饱和色）：thinking `#6EA8FE` · tool `#F2B544` · writing `#4FD08A` · delegating `#B48CFF` · **needs-you `#FF5C6C`** · idle `#7A7A85` · ended `#46464E`
-- Harness 主色（**7 个正式 harness**，全部用全名，不出现任何缩写/首字母）：Claude Code `#E0785A` · Claude Cowork `#CE8F6E` · Codex `#2DD4BF` · ChatGPT Work `#22A06B` · Cursor `#4C8DFF` · Grok Build `#F45FA0` · AntiGravity `#B4E048`（可选：Gemini CLI `#7DD3FC`）
-- **Harness 标识一律用厂商真 logo**，源文件已放在 `auspex/Resources/ProviderIcons/`（复用 vibe-bar 资产，单色 SVG，app 按上表主色着色）：`ProviderIcon-claude.svg`（Claude Code / Claude Cowork）· `ProviderIcon-codex.svg`（OpenAI 花，Codex / ChatGPT Work）· `ProviderIcon-cursor.svg` · `ProviderIcon-grok.svg` · `ProviderIcon-antigravity.svg` · `ProviderIcon-gemini.svg`。同一 logo 的两个 harness 靠**全名文字 + 主色**区分，不靠改 logo。
+- Harness 主色（**8 个正式 harness**，全部用全名，不出现任何缩写/首字母）：Claude Code `#E0785A` · Claude Cowork `#CE8F6E` · Codex `#2DD4BF` · ChatGPT Work `#22A06B` · Cursor `#4C8DFF` · Grok Build `#F45FA0` · Grok Bot `#F98BBE` · AntiGravity `#B4E048`（可选：Gemini CLI `#7DD3FC`）
+- **Harness 标识一律用厂商真 logo**，源文件已放在 `auspex/Resources/ProviderIcons/`（复用 vibe-bar 资产，单色 SVG，app 按上表主色着色）：`ProviderIcon-claude.svg`（Claude Code / Claude Cowork）· `ProviderIcon-codex.svg`（OpenAI 花，Codex / ChatGPT Work）· `ProviderIcon-cursor.svg` · `ProviderIcon-grok.svg`（Grok Build / Grok Bot）· `ProviderIcon-antigravity.svg` · `ProviderIcon-gemini.svg`。同一 logo 的两个 harness 靠**全名文字 + 主色**区分，不靠改 logo。
 
 ---
 
@@ -91,9 +92,9 @@ Auspex = 古罗马**观鸟占卜的祭司**。
 ## 4. 角色 atlas（场景核心，最先做）
 
 路径：`Resources/Sprites/<harness>/<variant>/<pose>.png`
-harness 文件夹名（严格，这是代码里的枚举原值，仅用于路径）：`claudeCode` `claudeCowork` `codex` `chatgptWork` `cursor` `grokBuild` `antigravity`（可选 `geminiCLI`）；variant 先只做 `default`（后续可加 `cli` 卫衣版 / `ide` 耳机版）。**界面上任何地方展示的都是全名**（Claude Code、Claude Cowork、Codex、ChatGPT Work、Cursor、Grok Build、AntiGravity），不出现缩写。
+harness 文件夹名（严格，这是代码里的枚举原值，仅用于路径）：`claudeCode` `claudeCowork` `codex` `chatgptWork` `cursor` `grokBuild` `grokBot` `antigravity`（可选 `geminiCLI`）；variant 先只做 `default`（后续可加 `cli` 卫衣版 / `ide` 耳机版）。**界面上任何地方展示的都是全名**（Claude Code、Claude Cowork、Codex、ChatGPT Work、Cursor、Grok Build、Grok Bot、AntiGravity），不出现缩写。
 
-每个 harness 一个"人"，上衣用 harness 主色，皮肤/发型各异让 7 人一眼可分；同门的两位（Claude Code / Claude Cowork，Codex / ChatGPT Work）保持家族相似但可区分（例如同发型不同配饰）：
+每个 harness 一个"人"，上衣用 harness 主色，皮肤/发型各异让 8 人一眼可分；同门的两位（Claude Code / Claude Cowork，Codex / ChatGPT Work，Grok Build / Grok Bot）保持家族相似但可区分（例如同发型不同配饰）：
 | harness（全名） | 文件夹 | 上衣 | 建议气质 |
 |---|---|---|---|
 | Claude Code | `claudeCode` | `#E0785A` | 沉稳，卷发 |
@@ -102,6 +103,7 @@ harness 文件夹名（严格，这是代码里的枚举原值，仅用于路径
 | ChatGPT Work | `chatgptWork` | `#22A06B` | 与 Codex 同发型，穿马甲 |
 | Cursor | `cursor` | `#4C8DFF` | 年轻，鸭舌帽 |
 | Grok Build | `grokBuild` | `#F45FA0` | 张扬，高马尾 |
+| Grok Bot | `grokBot` | `#F98BBE` | 与 Grok Build 同发型，戴耳麦（它是聊天机器人，没有代码工位感也没关系） |
 | AntiGravity | `antigravity` | `#B4E048` | 松弛，长发 |
 
 cell 32×32，人物约 14 宽 × 22 高，脚底贴 cell 底边（bottom-center 锚点），左右各留 ≥ 8 px；**默认坐姿朝上（背对观众、面向显示器）**，桌子与显示器由 app 画在人物上方，人物上方 8 px 不要画东西。
@@ -214,11 +216,11 @@ Resources/
 ├── Sprites/<harness>/default/<pose>.png (+ .json)
 ├── Tiles/ office.png office.json screens.png screens.json fx.png fx.json bubbles.png bubbles.json
 └── UI/ emptyState.png launch.png scanning.png harnessOffline.png onboarding-hero.png
-docs/art/ contact-<harness>.png ×7  contact-tiles.png  contact-fx.png  contact-icons.png  social-preview.png
+docs/art/ contact-<harness>.png ×8  contact-tiles.png  contact-fx.png  contact-icons.png  social-preview.png
 ```
 
 ## 11. 验收
-- Sprites 丢进 `~/.auspex/sprites/` 跑 Scene：`blocked` 在 1:1 下必须是全屏最抓眼元素；七个人 1:1 一眼可分；放大 8× 无一处抗锯齿灰边。
+- Sprites 丢进 `~/.auspex/sprites/` 跑 Scene：`blocked` 在 1:1 下必须是全屏最抓眼元素；八个人 1:1 一眼可分；放大 8× 无一处抗锯齿灰边。
 - 图标：16/32 两档在浅/深色 Dock 与 Finder 列表里可辨；菜单栏 template 在浅/深菜单栏都清晰。
 - 每个 atlas 的 JSON 与 PNG 尺寸一致，`columns = width/height` 成立。
 
