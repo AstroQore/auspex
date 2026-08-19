@@ -238,6 +238,12 @@ extension DemoScript.Blueprint {
                 .think(1.2),
                 .tool("Read", .fileRead, "Sources/AuspexCore/Registry/SessionRegistry.swift", 0.6),
                 .tool("Grep", .search, "boardSnapshots", 0.3),
+                // A failure in the compressed history, so the board opens with
+                // one red row in it: a session whose past is all green is not
+                // what anybody's afternoon looks like, and it leaves the one
+                // colour that means "look here" untested in every screenshot.
+                .toolFails("Bash", .shell, "swift build 2>&1 | tail -20", 0.9),
+                .say("The registry's frame stream is single-consumer, so the board has to be its one reader."),
                 .usage(48_210, 3_140, 31_800),
                 .endTurn
             ],
@@ -741,8 +747,32 @@ extension DemoScript {
             let id = "call-\(generation)-\(callIndex)"
             emit(.toolCallStarted(id: id, name: name, kind: kind, target: target))
             advance(seconds)
+            // Only failures carry a result body. A harness that logs tool
+            // output logs all of it, but a demo that emitted a fabricated
+            // paragraph per call would double the length of every trace to
+            // show a sentence nobody wrote — and the one result a reader
+            // actually needs is the one that explains a red row.
+            if fails {
+                emit(.textBody(role: .toolResult, text: Self.failure(for: kind), toolCallID: id))
+            }
             emit(.toolCallFinished(id: id, isError: fails))
             advance(0.2)
+        }
+
+        /// What a failed call said, per kind of tool. Invented, like the rest
+        /// of the script, and phrased the way the real thing would be.
+        private static func failure(for kind: ToolKind) -> String {
+            switch kind {
+            case .shell: "exit 1 · 1 test failed, 84 passed"
+            case .fileRead: "no such file or directory"
+            case .fileWrite: "the file changed on disk after it was read"
+            case .search: "the pattern is not valid"
+            case .web: "the request timed out"
+            case .mcp: "the server returned an error"
+            case .subagent: "the child exited before it answered"
+            case .plan: "the plan was rejected"
+            case .other: "the call returned an error"
+            }
         }
 
         private mutating func compileDelegation(

@@ -152,6 +152,38 @@ if let flag = arguments.firstIndex(of: "--render-board") {
     }
 }
 
+// Renders the Trajectory mode from the demo board, offscreen. The waterfall
+// is a `Canvas`, which has no view hierarchy to assert against, so drawing one
+// and looking at it is the only honest check that the layout maths reaches the
+// pixels — and it is the only way to look at the mode at all on a machine with
+// no attached display.
+if let flag = arguments.firstIndex(of: "--render-trajectory") {
+    let rest = arguments[arguments.index(after: flag)...]
+    guard let path = rest.first, !path.hasPrefix("-") else {
+        FileHandle.standardError.write(
+            Data("auspex: --render-trajectory needs a destination path.\n".utf8)
+        )
+        exit(2)
+    }
+    let warmup = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 20
+    let height = rest.dropFirst(2).first.flatMap(Double.init)
+        ?? TrajectorySnapshotRenderer.defaultSize.height
+    let width = rest.dropFirst(3).first.flatMap(Double.init)
+        ?? TrajectorySnapshotRenderer.defaultSize.width
+    do {
+        let summary = try TrajectorySnapshotRenderer.render(
+            to: URL(fileURLWithPath: path),
+            warmup: warmup,
+            size: CGSize(width: width, height: height)
+        )
+        FileHandle.standardOutput.write(Data("auspex: wrote \(path) — \(summary)\n".utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 if arguments.contains("--help") || arguments.contains("-h") {
     FileHandle.standardOutput.write(Data("""
         auspex — one live board for every AI coding agent on this Mac.
@@ -193,6 +225,13 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         ignore rule (`pathPrefix`, `project`, `promptPrefix`,
                         `harness`, `titleContains`) for this render only.
                         Reads no harness store and writes nothing.
+          --render-trajectory <path> [seconds] [height] [width]
+                        Render one session's Trajectory — the waterfall, the
+                        step list, and the inspector — to a PNG, offscreen,
+                        after letting the demo run for `seconds` (default 20),
+                        at `height` x `width` points (default 980 x 1600). The
+                        session shown is whichever demo session has the most to
+                        show. Reads no harness store.
           --mcp-stdio   Serve the task board over MCP on stdio. (M3)
           --hook        Handle a harness hook invocation. (M3)
           --help        Show this.
