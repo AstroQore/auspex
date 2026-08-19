@@ -342,4 +342,86 @@ struct SessionRegistryTests {
         #expect(frames > 0)
         #expect(frames < 50)
     }
+
+    @Test("a backfilled brief reaches the board without a relaunch")
+    func applyBriefsFoldsIntoTheLiveSet() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store: store)
+        let key = Fixtures.key()
+        await registry.ingest(Fixtures.event(.note("hello"), key: key, at: 0))
+
+        let applied = await registry.applyBriefs([
+            key: SessionBrief(
+                firstPrompt: "Make the resizer stop snapping back",
+                firstPromptAt: Fixtures.date(1),
+                lastTurnEndedAt: Fixtures.date(120)
+            )
+        ])
+
+        #expect(applied == 1)
+        let session = try #require(await registry.session(for: key))
+        #expect(session.brief.firstPrompt == "Make the resizer stop snapping back")
+        #expect(session.brief.lastTurnEndedAt == Fixtures.date(120))
+
+        // Marked dirty, so the registry's merged copy is what the store ends
+        // up holding rather than whatever the backfill derived from. `stop()`
+        // rather than a bare flush: it waits for the persist already in flight
+        // before draining, which is what makes the assertion below about the
+        // final state rather than about which task won.
+        await registry.stop()
+        let stored = try #require(try SessionRepository(store: store).fetch(key: key))
+        #expect(stored.brief.firstPrompt == "Make the resizer stop snapping back")
+    }
+
+    @Test("what the live pipeline already knows is not displaced by a backfill")
+    func applyBriefsDoesNotOverwriteFresherState() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store: store)
+        let key = Fixtures.key()
+        await registry.ingest(Fixtures.event(.userPrompt(preview: "The newest instruction"), key: key, at: 100))
+
+        let applied = await registry.applyBriefs([
+            key: SessionBrief(
+                firstPrompt: "An earlier instruction nobody saw",
+                firstPromptAt: Fixtures.date(10),
+                latestPrompt: "Something from the middle",
+                lastPromptAt: Fixtures.date(50)
+            )
+        ])
+
+        #expect(applied == 1)
+        let session = try #require(await registry.session(for: key))
+        // The store knew of an earlier assignment than the tail ever saw, and
+        // that one is the assignment. The latest prompt is the live one.
+        #expect(session.brief.firstPrompt == "An earlier instruction nobody saw")
+        #expect(session.brief.latestPrompt == "The newest instruction")
+    }
+
+    @Test("a brief for a session the board has never seen is dropped")
+    func applyBriefsIgnoresUnknownSessions() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store: store)
+
+        let applied = await registry.applyBriefs([
+            Fixtures.key(.codex, "never-bootstrapped"): SessionBrief(
+                firstPrompt: "Make the resizer stop snapping back",
+                firstPromptAt: Fixtures.date(1)
+            )
+        ])
+
+        #expect(applied == 0)
+        #expect(await registry.snapshot().sessions.isEmpty)
+    }
+
+    @Test("a brief that says nothing new costs no frame and no write")
+    func applyBriefsIsANoOpWhenNothingChanges() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store: store)
+        let key = Fixtures.key()
+        await registry.ingest(Fixtures.event(.userPrompt(preview: "The only instruction"), key: key, at: 10))
+
+        let brief = try #require(await registry.session(for: key)).brief
+        #expect(await registry.applyBriefs([key: brief]) == 0)
+        #expect(await registry.applyBriefs([:]) == 0)
+    }
 }

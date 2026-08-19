@@ -364,6 +364,49 @@ public actor SessionRegistry {
         return applied
     }
 
+    /// Folds briefs worked out somewhere else into the live set.
+    ///
+    /// ``BriefBackfill`` rebuilds what a session was asked to do from rows that
+    /// were already in the store, and it writes those rows itself. This is the
+    /// other half: the board renders what the *registry* holds, so without it a
+    /// backfill would not show until the next launch — and a person watching an
+    /// empty "asked for" line does not know a restart is what fixes it.
+    ///
+    /// Re-seeding the live set from disk would be the wrong way to do it: the
+    /// in-memory snapshot is the newer of the two for anything still running,
+    /// and reloading would trade a live state machine for a stale row. So each
+    /// brief is *folded* into the one already held, through the kit's recording
+    /// methods — an earlier assignment displaces a later one, a newer reply
+    /// displaces an older, and nothing else about the session is touched.
+    ///
+    /// The sessions that changed are marked dirty rather than assumed durable.
+    /// The backfill committed the same values, but it derived them from a row
+    /// that a flush may have overwritten in between; persisting the registry's
+    /// merged copy is what makes the live set the last word either way.
+    ///
+    /// - Returns: how many sessions changed. A brief for a session this
+    ///   registry has never seen is ignored — bootstrap loads the most recent
+    ///   few hundred, and seeding a row from a brief would put a session on the
+    ///   board with nothing but an instruction.
+    @discardableResult
+    public func applyBriefs(_ briefs: [SessionKey: SessionBrief]) -> Int {
+        guard !isStopped, !briefs.isEmpty else { return 0 }
+        var applied = 0
+        for (key, brief) in briefs {
+            guard var snapshot = snapshots[key] else { continue }
+            let folded = snapshot.brief.folding(brief)
+            guard folded != snapshot.brief else { continue }
+            snapshot.brief = folded
+            snapshots[key] = snapshot
+            dirtyKeys.insert(key)
+            applied += 1
+        }
+        guard applied > 0 else { return 0 }
+        schedulePersist()
+        schedulePublish()
+        return applied
+    }
+
     /// The identities the linker and the placement service work from.
     ///
     /// Sessions that are not believed to be running have their pid removed
