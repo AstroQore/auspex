@@ -135,7 +135,6 @@ private struct TrajectoryBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .keyboardShortcut("t", modifiers: .command)
         .help("Back to the board (⌘T)")
     }
 

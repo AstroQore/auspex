@@ -21,6 +21,14 @@ struct AuspexApp: App {
 
     @State private var environment = AppEnvironment.launched()
 
+    /// What the menu item says. It toggles, so it names what pressing it
+    /// would do rather than where the reader already is.
+    private var trajectoryCommandTitle: String {
+        environment.board.viewMode == .trajectory
+            ? "Close Trajectory"
+            : "Open Trajectory"
+    }
+
     var body: some Scene {
         WindowGroup(id: Self.mainWindowID) {
             RootView()
@@ -36,6 +44,24 @@ struct AuspexApp: App {
         // can carry the counts beside it. A title bar that repeated it would
         // be two headings for one screen.
         .windowToolbarStyle(.unified(showsTitle: false))
+        // A menu item and not a hidden button with a shortcut on it. The
+        // shortcut has to work from the board — which is where a person is
+        // when they want the trajectory — and a binding that only exists
+        // inside the mode it opens can only ever close it. A menu item is
+        // also the one place on macOS where a shortcut is discoverable.
+        .commands {
+            CommandGroup(after: .toolbar) {
+                Button(trajectoryCommandTitle) {
+                    if environment.board.viewMode == .trajectory {
+                        environment.board.closeTrajectory()
+                    } else {
+                        environment.board.openTrajectory()
+                    }
+                }
+                .keyboardShortcut("t", modifiers: .command)
+                .disabled(!environment.board.canOpenTrajectory)
+            }
+        }
 
         Settings {
             AuspexSettingsView(library: SpriteLibrary.shared, catalog: environment.catalog)

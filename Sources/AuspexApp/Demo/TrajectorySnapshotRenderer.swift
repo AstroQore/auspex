@@ -58,7 +58,8 @@ enum TrajectorySnapshotRenderer {
             content: TrajectorySnapshot(environment: environment, size: size)
         )
         renderer.scale = scale
-        guard let image = renderer.nsImage,
+        let image = renderer.nsImage
+        guard let image,
               let tiff = image.tiffRepresentation,
               let representation = NSBitmapImageRep(data: tiff),
               let png = representation.representation(using: .png, properties: [:])
