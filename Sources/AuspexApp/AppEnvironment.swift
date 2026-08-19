@@ -188,6 +188,10 @@ public final class AppEnvironment {
             } catch {
                 await self?.board.record(notice: "Stored sessions could not be reloaded: \(error).")
             }
+            // After bootstrap, because it folds into the briefs bootstrap
+            // loaded; in a task of its own, because it reads and rewrites a few
+            // hundred rows and the first event must not wait for that.
+            await self?.startBriefBackfill(store: store, registry: registry)
             await registry.run(events: events)
         })
 
@@ -206,6 +210,36 @@ public final class AppEnvironment {
         }
 
         startGrouping(registry: registry, table: table)
+    }
+
+    /// Rebuilds the briefs of sessions recorded before Auspex folded any.
+    ///
+    /// Once per store per event schema — ``BriefBackfill/runIfNeeded(batchSize:)``
+    /// owns that decision — and never on the main actor: it is a few hundred
+    /// SQLite statements and as many JSON round trips, at utility priority so
+    /// it yields to the pipeline it is running beside.
+    ///
+    /// The result goes back through the registry rather than being left in the
+    /// store, so a person watching the board sees the sessions fill in instead
+    /// of finding out on the next launch.
+    ///
+    /// A notice only when something changed, and only counts. The whole point
+    /// of the pass is prompts, and a diagnostic line is the last place any of
+    /// them should appear.
+    private func startBriefBackfill(store: AuspexStore, registry: SessionRegistry) {
+        tasks.append(Task.detached(priority: .utility) { [weak self] in
+            do {
+                let report = try BriefBackfill(store: store).runIfNeeded()
+                guard report.didRun else { return }
+                await registry.applyBriefs(report.briefs)
+                guard report.updated > 0 else { return }
+                await self?.board.record(notice: "Auspex \(report.summary).")
+            } catch {
+                await self?.board.record(
+                    notice: "Older sessions could not be filled in: \(error)."
+                )
+            }
+        })
     }
 
     /// Starts the pass that answers where each session is and who started it.
