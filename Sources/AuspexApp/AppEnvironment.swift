@@ -208,10 +208,18 @@ public final class AppEnvironment {
         board.startLedger(repository: TaskRepository(store: store))
         tasks.start(repository: TaskRepository(store: store))
         projects.start(repository: ProjectRepository(store: store))
-        harnesses.start(
-            home: paths.homeDirectory,
-            watchRoots: AuspexAdapters.watchRoots(home: paths.homeDirectory.path)
-        )
+        // A demo reads no harness store — and no harness *config* either. The
+        // page (and any offscreen render of it) would otherwise show this
+        // Mac's real MCP server names under a board that is supposed to be
+        // fabricated end to end.
+        if mode == .live {
+            harnesses.start(
+                home: paths.homeDirectory,
+                watchRoots: AuspexAdapters.watchRoots(home: paths.homeDirectory.path)
+            )
+        } else {
+            harnesses.startFabricated()
+        }
         // The setup sheet writes into real harness configs, so a demo never
         // offers it: a fabricated board must not be able to change the machine.
         setup.load(

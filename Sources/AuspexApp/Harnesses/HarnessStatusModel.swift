@@ -40,6 +40,21 @@ final class HarnessStatusModel {
     /// running.
     let harnesses = AuspexAdapters.featured
 
+    /// A demo's stand-in: every harness "detected", no config read.
+    ///
+    /// The page (and any offscreen render of it) must never show this Mac's
+    /// real MCP server names under a fabricated board, so a demo does not get
+    /// the file-reading loop at all — it gets a plausible fiction with nothing
+    /// in it that came off the machine.
+    func startFabricated() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        detected = Set(harnesses)
+        configs = [:]
+        refreshedAt = Date()
+        isLoading = false
+    }
+
     /// Starts reading, and keeps re-reading until ``stop()``.
     func start(home: URL, watchRoots: [Harness: [URL]]) {
         self.home = home
