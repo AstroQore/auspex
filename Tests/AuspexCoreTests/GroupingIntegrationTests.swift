@@ -318,6 +318,43 @@ struct GroupingIntegrationTests {
         #expect(try row(store, child)?["root_key"] as String? == parent.description)
         #expect(try store.projects.fetchProjects().map(\.name) == ["widget"])
     }
+
+    @Test("a tick folds a Codex Auto Review rollout under the root its variant names")
+    func coordinatorFoldsAutoReview() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store)
+        let root = Fixtures.key(.codex, "0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6")
+        let review = Fixtures.key(.codex, "0198f6d0-11ac-7e54-8b26-3ad70f9c1e83")
+
+        await registry.ingest(started(root, cwd: nil))
+        var guardian = Fixtures.identity(key: review, cwd: nil, pid: nil)
+        guardian.gitRoot = nil
+        guardian.gitBranch = nil
+        // The only record of the relationship anywhere. Neither rollout's body
+        // mentions the other, and no process links them: a guardian run holds
+        // no writer lock, so it has no pid to walk a tree from.
+        guardian.variant = "auto-review:\(root.sessionID)"
+        await registry.ingest(
+            Fixtures.event(.sessionStarted(identity: guardian), key: review, at: 1)
+        )
+
+        // An empty table, so nothing here can come from a process inference.
+        let coordinator = GroupingCoordinator(
+            registry: registry,
+            table: StubProcessTable(records: [], environments: [:])
+        )
+        #expect(await coordinator.tick().links == 1)
+        #expect(await coordinator.tick().links == 0)
+
+        await registry.stop()
+        let folded = try #require(await registry.session(for: review)?.identity)
+        #expect(folded.parent == root)
+        #expect(folded.parentLink == .subagent(toolUseID: nil))
+        // And the store re-roots the subtree, which is what the tree grouping
+        // and the sidebar read.
+        #expect(try row(store, review)?["root_key"] as String? == root.description)
+        #expect(try row(store, review)?["parent_key"] as String? == root.description)
+    }
 }
 
 /// A process table over a fixed array, so a coordinator test does not depend on

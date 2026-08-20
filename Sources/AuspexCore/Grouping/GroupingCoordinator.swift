@@ -53,11 +53,19 @@ public struct GroupingCoordinator: Sendable {
         self.linker = linker
     }
 
-    /// One pass: resolve the directories that changed, then infer the links the
-    /// process table can see.
+    /// One pass: resolve the directories that changed, then apply the links —
+    /// the ones a harness recorded in an identity, and the ones the process
+    /// table can see.
     ///
     /// Placements first, because a link moves a child under its parent's
     /// project and the parent's project should be known by then.
+    ///
+    /// Recorded relationships are proposed ahead of inferred ones so that a
+    /// pass which finds both for the same child applies the recorded one.
+    /// ``SessionRegistry/applyLinks(_:)`` fills blanks in order, and
+    /// ``SessionIdentityPatch/applied(to:)`` would refuse the weaker evidence
+    /// afterwards anyway — the order is what makes that agreement visible here
+    /// rather than only two files away.
     ///
     /// - Returns: how many placements and how many links were applied, which is
     ///   what a test asserts on and what a host can log.
@@ -69,7 +77,8 @@ public struct GroupingCoordinator: Sendable {
         let resolved = await placements.placements(for: identities)
         let placed = await registry.applyPlacements(resolved)
 
-        let links = linker.infer(identities: identities, table: table)
+        let links = SessionRelations.links(identities: identities)
+            + linker.infer(identities: identities, table: table)
         let linked = await registry.applyLinks(links)
         return (placed, linked)
     }
