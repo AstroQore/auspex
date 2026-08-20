@@ -126,7 +126,7 @@ final class SessionControlModel {
     /// would otherwise have to guess at.
     private func refreshedTarget(for identity: SessionIdentity) -> SessionControl.Target? {
         guard let table else { return nil }
-        (table as? ProcessTable)?.refresh()
+        refresh(table)
         let availability = SessionControl.availability(for: identity, table: table)
         switch availability {
         case let .available(target):
@@ -145,7 +145,7 @@ final class SessionControlModel {
         session: SessionKey
     ) -> Bool {
         guard let table else { return false }
-        (table as? ProcessTable)?.refresh()
+        refresh(table)
         let outcome = SessionControl.send(signal, to: target, table: table)
         switch outcome {
         case .sent:
@@ -172,7 +172,7 @@ final class SessionControlModel {
         Task { [weak self] in
             try? await Task.sleep(for: Self.forceGrace)
             guard let self, let table = self.table else { return }
-            (table as? ProcessTable)?.refresh()
+            refresh(table)
             guard SessionControl.stillMatches(prompt.target, table: table) else { return }
             // Only if the person has not moved on to something else. A dialog
             // that appears over an unrelated confirmation is worse than one
@@ -186,6 +186,18 @@ final class SessionControlModel {
                 isResumable: prompt.isResumable
             )
         }
+    }
+
+    /// Forces a new process-table snapshot before a decision that will reach
+    /// `kill(2)`.
+    ///
+    /// The cast is the honest shape of the thing: `ProcessTableReading` is a
+    /// read-only protocol with no notion of freshness, deliberately, so that
+    /// a fixed array can stand in for the kernel in a test. Only the real
+    /// table has a cache to invalidate, and only the real table is ever handed
+    /// a pid that a signal is about to go to.
+    private func refresh(_ table: any ProcessTableReading) {
+        (table as? ProcessTable)?.refresh()
     }
 
     /// Puts a line in the session's own trace.
@@ -217,7 +229,7 @@ final class SessionControlModel {
 /// because `role: .destructive` is what makes the button red without anybody
 /// choosing a colour.
 struct KillConfirmation: ViewModifier {
-    @Bindable var control: SessionControlModel
+    let control: SessionControlModel
 
     func body(content: Content) -> some View {
         content.alert(
@@ -278,10 +290,13 @@ struct ControlPrompt: Identifiable, Equatable {
     }
 
     /// What the destructive button says.
+    /// What the destructive button says. No ellipsis on either: the ellipsis
+    /// in the menu item is the promise that a question is coming, and this is
+    /// the question.
     var confirmTitle: String {
         switch step {
         case .terminate: "Kill"
-        case .force: "Force kill"
+        case .force: SessionControl.Signal.forceKill.menuTitle
         }
     }
 }

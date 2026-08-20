@@ -84,13 +84,13 @@ private struct SessionSignalItems: View {
         let availability = control.availability(for: identity)
         switch availability {
         case let .available(target):
-            Button("Interrupt (SIGINT)") { control.interrupt(identity) }
+            Button(SessionControl.Signal.interrupt.menuTitle) { control.interrupt(identity) }
                 .help(SessionControl.interruptHelp(for: identity.key.harness, pid: target.pid))
-            Button("Kill…") { control.requestKill(identity) }
+            Button(SessionControl.Signal.terminate.menuTitle) { control.requestKill(identity) }
                 .help("Asks first, then sends SIGTERM to pid \(target.pid)")
         case let .unavailable(reason):
-            Button("Interrupt (SIGINT)") {}.disabled(true).help(reason)
-            Button("Kill…") {}.disabled(true).help(reason)
+            Button(SessionControl.Signal.interrupt.menuTitle) {}.disabled(true).help(reason)
+            Button(SessionControl.Signal.terminate.menuTitle) {}.disabled(true).help(reason)
         }
     }
 }

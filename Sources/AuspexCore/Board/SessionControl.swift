@@ -82,9 +82,17 @@ public enum SessionControl {
         }
 
         /// What the menu item says.
+        ///
+        /// *Interrupt (SIGINT)* and not *Interrupt (⌃C)*, which is what it
+        /// looked like it should say. A full-screen harness reads its keyboard
+        /// in raw mode, where ⌃C arrives as a byte and never becomes a signal
+        /// — so "the thing that happens when I press ⌃C in the terminal" and
+        /// "what this menu item sends" are genuinely different events, and
+        /// naming the second after the first would be a promise the item
+        /// cannot keep. See ``interruptHelp(for:pid:)``.
         public var menuTitle: String {
             switch self {
-            case .interrupt: "Interrupt"
+            case .interrupt: "Interrupt (SIGINT)"
             case .terminate: "Kill…"
             case .forceKill: "Force kill"
             }
