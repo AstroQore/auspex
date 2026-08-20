@@ -295,7 +295,8 @@ shipped one. `v1_initial` creates:
 | `events` | the append-only event log |
 | `tool_calls` | one row per call, so durations need no replay of the log |
 | `messages` + `messages_fts` | indexed message text and the FTS5 index over it |
-| `tasks`, `task_links`, `task_log`, `tags`, `session_tags` | the shared task board — *M3* |
+| `plans`, `tasks`, `task_links`, `task_log`, `tags`, `session_tags` | the shared task board an orchestrator registers and its workers claim |
+| `session_notices`, `session_reports` | what agents said: a live call for a person, and a self-reported focus line |
 | `source_cursors` | where each tailer stopped reading |
 | `meta` | key/value, including the retention policy |
 
@@ -349,8 +350,23 @@ rather than a convention.
 
 ## MCP
 
-Auspex exposes its task board to agents over MCP, so an agent can see what its
-siblings are doing and claim, update, or complete a shared task. — *M3.*
+Auspex exposes itself to agents over MCP: sixteen tools, in three layers.
+
+The first is the one that matters. `auspex.notify(kind, message)` lets a
+session say it needs the person — a question, a review, a blocker, or finished
+work — and lands it in the right bucket with the agent's own words, a macOS
+notification, and a menu-bar count. Passive observation cannot answer that
+question at all: Claude Code and Cursor write no permission state to disk, and
+"I asked you something and I am waiting" is invisible in every harness's files.
+
+The second is `auspex.report(focus, progress)`, which replaces Auspex's
+inference about what a session is doing with the session's own sentence.
+
+The third is the task board — `plans.*` and `tasks.*` — whose intended caller
+is whoever *hands work out*: a supervisor registers a plan, files a task per
+worker, and puts the id in each brief, so each worker makes one
+`tasks.claim(task_id, role, scope)` call. `sessions.list`, `sessions.tree`,
+`sessions.self` and `peers.status` are read-only.
 
 - **Transport: a Unix domain socket at `~/.auspex/mcp.sock`.** Local user
   only, never a TCP port. The running app owns the listener.
@@ -365,14 +381,34 @@ siblings are doing and claim, update, or complete a shared task. — *M3.*
   opt-in; file tailing remains the baseline so Auspex works with harnesses
   that have no hook mechanism.
 
-Both flags currently print a not-implemented line to stderr and exit 2.
+`--hook` is not implemented yet and prints a not-implemented line to stderr.
+
+**Identity.** An agent never has to know its own session id. The kernel
+reports the socket's peer pid; `MCPSelfResolver` walks up from it until it
+finds a process the board already owns, or one of the session-id environment
+variables harnesses hand down to everything they spawn. `sessions.self` says
+which pid it used and what convinced it, and every tool that acts *as* a
+session takes an explicit `session_id` override — so a wrong guess is visible
+rather than silent.
+
+**Untrusted input.** Tool arguments are the one place a model writes straight
+into the database and onto the screen, so `MCPTextSanitizer` strips control
+characters, bidirectional overrides and zero-width formatters, collapses
+whitespace and caps length before any value reaches the store. Unknown
+argument keys are refused rather than ignored. A demo replay refuses the nine
+writing tools by name.
 
 ## Non-Goals
 
 - **No network.** No backend, no telemetry, no update service, no cloud sync.
-- **No writes into harness directories.** Auspex observes; it does not manage
-  another tool's state. Acting on a session (M4) means driving the harness
-  through its own supported interface, not editing its files.
+- **No writes into harness directories**, with one deliberate exception:
+  `HarnessInstaller`, which registers Auspex's MCP server and installs the
+  task-protocol note. It runs only when a person clicks, writes only inside a
+  `>>> auspex >>>` fence or one named JSON member, backs the file up to
+  `~/.auspex/backups/` first, re-parses it after, and can be undone exactly.
+  The observation layer keeps the absolute rule — see `AGENTS.md` § 6. Acting
+  on a session (M4) means driving the harness through its own supported
+  interface, not editing its files.
 - **No inference of missing data.** Where a harness log does not record a
   value, the field stays `nil`. A wrong model or a guessed state is worse than
   an empty one.

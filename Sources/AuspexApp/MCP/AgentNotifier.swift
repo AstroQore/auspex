@@ -50,16 +50,33 @@ actor AgentNotifier {
 
     /// Whether this process can talk to Notification Centre at all.
     ///
-    /// `UNUserNotificationCenter.current()` does not fail politely outside an
-    /// application bundle — it aborts the process, because it cannot find a
-    /// bundle proxy to attribute the notification to. That is exactly the
-    /// situation a `swift test` run is in, and one unguarded call would take
-    /// the whole suite down with SIGABRT rather than a failure.
+    /// `UNUserNotificationCenter.current()` needs a bundle LaunchServices can
+    /// attribute the notification to, and it does not fail politely without
+    /// one: in a `swift test` binary — which has no bundle identifier at all —
+    /// an unguarded call ends the whole suite with SIGABRT rather than a
+    /// failure. That was observed, not assumed.
     ///
-    /// So the presence of a bundle identifier is the gate. In the shipped
-    /// `Auspex.app` it is `com.astroqore.auspex`; in a test binary there is
-    /// none, and every entry point here becomes a no-op.
-    nonisolated static let isAvailable: Bool = Bundle.main.bundleIdentifier != nil
+    /// The identifier alone is not enough to ask, because
+    /// `Auspex.app/Contents/MacOS/Auspex` run *directly* — which is how every
+    /// headless render, every performance measurement and every agent smoke
+    /// test starts this app — reads one out of the Info.plist beside the binary
+    /// while never having been registered by LaunchServices. So the gate asks
+    /// the question that actually matters, and LaunchServices answers it
+    /// itself: it sets `__CFBundleIdentifier` in the environment of the process
+    /// it starts. A directly-executed binary inherits whatever its parent had
+    /// there — the terminal's, the harness's — which is never ours.
+    ///
+    /// Conservative on purpose. A directly-executed Auspex loses an alert it
+    /// probably could not have posted anyway; a test run that aborts loses
+    /// everything.
+    ///
+    /// The board does not depend on this. A person who never sees a
+    /// notification still gets the card, the bucket, and the menu-bar count;
+    /// the alert is the extra channel, not the state.
+    nonisolated static let isAvailable: Bool = {
+        guard let identifier = Bundle.main.bundleIdentifier else { return false }
+        return ProcessInfo.processInfo.environment["__CFBundleIdentifier"] == identifier
+    }()
 
     /// Posts one notice, if the person has allowed it.
     func post(_ notice: AgentNotice, title: String? = nil) async {

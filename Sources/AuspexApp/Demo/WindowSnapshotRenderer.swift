@@ -125,7 +125,11 @@ private struct WindowSnapshot: View {
                 BoardHeader(model: environment.board, section: section)
                 switch section {
                 case .harnesses:
-                    HarnessesView(model: environment.harnesses, board: environment.board.board)
+                    HarnessesView(
+                        model: environment.harnesses,
+                        board: environment.board.board,
+                        mcp: environment.mcp
+                    )
                 case .projects:
                     ProjectsPageView(
                         catalog: environment.catalog,

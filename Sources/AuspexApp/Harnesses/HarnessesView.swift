@@ -9,7 +9,7 @@ import SwiftUI
 /// One question, asked from two directions. *Why is this harness not on my
 /// board* — which is answered by whether its store exists, whether an adapter
 /// reads it, and when it last did anything. And *what can this harness reach* —
-/// which is answered by its MCP configuration, and which is the question M3's
+/// which is answered by its MCP configuration, and which is the question the
 /// task board depends on.
 ///
 /// ## Read-only, and it says so
@@ -303,7 +303,7 @@ private struct HarnessRackRow: View {
         }
         .help(
             "Harness hooks push a lifecycle event the moment it happens instead of on the "
-                + "next file poll. They are opt-in and land in M3; file tailing stays the "
+                + "next file poll. They are opt-in and land in a later milestone; file tailing stays the "
                 + "baseline either way."
         )
     }
@@ -366,7 +366,7 @@ private struct AuspexSlot: View {
             Text(
                 isRegistered
                     ? HarnessMCPConfigStore.auspexServerName
-                    : "\(HarnessMCPConfigStore.auspexServerName) — add in M3"
+                    : "\(HarnessMCPConfigStore.auspexServerName) — not registered"
             )
             .font(AuspexType.caption)
             .lineLimit(1)
@@ -383,7 +383,8 @@ private struct AuspexSlot: View {
         .help(
             isRegistered
                 ? "This harness can reach the Auspex task board."
-                : "Auspex has no MCP server to register yet. It arrives in M3."
+                : "This harness cannot reach the Auspex task board. "
+                    + "Register it from “Set up agents…” above."
         )
     }
 }
