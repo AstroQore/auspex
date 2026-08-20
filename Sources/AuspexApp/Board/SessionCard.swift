@@ -87,8 +87,12 @@ struct SessionCard: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
         .panelChrome(
             isSelected: isSelected,
-            isHighlighted: style.isAlarming,
-            highlightColor: style.color
+            // A card whose agent called for a person glows for the same reason
+            // a permission prompt does — it is the same fact, arrived at two
+            // ways — so the wall reads identically whether the harness reported
+            // it or the agent said it.
+            isHighlighted: style.isAlarming || row.needsPerson,
+            highlightColor: row.notice.map { NoticeStyle.color($0.kind) } ?? style.color
         )
         .overlay(alignment: .leading) {
             // The rail: harness identity, full height, and the only place the

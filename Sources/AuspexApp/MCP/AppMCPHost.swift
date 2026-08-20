@@ -13,7 +13,17 @@ import Foundation
 /// a tool answer in microseconds rather than at the mercy of a layout pass.
 actor AppMCPHost: AuspexMCPHost {
     private var board: BoardSnapshot = .empty
-    private var pids: [pid_t] = []
+    /// The transport, for the one question only it can answer: who is attached
+    /// right now.
+    ///
+    /// Read straight through rather than pushed in from `onConnectionsChange`,
+    /// and that is a correctness fix rather than a shortcut. A bridge connects
+    /// and writes `initialize` and its first `tools/call` in the same
+    /// millisecond; a connection snapshot that had to hop to the main actor and
+    /// back would lose that race, and `sessions.self` would answer "nothing is
+    /// attached" to the client that was, at that moment, attached. The kit's
+    /// `clientConnections` is lock-protected and safe to call from here.
+    private var listener: MCPSocketServer?
     private let store: AuspexStore?
     private let table: any ProcessTableReading
     private let readOnly: Bool
@@ -47,7 +57,11 @@ actor AppMCPHost: AuspexMCPHost {
     func boardSnapshot() -> BoardSnapshot { board }
     func ledger() -> TaskRepository? { store.map(TaskRepository.init(store:)) }
     func processTable() -> any ProcessTableReading { table }
-    func clientPIDs() -> [pid_t] { pids }
+    func clientPIDs() -> [pid_t] {
+        (listener?.clientConnections ?? [])
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
+            .compactMap(\.processID)
+    }
     func didRecordNotice(_ notice: AgentNotice) async { await onNotice(notice) }
     func didRecordReport(_ report: AgentReport) async { await onReport(report) }
     func didChangeLedger() async { await onLedgerChange() }
@@ -57,15 +71,6 @@ actor AppMCPHost: AuspexMCPHost {
     /// The frame the board is showing. Pushed once per applied frame.
     func setBoard(_ board: BoardSnapshot) { self.board = board }
 
-    /// Who is attached, most recently active first.
-    ///
-    /// Ordered here rather than by the transport, because "most recently
-    /// active" is what stands in for a per-request connection label — see
-    /// ``AuspexMCPHost/clientPIDs()``. A connection whose peer pid the kernel
-    /// would not report contributes nothing rather than a zero.
-    func setConnections(_ connections: [MCPClientConnectionInfo]) {
-        pids = connections
-            .sorted { $0.lastActivityAt > $1.lastActivityAt }
-            .compactMap(\.processID)
-    }
+    /// Hands over the listener once it has bound.
+    func setListener(_ listener: MCPSocketServer?) { self.listener = listener }
 }

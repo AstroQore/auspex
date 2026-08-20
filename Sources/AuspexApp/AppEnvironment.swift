@@ -189,12 +189,12 @@ public final class AppEnvironment {
         self.registry = registry
         board.autoSelectsFirstSession = mode == .demo
         board.start(registry: registry, repository: SessionRepository(store: store))
-        board.startLedger(repository: TaskRepository(store: store))
-        // The Tasks page is the one surface with nothing to draw until
-        // somebody has used it, and a demo exists to answer "what does this
-        // look like". The seed goes into the in-memory store a demo makes for
+        // The seed goes first: the board reads the ledger as it starts, and a
+        // demo whose plan arrived a frame later would show its own empty state
+        // for that frame. It writes into the in-memory store a demo makes for
         // itself and never into `~/.auspex/`.
         if mode == .demo { try? DemoTaskLedger.seed(into: TaskRepository(store: store)) }
+        board.startLedger(repository: TaskRepository(store: store))
         tasks.start(repository: TaskRepository(store: store))
         projects.start(repository: ProjectRepository(store: store))
         harnesses.start(

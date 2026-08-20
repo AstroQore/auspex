@@ -109,17 +109,18 @@ final class MCPController {
                 _ = try? paths.ensureBaseDirectory()
             }
         )
+        // Only the count, and only for the page that draws it. Who is attached
+        // is read straight off the listener by `AppMCPHost`, because a snapshot
+        // that had to arrive here first would be a frame behind the request it
+        // is meant to identify.
         listener.onConnectionsChange = { [weak self] connections in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                clientCount = connections.count
-                await host.setConnections(connections)
-            }
+            Task { @MainActor [weak self] in self?.clientCount = connections.count }
         }
         self.listener = listener
 
         do {
             try listener.start()
+            Task { [host] in await host.setListener(listener) }
             status = listener.status
             socketPath = path
             errorDescription = nil
@@ -137,6 +138,7 @@ final class MCPController {
     /// Stops serving and removes the socket file this instance created.
     func stop() {
         listener?.stop()
+        Task { [host] in await host.setListener(nil) }
         listener = nil
         status = .stopped
         clientCount = 0

@@ -35,6 +35,26 @@ public enum DemoTaskLedger {
         // a second call from a renderer.
         guard try ledger.tasks(planID: plan.id).isEmpty else { return }
 
+        // One session calling for a person, because that is the thing the
+        // board exists to surface and a demo that never shows it is a demo of
+        // the easy half.
+        //
+        // `blocked` rather than `needs_input`, and that is the rule working
+        // rather than a preference: a demo replays a scripted conversation on
+        // a loop, so every session is about to receive another prompt — and a
+        // `needs_input` notice is *answered* by the next prompt. It would clear
+        // itself within seconds of the demo starting, which is correct and
+        // would make for a demo of nothing. A blocker is about the world, not
+        // about the conversation, and stays until somebody dismisses it.
+        if let stuck = key(4) {
+            try ledger.recordNotice(
+                session: stuck,
+                kind: .blocked,
+                message: "Two step enums disagree about status 9. Ship the partial decode, or keep digging?",
+                now: now.addingTimeInterval(-540)
+            )
+        }
+
         let claimed = try ledger.createTask(
             title: "Tail the Codex rollout format",
             body: "Function calls, sub-agent activity, and the guardian approval event.",
