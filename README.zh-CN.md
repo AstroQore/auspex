@@ -20,7 +20,6 @@ Codex、ChatGPT Work、Cursor、Grok Build、Grok Bot、AntiGravity —— 并�
 
 > **状态：pre-alpha。** 它能跑，它在 tail 真实的存储，作者每天在用。但没有打过
 > tag 的发布，没有公证过的构建，版本之间也没有升级路径 —— 数据库 schema 还在变。
-> harness hook（`--hook`）尚未实现。
 
 ![Auspex 看板：按项目分组的会话卡片，右侧是某个会话的轨迹](docs/screenshots/board.png)
 
@@ -136,7 +135,10 @@ args = ["--mcp-stdio"]
 
 一共十六个工具。`auspex --mcp-stdio` 是给只会说 stdio 的客户端用的轻量桥接 —— 它连
 上 socket 并转发字节，Auspex 没在跑时以 1 退出并打印一行，所以这套协议只是增益，
-永远不是依赖。
+永远不是依赖。同一次注册还会给有 hook 机制的 harness 装上 **hook**：
+`auspex --hook <harness>` 把生命周期事件原样转发到同一个 socket，并且无论发生什么都
+在 200 ms 内以 0 退出 —— 因为 hook 是正在干活的 agent 的同步子进程，绝不能卡住它，
+更不能否决它。
 
 ![Tasks 页：计划、它们的任务，以及每条任务被谁认领](docs/screenshots/tasks.png)
 
@@ -202,9 +204,10 @@ Auspex 是**只读的本地文件观察者**。
   修改转录内容。SQLite 存储以只读方式打开，并预期存在活跃的 WAL。
 - **Auspex 自己写的一切都在 `~/.auspex/` 下**（权限 0700），且统一经由 `AuspexPaths`
   一个类型，因此写入范围读一个文件就能审计清楚。
-- **只有一个例外。** 把 Auspex 的 MCP server 注册进某个 harness，意味着要写那个
-  harness 的配置文件。它只在真人于 Settings → Harnesses 里点击时发生，只写在
-  `>>> auspex >>>` 围栏或一个名为 `auspex` 的 JSON 成员里面，写之前先备份到
+- **只有一个例外。** 把 Auspex 的 MCP server 和它的 hook 注册进某个 harness，意味着
+  要写那个 harness 的配置文件。它只在真人于 Settings → Harnesses 里点击时发生，只写在
+  Auspex 自己拥有的区域里 —— `>>> auspex >>>` 围栏、一个名为 `auspex` 的 JSON 成员，
+  或者命令指向 Auspex 二进制的那几条 hook 条目 —— 写之前先备份到
   `~/.auspex/backups/`，写完重新解析校验，并且可以精确撤销。
 - **无网络。** 没有后端、没有遥测、没有分析、没有更新服务，任何数据都不会离开你的
   机器。
@@ -241,8 +244,8 @@ Auspex 整天跟它观察的那些 harness 一起跑，所以它的开销是一�
 | **M0** | 仓库骨架，以及共享包 `agent-session-kit`：会话模型、事件流、source adapter 协议。 | 已完成 |
 | **M1** | Claude Code 与 Codex 的实时看板、会话轨迹与菜单栏，实时更新。 | 已完成 |
 | **M2** | 全部八个 harness，项目与任务分组，用户自己的项目与忽略规则，场景视图与 Crew 视图。 | 已完成 |
-| **M3** | 基于 `~/.auspex/mcp.sock` 的 MCP 任务看板、`--mcp-stdio` 桥接，以及一键写入各 harness 配置。 | 已完成 |
-| **M4** | harness hook（`--hook`）实现即时更新、保留策略的定时执行，以及控制能力 —— 不只是观察，还能直接对会话执行操作。 | 下一步 |
+| **M3** | 基于 `~/.auspex/mcp.sock` 的 MCP 任务看板、`--mcp-stdio` 桥接、可选的 harness hook（`--hook`），以及一键写入各 harness 配置。 | 已完成 |
+| **M4** | 保留策略的定时执行，以及控制能力 —— 不只是观察，还能直接对会话执行操作。 | 下一步 |
 
 ## 架构
 

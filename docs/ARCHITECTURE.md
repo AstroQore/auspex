@@ -1,10 +1,10 @@
 # Architecture
 
 > **How Auspex fits together, as built.** Everything below describes shipped
-> code unless it is marked otherwise; the three things that are not are called
-> out where they belong — harness hooks (`--hook`), retention scheduling, and
-> the scene's zones, which is in flight on a branch. Auspex is still pre-alpha:
-> the schema changes, and there is no upgrade path between versions.
+> code unless it is marked otherwise; the two things that are not are called
+> out where they belong — retention scheduling, and the scene's zones, which
+> is in flight on a branch. Auspex is still pre-alpha: the schema changes, and
+> there is no upgrade path between versions.
 
 ## Packages
 
@@ -498,15 +498,15 @@ writes nothing until the answer arrives, so waiting for a person and thinking
 hard are the same silence from outside), session and subagent boundaries at the
 instant they happen, and a heartbeat for everything else.
 
-**Registration.** A harness only calls a server it has been told about, so
-`HarnessInstaller` writes the `auspex` entry into each harness's own MCP
-configuration, and the short task-protocol note into its agent instructions
-file. It is the one thing in Auspex that writes outside `~/.auspex/`, and it is
-fenced five ways — a person clicked, inside a `>>> auspex >>>` block or one
-named JSON member, backed up into `~/.auspex/backups/` first, re-parsed after,
-and exactly reversible. `ConfigTextEditors` edits *text* rather than
-round-tripping a parser, because bytes somebody else wrote are never
-re-serialised. See `AGENTS.md` § 6.
+**Registration.** A harness only calls a server, or runs a hook, it has been
+told about — so `HarnessInstaller` writes the `auspex` MCP entry, the short
+task-protocol note, and the hook entries into each harness's own files. It is
+the one thing in Auspex that writes outside `~/.auspex/`, and it is fenced five
+ways: a person clicked, only inside a region Auspex owns, backed up into
+`~/.auspex/backups/` first, re-parsed after, and exactly reversible.
+`ConfigTextEditors` edits *text* rather than round-tripping a parser, because
+bytes somebody else wrote are never re-serialised. See `AGENTS.md` § 6 for all
+five and for what "a region Auspex owns" means in a hook table.
 
 **Identity.** An agent never has to know its own session id. The kernel
 reports the socket's peer pid; `MCPSelfResolver` walks up from it until it

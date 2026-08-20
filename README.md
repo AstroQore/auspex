@@ -21,8 +21,7 @@ agents themselves can say what they need.
 
 > **Status: pre-alpha.** It runs, it tails the real stores, and it is used
 > daily by its author. There is no tagged release, no notarized build, and no
-> upgrade path between versions — the database schema still changes. Harness
-> hooks (`--hook`) are not implemented.
+> upgrade path between versions — the database schema still changes.
 
 ![The Auspex board: session cards grouped by project, with one session's trace beside them](docs/screenshots/board.png)
 
@@ -152,7 +151,10 @@ args = ["--mcp-stdio"]
 Sixteen tools in all. `auspex --mcp-stdio` is a thin bridge for clients that
 speak stdio — it connects to the socket and pumps bytes, and exits 1 with one
 line when Auspex is not running, so the protocol is enrichment and never a
-dependency.
+dependency. The same registration installs **hooks** where a harness has them:
+`auspex --hook <harness>` forwards a lifecycle payload over the same socket and
+exits 0 within 200 ms whatever happens, because a hook is a synchronous child
+of a working agent and must never be able to block or veto it.
 
 ![The Tasks page: plans, their tasks, and who claimed each one](docs/screenshots/tasks.png)
 
@@ -228,11 +230,12 @@ Auspex is a **read-only observer of local files**.
 - **Everything Auspex writes goes under `~/.auspex/`** (mode 0700), routed
   through a single `AuspexPaths` type so the write scope is auditable by
   reading one file.
-- **One deliberate exception.** Registering Auspex's MCP server with a harness
-  means writing that harness's config. It happens only when a person clicks it
-  in Settings → Harnesses, only inside a `>>> auspex >>>` fence or one JSON
-  member named `auspex`, only after a backup into `~/.auspex/backups/`, is
-  re-parsed afterwards, and can be undone exactly.
+- **One deliberate exception.** Registering Auspex's MCP server and its hooks
+  with a harness means writing that harness's config. It happens only when a
+  person clicks it in Settings → Harnesses, only inside a region Auspex owns —
+  a `>>> auspex >>>` fence, one JSON member named `auspex`, or the hook entries
+  whose command runs the Auspex binary — only after a backup into
+  `~/.auspex/backups/`, is re-parsed afterwards, and can be undone exactly.
 - **No network.** No backend, no telemetry, no analytics, no update service.
   Nothing leaves your machine.
 
@@ -274,8 +277,8 @@ animates in a view that is not on screen.
 | **M0** | Repository skeleton and the shared `agent-session-kit` package: session model, event stream, source-adapter protocol. | done |
 | **M1** | Live board for Claude Code and Codex, updating in real time, with the session trace and the menu bar. | done |
 | **M2** | All eight harnesses, project and task grouping, the user's own projects and ignore rules, the scene and crew views. | done |
-| **M3** | MCP task board over `~/.auspex/mcp.sock`, the `--mcp-stdio` bridge, and one-click registration with each harness. | done |
-| **M4** | Harness hooks (`--hook`) for instant updates, retention scheduling, and control — acting on a session from Auspex rather than only watching it. | next |
+| **M3** | MCP task board over `~/.auspex/mcp.sock`, the `--mcp-stdio` bridge, opt-in harness hooks (`--hook`), and one-click registration with each harness. | done |
+| **M4** | Retention scheduling, and control — acting on a session from Auspex rather than only watching it. | next |
 
 ## Architecture
 
