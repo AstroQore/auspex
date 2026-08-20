@@ -151,6 +151,33 @@ public struct AssembledBoardFrame: Sendable, Equatable {
 /// Coalescing lives with the consumer rather than here, because the consumer is
 /// the one that knows the *latest* inputs: a burst of fifty snapshots should
 /// produce one assembly of the fiftieth, not fifty assemblies thrown away.
+///
+/// ## Measured
+///
+/// Release builds, live against the real store, the two launched alternately so
+/// that whatever else the machine was doing — several agents' sessions writing
+/// transcripts, and another copy of this app — landed on both arms; five runs
+/// each, `top -l 4 -s 5` plus three `sample <pid> 3` per run.
+///
+/// | | derivation samples on the main thread | process CPU |
+/// | --- | --- | --- |
+/// | on the main actor (what this replaces) | 0–304 per run | 20.6–39.1 % |
+/// | here | 0 in every run | 8.3–35.1 % |
+///
+/// The first column is the result. In the busiest three-second window of the
+/// old arm, one frame inside `rebuildGroups` held 23 % of every sample the main
+/// thread took; in the new arm the derivation does not appear on that thread at
+/// all, and the same stacks show up on a cooperative one. Process CPU is quoted
+/// because the budget asks for it, but the two ranges overlap and neither is
+/// worth a conclusion: this moves work rather than removing it, and what it
+/// removes — the frames a burst no longer derives because the newest one wins —
+/// is exactly what a five-run sample on a loaded machine cannot separate from
+/// the machine.
+///
+/// What is left on the main thread is *not* this: both arms spend their busiest
+/// windows inside AppKit's constraint pass over the SwiftUI graph — see
+/// ``BoardSnapshot`` and the note on `LiveBoardModel.board` — which every
+/// applied frame dirties and which nothing here touches.
 public actor BoardFrameAssembler {
     public init() {}
 
