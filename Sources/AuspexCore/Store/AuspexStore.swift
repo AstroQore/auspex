@@ -95,6 +95,12 @@ public final class AuspexStore: Sendable {
             try migrateSnapshotsToSchema2(db)
         }
 
+        migrator.registerMigration("v3_plans_and_notices") { db in
+            try createPlanTables(db)
+            try addTaskClaimColumns(db)
+            try createNoticeTables(db)
+        }
+
         return migrator
     }
 
@@ -478,6 +484,99 @@ public final class AuspexStore: Sendable {
         )
     }
 
+    // MARK: - v3 schema: plans, claims, and what an agent said
+
+    /// The decomposition a task hangs under.
+    ///
+    /// Its own table rather than a `parent_task_id` on `tasks`, because a plan
+    /// and a task answer different questions and are written by different
+    /// people: a plan is registered once by whoever is handing work out, and a
+    /// task churns through four states while somebody does it. Collapsing them
+    /// would make "archive the plan" and "close the task" the same statement.
+    private static func createPlanTables(_ db: Database) throws {
+        try db.create(table: "plans") { table in
+            table.autoIncrementedPrimaryKey("id")
+            // The handle that travels in a brief. Unique, because the whole
+            // point is that an agent can name a plan without holding its id.
+            table.column("slug", .text).notNull().unique()
+            table.column("title", .text).notNull()
+            table.column("summary", .text)
+            table.column("status", .text).notNull().defaults(to: "active")
+            table.column("project_id", .integer).references("projects", onDelete: .setNull)
+            // A session key rather than a foreign key, for the reason `tasks`
+            // gives: a plan outlives the session that registered it.
+            table.column("created_by_key", .text)
+            table.column("created_at", .double).notNull()
+            table.column("updated_at", .double).notNull()
+            table.column("archived_at", .double)
+        }
+        try db.create(index: "plans_on_status", on: "plans", columns: ["status"])
+    }
+
+    /// What a claim records, added to the `tasks` table v1 created.
+    ///
+    /// `claim_role` and `claim_scope` are free text on purpose. The vocabulary
+    /// belongs to whoever decomposed the work — "reviewer", "atlas pass 2",
+    /// "the TOML half" — and an enum here would force every orchestrator to
+    /// translate into ours before it could describe its own plan.
+    ///
+    /// The v1 default for `status` was `open`, which is not one of the four
+    /// board columns. Nothing has ever written a task row (the tables were
+    /// created ahead of their use), but normalising costs one statement and
+    /// means the column has exactly one vocabulary from here on.
+    private static func addTaskClaimColumns(_ db: Database) throws {
+        try db.alter(table: "tasks") { table in
+            table.add(column: "plan_id", .integer).references("plans", onDelete: .setNull)
+            table.add(column: "claim_role", .text)
+            table.add(column: "claim_scope", .text)
+            table.add(column: "claimed_by_key", .text)
+            table.add(column: "claimed_at", .double)
+            table.add(column: "completed_at", .double)
+            table.add(column: "result", .text)
+        }
+        try db.create(index: "tasks_on_plan_id", on: "tasks", columns: ["plan_id"])
+        try db.execute(sql: "UPDATE tasks SET status = 'todo' WHERE status NOT IN ('todo','doing','blocked','done')")
+    }
+
+    /// What an agent said when it called for a person, and what it said it was
+    /// doing.
+    ///
+    /// Both are Auspex's own state and neither is a projection of a harness's,
+    /// so they get tables of their own for the same three reasons
+    /// `session_views` does — and one more: they are the only rows in the
+    /// database an *agent* authored, so keeping them separate is what makes
+    /// "what did the agents tell us" a query rather than an audit.
+    ///
+    /// One row per session, replaced on each call. A notice is a live state,
+    /// not a log: two unanswered questions from one session are one session
+    /// that is stuck, and a board that showed both would be counting a session
+    /// twice. The history lives in `task_log` when a task is involved.
+    ///
+    /// No foreign key to `sessions`, again for `session_views`' reason: a call
+    /// can arrive before the flush that writes the session it is about.
+    private static func createNoticeTables(_ db: Database) throws {
+        try db.create(table: "session_notices") { table in
+            table.primaryKey("session_key", .text)
+            table.column("kind", .text).notNull()
+            table.column("message", .text).notNull()
+            table.column("urgency", .text).notNull().defaults(to: "normal")
+            table.column("created_at", .double).notNull()
+            table.column("cleared_at", .double)
+        }
+        try db.create(
+            index: "session_notices_on_cleared_at",
+            on: "session_notices",
+            columns: ["cleared_at"]
+        )
+
+        try db.create(table: "session_reports") { table in
+            table.primaryKey("session_key", .text)
+            table.column("focus", .text).notNull()
+            table.column("progress", .text)
+            table.column("created_at", .double).notNull()
+        }
+    }
+
     // MARK: - Meta accessors
 
     /// Reads a value from the `meta` table.
@@ -530,5 +629,10 @@ public final class AuspexStore: Sendable {
     /// A cursor store over this store's writer.
     public var sourceCursors: SourceCursorRepository {
         SourceCursorRepository(dbWriter: dbWriter)
+    }
+
+    /// The plans, tasks, claims, and agent notices over this store's writer.
+    public var tasks: TaskRepository {
+        TaskRepository(dbWriter: dbWriter)
     }
 }
