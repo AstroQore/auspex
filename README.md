@@ -182,8 +182,6 @@ machine — git's own files for the first, the process table for the second.
 
 ## Harnesses
 
-![The Harnesses page: detection, session counts, and MCP configuration per harness](docs/screenshots/harnesses.png)
-
 Eight harnesses are first-class — each gets a row, an accent, and its vendor's
 own mark, and each is named in full everywhere it appears. Auspex never
 abbreviates one.
@@ -206,8 +204,13 @@ featured — it is deprecated, and Auspex has no live adapter for it.
 
 The Harnesses page answers *why is this harness not on my board* and *what can
 it reach*: whether its store exists on this Mac, how many of its sessions are
-live, when it last did anything, and which MCP servers it has been configured
-with. Every file behind that page is read and never written.
+live, when it last did anything, and which MCP servers and hooks it has been
+configured with. Every file behind that page is read and never written.
+
+There is no screenshot of it here on purpose. That page is a report about *this
+machine* — it lists the MCP servers you personally have configured — so a
+picture of it is a picture of somebody's setup, and this repository is public.
+Run it and look.
 
 ## Characters
 
