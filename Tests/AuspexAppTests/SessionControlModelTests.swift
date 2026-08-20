@@ -221,7 +221,7 @@ struct DemoSignalTargetTests {
 
     @Test("a renderer's demo starts no process at all")
     func rendererLendsNothing() async throws {
-        let before = sleepers()
+        let before = standIns()
         let (events, continuation) = AsyncStream<AgentEvent>.makeStream(of: AgentEvent.self)
         let source = DemoEventSource(continuation: continuation, lendsProcess: false)
         let run = Task { await source.run() }
@@ -236,14 +236,20 @@ struct DemoSignalTargetTests {
         }
         run.cancel()
         await source.stop()
-        #expect(sleepers() == before)
+        #expect(standIns() == before)
     }
 
-    /// How many `/bin/sleep` processes this user has, so the assertion is
-    /// about what the test started rather than about the machine.
-    private func sleepers() -> Int {
-        let table = ProcessTable(maxAge: 0, includesArguments: false, includesWorkingDirectory: false)
+    /// How many demo stand-ins this test process has.
+    ///
+    /// Narrowed twice, and both narrowings are load-bearing. The parent has to
+    /// be *this* process, because another agent's Auspex on the same machine
+    /// starts stand-ins of its own; and the argument has to be the stand-in's
+    /// own lifetime, because the suites above start `/bin/sleep 30` in
+    /// parallel and counting every sleeper made this assertion a coin flip.
+    private func standIns() -> Int {
+        let table = ProcessTable(maxAge: 0, includesArguments: true, includesWorkingDirectory: false)
         table.refresh()
-        return table.find { $0.uid == getuid() && $0.name == "sleep" }.count
+        let own = getpid()
+        return table.find { $0.ppid == own && $0.name == "sleep" && $0.argv.contains("900") }.count
     }
 }
