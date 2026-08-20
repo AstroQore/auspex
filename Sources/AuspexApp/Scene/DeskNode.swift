@@ -419,13 +419,21 @@ final class DeskNode: SKNode {
             agent = created
             sprite = created
         }
+        switch look.seat {
         // Somebody in the queue for the gate is *leaving*, not gone. The
         // `ended` pose fades them out where they sit, which is right at a desk
         // — the chair is what is left — and wrong here, where the whole point
         // of the walk is that you can watch them go.
-        if look.seat == .gate {
+        case .gate:
             sprite.walk(.right, reduceMotion: look.reduceMotion)
-        } else {
+        // Somebody waiting to be read is *sitting there*, whether or not the
+        // process behind them has exited. Most of the sessions on this bench
+        // are `ended`, and the ended pose fades them out — which would leave
+        // the garden holding a note with nobody under it, and lose the one
+        // thing the annex was built to show.
+        case .note:
+            sprite.apply(pose: .idle, reduceMotion: look.reduceMotion)
+        default:
             sprite.apply(pose: look.pose, reduceMotion: look.reduceMotion)
         }
     }
@@ -499,7 +507,8 @@ final class DeskNode: SKNode {
         screen.removeAllActions()
         glow.removeAllActions()
 
-        guard let session, !look.isEnded, !look.isAway else {
+        let isDark = look.isAway || (look.isEnded && look.seat != .note)
+        guard let session, !isDark else {
             screen.color = theme.screenOff
             screen.alpha = 1
             glow.alpha = 0

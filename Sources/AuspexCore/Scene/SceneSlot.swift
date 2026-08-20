@@ -127,7 +127,7 @@ public struct SceneMetrics: Sendable, Equatable {
     /// The bottom edge of the table surface, from the top of its rectangle.
     public var tableSurfaceBottom: CGFloat { 104 }
     /// The floor line the near row of chairs stands on.
-    public var tableNearSeatY: CGFloat { 144 }
+    public var tableNearSeatY: CGFloat { 136 }
 
     /// The dimensions the scene view uses.
     public static let standard = SceneMetrics()

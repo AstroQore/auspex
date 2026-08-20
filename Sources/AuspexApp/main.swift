@@ -37,8 +37,14 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
         )
         exit(2)
     }
-    let elapsed = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 16
-    let focus = rest.dropFirst(2).first
+    // `--office-only` renders the map with both annexes switched off, which is
+    // the office exactly as it was before they existed. Having it here rather
+    // than only in Settings is what makes "the annexes changed nothing about
+    // the office" a picture two commands apart rather than a claim.
+    let officeOnly = rest.contains("--office-only")
+    let positional = rest.dropFirst().filter { !$0.hasPrefix("-") }
+    let elapsed = positional.first.flatMap(TimeInterval.init) ?? 16
+    let focus = positional.dropFirst().first
     do {
         let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
         let project = focus.flatMap { SceneSnapshotRenderer.projectKey(named: $0, in: board) }
@@ -48,18 +54,28 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
             )
             exit(2)
         }
+        let zones: SceneZoneOptions = officeOnly ? .officeOnly : .all
+        let unseenDone = SceneSnapshotRenderer.demoUnseenDone(board)
         try SceneSnapshotRenderer.render(
-            board: board, to: URL(fileURLWithPath: path), focusing: project
+            board: board,
+            to: URL(fileURLWithPath: path),
+            focusing: project,
+            zones: zones,
+            unseenDone: unseenDone
         )
         // Report what was drawn. Choosing *when* in the demo loop to render is
         // the whole job of picking a good screenshot, and this tally is how it
-        // is chosen.
+        // is chosen — which now includes the two states only the annexes draw.
         let counts = board.counts
+        let stale = board.sessions.filter { $0.isStale && $0.state.isActive }.count
         let framing = project.map { " framed on \(($0 as NSString).lastPathComponent)" } ?? ""
-        let summary = "auspex: \(board.sessions.count) sessions at t+\(Int(elapsed))s\(framing) — "
+        let map = officeOnly ? " office only" : ""
+        let summary = "auspex: \(board.sessions.count) sessions at t+\(Int(elapsed))s"
+            + "\(framing)\(map) — "
             + "\(counts.thinking) thinking, \(counts.tooling) tooling, "
             + "\(counts.delegating) delegating, \(counts.waitingPermission) blocked, "
-            + "\(counts.idle) idle, \(counts.ended) ended\n"
+            + "\(counts.idle) idle, \(stale) stale, \(unseenDone.count) done unseen, "
+            + "\(counts.ended) ended\n"
         FileHandle.standardOutput.write(Data(summary.utf8))
         exit(0)
     } catch {

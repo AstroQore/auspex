@@ -613,10 +613,14 @@ final class PlaceholderArt {
     }
 
     /// A picnic blanket, checked, lying flat.
+    ///
+    /// Deliberately not the red a checked blanket wants to be. Red means one
+    /// thing in this scene — a session that needs a person — and a rug that
+    /// borrowed it would be a false alarm lying on the grass all afternoon.
     func picnicBlanket() -> SKTexture {
         cached("picnicBlanket") { theme in
-            let cloth = theme.color(for: .waitingPermission(tool: nil))
-                .blended(withFraction: 0.55, of: theme.grass) ?? theme.grass
+            let cloth = theme.bark
+                .blended(withFraction: 0.35, of: theme.grass) ?? theme.grass
             let pale = cloth.blended(withFraction: 0.3, of: .white) ?? cloth
             var canvas = PixelCanvas(width: 18, height: 11)
             canvas.fill(1, 0, 16, 11, cloth)

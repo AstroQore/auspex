@@ -101,6 +101,40 @@ public struct DemoScript: Sendable, Equatable {
     public static var sessionKeys: [SessionKey] {
         Blueprint.all.map(\.key)
     }
+
+    /// How long one of these sessions may claim to be working without saying
+    /// anything before it counts as stale.
+    ///
+    /// Not the reducer's ninety seconds, and deliberately so. The demo
+    /// compresses a working day into two minutes: a build that would take ten
+    /// takes twenty-two, a subagent lives half a minute, a session is
+    /// forgotten about and remembered inside one loop. Staleness means
+    /// "silent for longer than the work should have taken", and against a
+    /// clock running fifty times fast the real threshold can never fire — so a
+    /// still of the demo could never show a state the scene draws. This is the
+    /// same rule in the same proportion.
+    public static let staleAfter: TimeInterval = 13
+
+    /// The sessions the demo's imaginary reader has not opened yet.
+    ///
+    /// The one fact about a board that no harness on the machine holds is
+    /// whether a person has *looked*. Everything else in this script is
+    /// derivable from events; this is not, so the demo has to state it — and
+    /// stating it is what lets a screenshot show the garden's whole point,
+    /// which is a session sitting there holding the note that says it finished
+    /// while you were elsewhere.
+    public static var unreadSessionKeys: [SessionKey] {
+        [SessionKey(harness: .claudeCode, sessionID: "7a1b9d43-5e02-4c8f-b6d1-3e90f2a71c55")]
+    }
+
+    /// What the reader has looked at, as of `now`: everything except
+    /// ``unreadSessionKeys``.
+    public static func seenAt(now: Date) -> [SessionKey: Date] {
+        let unread = Set(unreadSessionKeys)
+        var seen: [SessionKey: Date] = [:]
+        for key in sessionKeys where !unread.contains(key) { seen[key] = now }
+        return seen
+    }
 }
 
 // MARK: - Beats
@@ -123,6 +157,16 @@ extension DemoScript {
         case write(String, TimeInterval)
         /// A child session runs to completion while the parent waits.
         case delegate(String, String, TimeInterval)
+        /// Several children run at once while the parent waits for all of
+        /// them, arriving a beat apart and leaving a beat apart.
+        ///
+        /// Separate from ``delegate(_:_:_:)`` because two of those in a row is
+        /// two delegations, not one with two children: the second child would
+        /// start after the first had already finished, and a board showing a
+        /// family of three would never once be drawn. Fanning out is what
+        /// delegation actually looks like, and it is what the meeting room was
+        /// built to show.
+        case delegateMany([String], String, TimeInterval)
         /// A permission prompt sits unanswered for this long, then resolves.
         /// The tool is `nil` where the harness reports only that a person is
         /// needed — Grok Bot's roster carries a flag and no tool name.
@@ -254,7 +298,17 @@ extension DemoScript.Blueprint {
                 .think(2.5),
                 .tool("Read", .fileRead, "Sources/AuspexCore/Store/SessionRepository.swift", 3.0),
                 .write("Sources/AuspexApp/Trace/SessionTraceView.swift", 6.0),
-                .delegate("9c4e7b10-22af-4d33-8f61-77ac0e5d1b42", "explore", 14.0),
+                // Two at once, not one after the other: a fan-out is what
+                // delegation actually looks like, and a family of three is
+                // what the meeting room was built to seat.
+                .delegateMany(
+                    [
+                        "9c4e7b10-22af-4d33-8f61-77ac0e5d1b42",
+                        "1d83f5a6-90bc-4e77-a215-46f0c9d31e28"
+                    ],
+                    "explore",
+                    22.0
+                ),
                 .say("The inspector needs the tool-call ledger to pair starts with finishes."),
                 .permission("Bash", 26.0, true),
                 .tool("Bash", .shell, "swift build 2>&1 | tail -20", 9.0),
@@ -733,7 +787,10 @@ extension DemoScript {
                 )
 
             case .delegate(let childID, let agentType, let seconds):
-                compileDelegation(childID: childID, agentType: agentType, seconds: seconds)
+                compileDelegation(childIDs: [childID], agentType: agentType, seconds: seconds)
+
+            case .delegateMany(let childIDs, let agentType, let seconds):
+                compileDelegation(childIDs: childIDs, agentType: agentType, seconds: seconds)
 
             case .permission(let tool, let seconds, let allowed):
                 permissionIndex += 1
@@ -819,55 +876,92 @@ extension DemoScript {
             }
         }
 
+        /// Spawns `ids` at once and waits for all of them.
+        ///
+        /// They arrive a beat apart, work over the same stretch, and leave a
+        /// beat apart — which is what a fan-out looks like and what makes a
+        /// family of three a thing a still of the board can catch. One id is
+        /// the ordinary case and needs no separate path.
         private mutating func compileDelegation(
-            childID: String,
+            childIDs: [String],
             agentType: String,
             seconds: TimeInterval
         ) {
-            let child = SessionKey(harness: blueprint.harness, sessionID: childID)
-            callIndex += 1
-            let toolUseID = "call-\(generation)-\(callIndex)"
-            emit(.subagentStarted(child: child, agentType: agentType, toolUseID: toolUseID))
+            guard !childIDs.isEmpty else { return }
+            var children: [(key: SessionKey, call: String, task: String)] = []
 
-            // The child's own short life, on the same timeline.
-            let childIdentity = SessionIdentity(
-                key: child,
-                sourcePath: blueprint.sourcePath,
-                variant: blueprint.variant,
-                parent: blueprint.key,
-                parentLink: .subagent(toolUseID: toolUseID),
-                cwd: blueprint.cwd,
-                gitRoot: blueprint.gitRoot,
-                gitBranch: blueprint.branch,
-                pid: blueprint.pid.map { $0 + 1 },
-                procStart: startedAt,
-                title: "Find every call site of recentEvents",
-                model: blueprint.model,
-                entrypoint: blueprint.entrypoint
-            )
-            emit(.sessionStarted(identity: childIdentity), session: child)
-            emit(.turnStarted, session: child)
-            emit(.userPrompt(preview: "Find every call site of recentEvents"), session: child)
+            for (index, childID) in childIDs.enumerated() {
+                let child = SessionKey(harness: blueprint.harness, sessionID: childID)
+                callIndex += 1
+                let toolUseID = "call-\(generation)-\(callIndex)"
+                let task = Self.childTasks[index % Self.childTasks.count]
+                emit(.subagentStarted(child: child, agentType: agentType, toolUseID: toolUseID))
+
+                // The child's own short life, on the same timeline.
+                let childIdentity = SessionIdentity(
+                    key: child,
+                    sourcePath: blueprint.sourcePath,
+                    variant: blueprint.variant,
+                    parent: blueprint.key,
+                    parentLink: .subagent(toolUseID: toolUseID),
+                    cwd: blueprint.cwd,
+                    gitRoot: blueprint.gitRoot,
+                    gitBranch: blueprint.branch,
+                    pid: blueprint.pid.map { $0 + 1 + pid_t(index) },
+                    procStart: startedAt,
+                    title: task,
+                    model: blueprint.model,
+                    entrypoint: blueprint.entrypoint
+                )
+                emit(.sessionStarted(identity: childIdentity), session: child)
+                emit(.turnStarted, session: child)
+                emit(.userPrompt(preview: task), session: child)
+                children.append(
+                    (child, "call-\(generation)-child-\(callIndex)", task)
+                )
+                advance(0.5)
+            }
+
             advance(seconds * 0.2)
-
-            let childCall = "call-\(generation)-child-\(callIndex)"
-            emit(
-                .toolCallStarted(id: childCall, name: "Grep", kind: .search, target: "recentEvents("),
-                session: child
-            )
+            for entry in children {
+                emit(
+                    .toolCallStarted(
+                        id: entry.call, name: "Grep", kind: .search, target: "recentEvents("
+                    ),
+                    session: entry.key
+                )
+                advance(0.3)
+            }
             advance(seconds * 0.5)
-            emit(.toolCallFinished(id: childCall, isError: false), session: child)
-            advance(seconds * 0.3)
 
-            emit(
-                .usage(model: blueprint.model, inputTokens: 8_100, outputTokens: 940, cachedTokens: 0),
-                session: child
-            )
-            emit(.turnEnded(reason: .complete), session: child)
-            emit(.sessionEnded(reason: .exited), session: child)
-            emit(.subagentFinished(child: child))
+            let tail = seconds * 0.3 / Double(children.count)
+            for entry in children {
+                emit(.toolCallFinished(id: entry.call, isError: false), session: entry.key)
+                emit(
+                    .usage(
+                        model: blueprint.model,
+                        inputTokens: 8_100,
+                        outputTokens: 940,
+                        cachedTokens: 0
+                    ),
+                    session: entry.key
+                )
+                emit(.turnEnded(reason: .complete), session: entry.key)
+                emit(.sessionEnded(reason: .exited), session: entry.key)
+                emit(.subagentFinished(child: entry.key))
+                advance(tail)
+            }
             advance(0.3)
         }
+
+        /// What a subagent was sent to find out. One per child, so a family at
+        /// a table is three people doing three things rather than one prompt
+        /// printed three times.
+        private static let childTasks = [
+            "Find every call site of recentEvents",
+            "Check which adapters still tail synchronously",
+            "List the fixtures with no timestamp"
+        ]
 
         // MARK: Primitives
 

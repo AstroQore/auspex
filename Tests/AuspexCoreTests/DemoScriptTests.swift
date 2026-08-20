@@ -278,6 +278,89 @@ struct DemoScriptTests {
         }
     }
 
+    @Test("the delegating session fans out, so a family of three is on the board at once")
+    func delegationFansOut() throws {
+        // Two `delegate` beats in a row would be two delegations: the second
+        // child would start after the first had finished, and the scene's
+        // meeting room — one table, a parent at the head, children down the
+        // sides — would never once be drawn with more than one child at it.
+        let script = DemoScript.make(startedAt: epoch)
+        var spawned: [SessionKey: (start: TimeInterval, end: TimeInterval)] = [:]
+        for step in script.steps {
+            switch step.event.kind {
+            case .sessionStarted(let identity) where identity.parent != nil:
+                spawned[identity.key] = (step.offset, .infinity)
+            case .sessionEnded where spawned[step.event.session] != nil:
+                spawned[step.event.session]?.end = step.offset
+            default: break
+            }
+        }
+        #expect(spawned.count >= 2)
+
+        // Some instant at which two children of one parent are both alive.
+        let lives = Array(spawned.values)
+        let overlap = lives.contains { first in
+            lives.contains { other in
+                first.start != other.start
+                    && first.start < other.end && other.start < first.end
+            }
+        }
+        #expect(overlap, "the demo has to hold a family of three for the scene to seat one")
+    }
+
+    @Test("the demo says which of its sessions nobody has looked at")
+    func theDemoDeclaresWhatIsUnread() throws {
+        // Whether a person has *read* a session is the one thing about a board
+        // that no harness store holds, so a fabricated board has to state it
+        // rather than derive it — otherwise every finished session in a
+        // screenshot is unread, which is a board nobody has ever had.
+        let unread = DemoScript.unreadSessionKeys
+        #expect(!unread.isEmpty)
+        for key in unread { #expect(DemoScript.sessionKeys.contains(key)) }
+
+        // "Seen at `now`" is what a still of the board means by it: everything
+        // the reader has been through, as of the instant being drawn.
+        let instant: TimeInterval = 16
+        let now = epoch.addingTimeInterval(instant)
+        let seen = DemoScript.seenAt(now: now)
+        for key in unread { #expect(seen[key] == nil) }
+        for key in DemoScript.sessionKeys where !unread.contains(key) {
+            #expect(seen[key] == now)
+        }
+
+        // And the ledger agrees: exactly the declared ones read as unseen.
+        let sessions = demoSnapshots(upTo: instant)
+        let flagged = sessions.filter {
+            TaskLedger.isUnseenDone($0, lastSeenAt: seen[$0.key])
+        }
+        #expect(Set(flagged.map(\.key)) == Set(unread))
+    }
+
+    @Test("a session that goes quiet reads as stale against the demo's own clock")
+    func somethingGoesStale() {
+        // The demo compresses a working day into two minutes, so the
+        // reducer's ninety seconds can never fire inside one loop and a still
+        // of the demo could never show a state the scene draws.
+        let script = DemoScript.make(startedAt: epoch)
+        let reducer = SessionStateReducer(staleAfter: DemoScript.staleAfter)
+        var snapshots: [SessionKey: SessionSnapshot] = [:]
+        let instant: TimeInterval = 16
+        for step in script.steps where step.offset <= instant {
+            let key = step.event.session
+            var current = snapshots[key]
+            if current == nil, case .sessionStarted(let identity) = step.event.kind {
+                current = SessionStateReducer.initialSnapshot(identity: identity)
+            }
+            guard let current else { continue }
+            snapshots[key] = reducer.reduce(current, event: step.event)
+        }
+        let now = epoch.addingTimeInterval(instant)
+        let stale = snapshots.values
+            .map { reducer.refreshStaleness($0, now: now) }
+            .filter { $0.isStale && $0.state.isActive }
+        #expect(!stale.isEmpty, "the scene draws a dozing session; the demo has to produce one")
+    }
+
     @Test("the demo's auto review is folded under its root rather than shipped linked")
     func autoReviewIsFoldedFromItsVariant() throws {
         let script = DemoScript.make(startedAt: epoch)

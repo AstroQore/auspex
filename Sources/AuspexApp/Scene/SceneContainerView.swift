@@ -659,6 +659,8 @@ enum SceneSnapshotRenderer {
         to url: URL,
         scale: CGFloat = 2,
         focusing project: String? = nil,
+        zones: SceneZoneOptions = .all,
+        unseenDone: Set<SessionKey> = [],
         appearance: NSAppearance = NSAppearance(named: .darkAqua) ?? NSAppearance()
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
@@ -671,7 +673,13 @@ enum SceneSnapshotRenderer {
         // be made the size of the building and only the laid-out scene knows
         // what that is.
         scene.update(
-            board: board, selected: nil, focusedProject: nil, reduceMotion: true, theme: theme
+            board: board,
+            selected: nil,
+            focusedProject: nil,
+            reduceMotion: true,
+            theme: theme,
+            zones: zones,
+            unseenDone: unseenDone
         )
 
         let bounds = scene.contentBounds
@@ -725,8 +733,9 @@ enum SceneSnapshotRenderer {
     ) -> BoardSnapshot {
         // A fixed instant, so two renders of the same offset are identical.
         let start = Date(timeIntervalSince1970: 1_767_225_600)
+        let now = start.addingTimeInterval(elapsed)
         let script = DemoScript.make(seed: seed, startedAt: start)
-        let reducer = SessionStateReducer()
+        let reducer = SessionStateReducer(staleAfter: DemoScript.staleAfter)
         var snapshots: [SessionKey: SessionSnapshot] = [:]
 
         for step in script.steps where step.offset <= elapsed {
@@ -739,10 +748,34 @@ enum SceneSnapshotRenderer {
             snapshots[key] = reducer.reduce(current, event: step.event)
         }
 
-        return BoardSnapshot(
-            generatedAt: start.addingTimeInterval(elapsed),
-            sessions: Array(snapshots.values)
-        )
+        // Staleness is the one derived value that changes because time passed
+        // rather than because something happened, and folding events alone can
+        // never produce it: every `reduce` recomputes it against the event's
+        // own instant, which is by definition not silent. A live board has a
+        // tick to do this on; a still has to do it here, or no render can ever
+        // show a session that went quiet — a state the scene draws.
+        for (key, snapshot) in snapshots {
+            snapshots[key] = reducer.refreshStaleness(snapshot, now: now)
+        }
+
+        return BoardSnapshot(generatedAt: now, sessions: Array(snapshots.values))
+    }
+
+    /// Which of the demo board's sessions finished something nobody has read.
+    ///
+    /// The garden's whole point is that this is visible, and it is the one
+    /// thing about a board that cannot be derived from a harness store — so
+    /// the demo states which of its sessions the imaginary reader has opened,
+    /// and the ledger answers from that exactly as it does for a real board.
+    @MainActor
+    static func demoUnseenDone(_ board: BoardSnapshot) -> Set<SessionKey> {
+        let seen = DemoScript.seenAt(now: board.generatedAt)
+        var unseen: Set<SessionKey> = []
+        for session in board.sessions
+        where TaskLedger.isUnseenDone(session, lastSeenAt: seen[session.key]) {
+            unseen.insert(session.key)
+        }
+        return unseen
     }
 
     enum RenderError: Error, CustomStringConvertible {
