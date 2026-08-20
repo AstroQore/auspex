@@ -6,42 +6,31 @@ import SwiftUI
 ///
 /// ## Why a clock at all
 ///
-/// Two things on the wall move on their own: the activity strip under each
-/// card, and the elapsed stopwatch beside it. Both used to drive themselves —
-/// a `repeatForever` animation per card, and one self-updating `Text` per
-/// stopwatch — which is fine for ten cards and is a room heater for five
-/// hundred. Every one of them is an independent timer the render loop has to
-/// service, and none of them is doing anything the others are not.
+/// The stopwatch beside every running card has to count. It used to do that
+/// with one self-updating `Text` per card, which is fine for ten cards and is a
+/// room heater for five hundred: every one of them is an independent timer the
+/// render loop has to service, and none of them is doing anything the others
+/// are not.
 ///
-/// So there is one ticker, at 4 Hz, and everything that moves is a pure
-/// function of its phase.
+/// So there is one ticker, at 1 Hz, and every stopwatch is a pure function of
+/// it. They all show the same instant as a result, rather than each sampling
+/// `Date()` at whatever moment its own body happened to run.
 ///
-/// ## Why two properties instead of one
+/// ## Why it is only the stopwatches
 ///
-/// ``phase`` advances four times a second; ``now`` advances once. They are
-/// stored separately rather than derived at the call site because Observation
-/// tracks reads *per property*: a stopwatch that reads only `now` is
-/// invalidated once a second, not four times, and a card that reads neither is
-/// never invalidated at all.
+/// It used to carry a second, faster property — a 4 Hz `phase` — because the
+/// activity strip under every card was a function of it. That strip is now a
+/// `CAGradientLayer` with animations that repeat forever on the render server
+/// (see ``ActivityStrip``), so nothing on the board needs a phase, and the
+/// clock ticks once a second instead of four times.
 ///
-/// That is the whole performance story of the board, and it only works if the
-/// reads stay where they are. The clock is read by two leaf views —
-/// ``ActivityStrip`` and ``ElapsedLabel`` — and by nothing else. Reading it in
-/// a card's body, or in the board's, would re-evaluate every card four times a
-/// second and undo the arrangement.
+/// The remaining reader is ``ElapsedLabel``, in a leaf. Reading `now` in a
+/// card's body, or in the board's, would re-evaluate every card once a second
+/// and undo the arrangement.
 @MainActor
 @Observable
 final class BoardClock {
-    /// Ticks per second. Fast enough that a sweeping strip reads as travel,
-    /// slow enough that a board of forty animating cards is a rounding error.
-    static let rate = 4
-
-    /// The 4 Hz counter. Everything animated is a function of this.
-    private(set) var phase = 0
-
-    /// The wall clock, republished once a second. Drives the stopwatches, and
-    /// keeps them all reading the same instant rather than each sampling
-    /// `Date()` at whatever moment its own body happened to run.
+    /// The wall clock, republished once a second.
     private(set) var now = Date()
 
     /// Runs until the surrounding task is cancelled.
@@ -54,21 +43,14 @@ final class BoardClock {
         var next = 0
         while !Task.isCancelled {
             next += 1
-            let deadline = start.advanced(by: .milliseconds(1_000 / Self.rate * next))
+            let deadline = start.advanced(by: .seconds(next))
             do {
                 try await Task.sleep(until: deadline, clock: .continuous)
             } catch {
                 return
             }
             guard !Task.isCancelled else { return }
-            phase = next
-            // Republished only on a whole second. The `@Observable` macro's
-            // own guard is no help here: it compares the new value with the
-            // old and stays quiet when they match, and no two readings of
-            // `Date()` ever match. Without this, every stopwatch on the wall
-            // would be invalidated four times a second to show the same
-            // number three of those times.
-            if next.isMultiple(of: Self.rate) { now = Date() }
+            now = Date()
         }
     }
 }
