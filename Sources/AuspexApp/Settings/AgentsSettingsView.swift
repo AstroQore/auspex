@@ -118,6 +118,12 @@ private struct AgentsSettingsGroup: View {
                                 .foregroundStyle(AuspexPalette.text3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        if let note = row.note {
+                            Text(note)
+                                .font(AuspexType.caption)
+                                .foregroundStyle(AuspexPalette.text3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     Spacer(minLength: 8)
                     action(for: row)

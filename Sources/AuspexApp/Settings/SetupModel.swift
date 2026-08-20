@@ -31,6 +31,11 @@ final class SetupModel {
         /// vocabulary. A person agreeing to "install harness hooks" is entitled
         /// to know it means eight of them.
         var detail: String?
+        /// What the harness will then do about it, when that is not obvious —
+        /// Codex will not run a hook it has not been shown, and a person who
+        /// ticks this box deserves to hear that from Auspex rather than from
+        /// Codex's next launch.
+        var note: String?
         /// What happened the last time this row was acted on.
         var outcome: String?
         var didFail = false
@@ -103,15 +108,15 @@ final class SetupModel {
                     isDetected: detected.contains(harness),
                     rows: HarnessInstaller.Piece.allCases.map { piece in
                         let offer = installer.offer(harness, piece)
+                        let plan = piece == .hooks ? installer.hookPlan(for: harness) : nil
                         return Row(
                             harness: harness,
                             piece: piece,
                             path: offer.path,
                             displayPath: offer.displayPath,
                             state: offer.state,
-                            detail: piece == .hooks
-                                ? installer.hookPlan(for: harness)?.summary
-                                : nil
+                            detail: plan?.summary,
+                            note: plan?.note
                         )
                     }
                 )

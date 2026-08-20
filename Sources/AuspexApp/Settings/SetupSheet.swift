@@ -180,6 +180,12 @@ private struct SetupRowView: View {
                         .foregroundStyle(AuspexPalette.text3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if let note = row.note {
+                    Text(note)
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let note = stateNote {
                     Text(note)
                         .font(AuspexType.caption)
