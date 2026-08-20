@@ -173,3 +173,77 @@ struct SessionControlModelTests {
         #expect(process.isRunning)
     }
 }
+
+/// The demo's stand-in process.
+///
+/// Worth a test of its own because it is the only part of the control feature
+/// a person can try by hand, and because it starts a real process: something
+/// has to assert that it is started once, attached to a session, and stopped.
+@Suite("Session control · the demo's stand-in", .serialized)
+struct DemoSignalTargetTests {
+    @Test("one demo session is lent a live pid, and the process goes when the source does")
+    func lendsAndCleansUp() async throws {
+        let (events, continuation) = AsyncStream<AgentEvent>.makeStream(of: AgentEvent.self)
+        let source = DemoEventSource(continuation: continuation)
+        let run = Task { await source.run() }
+
+        // The earliest session in the script opens at t+0.2s; the patch is
+        // emitted straight after its `sessionStarted`.
+        var lent: (key: SessionKey, pid: pid_t)?
+        for await event in events {
+            if case let .identityUpdated(patch) = event.kind, let pid = patch.pid {
+                lent = (event.session, pid)
+                break
+            }
+        }
+        run.cancel()
+
+        let borrowed = try #require(lent)
+        let table = ProcessTable(maxAge: 0, includesArguments: false, includesWorkingDirectory: false)
+        table.refresh()
+        // A real, running process — which is the whole point — and ours.
+        let record = try #require(table.record(pid: borrowed.pid))
+        #expect(record.name == "sleep")
+        #expect(record.uid == getuid())
+
+        await source.stop()
+        // `terminate()` is asynchronous; the process is reaped shortly after.
+        var attempts = 0
+        while attempts < 50 {
+            table.refresh()
+            if table.record(pid: borrowed.pid) == nil { break }
+            try await Task.sleep(for: .milliseconds(40))
+            attempts += 1
+        }
+        table.refresh()
+        #expect(table.record(pid: borrowed.pid) == nil)
+    }
+
+    @Test("a renderer's demo starts no process at all")
+    func rendererLendsNothing() async throws {
+        let before = sleepers()
+        let (events, continuation) = AsyncStream<AgentEvent>.makeStream(of: AgentEvent.self)
+        let source = DemoEventSource(continuation: continuation, lendsProcess: false)
+        let run = Task { await source.run() }
+
+        var seen = 0
+        for await event in events {
+            if case .identityUpdated(let patch) = event.kind {
+                #expect(patch.pid == nil)
+            }
+            seen += 1
+            if seen > 30 { break }
+        }
+        run.cancel()
+        await source.stop()
+        #expect(sleepers() == before)
+    }
+
+    /// How many `/bin/sleep` processes this user has, so the assertion is
+    /// about what the test started rather than about the machine.
+    private func sleepers() -> Int {
+        let table = ProcessTable(maxAge: 0, includesArguments: false, includesWorkingDirectory: false)
+        table.refresh()
+        return table.find { $0.uid == getuid() && $0.name == "sleep" }.count
+    }
+}
