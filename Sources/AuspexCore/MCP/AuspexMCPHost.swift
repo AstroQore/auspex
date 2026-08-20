@@ -51,6 +51,16 @@ public protocol AuspexMCPHost: Sendable {
 
     /// A plan or task changed, so the Tasks board should re-read.
     func didChangeLedger() async
+
+    /// A harness's hook reported something the transcript will not. The app
+    /// puts these into the same stream the tailers feed, so the reducer folds a
+    /// permission prompt and a tool call the same way.
+    func didObserve(_ events: [AgentEvent]) async
+}
+
+public extension AuspexMCPHost {
+    /// Hosts that only answer questions ignore them.
+    func didObserve(_ events: [AgentEvent]) async {}
 }
 
 /// A host with no app behind it: an empty board, no store, nothing attached.

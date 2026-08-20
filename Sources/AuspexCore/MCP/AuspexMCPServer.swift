@@ -38,6 +38,11 @@ public actor AuspexMCPServer {
     private var declaredPIDs: [pid_t] = []
     private static let declaredPIDLimit = 32
 
+    /// Turns harness hook payloads into board events, and remembers which
+    /// sessions are blocked on a permission so the resolution can close the one
+    /// that was opened.
+    private var hooks = HookEventRouter()
+
     public init(
         host: any AuspexMCPHost,
         resolver: MCPSelfResolver = MCPSelfResolver(),
@@ -78,16 +83,54 @@ public actor AuspexMCPServer {
         }
     }
 
-    /// Notifications: `notifications/initialized`, and Auspex's own hello.
+    /// Notifications: `notifications/initialized`, Auspex's own hello, and the
+    /// hook ingress.
     private func handleNotification(_ request: MCPRequest) async {
-        guard request.method == "auspex/hello" else { return }
-        guard let pid = request.params?["pid"]?.intValue, pid > 0, pid < Int(Int32.max) else { return }
-        let declared = pid_t(pid)
-        declaredPIDs.removeAll { $0 == declared }
-        declaredPIDs.append(declared)
-        if declaredPIDs.count > Self.declaredPIDLimit {
-            declaredPIDs.removeFirst(declaredPIDs.count - Self.declaredPIDLimit)
+        switch request.method {
+        case "auspex/hello":
+            guard let pid = request.params?["pid"]?.intValue, pid > 0, pid < Int(Int32.max) else {
+                return
+            }
+            let declared = pid_t(pid)
+            declaredPIDs.removeAll { $0 == declared }
+            declaredPIDs.append(declared)
+            if declaredPIDs.count > Self.declaredPIDLimit {
+                declaredPIDs.removeFirst(declaredPIDs.count - Self.declaredPIDLimit)
+            }
+        case HookEvent.method:
+            await handleHook(request.params)
+        default:
+            return
         }
+    }
+
+    /// One hook invocation, from the short-lived `Auspex --hook` process.
+    ///
+    /// A notification rather than a request, and answered with silence: the
+    /// hook process has a 200-millisecond budget and a harness waiting on it,
+    /// so it writes its line and goes. Nothing it could be told would be worth
+    /// the round trip.
+    ///
+    /// Session resolution is the payload's own id first — Claude Code's is the
+    /// name of its transcript, so a key built from it is the key the tailer
+    /// builds — and the process the hook ran in otherwise. The hook is a direct
+    /// child of the harness, so its parent pid is the strongest evidence
+    /// anything in Auspex gets.
+    private func handleHook(_ params: MCPJSON?) async {
+        guard let hook = HookEvent(params: params) else { return }
+        let board = await host.boardSnapshot()
+        let fallback = resolver.resolve(
+            pid: hook.pid,
+            identities: board.sessions.map(\.identity),
+            table: await host.processTable()
+        )?.session
+        let events = hooks.events(
+            for: hook,
+            known: Set(board.sessions.map(\.key)),
+            fallback: fallback
+        )
+        guard !events.isEmpty else { return }
+        await host.didObserve(events)
     }
 
     private func result(for request: MCPRequest) async throws -> MCPJSON {
