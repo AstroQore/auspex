@@ -113,9 +113,11 @@ Auspex is pre-alpha; there are no released versions yet.
   being read — so the loudest channel here is light: a monitor's colour is its
   session's state, its rhythm is that state's motion, and the spill lands on
   the desk and the agent. Blocked sessions strobe red, raise a hand, and put an
-  exclamation over the desk; everything else stays quiet. Camera pans on
-  scroll, zooms on pinch or ⌘-scroll, and frames the whole building on
-  **Fit**. Clicking a desk sets the same selection clicking a card does, in
+  exclamation over the desk; everything else stays quiet. The canvas is an
+  `NSScrollView`, so two fingers pan and pinch at once with the platform's own
+  momentum and elastic edges; ⌘-scroll zooms, a two-finger double tap frames the
+  room under the pointer, and **Fit** frames the whole building. Clicking a
+  desk sets the same selection clicking a card does, in
   both directions. Every rhythm collapses to a static pose under Reduce Motion.
 - **`SceneLayout`** in `AuspexCore` — the pure, tested seating plan behind it.
   Keeps an allocation table rather than laying out from the board's own order,
@@ -231,6 +233,29 @@ Auspex is pre-alpha; there are no released versions yet.
 
 ### Changed
 
+- **The scene's canvas is the platform's.** The office now hangs on an
+  `NSScrollView` whose document view is empty, flipped, world-sized and never
+  drawn; the `SKView` stays the size of the window underneath it and renders
+  whatever rectangle the clip view is showing, read onto the `SKCameraNode`
+  once per frame. Panning, momentum, elastic edges, the scroll-direction
+  preference and the live pinch are the platform's, which is what makes two
+  fingers scale and move the map at the same time — the thing a hand-rolled
+  magnify handler cannot do, because zooming around a centroid does not
+  translate when the centroid travels. What stayed ours is the travel of such a
+  pinch (applied only when the system is not already scrolling for the same
+  fingers), a zoom on ⌘-scroll, a smart zoom that frames the room under the
+  pointer, and the landing on the crisp zoom ladder when the fingers lift. The
+  `SKView` is deliberately not the document view: a document is scaled by the
+  magnification, so a Metal-backed one would need a drawable the size of the
+  building times the zoom — hundreds of megabytes for a picture 900 points
+  wide.
+- **Hovering costs a rectangle test rather than a walk of the office.** Every
+  mouse-moved event used to call `SKScene.nodes(at:)`, which visits every node
+  in the scene and allocates; measured on a 600-session office that is 5.0 ms
+  per hit test, and a trackpad asks several times per frame. The pointer is now
+  placed against the floor plan — the room first, then that room's desks — at
+  0.14 µs per hit test, and at most once per drawn frame however often the
+  pointer moved between them.
 - `AuspexAdapters.installed` and `watchRoots(home:)` index by each adapter's
   `handledHarnesses` rather than its primary `harness`, so ChatGPT Work is not
   reported as unwatched while its sessions are on the board.

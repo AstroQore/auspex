@@ -108,9 +108,26 @@ struct SceneCanvasViewTests {
 
     // MARK: - The clip view and the camera
 
+    @Test("A fit stays fitted until somebody takes over")
+    func fitIsAState() {
+        let (view, scene) = Self.canvas()
+        scene.fitAll()
+        scene.update(CACurrentMediaTime())
+        let fitted = scene.viewport
+
+        // Something nudges the clip view without a hand behind it — a room
+        // opening, a window being dragged. The building stays framed.
+        view.scrollView.contentView.setBoundsOrigin(NSPoint(x: 90, y: 60))
+        scene.update(CACurrentMediaTime())
+        #expect(scene.viewport.zoom == fitted.zoom)
+        #expect(scene.viewport.showsAll(of: scene.contentBounds))
+    }
+
     @Test("Moving the clip view moves the camera with it")
     func cameraFollowsTheClipView() {
         let (view, scene) = Self.canvas()
+        // What every gesture does on its way in: the reader is driving now.
+        view.cancelFlight()
         let before = scene.viewport.center
 
         view.scrollView.magnification = 1

@@ -116,9 +116,12 @@ shape does.
 Exactly one of those is allowed to shout, and it is the one that will never
 resolve itself without a person.
 
-Scroll to pan, pinch or ⌘-scroll to zoom, **Fit** to frame everything. Click a
-desk to fill the trace inspector — the same selection clicking a card makes, in
-both directions. Hover for a nameplate; double-click to centre. Under Reduce
+The canvas is a real scroll view, so two fingers pan and pinch at once the way
+they do in Preview, with the same momentum and the same elastic edges; ⌘-scroll
+zooms, a two-finger double tap frames the room under the pointer, and **Fit**
+frames everything. Click a desk to fill the trace inspector — the same selection
+clicking a card makes, in both directions. Hover for a nameplate; double-click
+to centre. Under Reduce
 Motion every rhythm collapses to a static pose. A session keeps its desk for as
 long as it is on the board, so nothing moves under the pointer; when it goes,
 the desk stays empty until something else takes it.

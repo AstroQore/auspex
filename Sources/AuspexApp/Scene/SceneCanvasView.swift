@@ -202,7 +202,10 @@ final class SceneCanvasView: NSView, SceneViewportHost {
             self.busyUntil = nil
             skView.setInteracting(false)
         }
-        guard let flight else { return }
+        guard let flight else {
+            keepFraming()
+            return
+        }
         // A gesture that arrives mid-flight wins: the reader is here now, and a
         // camera that kept flying to where they used to be pointed would be the
         // view arguing with them.
@@ -221,6 +224,25 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     func fit(animated: Bool) {
         guard !geometry.isEmpty else { return }
         apply(viewport.fitted(), animated: animated, framingEverything: true)
+    }
+
+    /// Keeps a framed building framed.
+    ///
+    /// "Fit" is a state rather than an event: a reader who asked for the whole
+    /// office wants the whole office as the window is dragged wider and as
+    /// rooms open and close. Checking it on the frame rather than only when a
+    /// resize arrives is what stops it depending on whether the clip view had
+    /// already been told its new size — the answer is arithmetic, and a frame
+    /// that is already framed writes nothing.
+    private func keepFraming() {
+        guard isFramingEverything, !geometry.isEmpty else { return }
+        let current = viewport
+        let fitted = current.fitted()
+        guard abs(fitted.zoom - current.zoom) > 0.0001
+            || abs(fitted.center.x - current.center.x) > 0.5
+            || abs(fitted.center.y - current.center.y) > 0.5
+        else { return }
+        write(fitted)
     }
 
     /// Stops a flight because the reader has taken over.
