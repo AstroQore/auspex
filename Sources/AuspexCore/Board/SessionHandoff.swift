@@ -29,13 +29,6 @@ public enum SessionHandoff {
 
     /// The AppleScript that opens Terminal.app on a shell line.
     ///
-    /// Terminal.app specifically. macOS has no "default terminal" the way it
-    /// has a default browser — no UTI, no `LSCopyDefaultApplication…` answer —
-    /// so the choice is between the one terminal every Mac has and guessing
-    /// from what is installed. A person who prefers another one still gets the
-    /// command on the clipboard, which is why the app copies it as well as
-    /// running it.
-    ///
     /// `do script` with no `in` clause opens a new window, which is what a
     /// resumed session wants: dropping it into whatever tab happens to be
     /// front would interrupt whatever is running there.
@@ -47,6 +40,149 @@ public enum SessionHandoff {
         end tell
         """
     }
+
+    // MARK: - Which terminal
+
+    /// A terminal emulator Auspex knows how to open a command in.
+    ///
+    /// macOS has no "default terminal" the way it has a default browser — no
+    /// UTI, no `LSCopyDefaultApplication…` answer — so there is nothing to
+    /// ask. What is left is knowing a handful of them by name, and the
+    /// clipboard for everyone else.
+    public struct Terminal: Hashable, Sendable, Identifiable {
+        /// How a command gets into it.
+        public enum Entry: Hashable, Sendable {
+            /// It has a scripting dictionary that will run a line.
+            case appleScript
+            /// It has no way to be told to run anything, but it will open a
+            /// window on a directory. The command goes to the clipboard and
+            /// the person presses ⌘V.
+            case urlOnDirectory(scheme: String)
+        }
+
+        /// What to call it in a menu item.
+        public let name: String
+        /// Its bundle identifier, for `NSWorkspace` and for the frontmost
+        /// check.
+        public let bundleIdentifier: String
+        /// How to get a command into it.
+        public let entry: Entry
+
+        public var id: String { bundleIdentifier }
+
+        public init(name: String, bundleIdentifier: String, entry: Entry) {
+            self.name = name
+            self.bundleIdentifier = bundleIdentifier
+            self.entry = entry
+        }
+
+        /// Whether the command can be handed over, or only the window.
+        public var runsCommands: Bool { entry == .appleScript }
+    }
+
+    /// Terminal.app: the one every Mac has, and the fallback for every case
+    /// below.
+    public static let terminalApp = Terminal(
+        name: "Terminal",
+        bundleIdentifier: "com.apple.Terminal",
+        entry: .appleScript
+    )
+
+    /// The terminals Auspex will open a resume command in, in the order it
+    /// would pick between them when nothing else decides.
+    ///
+    /// iTerm2 before Warp before Terminal.app, because installing either of
+    /// the first two is a decision and having the third is not. Warp is last
+    /// of the three that gets tried and first of the ones that cannot be told
+    /// to run a command — it has no scripting dictionary, so what it gets is a
+    /// window on the right directory and the command on the clipboard.
+    public static let knownTerminals: [Terminal] = [
+        Terminal(name: "iTerm", bundleIdentifier: "com.googlecode.iterm2", entry: .appleScript),
+        Terminal(name: "Warp", bundleIdentifier: "dev.warp.Warp-Stable", entry: .urlOnDirectory(scheme: "warp")),
+        terminalApp
+    ]
+
+    /// The known terminal with this bundle identifier, or `nil`.
+    public static func terminal(bundleIdentifier: String?) -> Terminal? {
+        guard let bundleIdentifier else { return nil }
+        return knownTerminals.first { $0.bundleIdentifier == bundleIdentifier }
+    }
+
+    /// Which terminal to open a resume command in.
+    ///
+    /// - Parameters:
+    ///   - lastUsed: the bundle identifier of the last known terminal the
+    ///     person was actually in. This is the answer whenever there is one:
+    ///     "the terminal you were in a minute ago" beats any ranking, and
+    ///     asking which application is frontmost *at the moment of the click*
+    ///     would only ever answer "Auspex".
+    ///   - isInstalled: whether an application with a bundle identifier is on
+    ///     this machine. Injected, because the suite must not depend on what
+    ///     the machine running it happens to have.
+    ///
+    /// Never returns `nil`: Terminal.app is part of the operating system.
+    public static func chooseTerminal(
+        lastUsed: String?,
+        isInstalled: (String) -> Bool
+    ) -> Terminal {
+        if let remembered = terminal(bundleIdentifier: lastUsed), isInstalled(remembered.bundleIdentifier) {
+            return remembered
+        }
+        return knownTerminals.first { isInstalled($0.bundleIdentifier) } ?? terminalApp
+    }
+
+    /// The AppleScript that runs `shellLine` in `terminal`, or `nil` for a
+    /// terminal that cannot be told to run anything.
+    ///
+    /// iTerm2's dictionary is not Terminal.app's: there is no `do script`, and
+    /// a window has to be created before a session exists to write into. Both
+    /// scripts open a *new window* rather than reusing the front one, because
+    /// typing into whatever tab happens to be at the front would interrupt
+    /// whatever is running there.
+    public static func terminalScript(for terminal: Terminal, shellLine: String) -> String? {
+        guard terminal.entry == .appleScript else { return nil }
+        switch terminal.bundleIdentifier {
+        case terminalApp.bundleIdentifier:
+            return terminalScript(shellLine: shellLine)
+        case "com.googlecode.iterm2":
+            return """
+            tell application "iTerm"
+                activate
+                set auspexWindow to (create window with default profile)
+                tell current session of auspexWindow
+                    write text "\(appleScriptEscaped(shellLine))"
+                end tell
+            end tell
+            """
+        default:
+            return nil
+        }
+    }
+
+    /// The URL that opens `terminal` on `directory`, for the terminals that
+    /// have no scripting entry point.
+    ///
+    /// `nil` when the terminal takes a script instead, or when the session
+    /// recorded no directory to open — a window in the wrong place is not
+    /// worth the app switch.
+    public static func terminalURL(for terminal: Terminal, directory: String?) -> URL? {
+        guard case let .urlOnDirectory(scheme) = terminal.entry,
+              let directory, !directory.isEmpty,
+              let encoded = directory.addingPercentEncoding(withAllowedCharacters: pathValueCharacters)
+        else { return nil }
+        return URL(string: "\(scheme)://action/new_tab?path=\(encoded)")
+    }
+
+    /// What may appear unescaped in the `path` query value of a terminal URL.
+    ///
+    /// `urlQueryAllowed` minus the characters that mean something *to a query
+    /// string* — otherwise a directory with a `&` or a `+` in its name
+    /// silently becomes two parameters or a space.
+    private static let pathValueCharacters: CharacterSet = {
+        var set = CharacterSet.urlQueryAllowed
+        set.remove(charactersIn: "&=+?#")
+        return set
+    }()
 
     /// Escapes a string for the inside of an AppleScript double-quoted
     /// literal: backslashes first, then quotes.

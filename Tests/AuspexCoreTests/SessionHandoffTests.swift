@@ -178,3 +178,91 @@ struct SessionHandoffEditorTests {
         #expect(probed == ["/opt/homebrew/bin/cursor", "/opt/homebrew/bin/code"])
     }
 }
+
+/// Which terminal a resume opens in, and how the command gets into it.
+///
+/// Every case injects its own "is this installed", because the machine running
+/// the suite has its own answer and the point of the test is the ranking, not
+/// that machine.
+@Suite("SessionHandoff · which terminal")
+struct SessionHandoffTerminalChoiceTests {
+    private let iTerm = "com.googlecode.iterm2"
+    private let warp = "dev.warp.Warp-Stable"
+    private let terminal = "com.apple.Terminal"
+
+    @Test("the terminal the person was last in wins over any ranking")
+    func lastUsedWins() {
+        let chosen = SessionHandoff.chooseTerminal(lastUsed: warp) { _ in true }
+        #expect(chosen.bundleIdentifier == warp)
+    }
+
+    @Test("a remembered terminal that is no longer installed falls back to the ranking")
+    func lastUsedUninstalled() {
+        let chosen = SessionHandoff.chooseTerminal(lastUsed: iTerm) { $0 != self.iTerm }
+        #expect(chosen.bundleIdentifier == warp)
+    }
+
+    @Test("with nothing remembered, an installed terminal beats the built-in one")
+    func ranking() {
+        #expect(SessionHandoff.chooseTerminal(lastUsed: nil) { _ in true }.bundleIdentifier == iTerm)
+        #expect(
+            SessionHandoff.chooseTerminal(lastUsed: nil) { $0 != self.iTerm }.bundleIdentifier == warp
+        )
+    }
+
+    /// The fallback the type documents: Terminal.app is part of the operating
+    /// system, so the answer is never "no terminal".
+    @Test("with nothing installed at all, Terminal.app is still the answer")
+    func fallback() {
+        let chosen = SessionHandoff.chooseTerminal(lastUsed: "com.example.nothing") { _ in false }
+        #expect(chosen.bundleIdentifier == terminal)
+        #expect(chosen.runsCommands)
+    }
+
+    @Test("something that is not a terminal is never remembered as one")
+    func unknownIdentifier() {
+        #expect(SessionHandoff.terminal(bundleIdentifier: "com.apple.Safari") == nil)
+        #expect(SessionHandoff.terminal(bundleIdentifier: nil) == nil)
+    }
+
+    @Test("iTerm gets its own script, because it has no `do script`")
+    func iTermScript() throws {
+        let iTermApp = try #require(SessionHandoff.knownTerminals.first { $0.bundleIdentifier == iTerm })
+        let script = try #require(
+            SessionHandoff.terminalScript(for: iTermApp, shellLine: "claude --resume abc")
+        )
+        #expect(script.contains("tell application \"iTerm\""))
+        #expect(script.contains("create window with default profile"))
+        #expect(script.contains("write text \"claude --resume abc\""))
+        #expect(script.contains("do script") == false)
+    }
+
+    @Test("a terminal that cannot be told to run anything has no script")
+    func warpHasNoScript() {
+        let warpApp = SessionHandoff.knownTerminals.first { $0.bundleIdentifier == warp }!
+        #expect(SessionHandoff.terminalScript(for: warpApp, shellLine: "claude") == nil)
+        #expect(warpApp.runsCommands == false)
+    }
+
+    @Test("it gets a window on the working directory instead")
+    func warpURL() {
+        let warpApp = SessionHandoff.knownTerminals.first { $0.bundleIdentifier == warp }!
+        let url = SessionHandoff.terminalURL(for: warpApp, directory: "/Users/example/Code/widget")
+        #expect(url?.absoluteString == "warp://action/new_tab?path=/Users/example/Code/widget")
+        #expect(SessionHandoff.terminalURL(for: warpApp, directory: nil) == nil)
+        #expect(SessionHandoff.terminalURL(for: warpApp, directory: "") == nil)
+        #expect(SessionHandoff.terminalURL(for: SessionHandoff.terminalApp, directory: "/tmp") == nil)
+    }
+
+    /// A directory name with a `&` or a `+` in it would otherwise become two
+    /// query parameters, or a space.
+    @Test("a directory with query punctuation in its name is encoded, not split")
+    func warpURLEncoding() {
+        let warpApp = SessionHandoff.knownTerminals.first { $0.bundleIdentifier == warp }!
+        let url = SessionHandoff.terminalURL(for: warpApp, directory: "/Users/example/a&b+c d?e")
+        let text = url?.absoluteString ?? ""
+        #expect(text.contains("%26") && text.contains("%2B") && text.contains("%3F"))
+        #expect(text.contains("%20"))
+        #expect(url?.query()?.hasPrefix("path=") == true)
+    }
+}
