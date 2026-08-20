@@ -67,18 +67,49 @@ public struct BoardSummary: Sendable, Equatable, Hashable {
         self.init(counts: board.counts)
     }
 
-    /// A summary of a set of sessions, told what has been read.
+    /// A summary of a set of sessions, told what has been read and what the
+    /// agents have said.
     ///
-    /// The form the board uses per frame: it already holds the sessions and
-    /// the seen-at map, and deriving rows for the whole board just to count
-    /// them would pay for a delegation-tree walk per session.
-    public init(sessions: [SessionSnapshot], seenAt: [SessionKey: Date]) {
+    /// The form the board uses per frame: it already holds the sessions, the
+    /// seen-at map and the notices, and deriving rows for the whole board just
+    /// to count them would pay for a delegation-tree walk per session.
+    ///
+    /// A session whose agent called `auspex.notify` is *moved* into "needs
+    /// you" rather than added to it. Counting it in both would make the five
+    /// numbers add up to more than the board has cards on it, and the chip a
+    /// person is most likely to click would be the one that lies.
+    public init(
+        sessions: [SessionSnapshot],
+        seenAt: [SessionKey: Date],
+        notices: [SessionKey: AgentNotice] = [:]
+    ) {
+        var counts = BoardSnapshot.Counts(sessions: sessions)
         var unseen = 0
-        for session in sessions
-        where TaskLedger.isUnseenDone(session, lastSeenAt: seenAt[session.key]) {
-            unseen += 1
+        for session in sessions {
+            let notice = notices[session.key]
+            if TaskLedger.isUnseenDone(
+                state: session.state,
+                lastTurnEndedAt: session.brief.lastTurnEndedAt,
+                lastSeenAt: seenAt[session.key],
+                isChild: TaskLedger.isChild(session.identity),
+                hasAssignment: session.brief.firstPrompt != nil,
+                notice: notice
+            ) {
+                unseen += 1
+            }
+            guard notice?.kind.wantsPerson == true else { continue }
+            if case .waitingPermission = session.state { continue }
+            counts.waitingPermission += 1
+            switch session.state {
+            case .thinking: counts.thinking -= 1
+            case .toolCalling, .writingFile: counts.tooling -= 1
+            case .delegating: counts.delegating -= 1
+            case .idle: counts.idle -= 1
+            case .ended: counts.ended -= 1
+            case .waitingPermission: break
+            }
         }
-        self.init(counts: BoardSnapshot.Counts(sessions: sessions), doneUnseen: unseen)
+        self.init(counts: counts, doneUnseen: unseen)
     }
 
     /// A summary of the rows a board actually drew.

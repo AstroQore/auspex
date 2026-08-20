@@ -92,8 +92,53 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     /// `true` when a turn closed after the card was last opened — see
     /// ``TaskLedger/isUnseenDone(state:lastTurnEndedAt:lastSeenAt:isChild:hasAssignment:)``.
     public let isUnseenDone: Bool
+    /// What the agent itself said it needs, when it called for a person
+    /// through `auspex.notify`.
+    ///
+    /// The only field on a row an *agent* wrote. Everything else is observed,
+    /// and the card marks the difference — because "Auspex thinks this session
+    /// is idle" and "this session says it is waiting for you" are different
+    /// claims and a person acts on them differently.
+    public let notice: RowNotice?
+    /// The line the agent wrote about what it is doing, while it is still the
+    /// most recent thing it said.
+    ///
+    /// Overrides the observed "said" line. `nil` once the session has spoken
+    /// in prose again, because an observation newer than a report is better
+    /// than the report.
+    public let reportedFocus: String?
 
     public var id: SessionKey { key }
+
+    /// Whether a person has to do something before this session moves.
+    public var needsPerson: Bool {
+        if case .waitingPermission = state { return true }
+        return notice?.kind.wantsPerson == true
+    }
+
+    /// One agent's call for a person, flattened for the card.
+    public struct RowNotice: Sendable, Equatable {
+        public let kind: AgentNoticeKind
+        public let message: String
+        public let urgency: AgentNoticeUrgency
+        public let at: Date
+
+        public init(kind: AgentNoticeKind, message: String, urgency: AgentNoticeUrgency, at: Date) {
+            self.kind = kind
+            self.message = message
+            self.urgency = urgency
+            self.at = at
+        }
+
+        public init(_ notice: AgentNotice) {
+            self.init(
+                kind: notice.kind,
+                message: notice.message,
+                urgency: notice.urgency,
+                at: notice.createdAt
+            )
+        }
+    }
 
     /// `true` when the session is over.
     public var isEnded: Bool { state.isEnded }
@@ -137,7 +182,9 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         latestPrompt: String? = nil,
         latestAssistant: String? = nil,
         lastTurnEndedAt: Date? = nil,
-        isUnseenDone: Bool = false
+        isUnseenDone: Bool = false,
+        notice: RowNotice? = nil,
+        reportedFocus: String? = nil
     ) {
         self.variantLabel = variantLabel
         self.key = key
@@ -167,6 +214,8 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         self.latestAssistant = latestAssistant
         self.lastTurnEndedAt = lastTurnEndedAt
         self.isUnseenDone = isUnseenDone
+        self.notice = notice
+        self.reportedFocus = reportedFocus
     }
 }
 
@@ -216,11 +265,18 @@ public struct BoardRowBuilder: Sendable {
     /// Empty by default. A board whose sessions all carry their own brief never
     /// reads it.
     private let briefs: [SessionKey: SessionBrief]
+    /// What agents have called for, by session. The only agent-authored input
+    /// to a row; passed in whole for the same reason `seenAt` is.
+    private let notices: [SessionKey: AgentNotice]
+    /// What agents said they are doing.
+    private let reports: [SessionKey: AgentReport]
 
     public init(
         board: BoardSnapshot,
         seenAt: [SessionKey: Date] = [:],
-        briefs: [SessionKey: SessionBrief] = [:]
+        briefs: [SessionKey: SessionBrief] = [:],
+        notices: [SessionKey: AgentNotice] = [:],
+        reports: [SessionKey: AgentReport] = [:]
     ) {
         self.board = board
         var index: [SessionKey: SessionSnapshot] = [:]
@@ -229,6 +285,8 @@ public struct BoardRowBuilder: Sendable {
         self.bySession = index
         self.seenAt = seenAt
         self.briefs = briefs
+        self.notices = notices
+        self.reports = reports
     }
 
     /// The row for one session.
@@ -236,6 +294,11 @@ public struct BoardRowBuilder: Sendable {
         let project = board.projectKey(for: session).map(BoardGrouping.projectName(forPath:))
         let brief = brief(for: session)
         let title = Self.title(for: session, project: project, brief: brief)
+        let notice = notices[session.key]
+        // A report is a claim about *now*. Once the session has spoken in
+        // prose again, the observation is newer than the claim and wins.
+        let report = reports[session.key]
+            .flatMap { $0.isSuperseded(byAssistantAt: brief.lastAssistantAt) ? nil : $0 }
         return BoardRow(
             key: session.key,
             harness: session.key.harness,
@@ -272,8 +335,11 @@ public struct BoardRowBuilder: Sendable {
                 lastTurnEndedAt: brief.lastTurnEndedAt,
                 lastSeenAt: seenAt[session.key],
                 isChild: TaskLedger.isChild(session.identity),
-                hasAssignment: brief.firstPrompt != nil
-            )
+                hasAssignment: brief.firstPrompt != nil,
+                notice: notice
+            ),
+            notice: notice.map(BoardRow.RowNotice.init),
+            reportedFocus: report?.line
         )
     }
 

@@ -37,8 +37,13 @@ struct SessionTraceView: View {
                 children: model.selectedChildren,
                 projectName: model.selectedProjectName,
                 control: environment.control,
+                notice: model.notices[session.key].map(BoardRow.RowNotice.init),
+                reportedFocus: model.reports[session.key]
+                    .flatMap { $0.isSuperseded(byAssistantAt: session.brief.lastAssistantAt) ? nil : $0 }?
+                    .line,
                 onSelect: { model.selectedKey = $0 },
-                onOpenTrajectory: { model.openTrajectory() }
+                onOpenTrajectory: { model.openTrajectory() },
+                onDismissNotice: { model.dismissNotice(session.key) }
             )
             tabBar
             traceList
@@ -274,11 +279,20 @@ struct SessionHeaderView: View {
     /// Interrupt and kill, when the host has them. `nil` where a header is
     /// drawn into a bitmap rather than onto a screen.
     var control: SessionControlModel?
+    /// What this session's agent called for, when it called. The pane a person
+    /// opens *because* of an alert has to show the alert's own words at the
+    /// top; making them go back to the card for it would be absurd.
+    var notice: BoardRow.RowNotice?
+    /// The line the agent wrote about what it is doing, while it is current.
+    var reportedFocus: String?
     let onSelect: (SessionKey) -> Void
     /// Opens this session's trajectory. `nil` where there is nowhere to open
     /// it — the offscreen renderer builds this header without a board column
     /// to switch.
     var onOpenTrajectory: (() -> Void)?
+    /// Clears the call. `nil` on the offscreen renderer, which has nowhere to
+    /// send a click.
+    var onDismissNotice: (() -> Void)?
 
     /// Whether the reader has opened the assignment out past its fold.
     @State private var showsWholeTask = false
@@ -286,6 +300,18 @@ struct SessionHeaderView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             identity
+            if let notice {
+                NoticeBanner(notice: notice, onDismiss: onDismissNotice)
+            }
+            if let reportedFocus {
+                // Marked with the same caret the card uses, so a reader learns
+                // once that this line has an author.
+                Text("\(NoticeStyle.selfReportedMark) \(reportedFocus)")
+                    .font(AuspexType.body)
+                    .foregroundStyle(AuspexPalette.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
             assignment
             chips
             stats
@@ -317,9 +343,13 @@ struct SessionHeaderView: View {
                     .textSelection(.enabled)
             }
             Spacer(minLength: 6)
-            if session.isStale { StaleTag() }
-            StatePill(state: session.state, isStale: session.isStale)
-                .fixedSize()
+            if session.isStale, notice == nil { StaleTag() }
+            if let notice {
+                NoticePill(kind: notice.kind)
+            } else {
+                StatePill(state: session.state, isStale: session.isStale)
+                    .fixedSize()
+            }
         }
     }
 

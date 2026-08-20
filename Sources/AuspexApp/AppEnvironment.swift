@@ -67,8 +67,19 @@ public final class AppEnvironment {
     /// The Harnesses page: detection, counts, and MCP configuration.
     let harnesses = HarnessStatusModel()
 
+    /// The MCP listener agents attach to, and what it is doing.
+    ///
+    /// Built in ``start()`` rather than here because it needs the process
+    /// table the liveness loop already owns — one `sysctl` sweep between them
+    /// rather than two — and because a demo must be able to decide not to bind
+    /// at all.
+    private(set) var mcp: MCPController?
+
     /// The sidebar's project tree.
     let projects = ProjectsModel()
+
+    /// The Tasks page: plans, tasks, and the live sessions on them.
+    let tasks = TasksModel()
 
     /// The projects a person made and the rules they wrote — the user layer
     /// the board places and filters with.
@@ -97,7 +108,7 @@ public final class AppEnvironment {
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
     private var eventContinuation: AsyncStream<AgentEvent>.Continuation?
-    private var tasks: [Task<Void, Never>] = []
+    private var pipelineTasks: [Task<Void, Never>] = []
     private var didStart = false
 
     /// How often the grouping pass runs.
@@ -173,10 +184,9 @@ public final class AppEnvironment {
         let registry = SessionRegistry(store: store)
         self.registry = registry
         board.autoSelectsFirstSession = mode == .demo
-        // The sidebar's tree is derived from the same frame the board is, and
-        // once per frame rather than once per render.
-        board.onFrame = { [projects] frame in projects.rebuild(board: frame) }
         board.start(registry: registry, repository: SessionRepository(store: store))
+        board.startLedger(repository: TaskRepository(store: store))
+        tasks.start(repository: TaskRepository(store: store))
         projects.start(repository: ProjectRepository(store: store))
         harnesses.start(
             home: paths.homeDirectory,
@@ -198,7 +208,7 @@ public final class AppEnvironment {
         // handful of events per second whenever the board is busy laying
         // out. Everything that moves events runs off the main actor;
         // only UI notices come back to it.
-        tasks.append(Task.detached { [weak self] in
+        pipelineTasks.append(Task.detached { [weak self] in
             do {
                 // Before any producer starts, so a relaunch shows the board it
                 // had rather than one that fills in as each harness happens to
@@ -230,6 +240,8 @@ public final class AppEnvironment {
         }
         control.onNotice = { [board] notice in board.record(notice: notice) }
 
+        startMCP(store: store, table: table)
+
         switch mode {
         case .demo:
             startDemo(into: continuation)
@@ -239,6 +251,47 @@ public final class AppEnvironment {
 
         startGrouping(registry: registry, table: table)
     }
+
+    /// Brings up the MCP listener and points it at the board.
+    ///
+    /// The frame goes to the server through the same `onFrame` hook the
+    /// sidebar's tree uses, so a tool call reads a value that is already in
+    /// hand rather than waking the board model up to ask for one.
+    private func startMCP(store: AuspexStore, table: any ProcessTableReading) {
+        // A demo must not post a system notification: nothing on its board
+        // happened, and a fabricated alert in Notification Centre outlives the
+        // window that explained itself.
+        let isDemo = mode == .demo
+        let controller = MCPController(
+            paths: paths,
+            store: store,
+            table: table,
+            isReadOnly: isDemo,
+            onNotice: { [weak self] notice in
+                await MainActor.run { self?.board.apply(notice: notice) }
+                guard !isDemo else { return }
+                await AgentNotifier.shared.post(notice)
+            },
+            onReport: { [weak self] report in
+                await MainActor.run { self?.board.apply(report: report) }
+            },
+            onLedgerChange: { [weak self] in
+                await MainActor.run { self?.tasks.reload() }
+            }
+        )
+        mcp = controller
+        controller.start()
+
+        // One hook, two readers: the sidebar's tree and the MCP server both
+        // want the frame the wall is drawing, once per applied frame rather
+        // than once per render.
+        board.onFrame = { [projects, tasks, board, weak controller] frame in
+            projects.rebuild(board: frame)
+            tasks.apply(board: frame, notices: board.notices)
+            controller?.publish(board: frame)
+        }
+    }
+
 
     /// Rebuilds the briefs of sessions recorded before Auspex folded any.
     ///
@@ -255,7 +308,7 @@ public final class AppEnvironment {
     /// of the pass is prompts, and a diagnostic line is the last place any of
     /// them should appear.
     private func startBriefBackfill(store: AuspexStore, registry: SessionRegistry) {
-        tasks.append(Task.detached(priority: .utility) { [weak self] in
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak self] in
             do {
                 let report = try BriefBackfill(store: store).runIfNeeded()
                 guard report.didRun else { return }
@@ -292,7 +345,7 @@ public final class AppEnvironment {
     /// would be a coordinator only tested in one of them.
     private func startGrouping(registry: SessionRegistry, table: any ProcessTableReading) {
         let grouping = GroupingCoordinator(registry: registry, table: table)
-        tasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
+        pipelineTasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
     }
 
     /// Stops every producer and flushes what the registry has buffered.
@@ -301,10 +354,15 @@ public final class AppEnvironment {
     /// for an in-flight transaction and commits the rest, so quitting mid-burst
     /// does not lose the last quarter second of a session.
     func shutdown() async {
-        for task in tasks { task.cancel() }
-        tasks.removeAll()
+        for task in pipelineTasks { task.cancel() }
+        pipelineTasks.removeAll()
+        // Before the pipeline goes: a bridge that writes one more line while
+        // the store is closing gets a clean EOF instead of a half-answer.
+        mcp?.stop()
+        mcp = nil
         board.stop()
         projects.stop()
+        tasks.stop()
         harnesses.stop()
         eventContinuation?.finish()
         eventContinuation = nil
@@ -334,7 +392,7 @@ public final class AppEnvironment {
         )
         self.coordinator = coordinator
 
-        tasks.append(Task.detached { [weak self] in
+        pipelineTasks.append(Task.detached { [weak self] in
             let streams = await coordinator.start()
             // Notices are for the UI and arrive rarely; the events are not
             // and do not — they stay off the main actor.
@@ -358,7 +416,7 @@ public final class AppEnvironment {
             home: home
         )
         let registryForLiveness = registry
-        tasks.append(Task.detached {
+        pipelineTasks.append(Task.detached {
             await resolver.runLoop(
                 every: .seconds(3),
                 identities: {
@@ -376,12 +434,12 @@ public final class AppEnvironment {
             lendsProcess: offersSignalTarget
         )
         demoSource = source
-        tasks.append(Task.detached { await source.run() })
+        pipelineTasks.append(Task.detached { await source.run() })
     }
 
     /// Keeps a task alive for `shutdown()` to cancel.
     private func track(_ task: Task<Void, Never>) {
-        tasks.append(task)
+        pipelineTasks.append(task)
     }
 
     /// A notice, as a sentence rather than as an enum dump.

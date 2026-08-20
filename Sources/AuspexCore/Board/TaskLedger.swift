@@ -47,8 +47,21 @@ public enum TaskLedger {
         lastTurnEndedAt: Date?,
         lastSeenAt: Date?,
         isChild: Bool,
-        hasAssignment: Bool
+        hasAssignment: Bool,
+        notice: AgentNotice? = nil
     ) -> Bool {
+        // An agent that called `notify(done)` said so itself, and that beats
+        // every inference below: it needs no `firstPrompt` to have been
+        // observed, it works for a subagent a person deliberately asked about,
+        // and it works for a harness whose store never records a turn
+        // boundary. What it still respects is the person: a receipt read is a
+        // receipt done with.
+        if let notice, notice.kind == .done {
+            return notice.createdAt > (lastSeenAt ?? .distantPast)
+        }
+        // A live call for a person is not "finished"; it is the other bucket,
+        // and `bucket(state:isUnseenDone:notice:)` puts it there.
+        if notice?.kind.wantsPerson == true { return false }
         guard let lastTurnEndedAt, !isChild, hasAssignment else { return false }
         switch state {
         case .idle, .ended: break
@@ -118,14 +131,27 @@ public enum TaskLedger {
 
     /// The bucket for one row.
     public static func bucket(of row: BoardRow) -> Bucket {
-        bucket(state: row.state, isUnseenDone: row.isUnseenDone)
+        bucket(state: row.state, isUnseenDone: row.isUnseenDone, needsPerson: row.needsPerson)
     }
 
-    /// The bucket for one session, given what has been read.
-    public static func bucket(of session: SessionSnapshot, lastSeenAt: Date?) -> Bucket {
+    /// The bucket for one session, given what has been read and what its agent
+    /// has said.
+    public static func bucket(
+        of session: SessionSnapshot,
+        lastSeenAt: Date?,
+        notice: AgentNotice? = nil
+    ) -> Bucket {
         bucket(
             state: session.state,
-            isUnseenDone: isUnseenDone(session, lastSeenAt: lastSeenAt)
+            isUnseenDone: isUnseenDone(
+                state: session.state,
+                lastTurnEndedAt: session.brief.lastTurnEndedAt,
+                lastSeenAt: lastSeenAt,
+                isChild: isChild(session.identity),
+                hasAssignment: session.brief.firstPrompt != nil,
+                notice: notice
+            ),
+            needsPerson: notice?.kind.wantsPerson == true
         )
     }
 
@@ -136,7 +162,19 @@ public enum TaskLedger {
     /// only state a person has to act on *now*, and `isUnseenDone` already
     /// excludes it — the check here is belt and braces for a caller that built
     /// the flag some other way.
-    public static func bucket(state: SessionState, isUnseenDone: Bool) -> Bucket {
+    ///
+    /// `needsPerson` is the agent's own claim — it called `auspex.notify` — and
+    /// it wins for the same reason `waitingPermission` does: a session that
+    /// says it is stuck on somebody is stuck on somebody, whatever its
+    /// transcript looks like from outside. This is the one place the passive
+    /// layer and the reported layer meet, and they agree by construction
+    /// because both land in the same bucket.
+    public static func bucket(
+        state: SessionState,
+        isUnseenDone: Bool,
+        needsPerson: Bool = false
+    ) -> Bucket {
+        if needsPerson { return .needsYou }
         if case .waitingPermission = state { return .needsYou }
         if isUnseenDone { return .doneUnseen }
         switch state {
@@ -192,8 +230,8 @@ public enum TaskLedger {
             self.id = row.key.description
         }
 
-        init(_ session: SessionSnapshot, lastSeenAt: Date?) {
-            let bucket = TaskLedger.bucket(of: session, lastSeenAt: lastSeenAt)
+        init(_ session: SessionSnapshot, lastSeenAt: Date?, notice: AgentNotice? = nil) {
+            let bucket = TaskLedger.bucket(of: session, lastSeenAt: lastSeenAt, notice: notice)
             self.rank = TaskLedger.rank(bucket)
             self.clock = TaskLedger.clock(of: session, in: bucket)
             self.id = session.key.description
@@ -237,14 +275,17 @@ public enum TaskLedger {
     /// window from the third row of the menu bar should land on the third card.
     public static func sorted(
         _ sessions: [SessionSnapshot],
-        seenAt: [SessionKey: Date]
+        seenAt: [SessionKey: Date],
+        notices: [SessionKey: AgentNotice] = [:]
     ) -> [SessionSnapshot] {
         guard sessions.count > 1 else { return sessions }
         // Keyed once for the same reasons as the row form, and one more: the
         // naive comparator hashes a `SessionKey` into `seenAt` twice per
         // comparison, and a `SessionSnapshot` is the most expensive value in
         // the package to copy.
-        let keys = sessions.map { SortKey($0, lastSeenAt: seenAt[$0.key]) }
+        let keys = sessions.map {
+            SortKey($0, lastSeenAt: seenAt[$0.key], notice: notices[$0.key])
+        }
         let order = sessions.indices.sorted { SortKey.precedes(keys[$0], keys[$1]) }
         return order.map { sessions[$0] }
     }
@@ -266,8 +307,13 @@ public enum TaskLedger {
     /// The menu bar's list. A session that ended and was read is history and
     /// belongs on the board's collapsed section, not in a panel a person opens
     /// to ask what is outstanding.
-    public static func wantsAttention(_ session: SessionSnapshot, lastSeenAt: Date?) -> Bool {
-        !session.state.isEnded || isUnseenDone(session, lastSeenAt: lastSeenAt)
+    public static func wantsAttention(
+        _ session: SessionSnapshot,
+        lastSeenAt: Date?,
+        notice: AgentNotice? = nil
+    ) -> Bool {
+        if notice?.isLive == true { return true }
+        return !session.state.isEnded || isUnseenDone(session, lastSeenAt: lastSeenAt)
     }
 
     // MARK: - Counting and filtering

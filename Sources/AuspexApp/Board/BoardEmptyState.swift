@@ -34,7 +34,7 @@ struct BoardEmptyStateContent: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             watchList
-            if !model.notices.isEmpty { noticeList }
+            if !model.diagnostics.isEmpty { noticeList }
             footer
         }
     }
@@ -99,7 +99,7 @@ struct BoardEmptyStateContent: View {
             Text("From the ingest pipeline")
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.textTertiary)
-            ForEach(Array(model.notices.suffix(6).enumerated()), id: \.offset) { _, notice in
+            ForEach(Array(model.diagnostics.suffix(6).enumerated()), id: \.offset) { _, notice in
                 Text(notice)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.textSecondary)

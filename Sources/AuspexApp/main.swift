@@ -6,20 +6,18 @@ import Foundation
 // invocation never brings up NSApplication, the Dock, or a window. MCP
 // clients and harness hooks spawn this binary as a plain child process —
 // sometimes inside a sandbox — and touching AppKit there is fatal.
-//
-// Both modes are placeholders; they land in M3.
 let arguments = CommandLine.arguments.dropFirst()
 
-if arguments.contains("--mcp-stdio") {
-    FileHandle.standardError.write(
-        Data("auspex: --mcp-stdio is not implemented yet (planned for M3).\n".utf8)
-    )
-    exit(2)
+// The MCP server, as an MCP client expects to spawn it: a byte pump between
+// this process's stdio and the socket the running app listens on. It reads no
+// harness store, opens no window, and writes nothing to disk.
+if AuspexStdioBridge.isRequested() {
+    exit(AuspexStdioBridge.run())
 }
 
 if arguments.contains("--hook") {
     FileHandle.standardError.write(
-        Data("auspex: --hook is not implemented yet (planned for M3).\n".utf8)
+        Data("auspex: --hook is not implemented yet (planned for M4).\n".utf8)
     )
     exit(2)
 }
@@ -332,8 +330,12 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         at `height` x `width` points (default 980 x 1600). The
                         session shown is whichever demo session has the most to
                         show. Reads no harness store.
-          --mcp-stdio   Serve the task board over MCP on stdio. (M3)
-          --hook        Handle a harness hook invocation. (M3)
+          --mcp-stdio   Serve the running Auspex's task board over MCP on
+                        stdio. This is the command an MCP client is
+                        configured with; it connects to ~/.auspex/mcp.sock
+                        (override with AUSPEX_MCP_SOCKET) and pumps bytes.
+                        Exits 1 when Auspex is not running.
+          --hook        Handle a harness hook invocation. (M4)
           --help        Show this.
 
         """.utf8))

@@ -98,7 +98,13 @@ struct BoardView: View {
         return SessionCard(
             row: row,
             isSelected: model.selectedKey == row.key,
-            onSelectParent: { key in model.selectedKey = key }
+            onSelectParent: { key in model.selectedKey = key },
+            // Only when there is something to clear, so the closure stays out
+            // of `==` for the ordinary card — see `SessionCard.==`, which
+            // compares the row and nothing else.
+            onDismissNotice: row.notice == nil
+                ? nil
+                : { model.dismissNotice(row.key) }
         )
         .equatable()
         // Dimmed rather than removed while "show ignored" is on: the point of

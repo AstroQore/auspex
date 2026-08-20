@@ -168,9 +168,18 @@ struct MenuBarContent: View {
         // that ended and was looked at is history and belongs on the board's
         // collapsed section; one that ended and was not is the errand this
         // panel exists to hand over.
+        // Notices are the fourth reason a session belongs here, beside live,
+        // blocked and unread: an agent that called for a person is the single
+        // most urgent thing this panel can show.
+        let notices = board.notices
         let sessions = TaskLedger.sorted(
-            board.board.sessions.filter { TaskLedger.wantsAttention($0, lastSeenAt: seenAt[$0.key]) },
-            seenAt: seenAt
+            board.board.sessions.filter {
+                TaskLedger.wantsAttention(
+                    $0, lastSeenAt: seenAt[$0.key], notice: notices[$0.key]
+                )
+            },
+            seenAt: seenAt,
+            notices: notices
         )
         let summary = board.summary
 
@@ -189,7 +198,8 @@ struct MenuBarContent: View {
                         session: session,
                         isUnseenDone: TaskLedger.isUnseenDone(
                             session, lastSeenAt: seenAt[session.key]
-                        )
+                        ),
+                        notice: notices[session.key]
                     ) { open(session.key) }
                 }
                 if sessions.count > Self.listLimit {
@@ -269,6 +279,10 @@ struct MenuBarContent: View {
 private struct MenuBarRow: View {
     let session: SessionSnapshot
     var isUnseenDone = false
+    /// What the agent itself said, when it called. It replaces the inferred
+    /// subtitle: a sentence somebody wrote on purpose beats one Auspex
+    /// assembled out of a state and a project name.
+    var notice: AgentNotice?
     let action: () -> Void
 
     var body: some View {
@@ -288,9 +302,13 @@ private struct MenuBarRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 6)
-                if isUnseenDone { UnseenDot() }
-                StatePill(state: session.state, isStale: session.isStale)
-                    .fixedSize()
+                if isUnseenDone, notice == nil { UnseenDot() }
+                if let notice, notice.kind.wantsPerson {
+                    NoticePill(kind: notice.kind)
+                } else {
+                    StatePill(state: session.state, isStale: session.isStale)
+                        .fixedSize()
+                }
             }
             .padding(.horizontal, 12)
             .frame(height: 40)
@@ -315,6 +333,7 @@ private struct MenuBarRow: View {
     /// the window — and "two of them are not in the changelog" decides that,
     /// while "storefront-web · idle" does not.
     private var subtitle: String {
+        if let notice { return notice.message }
         if isUnseenDone, let said = session.brief.latestAssistant, !said.isEmpty {
             return said
         }

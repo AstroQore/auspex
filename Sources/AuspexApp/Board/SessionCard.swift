@@ -44,6 +44,10 @@ struct SessionCard: View, Equatable {
     let row: BoardRow
     let isSelected: Bool
     var onSelectParent: (SessionKey) -> Void = { _ in }
+    /// Clears the agent's call for a person. `nil` on the surfaces where a
+    /// card is a picture rather than a control — an offscreen render, mostly —
+    /// which is also what keeps the banner from growing a dead button there.
+    var onDismissNotice: (() -> Void)?
 
     /// Equality is over the values that are drawn. The closure is not one of
     /// them — it is the same action on every card — and comparing functions is
@@ -64,6 +68,13 @@ struct SessionCard: View, Equatable {
         VStack(alignment: .leading, spacing: 10) {
             header(style: style, isOver: isOver)
             identityLine
+            // Above the ledger, because it is the only line on the card
+            // somebody wrote on purpose — and because a person scanning a wall
+            // for what needs them should not have to read past two inferred
+            // lines to find it.
+            if let notice = row.notice {
+                NoticeBanner(notice: notice, onDismiss: onDismissNotice)
+            }
             ledgerLines
             activityLine(style: style)
             chips
@@ -125,10 +136,18 @@ struct SessionCard: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
             // Nudged down to the cap height of the title beside it, which is
             // top-aligned so a two-line assignment grows downwards.
-            if row.isUnseenDone { UnseenDot().padding(.top, 7) }
+            if row.isUnseenDone, row.notice == nil { UnseenDot().padding(.top, 7) }
             if row.isStale, !isOver { StaleTag() }
-            StatePill(state: row.state, isStale: row.isStale)
-                .fixedSize()
+            // The agent's claim replaces the observation rather than sitting
+            // beside it. Two pills — "idle" and "needs input" — would be the
+            // card arguing with itself, and the reader would have to know
+            // which one to believe.
+            if let notice = row.notice {
+                NoticePill(kind: notice.kind)
+            } else {
+                StatePill(state: row.state, isStale: row.isStale)
+                    .fixedSize()
+            }
         }
     }
 
@@ -140,12 +159,21 @@ struct SessionCard: View, Equatable {
     /// same sentence twice — see ``BoardRowBuilder``.
     @ViewBuilder
     private var ledgerLines: some View {
-        if row.latestPrompt != nil || row.latestAssistant != nil {
+        if row.latestPrompt != nil || row.latestAssistant != nil || row.reportedFocus != nil {
             VStack(alignment: .leading, spacing: 3) {
                 if let asked = row.latestPrompt {
                     LedgerLine(key: "asked", text: asked, tint: AuspexPalette.text2)
                 }
-                if let said = row.latestAssistant {
+                if let focus = row.reportedFocus {
+                    // The agent's own account of what it is doing, marked as
+                    // such. It replaces the inferred "said" line: a sentence
+                    // written on purpose beats one lifted out of a transcript.
+                    LedgerLine(
+                        key: "doing",
+                        text: "\(NoticeStyle.selfReportedMark) \(focus)",
+                        tint: AuspexPalette.text2
+                    )
+                } else if let said = row.latestAssistant {
                     LedgerLine(key: "said", text: said, tint: AuspexPalette.text3)
                 }
             }

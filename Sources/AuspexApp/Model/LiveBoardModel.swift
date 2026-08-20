@@ -234,6 +234,103 @@ final class LiveBoardModel {
     /// then costs one hash lookup rather than a query it must never make.
     private(set) var derivedBriefs: [SessionKey: SessionBrief] = [:]
 
+    /// What each session's agent has called for, when it called.
+    ///
+    /// Auspex's own state, like ``seenAt``: read once from the store, kept in
+    /// memory, and written through. A card must not go to SQLite to find out
+    /// whether the agent behind it is asking for something.
+    private(set) var notices: [SessionKey: AgentNotice] = [:]
+
+    /// What each session's agent said it is doing.
+    private(set) var reports: [SessionKey: AgentReport] = [:]
+
+    /// The sessions calling for a person right now, in board order. What the
+    /// menu bar lists and what the header's chip counts.
+    var callingSessions: [SessionKey] {
+        rowGroups.flatMap(\.rows).filter { $0.notice?.kind.wantsPerson == true }.map(\.key)
+    }
+
+    /// Starts reading the ledger's side of the board: what agents have called
+    /// for, and what they said they are doing.
+    func startLedger(repository: TaskRepository) {
+        ledger = repository
+        reloadLedger()
+    }
+
+    /// Re-reads both maps whole. They are a handful of rows even on a busy
+    /// machine, and reading them together is what keeps a card from showing a
+    /// notice with a report from the previous frame beside it.
+    func reloadLedger() {
+        guard let ledger else { return }
+        Task { [weak self] in
+            let state = await Task.detached(priority: .utility) {
+                (
+                    notices: (try? ledger.liveNotices()) ?? [:],
+                    reports: (try? ledger.allReports()) ?? [:]
+                )
+            }.value
+            guard let self else { return }
+            notices = state.notices
+            reports = state.reports
+            rebuildGroups()
+        }
+    }
+
+    /// An agent just called. Applied on the spot rather than by re-reading, so
+    /// the card moves on the same frame the notification arrives on.
+    func apply(notice: AgentNotice) {
+        notices[notice.session] = notice
+        rebuildGroups()
+    }
+
+    /// An agent just said what it is doing.
+    func apply(report: AgentReport) {
+        reports[report.session] = report
+        rebuildGroups()
+    }
+
+    /// Takes a call off the board — the "Dismiss" on a card.
+    ///
+    /// The notification goes with it: an alert still sitting in Notification
+    /// Centre for something the person has already dealt with is the fastest
+    /// way to teach somebody to ignore alerts.
+    func dismissNotice(_ key: SessionKey) {
+        guard notices.removeValue(forKey: key) != nil else { return }
+        rebuildGroups()
+        clearThrough(key)
+    }
+
+    /// Writes a dismissal through to the store and takes the alert back.
+    private func clearThrough(_ key: SessionKey) {
+        let ledger = ledger
+        Task.detached(priority: .utility) {
+            try? ledger?.clearNotice(session: key)
+            await AgentNotifier.shared.withdraw(session: key)
+        }
+    }
+
+    /// Clears the calls the person has already answered.
+    ///
+    /// The auto-clear the whole `needs_input` bucket depends on: an agent asked
+    /// a question, the person typed an answer into that session's terminal, and
+    /// the card must stop shouting without anybody having to visit Auspex to
+    /// say so. ``AgentNotice/isAnswered(byPromptAt:)`` owns the rule; this
+    /// applies it to the frame in hand.
+    private func clearAnsweredNotices() {
+        guard !notices.isEmpty else { return }
+        // Collected first: the caller rebuilds once, after this, and a
+        // dismissal per answered question would redraw the wall per question.
+        let answered = notices.filter { key, notice in
+            guard let session = rawBoard.session(for: key) else { return false }
+            return notice.isAnswered(byPromptAt: session.brief.lastPromptAt)
+        }
+        guard !answered.isEmpty else { return }
+        for key in answered.keys {
+            notices.removeValue(forKey: key)
+            clearThrough(key)
+        }
+    }
+
     /// Hands the board the briefs a backfill rebuilt, and redraws.
     ///
     /// Sessions the registry already holds get theirs through
@@ -333,7 +430,13 @@ final class LiveBoardModel {
         for session in board.sessions { index[session.key] = session }
         sessionIndex = index
 
-        let builder = BoardRowBuilder(board: board, seenAt: seenAt, briefs: derivedBriefs)
+        let builder = BoardRowBuilder(
+            board: board,
+            seenAt: seenAt,
+            briefs: derivedBriefs,
+            notices: notices,
+            reports: reports
+        )
         let groups = BoardGrouping.groups(
             for: board,
             groupBy: groupBy,
@@ -385,7 +488,7 @@ final class LiveBoardModel {
         self.endedRows = bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows
         // Counted before the bucket filter, on purpose: a chip that zeroed the
         // others when clicked would leave no way back to them.
-        summary = BoardSummary(sessions: kept, seenAt: seenAt)
+        summary = BoardSummary(sessions: kept, seenAt: seenAt, notices: notices)
         sessionCount = board.sessions.count
         refreshSelection()
     }
@@ -613,11 +716,15 @@ final class LiveBoardModel {
 
     /// What the ingest pipeline has said about itself, newest last. Shown in
     /// the empty state, which is the only place a person can act on it.
-    private(set) var notices: [String] = []
+    ///
+    /// Not to be confused with ``notices``, which is what *agents* said. These
+    /// are Auspex talking about its own plumbing.
+    private(set) var diagnostics: [String] = []
 
     // MARK: Wiring
 
     private var repository: SessionRepository?
+    private var ledger: TaskRepository?
     private var consumeTask: Task<Void, Never>?
     private var traceTask: Task<Void, Never>?
     private var searchTask: Task<Void, Never>?
@@ -688,8 +795,8 @@ final class LiveBoardModel {
 
     /// Records something the ingest pipeline reported.
     func record(notice: String) {
-        notices.append(notice)
-        if notices.count > 24 { notices.removeFirst(notices.count - 24) }
+        diagnostics.append(notice)
+        if diagnostics.count > 24 { diagnostics.removeFirst(diagnostics.count - 24) }
     }
 
     /// Replaces the user layer — the projects a person has made and the rules
@@ -737,6 +844,9 @@ final class LiveBoardModel {
     /// the pipeline's timing.
     func apply(_ frame: BoardSnapshot) {
         rawBoard = frame
+        // Before the rebuild, so a question the person has already answered is
+        // never drawn as still asking.
+        clearAnsweredNotices()
         rebuildVisibleBoard()
         if !board.sessions.isEmpty { hasEverSeenSession = true }
 

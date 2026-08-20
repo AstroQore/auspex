@@ -2,6 +2,7 @@ import AgentSessionKit
 import AgentSessionLive
 import AuspexCore
 import SwiftUI
+import UserNotifications
 
 /// The main window: sidebar, board, trace.
 ///
@@ -24,6 +25,14 @@ struct RootView: View {
     /// Owned by the window rather than by the board so that it survives a
     /// switch between Board and Scene, and so there is visibly one of them.
     @State private var clock = BoardClock()
+
+    /// Where a click on a notification lands.
+    ///
+    /// Held by the window because the window is what a click has to open onto.
+    /// `UNUserNotificationCenter` keeps only a weak delegate, so something with
+    /// the app's lifetime has to hold it — and the window outlives every
+    /// notification it will ever route.
+    @State private var notifications = AgentNotificationDelegate()
 
     var body: some View {
         @Bindable var model = environment.board
@@ -52,11 +61,36 @@ struct RootView: View {
         .modifier(KillConfirmation(control: environment.control))
         .task { environment.start() }
         .task { await clock.run() }
+        .task { routeNotifications() }
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
         ) { _ in
             Task { await environment.shutdown() }
         }
+    }
+
+    /// Points the notification centre's two actions at the board.
+    ///
+    /// "Show" selects the card the agent called from — which also marks it
+    /// seen, so acting on an alert is what stops it being unread. "Copy resume
+    /// command" is for the person whose answer belongs in the terminal rather
+    /// than in Auspex; it copies and does nothing else, because opening a
+    /// terminal on somebody's behalf from a notification is a surprise.
+    private func routeNotifications() {
+        notifications.onSelect = { key in
+            environment.board.selectedKey = key
+            environment.board.focusProject(of: key)
+        }
+        notifications.onCopyResume = { key in
+            guard let identity = environment.board.session(for: key)?.identity,
+                  case let .available(command, _) = SessionHandoff.resume(for: identity)
+            else { return }
+            SessionActions.copy(command)
+        }
+        // Not outside an app bundle: `current()` aborts the process there —
+        // see `AgentNotifier.isAvailable`.
+        guard AgentNotifier.isAvailable else { return }
+        UNUserNotificationCenter.current().delegate = notifications
     }
 
     @ViewBuilder
