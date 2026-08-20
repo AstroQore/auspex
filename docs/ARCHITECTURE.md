@@ -1,18 +1,17 @@
 # Architecture
 
-> **Target design; not all implemented.** Auspex is pre-alpha. This document
-> describes where the project is going. Today the repository contains the
-> package skeleton, `AuspexPaths`, the full `AuspexStore` schema with its
-> repositories, `SessionRegistry` and `BoardSnapshot`, and an empty window.
-> Nothing produces an event stream yet. Each section notes the milestone that
-> makes it real.
+> **How Auspex fits together, as built.** Everything below describes shipped
+> code unless it is marked otherwise; the three things that are not are called
+> out where they belong — harness hooks (`--hook`), retention scheduling, and
+> the scene's zones, which is in flight on a branch. Auspex is still pre-alpha:
+> the schema changes, and there is no upgrade path between versions.
 
 ## Packages
 
 Auspex is split across two repositories so the hard part — knowing how each
 harness records a session — is reusable on its own.
 
-### `agent-session-kit` (sibling repository) — M0/M1
+### `agent-session-kit` (sibling repository)
 
 - **`AgentSessionKit`** — the vocabulary. `AgentEvent`, `AgentSession`,
   `SessionState`, `HarnessID`, and the `SourceAdapter` protocol. Pure model
@@ -55,11 +54,17 @@ glue only.
                      SessionRegistry              (live set of sessions)
                              │
                              ▼
-                      BoardSnapshot               (immutable render input)
+                      BoardSnapshot               (immutable render input, ≤ 20 Hz)
                              │
-        ┌────────────────────┼────────────────────┐
-        ▼                    ▼                    ▼
-   Board (SwiftUI)    SpriteKit Scene        MenuBar extra
+                             ▼
+                  BoardFrameAssembler             (off every actor, ≤ 8 Hz)
+                             │
+                             ▼
+                  AssembledBoardFrame             (rows, groups, tree, summary)
+                             │
+        ┌──────────┬─────────┼─────────┬──────────┐
+        ▼          ▼         ▼         ▼          ▼
+      Board     Scene      Crew    Trajectory  MenuBar extra
 ```
 
 **SourceAdapters** watch each harness's on-disk store and emit events. They
@@ -71,14 +76,14 @@ apart by each rollout's `originator`; it reports both through
 `SourceAdapter.handledHarnesses`, and `AuspexAdapters` indexes by that so
 neither harness can be claimed unwatched while its sessions are on the board.
 Claude Cowork is the mirror case — the same format as Claude Code, a different
-store inside Claude.app's container, and therefore its own adapter. — *M1
-(Claude Code, Codex), M2 (the rest).*
+store inside Claude.app's container, and therefore its own adapter.
 
-### The seven harnesses
+### The eight harnesses
 
 `AuspexAdapters.featured` is the list every surface reports on: Claude Code,
-Claude Cowork, Codex, ChatGPT Work, Cursor, Grok Build, AntiGravity. Gemini CLI
-is in the kit's catalog and has no live adapter, so it is recognised but not
+Claude Cowork, Codex, ChatGPT Work, Cursor, Grok Build, Grok Bot, AntiGravity.
+Seven adapters cover them, because `CodexLiveAdapter` covers two. Gemini CLI is
+in the kit's catalog and has no live adapter, so it is recognised but not
 featured.
 
 Identity is the vendor's own single-colour mark (`HarnessLogo`, loaded from
@@ -89,28 +94,74 @@ string abbreviates a harness.
 
 **AgentEvent stream** merges every adapter into a single ordered async stream:
 turn started, assistant text, tool call started/finished, sub-agent spawned,
-file written, permission requested, turn ended, session ended. — *M1.*
+file written, permission requested, turn ended, session ended.
 
 **SessionStateReducer** folds that stream into a `SessionState` per session —
 thinking, calling a tool, delegating, writing, waiting for permission, idle,
 ended — plus the derived facts the board shows: current tool, elapsed time in
 state, sub-agent tree, files touched. Pure function of (state, event); this is
-the piece that must stay unit-testable. — *M1.*
+the piece that must stay unit-testable.
 
 **SessionRegistry** is an actor holding the live set. It bootstraps from the
 store so a relaunch shows the board it had rather than an empty one, folds each
 event through the reducer, batches writes into one transaction per 250 ms, and
 re-evaluates staleness on a one-second tick — the one derived value that
 changes because time passed rather than because something happened. Session
-birth and death are the reducer's; project and task grouping are *M2*. —
-*M1.*
+birth and death are the reducer's.
 
 **BoardSnapshot** is an immutable value the UI renders, published on an
 `AsyncStream` coalesced to at most 20 Hz — a board redrawn faster than that is
 redrawn for nobody. Views never read the registry directly, so the SwiftUI
 board, the pixel scene, and the menu bar always agree. Sorted alive first, then
 by which session most needs a person, then by recency; grouped by harness and
-by project, and carrying the delegation forest as `tree`. — *M1.*
+by project, and carrying the delegation forest as `tree`.
+
+## The frame the window draws
+
+A `BoardSnapshot` is not what a view renders. Turning one into the window —
+applying the person's projects and ignore rules, grouping it, building a row
+per session, sorting the ledger, walking the delegation forest for the
+sidebar's tree — is a few milliseconds of value copying and string hashing on a
+real store, and it used to happen on the main actor eight times a second while
+the same thread was laying the window out.
+
+**`BoardFrameAssembler`** is an actor that does it instead. `LiveBoardModel`
+gathers the inputs (`BoardFrameInputs`: claims, rules, grouping axis, filters,
+what has been seen, what agents said) and hands them over with the raw frame;
+what comes back is an `AssembledBoardFrame` of finished values. Every path that
+can change what the window draws — a frame from the pipeline, a filter clicked,
+a project focused, a card marked seen, the user layer replaced — goes through
+one `scheduleAssembly()`, so there is no second derivation to keep in step with
+the first. At most one assembly is in flight; further calls set a flag, so a
+burst of fifty frames costs one assembly of the fiftieth. Frames are coalesced
+to 8 Hz on the way in, and each result carries a sequence number so an
+out-of-order one is dropped rather than drawn.
+
+**`BoardRow`** is why the comparison at the end is cheap. A `SessionSnapshot`
+is the reducer's whole working state — fifteen optionals of identity, a
+dictionary of open tool calls, a set of open children — and SwiftUI compares
+what a view holds to decide what to re-render. A row is a flat value of
+scalars, small enums and strings copied by reference out of the snapshot, plus
+the two answers a card used to compute per body: what its parent is called, and
+how many descendants it has. Views hold rows; nothing on the wall holds a
+snapshot.
+
+The same rule shapes `LiveBoardModel`'s surface. `board` is a fresh value every
+frame and can never compare equal, so the surfaces that are *always* on screen
+— the sidebar, the header, the trace pane — read narrow `Equatable` properties
+derived once per frame (`sessionCount`, `summary`, `selectedSession`,
+`selectedParent`, `selectedChildren`, `selectedProjectName`) and never `board`
+itself. Reading `board` from an always-visible view puts the whole window back
+on a treadmill of full-window layout passes.
+
+The other half of that treadmill is AppKit's, and it is **not** solved. A
+hosting view's minimum size is an Auto Layout constraint, refreshed from
+`NSHostingView.minSize()` on every display cycle the SwiftUI graph was dirtied
+on — a second full `sizeThatFits` of everything under it, for a number that
+never moves. On a live board it is the largest single cost the main thread
+carries while nobody is touching the window. What is measured, and which fix
+was tried and did not work, is in
+[`docs/research/idle-window-minsize.md`](research/idle-window-minsize.md).
 
 ## Grouping
 
@@ -143,7 +194,7 @@ resolved **once**, which matters because Claude Code re-reports its working
 directory on every transcript line. `ProjectRepository` writes what comes out —
 upserting `projects` and `worktrees`, pointing `sessions.project_id` /
 `worktree_id` at them, and answering the questions a live board cannot, like
-"every session this machine has ever run in this repository". — *M2.*
+"every session this machine has ever run in this repository".
 
 ### Who: `ProcessLinker` → `sessions.parent_key` / `root_key`
 
@@ -170,7 +221,7 @@ feeds the answers back in through `SessionRegistry.applyPlacements(_:)` and
 `applyLinks(_:)`, which turn them into ordinary `identityUpdated` events.
 `AppEnvironment` starts it beside the liveness loop and hands both the same
 `ProcessTable`, whose three-second cache then serves one read per tick instead
-of two. — *M2.*
+of two.
 
 ### What the UI does with both
 
@@ -248,6 +299,54 @@ person typed it, the same string the card's `asked:` line shows — and falls
 back to the title for a session whose transcript has not been read far enough
 to have a brief yet.
 
+## The four views
+
+`BoardViewMode` is one enum in Core — `board`, `scene`, `crew`, `trajectory` —
+and the container in `RootView` is a plain switch over it. A mode rather than a
+destination: the selection, the grouping, the filters and the trace beside them
+all survive a switch, so adding another way of looking at the board is a case
+here and a branch there.
+
+**Board** renders `rowGroups`. **Crew** is the one surface that still holds
+`SessionSnapshot`s, because its avatars are drawn from fields a row does not
+carry; it is only built while its own mode is on screen, so that is one mode's
+cost rather than the board's. **Trajectory** is the odd one out: it draws the
+*selected* session rather than the board, which is why it is the only mode that
+`requiresSelection`, and its state (the fold, the layout, the inspector's
+selection) lives on `LiveBoardModel` so that leaving and coming back does not
+re-read a transcript the model already holds.
+
+**Scene** is SpriteKit, and its canvas is an `NSScrollView` with an *empty,
+world-sized document view*. Everything a canvas has to do with two fingers —
+momentum, elastic edges, the scroll-direction preference, and a pinch that
+moves the map while it scales it — is behaviour `NSScrollView` has and a
+hand-rolled gesture handler does not keep for long. So the scroll view owns
+where the reader is, its magnification is the zoom, and the `SKView` underneath
+simply draws the rectangle the clip view is showing. The `SKView` is
+deliberately not the document view: a document view is scaled by the
+magnification, and a Metal-backed one would be re-rasterised for it.
+
+The view, not the scene, answers "is anybody looking at this": `OfficeSKView`
+watches window occlusion, superview, and hidden state, and suspends the render
+loop, the scene's actions, and the frame rate together when the answer is no.
+It rests at 30 fps — the fastest thing in the office is a typing hand at ten
+changes a second — and goes to 60 for the length of a gesture.
+
+*In flight:* zones — a floor plan that gives the office named districts rather
+than one grid of rooms — are being built on a branch (`SceneZone`,
+`SceneRoute`) and are not described here yet.
+
+### Character packages
+
+The people in the office are placeholders drawn in code until art exists. A
+real character is a folder under `~/.auspex/characters/`: a `manifest.json` and
+one frame strip per pose. `CharacterLibrary` reads them, `CharacterManifest`
+validates them, `CharacterFolderWatcher` notices a new one without a relaunch,
+and `CharacterSelection` records which character each harness wears. A package
+with three poses drawn and five missing is usable — the missing poses fall back
+to the placeholder — because art lands one pose at a time.
+`docs/CHARACTERS.md` is the format.
+
 ## Harness Configuration
 
 `HarnessMCPConfigStore` reads each harness's own MCP configuration — the
@@ -276,7 +375,7 @@ page: a config Auspex cannot fully parse still has a legible server list. So
 `[mcp_servers.foo.env]` is read as a sub-table of `foo` rather than as a server
 called `foo.env`, a quoted name is unquoted, and anything unrecognised costs
 its own table rather than the file. "No config file", "could not be read", and
-"no servers" stay three distinct answers all the way to the screen. — *M2.*
+"no servers" stay three distinct answers all the way to the screen.
 
 ## Storage
 
@@ -398,6 +497,16 @@ What hooks add is `PermissionRequest` (Claude asks for approval in its UI and
 writes nothing until the answer arrives, so waiting for a person and thinking
 hard are the same silence from outside), session and subagent boundaries at the
 instant they happen, and a heartbeat for everything else.
+
+**Registration.** A harness only calls a server it has been told about, so
+`HarnessInstaller` writes the `auspex` entry into each harness's own MCP
+configuration, and the short task-protocol note into its agent instructions
+file. It is the one thing in Auspex that writes outside `~/.auspex/`, and it is
+fenced five ways — a person clicked, inside a `>>> auspex >>>` block or one
+named JSON member, backed up into `~/.auspex/backups/` first, re-parsed after,
+and exactly reversible. `ConfigTextEditors` edits *text* rather than
+round-tripping a parser, because bytes somebody else wrote are never
+re-serialised. See `AGENTS.md` § 6.
 
 **Identity.** An agent never has to know its own session id. The kernel
 reports the socket's peer pid; `MCPSelfResolver` walks up from it until it
