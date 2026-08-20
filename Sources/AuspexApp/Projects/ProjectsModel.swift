@@ -35,7 +35,11 @@ final class ProjectsModel {
     private(set) var tree: ProjectTree = .empty
 
     /// Project display names by root path, from the store.
-    private(set) var names: [String: String] = [:]
+    ///
+    /// Not observed, and private: nothing draws the map. It is read by the
+    /// assembler, which is handed a copy through ``onNames``, and kept here
+    /// only so a refresh that finds the same names can say nothing.
+    @ObservationIgnored private var names: [String: String] = [:]
 
     /// Called when the store's project names change, so the model that owns the
     /// frame can put them into the next assembly.
