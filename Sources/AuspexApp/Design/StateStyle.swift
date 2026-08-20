@@ -19,8 +19,9 @@ import SwiftUI
 ///
 /// Sessions that are not doing anything animate nothing at all: `.idle` and
 /// `.ended` resolve to ``Motion/steady(_:)``, whose `isAnimated` is `false`,
-/// and the board never hands them a clock phase. A wall of four hundred
-/// finished sessions costs the render loop nothing.
+/// so ``ActivityStrip`` draws them as one rectangle in SwiftUI and gives them
+/// no layer and no animation. A wall of four hundred finished sessions costs
+/// the render loop nothing.
 struct StateStyle: Sendable, Equatable {
     /// The state's colour: the pill, the dot, the strip, and — for
     /// `waitingPermission` only — the card's outline and glow.
@@ -43,8 +44,10 @@ struct StateStyle: Sendable, Equatable {
 
     /// What the activity strip does.
     ///
-    /// Every case is a pure function of a phase number the board hands down,
-    /// which is what lets one clock drive the whole wall — see ``BoardClock``.
+    /// A description of a rhythm, not of a frame: ``ActivityStrip`` turns each
+    /// case into a `CAAnimation` that repeats forever on the render server, so
+    /// nothing here is sampled against a clock and no case costs the main
+    /// thread anything per frame.
     enum Motion: Sendable, Equatable, Hashable {
         /// A fixed bar at this opacity. Never redrawn.
         case steady(Double)
@@ -54,16 +57,18 @@ struct StateStyle: Sendable, Equatable {
         /// `width` is how wide the head is, in twenty-fourths of the strip, so
         /// a file write reads as a tighter, busier pass than a shell command.
         case sweep(width: Int)
-        /// The strip snaps to full and falls away. Someone is waiting.
+        /// Someone is waiting. Drawn as a still bar at full colour rather than
+        /// as a flash: the card this sits on already carries a red outline and
+        /// a glow, and a strobing strip under it sounded the same alarm twice.
         case strobe
         /// One tick per child, lighting in sequence.
         case ticks(count: Int)
 
-        /// Whether this motion needs the clock at all.
+        /// Whether this state is one where something is still happening.
         ///
-        /// The board reads this to decide whether to pass a card a live phase
-        /// or a frozen zero — and a frozen zero is what makes an ended card
-        /// compare equal to its previous self and skip its body entirely.
+        /// Read by the surfaces that have no strip — the state pill's dot, and
+        /// the sidebar's — to decide whether to glow. It is about the session,
+        /// not about the strip: `.strobe` says yes here and still does not move.
         var isAnimated: Bool {
             switch self {
             case .steady: false
