@@ -1,10 +1,9 @@
 # Architecture
 
 > **How Auspex fits together, as built.** Everything below describes shipped
-> code unless it is marked otherwise; the two things that are not are called
-> out where they belong — retention scheduling, and the scene's zones, which
-> is in flight on a branch. Auspex is still pre-alpha: the schema changes, and
-> there is no upgrade path between versions.
+> code unless it is marked otherwise; the one thing that is not is called
+> out where it belongs — retention scheduling. Auspex is still pre-alpha:
+> the schema changes, and there is no upgrade path between versions.
 
 ## Packages
 
@@ -332,9 +331,12 @@ loop, the scene's actions, and the frame rate together when the answer is no.
 It rests at 30 fps — the fastest thing in the office is a typing hand at ten
 changes a second — and goes to 60 for the length of a gesture.
 
-*In flight:* zones — a floor plan that gives the office named districts rather
-than one grid of rooms — are being built on a branch (`SceneZone`,
-`SceneRoute`) and are not described here yet.
+The scene's zones shipped: one continuous map — the office, a meeting room
+strip where a delegating session sits at a long table with its sub-agents,
+and a garden where idle sessions rest, unseen-done ones hold a note, and an
+ended session walks out through the gate. `SceneLayout` owns the plan;
+Settings → Scene switches either annex off, which returns everyone to their
+desks.
 
 ### Character packages
 

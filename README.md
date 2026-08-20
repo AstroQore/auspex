@@ -80,11 +80,14 @@ trace beside them all survive a switch.
 and the one that answers *what is this session doing* precisely: state, tool
 name, target file, elapsed, tokens, what it was asked to do, what it last said.
 
-**Scene** is the same board as a room. Every session is a person at a desk,
-every project is a room they share, and a sub-agent sits at a smaller desk
-beside the agent that spawned it. The loudest channel is light: a monitor's
-colour is its session's state and its rhythm is that state's motion. Six rooms
-of lighting resolve as a pattern before any shape does.
+**Scene** is the same board as a place. Every session is a person, every
+project is a room, and *where somebody is* is the first thing a glance reads:
+working sessions sit at their desks, a delegating session walks to the meeting
+room with the sub-agents it spawned around a long table, idle ones rest on a
+garden bench — the ones that finished something you have not looked at hold a
+note — and an ended session walks out through the gate. The loudest channel is
+light: a monitor's colour is its session's state and its rhythm is that
+state's motion.
 
 ![The scene view: a room per project, agents at desks, their monitors lit by what they are doing](docs/screenshots/scene.png)
 
