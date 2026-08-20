@@ -112,11 +112,17 @@ struct BoardView: View {
         // that looks exactly like the others would not answer that.
         .opacity(isIgnored ? 0.4 : 1)
         .onTapGesture { model.selectedKey = row.key }
+        // A card is the thing a person drags onto a task to say "this session
+        // is the one doing that". The same relationship `tasks.claim` records,
+        // made by hand — see `TaskDragPayload`.
+        .draggable(TaskDragPayload.session(row.key))
         .contextMenu {
-            // What to do *with* this session, then what to do about seeing
-            // it: the handoff is about the agent, the rules are about the
-            // board, and one divider is cheaper than two menus.
+            // What to do *with* this session, then where it belongs, then what
+            // to do about seeing it: the handoff is about the agent, the tasks
+            // are about the work, the rules are about the board.
             actions(for: row)
+            Divider()
+            LinkToTaskMenu(key: row.key, tasks: environment.tasks)
             Divider()
             SessionRowMenu(row: row, model: model, environment: environment)
         }

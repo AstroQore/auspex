@@ -31,6 +31,13 @@ final class TasksModel {
     /// this yet" from "everything is finished", which want different pages.
     private(set) var isEmpty = true
 
+    /// Tasks not yet in the `done` column — the number beside the sidebar row.
+    ///
+    /// An `Int` rather than a derivation over ``lanes``, because the sidebar is
+    /// on screen always and reading the lanes would invalidate it every time
+    /// any task moved.
+    private(set) var openCount = 0
+
     /// Whether archived plans are drawn as well.
     var showsArchived = false {
         didSet { if oldValue != showsArchived { reload() } }
@@ -164,6 +171,7 @@ final class TasksModel {
     private func rebuild() {
         guard let latest else { return }
         isEmpty = latest.plans.isEmpty && latest.tasks.isEmpty
+        openCount = latest.tasks.count { $0.status != .done }
 
         let linksByTask = Dictionary(grouping: latest.links) { $0.taskID }
         func row(_ task: AuspexTask) -> TaskRow {

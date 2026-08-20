@@ -49,7 +49,8 @@ enum WindowSnapshotRenderer {
         section: BoardSection = .live,
         scale: CGFloat = 2,
         focus: String? = nil,
-        ignore: [IgnoreRule.Kind] = []
+        ignore: [IgnoreRule.Kind] = [],
+        groupBy: BoardGroupBy? = nil
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
         // policy keeps it out of the Dock and off the menu bar while it does.
@@ -60,6 +61,7 @@ enum WindowSnapshotRenderer {
         environment.start()
         for kind in ignore { environment.catalog.add(rule: IgnoreRule(kind: kind)) }
         environment.board.focusedProjectKey = focus
+        if let groupBy { environment.board.groupBy = groupBy }
         defer { Task { await environment.shutdown() } }
 
         // The pipeline runs on detached tasks; spinning the main run loop is
@@ -114,6 +116,7 @@ private struct WindowSnapshot: View {
                 section: .constant(section),
                 model: environment.board,
                 projects: environment.projects,
+                tasks: environment.tasks,
                 mode: environment.mode
             )
             .frame(width: 232)
@@ -128,12 +131,14 @@ private struct WindowSnapshot: View {
                         catalog: environment.catalog,
                         tree: environment.projects.tree
                     )
+                case .tasks:
+                    TasksPageView(model: environment.tasks, board: environment.board)
                 default:
                     BoardView(model: environment.board)
                 }
             }
             .frame(maxWidth: .infinity)
-            if section != .harnesses, section != .projects {
+            if section != .harnesses, section != .projects, section != .tasks {
                 divider
                 SessionTraceView(model: environment.board)
                     .frame(width: 420)

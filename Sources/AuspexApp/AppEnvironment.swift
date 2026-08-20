@@ -186,6 +186,11 @@ public final class AppEnvironment {
         board.autoSelectsFirstSession = mode == .demo
         board.start(registry: registry, repository: SessionRepository(store: store))
         board.startLedger(repository: TaskRepository(store: store))
+        // The Tasks page is the one surface with nothing to draw until
+        // somebody has used it, and a demo exists to answer "what does this
+        // look like". The seed goes into the in-memory store a demo makes for
+        // itself and never into `~/.auspex/`.
+        if mode == .demo { try? DemoTaskLedger.seed(into: TaskRepository(store: store)) }
         tasks.start(repository: TaskRepository(store: store))
         projects.start(repository: ProjectRepository(store: store))
         harnesses.start(
@@ -450,10 +455,8 @@ public final class AppEnvironment {
 
 /// Top-level areas of the app.
 ///
-/// Only ``live`` has a surface today. The rest are listed rather than hidden
-/// because the sidebar is also the app's table of contents: a person should be
-/// able to see that projects and tasks are coming without having to read a
-/// roadmap.
+/// The sidebar is also the app's table of contents, so a section that is not
+/// built yet is listed rather than hidden — see ``arrivesIn``.
 public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     case live
     case allSessions
@@ -487,12 +490,11 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// The milestone this section arrives in, or `nil` when it is here.
-    public var arrivesIn: String? {
-        switch self {
-        case .live, .allSessions, .projects, .harnesses, .settings: nil
-        case .tasks: "M3"
-        }
-    }
+    ///
+    /// Every section is here now. The property stays because the sidebar is
+    /// also this app's table of contents, and the next thing that is announced
+    /// before it is built should be announced the same way.
+    public var arrivesIn: String? { nil }
 
     /// Whether the section can be selected.
     public var isAvailable: Bool { arrivesIn == nil }

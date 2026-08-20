@@ -175,6 +175,7 @@ private struct TrajectorySnapshot: View {
                 section: .constant(.live),
                 model: environment.board,
                 projects: environment.projects,
+                tasks: environment.tasks,
                 mode: environment.mode
             )
             .frame(width: 232)

@@ -213,6 +213,11 @@ if let flag = arguments.firstIndex(of: "--render-board") {
     // the board bound to a project — or with a rule hiding something — is
     // otherwise impossible to take without writing into somebody's ~/.auspex/.
     let focus = rest.first { $0.hasPrefix("focus=") }.map { String($0.dropFirst(6)) }
+    // `group=` picks the axis the wall is divided along, for the screenshots
+    // that are *about* the grouping — a tree render cannot be reached any other
+    // way from a headless process.
+    let groupBy = rest.first { $0.hasPrefix("group=") }
+        .flatMap { BoardGroupBy(rawValue: String($0.dropFirst(6))) }
     let ignore = rest.filter { $0.hasPrefix("ignore=") }.compactMap { argument -> IgnoreRule.Kind? in
         let body = argument.dropFirst(7)
         guard let separator = body.firstIndex(of: ":") else { return nil }
@@ -226,7 +231,8 @@ if let flag = arguments.firstIndex(of: "--render-board") {
             size: CGSize(width: WindowSnapshotRenderer.defaultSize.width, height: height),
             section: section,
             focus: focus,
-            ignore: ignore
+            ignore: ignore,
+            groupBy: groupBy
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
         exit(0)
@@ -313,6 +319,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         sheet of 16 frames.
           --render-board <path> [seconds] [height] [section]
                         [focus=<project>] [ignore=<kind>:<value>]
+                        [group=<none|harness|project|tree>]
                         Render the whole window — sidebar, board, trace — to a
                         PNG, offscreen, after letting the demo run for
                         `seconds` (default 20), at `height` points (default
@@ -321,7 +328,9 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         `focus=` binds the window to one project the way
                         clicking it in the sidebar does; `ignore=` applies an
                         ignore rule (`pathPrefix`, `project`, `promptPrefix`,
-                        `harness`, `titleContains`) for this render only.
+                        `harness`, `titleContains`) for this render only;
+                        `group=` divides the wall along that axis, which is the
+                        only way to reach the tree grouping headlessly.
                         Reads no harness store and writes nothing.
           --render-trajectory <path> [seconds] [height] [width]
                         Render one session's Trajectory — the waterfall, the

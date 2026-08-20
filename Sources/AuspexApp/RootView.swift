@@ -43,6 +43,7 @@ struct RootView: View {
                 section: $section,
                 model: model,
                 projects: environment.projects,
+                tasks: environment.tasks,
                 mode: environment.mode
             )
         } content: {
@@ -107,6 +108,8 @@ struct RootView: View {
                         catalog: environment.catalog,
                         tree: environment.projects.tree
                     )
+                } else if section == .tasks {
+                    TasksPageView(model: environment.tasks, board: model)
                 } else if section == .settings {
                     // The same pane the Settings window shows. Two ways in
                     // rather than two panes: a person who found the row in the
@@ -169,6 +172,7 @@ struct SidebarView: View {
     @Binding var section: BoardSection?
     @Bindable var model: LiveBoardModel
     let projects: ProjectsModel
+    let tasks: TasksModel
     let mode: AppEnvironment.Mode
 
     var body: some View {
@@ -229,6 +233,12 @@ struct SidebarView: View {
             }
 
             if mode == .demo { demoNote }
+
+            SidebarRow(
+                title: BoardSection.tasks.title,
+                count: tasks.openCount,
+                isSelected: section == .tasks
+            ) { section = .tasks }
 
             SidebarRow(
                 title: BoardSection.harnesses.title,
