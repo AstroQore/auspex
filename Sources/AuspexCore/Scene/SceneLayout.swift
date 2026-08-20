@@ -58,10 +58,23 @@ public struct SceneLayout: Sendable, Equatable {
     /// is waiting for the next project to take it.
     private var floors: [FloorState?]
 
+    /// The long tables, in the order they were opened. `nil` is a table whose
+    /// family has stopped meeting.
+    private var tables: [TableState?]
+
+    /// Who is on which bench. `nil` is a seat somebody got up from.
+    private var gardenSeats: [SessionKey?]
+
+    /// Who is in the queue for the gate, in the order they joined it.
+    private var gateQueue: [SessionKey?]
+
     /// Creates an empty building.
     public init(metrics: SceneMetrics = .standard) {
         self.metrics = metrics
         self.floors = []
+        self.tables = []
+        self.gardenSeats = []
+        self.gateQueue = []
     }
 
     /// The title the floor with no project shows.
@@ -101,18 +114,44 @@ public struct SceneLayout: Sendable, Equatable {
         }
     }
 
+    /// One delegating family, meeting.
+    ///
+    /// The head is the session that delegated; the seats are its descendants,
+    /// alternating sides down the table. Like a bay, the seats are never
+    /// shortened while the head is still meeting — a table that shrank every
+    /// time a subagent finished would rearrange the room under the reader.
+    private struct TableState: Sendable, Equatable {
+        var head: SessionKey
+        var seats: [SessionKey?]
+    }
+
     /// The width of a bay that has been vacated: one plain workstation.
     private static let vacantBayWidth: CGFloat = 1
 
+    /// The air between a strip's edge and what is drawn inside it.
+    private static let stripPadding: CGFloat = 16
+
     // MARK: - Update
 
-    /// Seats `board` and returns the office to draw.
+    /// Seats `board` and returns the map to draw.
     ///
-    /// - Parameter board: the frame to lay out. Its own ordering is used only
-    ///   to break ties when several new sessions appear at once, so that two
-    ///   layouts fed the same boards agree.
-    public mutating func update(with board: BoardSnapshot) -> SceneFrame {
-        let plan = Plan(board: board)
+    /// - Parameters:
+    ///   - board: the frame to lay out. Its own ordering is used only to break
+    ///     ties when several new sessions appear at once, so that two layouts
+    ///     fed the same boards agree.
+    ///   - zones: which annexes are switched on. ``SceneZoneOptions/officeOnly``
+    ///     produces exactly the office this layout produced before the annexes
+    ///     existed, down to the coordinates.
+    ///   - unseenDone: the sessions the task ledger calls finished-and-unread.
+    ///     They are the ones that sit in the garden holding a note, and there
+    ///     is no way to derive the set from the board — it is a fact about
+    ///     what the *reader* has looked at.
+    public mutating func update(
+        with board: BoardSnapshot,
+        zones: SceneZoneOptions = .all,
+        unseenDone: Set<SessionKey> = []
+    ) -> SceneFrame {
+        let plan = Plan(board: board, zones: zones, unseenDone: unseenDone)
         sweep(plan)
         seat(plan)
         return geometry(plan)
@@ -134,9 +173,18 @@ public struct SceneLayout: Sendable, Equatable {
         let depth: [SessionKey: Int]
         /// Sessions in the order the board reported them.
         let order: [SessionKey]
+        /// Which part of the map each session belongs on.
+        let placement: [SessionKey: SceneZoning.Placement]
+        /// The heads of the tables that want to be open, in board order.
+        let tableHeads: [SessionKey]
+        /// Each table's children, in board order.
+        let tableChildren: [SessionKey: [SessionKey]]
+        /// Which annexes are switched on.
+        let zones: SceneZoneOptions
 
-        init(board: BoardSnapshot) {
+        init(board: BoardSnapshot, zones: SceneZoneOptions, unseenDone: Set<SessionKey>) {
             self.board = board
+            self.zones = zones
             self.order = board.sessions.map(\.key)
             let present = Set(order)
 
@@ -181,6 +229,48 @@ public struct SceneLayout: Sendable, Equatable {
             }
             self.bayRoot = bayRoot
             self.depth = depth
+
+            // A table is a family *in one project*, which is the same rule a
+            // bay follows and for the same reason: a subagent working in
+            // another repository is a root of its own, and dragging it into
+            // its parent's meeting would bury the one delegation a person most
+            // wants to see. So the meeting room is told about the edges that
+            // stay inside a room, and only those.
+            var roomParent: [SessionKey: SessionKey] = [:]
+            for (child, above) in parent where floorKey[child] == floorKey[above] {
+                roomParent[child] = above
+            }
+            let placement = SceneZoning.placements(
+                sessions: board.sessions,
+                parent: roomParent,
+                unseenDone: unseenDone,
+                options: zones
+            )
+            self.placement = placement
+
+            var heads: [SessionKey] = []
+            var children: [SessionKey: [SessionKey]] = [:]
+            for key in order {
+                guard let seat = placement[key], let table = seat.table else { continue }
+                if table == key {
+                    heads.append(key)
+                } else {
+                    children[table, default: []].append(key)
+                }
+            }
+            // A table with no head is a table nobody called: it can only happen
+            // if the head left the board between two derivations of the same
+            // frame, which it cannot, but seating children around nothing would
+            // be silent and wrong rather than loud and wrong.
+            let headSet = Set(heads)
+            self.tableHeads = heads
+            self.tableChildren = children.filter { headSet.contains($0.key) }
+        }
+
+        /// Where one session goes. The office desk for anything the annexes
+        /// have no opinion about.
+        func place(_ key: SessionKey) -> SceneZoning.Placement {
+            placement[key] ?? .desk
         }
     }
 
@@ -211,6 +301,46 @@ public struct SceneLayout: Sendable, Equatable {
             floors[index] = floor.bays.isEmpty ? nil : floor
         }
         while let last = floors.last, last == nil { floors.removeLast() }
+
+        sweepAnnexes(plan)
+    }
+
+    /// Releases every chair and bench whose occupant has gone back to work,
+    /// left the board, or moved to the other annex.
+    ///
+    /// The same four rules the office follows, for the same reason: a person
+    /// who looks away for a minute should come back to the garden they left,
+    /// not to one that has been re-sorted around them.
+    private mutating func sweepAnnexes(_ plan: Plan) {
+        let heads = Set(plan.tableHeads)
+        for index in tables.indices {
+            guard let table = tables[index] else { continue }
+            guard heads.contains(table.head) else {
+                tables[index] = nil
+                continue
+            }
+            let children = Set(plan.tableChildren[table.head] ?? [])
+            var kept = table
+            for seat in kept.seats.indices {
+                guard let child = kept.seats[seat] else { continue }
+                if !children.contains(child) { kept.seats[seat] = nil }
+            }
+            tables[index] = kept
+        }
+        while let last = tables.last, last == nil { tables.removeLast() }
+
+        release(&gardenSeats) { plan.place($0).kind.isGardenRest }
+        release(&gateQueue) { plan.place($0).kind == .gate }
+        while let last = gardenSeats.last, last == nil { gardenSeats.removeLast() }
+        while let last = gateQueue.last, last == nil { gateQueue.removeLast() }
+    }
+
+    /// Empties every place in `slots` whose occupant no longer belongs there.
+    private func release(_ slots: inout [SessionKey?], keeping: (SessionKey) -> Bool) {
+        for index in slots.indices {
+            guard let key = slots[index] else { continue }
+            if !keeping(key) { slots[index] = nil }
+        }
     }
 
     // MARK: Seat
@@ -243,6 +373,77 @@ public struct SceneLayout: Sendable, Equatable {
         for key in plan.order where plan.bayRoot[key] != key && !seated.contains(key) {
             guard let root = plan.bayRoot[key], let location = bayOf[root] else { continue }
             allocateSeat(child: key, floor: location.floor, bay: location.bay)
+        }
+
+        seatAnnexes(plan)
+    }
+
+    /// Gives everybody who has left their desk somewhere to be.
+    private mutating func seatAnnexes(_ plan: Plan) {
+        var tableOf: [SessionKey: Int] = [:]
+        var placed: Set<SessionKey> = []
+        for (index, table) in tables.enumerated() {
+            guard let table else { continue }
+            tableOf[table.head] = index
+            placed.insert(table.head)
+            for child in table.seats { if let child { placed.insert(child) } }
+        }
+
+        for head in plan.tableHeads where tableOf[head] == nil {
+            tableOf[head] = openTable(head: head)
+        }
+        for head in plan.tableHeads {
+            guard let index = tableOf[head] else { continue }
+            for child in plan.tableChildren[head] ?? [] where !placed.contains(child) {
+                take(child, at: index)
+            }
+        }
+
+        var resting: Set<SessionKey> = []
+        for key in gardenSeats { if let key { resting.insert(key) } }
+        var leaving: Set<SessionKey> = []
+        for key in gateQueue { if let key { leaving.insert(key) } }
+
+        for key in plan.order {
+            let kind = plan.place(key).kind
+            if kind.isGardenRest, !resting.contains(key) {
+                Self.claim(key, in: &gardenSeats)
+            } else if kind == .gate, !leaving.contains(key) {
+                Self.claim(key, in: &gateQueue)
+            }
+        }
+    }
+
+    /// Opens a table for `head`, reusing one whose family has broken up.
+    private mutating func openTable(head: SessionKey) -> Int {
+        let table = TableState(head: head, seats: [])
+        if let free = tables.firstIndex(where: { $0 == nil }) {
+            tables[free] = table
+            return free
+        }
+        tables.append(table)
+        return tables.count - 1
+    }
+
+    /// Sits `child` down at the lowest free chair of table `index`.
+    private mutating func take(_ child: SessionKey, at index: Int) {
+        guard var table = tables[index] else { return }
+        if let free = table.seats.firstIndex(where: { $0 == nil }) {
+            table.seats[free] = child
+        } else {
+            table.seats.append(child)
+        }
+        tables[index] = table
+    }
+
+    /// Puts `key` in the lowest free place, growing the list only when there
+    /// is none — the office's own rule, so an annex that has churned all day
+    /// is no wider than its busiest moment.
+    private static func claim(_ key: SessionKey, in places: inout [SessionKey?]) {
+        if let free = places.firstIndex(where: { $0 == nil }) {
+            places[free] = key
+        } else {
+            places.append(key)
         }
     }
 
@@ -399,7 +600,8 @@ public struct SceneLayout: Sendable, Equatable {
                         anchor: rootAnchor,
                         scale: 1,
                         floorIndex: floorIndex,
-                        row: placement.row
+                        row: placement.row,
+                        isAway: bay.map { plan.place($0.root).zone != .office } ?? false
                     )
                 )
 
@@ -420,7 +622,8 @@ public struct SceneLayout: Sendable, Equatable {
                             anchor: anchor,
                             scale: metrics.childScale,
                             floorIndex: floorIndex,
-                            row: placement.row
+                            row: placement.row,
+                            isAway: child.map { plan.place($0).zone != .office } ?? false
                         )
                     )
                 }
@@ -449,9 +652,39 @@ public struct SceneLayout: Sendable, Equatable {
             buildingRight = max(buildingRight, left + units * metrics.cellWidth)
         }
 
-        // Tethers are drawn between desks, so a delegation whose child landed on
-        // another floor still gets a line — that crossing is the informative
-        // case, not an error to hide.
+        // The office is finished and has not moved a point. Everything after
+        // this hangs below it, which is what makes "switch the annexes off"
+        // and "the office as it was" the same picture rather than two pictures
+        // that have to be kept in step.
+        let officeBottom = outFloors.isEmpty ? metrics.margin : shelfTop + shelfHeight
+        let officeRight = outFloors.isEmpty ? metrics.margin : buildingRight
+        var annexes = Annexes(
+            metrics: metrics,
+            left: metrics.margin,
+            width: max(officeRight - metrics.margin, metrics.rowUnits * metrics.cellWidth),
+            top: officeBottom
+        )
+        annexes.layOutMeeting(tables: tables, plan: plan)
+        annexes.layOutGarden(resting: gardenSeats, leaving: gateQueue, plan: plan)
+
+        // Where somebody is, not where their desk is. A parent who has walked
+        // to a table and a child that followed it there are still a delegation,
+        // and the line has to go where they went.
+        for seat in annexes.seats {
+            guard let key = seat.session else { continue }
+            anchors[key] = seat.anchor
+            scales[key] = seat.scale
+        }
+
+        // Tethers are drawn between people rather than between desks, so a
+        // delegation whose child landed on another floor still gets a line —
+        // that crossing is the informative case, not an error to hide — and a
+        // family that got up and walked to a table takes its lines with it.
+        //
+        // They are drawn around a table too, short as they are. "Every
+        // delegation on this board has a line" is a property somebody reads
+        // the picture with, and a room where it silently stops holding is a
+        // room where a missing line means nothing.
         var tethers: [SceneTether] = []
         for key in plan.order {
             guard let parent = plan.parent[key],
@@ -461,13 +694,25 @@ public struct SceneLayout: Sendable, Equatable {
             tethers.append(SceneTether(parent: parent, child: key, from: from, to: to))
         }
 
-        let height = outFloors.isEmpty ? 0 : shelfTop + shelfHeight + metrics.margin
-        let width = outFloors.isEmpty ? 0 : buildingRight + metrics.margin
+        let bottom = max(officeBottom, annexes.bottom)
+        let right = max(officeRight, annexes.right)
+        let isEmpty = outFloors.isEmpty && annexes.areas.isEmpty
+        let height = isEmpty ? 0 : bottom + metrics.margin
+        let width = isEmpty ? 0 : right + metrics.margin
         return SceneFrame(
             floors: outFloors,
             slots: slots,
             tethers: tethers,
-            contentRect: CGRect(x: 0, y: 0, width: width, height: height)
+            contentRect: CGRect(x: 0, y: 0, width: width, height: height),
+            zones: annexes.areas,
+            seats: annexes.seats,
+            tables: annexes.tables,
+            gate: annexes.gate,
+            walkways: SceneWalkways(
+                trunk: metrics.margin / 2,
+                lanes: annexes.lanes(officeBottom: officeBottom)
+            ),
+            metrics: metrics
         )
     }
 
@@ -476,5 +721,266 @@ public struct SceneLayout: Sendable, Equatable {
         case .project(let path): BoardGrouping.projectName(forPath: path)
         case .unplaced: unplacedFloorTitle
         }
+    }
+
+    // MARK: - The annexes
+
+    /// Lays the meeting room and the garden out below the office.
+    ///
+    /// ## Why the annexes are strips and not a second campus
+    ///
+    /// The office shelves sideways because it is made of rooms whose count is
+    /// the number of repositories somebody has open, which is unbounded. The
+    /// annexes are not: there is one meeting room and one garden however busy
+    /// the day is, and what grows inside them — tables, benches — is bounded by
+    /// the same sessions the office already sized itself for. So they are laid
+    /// out as full-width strips under the building, which makes the map read
+    /// top to bottom as *working, meeting, resting, gone* and makes "walk from
+    /// here to there" a trip down one gutter rather than a search.
+    ///
+    /// Nothing here can move the office. It is handed the office's bottom edge
+    /// and its width and it only ever grows downward, which is what makes the
+    /// annexes-off picture identical to the picture before they existed rather
+    /// than merely similar to it.
+    private struct Annexes {
+        let metrics: SceneMetrics
+        let left: CGFloat
+        /// How wide the office is, which is the width the strips take unless
+        /// what is in them needs more.
+        let width: CGFloat
+
+        private(set) var areas: [SceneZoneArea] = []
+        private(set) var seats: [SceneSeat] = []
+        private(set) var tables: [SceneTable] = []
+        private(set) var gate: CGPoint?
+        /// The lowest point anything in the annexes reaches.
+        private(set) var bottom: CGFloat
+        /// The rightmost point anything in them reaches.
+        private(set) var right: CGFloat
+
+        private var cursor: CGFloat
+        private var meetingLane: CGFloat?
+        private var gardenLane: CGFloat?
+
+        init(metrics: SceneMetrics, left: CGFloat, width: CGFloat, top: CGFloat) {
+            self.metrics = metrics
+            self.left = left
+            self.width = width
+            self.bottom = top
+            // Starts at the left edge and not at `left + width`: a strip only
+            // widens the map once one has actually been placed, which is what
+            // keeps a switched-off annex from quietly padding the office out to
+            // a full row.
+            self.right = left
+            self.cursor = top
+        }
+
+        /// The walkways, once both strips have been placed.
+        func lanes(officeBottom: CGFloat) -> [SceneZone: CGFloat] {
+            var lanes: [SceneZone: CGFloat] = [
+                .office: officeBottom + metrics.floorGap / 2
+            ]
+            if let meetingLane { lanes[.meeting] = meetingLane }
+            if let gardenLane { lanes[.garden] = gardenLane }
+            return lanes
+        }
+
+        // MARK: Meeting room
+
+        mutating func layOutMeeting(tables state: [TableState?], plan: Plan) {
+            guard plan.zones.meetingRoom else { return }
+            let live = state.enumerated().compactMap { index, table in
+                table.map { (index: index, table: $0) }
+            }
+            guard !live.isEmpty else { return }
+
+            let top = cursor + metrics.floorGap
+            let inner = left + Self.padding
+            let limit = left + width - Self.padding
+            var cursorX = inner
+            var row = 0
+            var widest = inner
+            var occupancy = 0
+
+            for entry in live {
+                let children = entry.table.seats.count
+                let tableWidth = metrics.tableWidth(children: children)
+                if cursorX > inner, cursorX + tableWidth > limit + 0.0001 {
+                    row += 1
+                    cursorX = inner
+                }
+                let tableTop = top + metrics.floorHeaderHeight
+                    + CGFloat(row) * (metrics.tableHeight + metrics.tableGap)
+                let rect = CGRect(
+                    x: cursorX, y: tableTop, width: tableWidth, height: metrics.tableHeight
+                )
+                let id = "z.meeting.t\(entry.index)"
+                let floorKey = plan.floorKey[entry.table.head]
+                tables.append(
+                    SceneTable(
+                        id: id,
+                        head: entry.table.head,
+                        projectKey: floorKey?.projectKey,
+                        title: floorKey.map(SceneLayout.title(for:)) ?? "",
+                        frame: rect,
+                        seatCount: children
+                    )
+                )
+                occupancy += 1
+                seats.append(
+                    SceneSeat(
+                        id: "\(id).head",
+                        session: entry.table.head,
+                        kind: .tableHead,
+                        anchor: CGPoint(x: rect.minX + 30, y: rect.minY + metrics.tableSurfaceBottom),
+                        scale: 1,
+                        tableID: id
+                    )
+                )
+                for (index, child) in entry.table.seats.enumerated() {
+                    if child != nil { occupancy += 1 }
+                    let column = index / 2
+                    let isFarSide = index.isMultiple(of: 2)
+                    let x = rect.minX + metrics.tableHeadWidth + 20
+                        + (CGFloat(column) + 0.5) * metrics.tableSeatSpacing
+                    let y = isFarSide
+                        ? rect.minY + metrics.tableSurfaceTop
+                        : rect.minY + metrics.tableNearSeatY
+                    seats.append(
+                        SceneSeat(
+                            id: "\(id).c\(index)",
+                            session: child,
+                            kind: isFarSide ? .tableNorth : .tableSouth,
+                            anchor: CGPoint(x: x, y: y),
+                            scale: metrics.childScale,
+                            tableID: id
+                        )
+                    )
+                }
+                cursorX += tableWidth + metrics.tableGap
+                widest = max(widest, cursorX - metrics.tableGap)
+            }
+
+            let rows = row + 1
+            let height = metrics.floorHeaderHeight
+                + CGFloat(rows) * (metrics.tableHeight + metrics.tableGap)
+                - metrics.tableGap + Self.padding
+            let stripWidth = max(width, widest - left + Self.padding)
+            let rect = CGRect(x: left, y: top, width: stripWidth, height: height)
+            meetingLane = rect.maxY - Self.laneInset
+            areas.append(
+                SceneZoneArea(
+                    id: "z.meeting",
+                    zone: .meeting,
+                    title: Self.meetingTitle,
+                    frame: rect,
+                    rowCount: rows,
+                    occupancy: occupancy,
+                    laneY: rect.maxY - Self.laneInset
+                )
+            )
+            cursor = rect.maxY
+            bottom = max(bottom, rect.maxY)
+            right = max(right, rect.maxX)
+        }
+
+        // MARK: Garden
+
+        mutating func layOutGarden(
+            resting: [SessionKey?],
+            leaving: [SessionKey?],
+            plan: Plan
+        ) {
+            guard plan.zones.garden else { return }
+            let leavingCount = leaving.count
+            guard !resting.isEmpty || leavingCount > 0 else { return }
+
+            let top = cursor + metrics.floorGap
+            // The gate end is kept clear of benches, and it widens with the
+            // queue: a session on its way out walking through somebody's picnic
+            // is the kind of overlap a fixed reserve produces on exactly the
+            // busy afternoon nobody wants to debug.
+            let reserve = max(
+                metrics.gateReserve, Self.gatePost + CGFloat(leavingCount) * Self.queueSpacing
+            )
+            let usable = width - Self.padding * 2 - reserve
+            let columns = max(1, Int((usable / metrics.gardenSeatSpacing).rounded(.down)))
+            let rows = max(1, (resting.count + columns - 1) / columns)
+            let height = metrics.floorHeaderHeight + CGFloat(rows) * metrics.gardenRowHeight
+            let rect = CGRect(x: left, y: top, width: width, height: height)
+
+            var occupancy = 0
+            for (index, key) in resting.enumerated() {
+                if key != nil { occupancy += 1 }
+                let column = index % columns
+                let row = index / columns
+                let anchor = CGPoint(
+                    x: left + Self.padding
+                        + (CGFloat(column) + 0.5) * metrics.gardenSeatSpacing,
+                    y: top + metrics.floorHeaderHeight
+                        + CGFloat(row + 1) * metrics.gardenRowHeight - Self.seatLift
+                )
+                seats.append(
+                    SceneSeat(
+                        id: "z.garden.s\(index)",
+                        session: key,
+                        kind: key.map { plan.place($0).kind } ?? .bench,
+                        anchor: anchor,
+                        scale: 1
+                    )
+                )
+            }
+
+            let gateY = top + metrics.floorHeaderHeight
+                + metrics.gardenRowHeight - Self.seatLift
+            let gatePoint = CGPoint(x: rect.maxX - reserve / 2, y: gateY)
+            gate = gatePoint
+            for (index, key) in leaving.enumerated() {
+                if key != nil { occupancy += 1 }
+                seats.append(
+                    SceneSeat(
+                        id: "z.garden.g\(index)",
+                        session: key,
+                        kind: .gate,
+                        anchor: CGPoint(
+                            x: gatePoint.x - Self.gatePost / 2
+                                - CGFloat(index) * Self.queueSpacing,
+                            y: gateY
+                        ),
+                        scale: 1
+                    )
+                )
+            }
+
+            gardenLane = rect.maxY - Self.laneInset
+            areas.append(
+                SceneZoneArea(
+                    id: "z.garden",
+                    zone: .garden,
+                    title: Self.gardenTitle,
+                    frame: rect,
+                    rowCount: rows,
+                    occupancy: occupancy,
+                    laneY: rect.maxY - Self.laneInset
+                )
+            )
+            cursor = rect.maxY
+            bottom = max(bottom, rect.maxY)
+            right = max(right, rect.maxX)
+        }
+
+        /// The air between a strip's edge and what is drawn inside it.
+        private static let padding: CGFloat = SceneLayout.stripPadding
+        /// How far above a row's bottom line somebody's feet are.
+        private static let seatLift: CGFloat = 26
+        /// How far above a strip's bottom edge its walkway runs.
+        private static let laneInset: CGFloat = 14
+        /// How much room the gate itself takes.
+        private static let gatePost: CGFloat = 96
+        /// The gap between two sessions queueing to leave.
+        private static let queueSpacing: CGFloat = 38
+
+        static let meetingTitle = "Meeting room"
+        static let gardenTitle = "Garden"
     }
 }

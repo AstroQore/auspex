@@ -42,8 +42,12 @@ public struct SceneHitIndex: Sendable, Equatable {
 
     /// The rooms, in drawing order.
     public let floors: [SceneFloor]
+    /// The annexes, in drawing order.
+    public let zones: [SceneZoneArea]
     /// Each room's desks, by the room's allocation index.
     private let desks: [Int: [Desk]]
+    /// Each annex's chairs and benches, by the annex's id.
+    private let seats: [String: [Desk]]
     /// How far outside its room a desk is allowed to reach. Half a desk, which
     /// is exactly how far the outermost one in a row can overhang.
     private let overhang: CGFloat
@@ -53,7 +57,9 @@ public struct SceneHitIndex: Sendable, Equatable {
 
     private init() {
         self.floors = []
+        self.zones = []
         self.desks = [:]
+        self.seats = [:]
         self.overhang = 0
     }
 
@@ -68,9 +74,14 @@ public struct SceneHitIndex: Sendable, Equatable {
     ///     which is the point on the floor line the desk stands on.
     public init(frame: SceneFrame, deskSize: CGSize, deskBaseline: CGFloat) {
         self.floors = frame.floors
+        self.zones = frame.zones
         self.overhang = deskSize.width / 2
         var byFloor: [Int: [Desk]] = [:]
-        for slot in frame.slots where slot.session != nil {
+        // A desk whose occupant has walked off is still a desk, but it is not
+        // *them* — clicking it would select somebody who is visibly standing
+        // somewhere else on the map. The seat they walked to carries the
+        // session instead.
+        for slot in frame.slots where slot.isOccupied {
             byFloor[slot.floorIndex, default: []].append(
                 Desk(
                     slotID: slot.id,
@@ -85,6 +96,39 @@ public struct SceneHitIndex: Sendable, Equatable {
             )
         }
         self.desks = byFloor
+
+        var byZone: [String: [Desk]] = [:]
+        let areas = frame.zones
+        for seat in frame.seats where seat.session != nil {
+            guard let area = areas.last(where: { $0.zone == seat.zone }) else { continue }
+            // Chairs at a table are two thirds of a desk apart, so a desk-wide
+            // click target would cover its neighbours. The seat's own spacing
+            // is the honest width, and it is what the layout drew with.
+            let width = min(deskSize.width, Self.width(of: seat.kind, metrics: frame.metrics))
+            byZone[area.id, default: []].append(
+                Desk(
+                    slotID: seat.id,
+                    session: seat.session,
+                    rect: Self.deskRect(
+                        anchor: seat.anchor,
+                        scale: seat.scale,
+                        size: CGSize(width: width, height: deskSize.height),
+                        baseline: deskBaseline
+                    )
+                )
+            )
+        }
+        self.seats = byZone
+    }
+
+    /// How wide a click on one kind of seat reaches.
+    private static func width(of kind: SceneSeatKind, metrics: SceneMetrics) -> CGFloat {
+        switch kind {
+        case .desk: metrics.cellWidth
+        case .tableHead, .tableNorth, .tableSouth: metrics.tableSeatSpacing
+        case .bench, .note, .doze: metrics.gardenSeatSpacing
+        case .gate: metrics.gardenSeatSpacing * 0.4
+        }
     }
 
     /// The area one workstation's click target covers, in layout space.
@@ -129,9 +173,25 @@ public struct SceneHitIndex: Sendable, Equatable {
                 return hit
             }
         }
+        for area in zones.reversed() {
+            guard area.frame.insetBy(dx: -overhang, dy: -overhang).contains(point) else {
+                continue
+            }
+            if let hit = seats[area.id]?.last(where: { $0.rect.contains(point) }) {
+                return hit
+            }
+        }
         return nil
+    }
+
+    /// The annex a layout point is in.
+    public func zone(at point: CGPoint) -> SceneZoneArea? {
+        zones.last { $0.frame.contains(point) }
     }
 
     /// How many desks the index holds. For tests, and for nothing else.
     public var deskCount: Int { desks.values.reduce(0) { $0 + $1.count } }
+
+    /// How many annex seats it holds. Likewise.
+    public var seatCount: Int { seats.values.reduce(0) { $0 + $1.count } }
 }

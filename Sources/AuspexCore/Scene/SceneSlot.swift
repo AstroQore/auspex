@@ -39,6 +39,34 @@ public struct SceneMetrics: Sendable, Equatable {
     /// in it still has to be wide enough to write the project's name across.
     public var minimumFloorUnits: CGFloat
 
+    // MARK: The annexes
+
+    /// How fast somebody walks, in layout points a second.
+    ///
+    /// Two workstations a second: fast enough that a person who looked away
+    /// for a moment does not come back to somebody still crossing the map,
+    /// slow enough that the walk is a thing you see happen rather than a jump
+    /// with a smear in it.
+    public var walkSpeed: CGFloat
+    /// The distance between two seats along one side of a long table.
+    public var tableSeatSpacing: CGFloat
+    /// The end of the table the session that delegated sits at, and the width
+    /// its chair needs.
+    public var tableHeadWidth: CGFloat
+    /// The far end, past the last seat.
+    public var tableTailWidth: CGFloat
+    /// A whole table, projector screen and both rows of chairs included.
+    public var tableHeight: CGFloat
+    /// The air between two tables.
+    public var tableGap: CGFloat
+    /// The distance between two seats in the garden.
+    public var gardenSeatSpacing: CGFloat
+    /// The height of one row of garden seats.
+    public var gardenRowHeight: CGFloat
+    /// How much of the garden's right-hand end is kept clear for the gate and
+    /// the queue of sessions walking out through it.
+    public var gateReserve: CGFloat
+
     public init(
         cellWidth: CGFloat = 104,
         rowHeight: CGFloat = 104,
@@ -48,7 +76,16 @@ public struct SceneMetrics: Sendable, Equatable {
         floorHeaderHeight: CGFloat = 30,
         floorGap: CGFloat = 22,
         childScale: CGFloat = 0.66,
-        minimumFloorUnits: CGFloat = 3
+        minimumFloorUnits: CGFloat = 3,
+        walkSpeed: CGFloat = 208,
+        tableSeatSpacing: CGFloat = 68,
+        tableHeadWidth: CGFloat = 60,
+        tableTailWidth: CGFloat = 28,
+        tableHeight: CGFloat = 158,
+        tableGap: CGFloat = 26,
+        gardenSeatSpacing: CGFloat = 92,
+        gardenRowHeight: CGFloat = 110,
+        gateReserve: CGFloat = 150
     ) {
         self.cellWidth = cellWidth
         self.rowHeight = rowHeight
@@ -59,7 +96,36 @@ public struct SceneMetrics: Sendable, Equatable {
         self.floorGap = floorGap
         self.childScale = childScale
         self.minimumFloorUnits = minimumFloorUnits
+        self.walkSpeed = walkSpeed
+        self.tableSeatSpacing = tableSeatSpacing
+        self.tableHeadWidth = tableHeadWidth
+        self.tableTailWidth = tableTailWidth
+        self.tableHeight = tableHeight
+        self.tableGap = tableGap
+        self.gardenSeatSpacing = gardenSeatSpacing
+        self.gardenRowHeight = gardenRowHeight
+        self.gateReserve = gateReserve
     }
+
+    /// How wide a table with `children` seats along it is.
+    ///
+    /// Children sit in pairs facing each other, so the table grows by one
+    /// column for every two of them and a family of two is the same table as a
+    /// family of one — which is what stops a table breathing every time a
+    /// subagent finishes.
+    public func tableWidth(children: Int) -> CGFloat {
+        let columns = max(1, (children + 1) / 2)
+        return tableHeadWidth + tableSeatSpacing * CGFloat(columns) + tableTailWidth + 20
+    }
+
+    /// Where the surface of a table sits inside its rectangle, measured from
+    /// the top of that rectangle. Above it is the projector screen and the far
+    /// row of chairs; below it is the near row.
+    public var tableSurfaceTop: CGFloat { 74 }
+    /// The bottom edge of the table surface, from the top of its rectangle.
+    public var tableSurfaceBottom: CGFloat { 104 }
+    /// The floor line the near row of chairs stands on.
+    public var tableNearSeatY: CGFloat { 144 }
 
     /// The dimensions the scene view uses.
     public static let standard = SceneMetrics()
@@ -143,6 +209,17 @@ public struct SceneSlot: Sendable, Equatable, Identifiable {
     public let floorIndex: Int
     /// Which row of that floor.
     public let row: Int
+    /// `true` when this desk's session is sitting somewhere else on the map —
+    /// at a table in the meeting room, or on a bench in the garden.
+    ///
+    /// The desk is *held* rather than freed, which is the difference between
+    /// somebody being out of the room and somebody having left the company. It
+    /// costs an empty desk in the picture and buys three things: the office
+    /// keeps the exact geometry it had before the annexes existed, a session
+    /// that goes idle and comes back sits down where it was rather than
+    /// wherever the allocator had got to, and a walk has somewhere to walk
+    /// *from*.
+    public let isAway: Bool
 
     public init(
         id: String,
@@ -152,7 +229,8 @@ public struct SceneSlot: Sendable, Equatable, Identifiable {
         anchor: CGPoint,
         scale: CGFloat,
         floorIndex: Int,
-        row: Int
+        row: Int,
+        isAway: Bool = false
     ) {
         self.id = id
         self.session = session
@@ -162,10 +240,154 @@ public struct SceneSlot: Sendable, Equatable, Identifiable {
         self.scale = scale
         self.floorIndex = floorIndex
         self.row = row
+        self.isAway = isAway
     }
 
     /// `true` when the desk is standing empty.
     public var isVacant: Bool { session == nil }
+
+    /// `true` when somebody is actually sitting here.
+    public var isOccupied: Bool { session != nil && !isAway }
+}
+
+/// One seat in an annex: a chair at a long table, or a place in the garden.
+///
+/// The office's counterpart is ``SceneSlot``, and the two are deliberately not
+/// one type. A desk is an *allocation* — it belongs to the layout's table of
+/// who took which bay, it survives its occupant, and it is what the office's
+/// four stability rules are about. A seat is a *placement*: it exists because
+/// somebody is doing something, it is held only while they keep doing it, and
+/// nothing about the office moves when one appears.
+public struct SceneSeat: Sendable, Equatable, Identifiable {
+    /// Stable for as long as the seat exists, whoever is in it.
+    public let id: String
+    /// Who is sitting here, or `nil` for a seat being kept warm.
+    public let session: SessionKey?
+    /// What they are doing here, which is also what furniture to draw.
+    public let kind: SceneSeatKind
+    /// The point on the floor line they stand on, in layout space.
+    public let anchor: CGPoint
+    /// How large to draw them — the same convention ``SceneSlot/scale`` uses.
+    public let scale: CGFloat
+    /// The table this seat belongs to, for a meeting seat.
+    public let tableID: String?
+
+    public init(
+        id: String,
+        session: SessionKey?,
+        kind: SceneSeatKind,
+        anchor: CGPoint,
+        scale: CGFloat,
+        tableID: String? = nil
+    ) {
+        self.id = id
+        self.session = session
+        self.kind = kind
+        self.anchor = anchor
+        self.scale = scale
+        self.tableID = tableID
+    }
+
+    public var zone: SceneZone { kind.zone }
+    public var isVacant: Bool { session == nil }
+}
+
+/// One annex, as a strip of the map.
+///
+/// The counterpart of ``SceneFloor``, and like a floor it is what the minimap
+/// draws and what a double-click frames. Unlike a floor it is not a project:
+/// there is one meeting room and one garden however many projects are open,
+/// because who you are working *for* stops mattering the moment you get up
+/// from the desk.
+public struct SceneZoneArea: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let zone: SceneZone
+    /// What the strip's nameplate says.
+    public let title: String
+    /// The whole strip, header included, in layout space.
+    public let frame: CGRect
+    /// How many rows of seats it holds.
+    public let rowCount: Int
+    /// How many of its seats have somebody in them.
+    public let occupancy: Int
+    /// The `y` of the walkway through it. Everybody in this strip leaves and
+    /// arrives on this line, which is what makes a route three straight
+    /// segments instead of a pathfinding problem.
+    public let laneY: CGFloat
+
+    public init(
+        id: String,
+        zone: SceneZone,
+        title: String,
+        frame: CGRect,
+        rowCount: Int,
+        occupancy: Int,
+        laneY: CGFloat
+    ) {
+        self.id = id
+        self.zone = zone
+        self.title = title
+        self.frame = frame
+        self.rowCount = rowCount
+        self.occupancy = occupancy
+        self.laneY = laneY
+    }
+}
+
+/// One delegating family's table.
+public struct SceneTable: Sendable, Equatable, Identifiable {
+    /// Stable while the family is meeting.
+    public let id: String
+    /// The session that delegated. It sits at the head.
+    public let head: SessionKey
+    /// The project the family is working in, for the table's nameplate.
+    public let projectKey: String?
+    /// What the nameplate says.
+    public let title: String
+    /// The table and both rows of chairs, in layout space.
+    public let frame: CGRect
+    /// How many children are seated along it.
+    public let seatCount: Int
+
+    public init(
+        id: String,
+        head: SessionKey,
+        projectKey: String?,
+        title: String,
+        frame: CGRect,
+        seatCount: Int
+    ) {
+        self.id = id
+        self.head = head
+        self.projectKey = projectKey
+        self.title = title
+        self.frame = frame
+        self.seatCount = seatCount
+    }
+}
+
+/// Where the walking happens.
+///
+/// One horizontal walkway per strip and one vertical gutter joining them, in
+/// layout space. Every route on the map is built out of these two ideas, so
+/// they are published with the frame rather than re-derived by whoever is
+/// animating: a walker that took a different view of where the walkway was
+/// would step through the furniture on its way to agreeing.
+public struct SceneWalkways: Sendable, Equatable {
+    /// The `x` of the gutter that joins the strips.
+    public let trunk: CGFloat
+    private let lanes: [SceneZone: CGFloat]
+
+    public init(trunk: CGFloat, lanes: [SceneZone: CGFloat]) {
+        self.trunk = trunk
+        self.lanes = lanes
+    }
+
+    public static let empty = SceneWalkways(trunk: 0, lanes: [:])
+
+    /// The walkway through one strip. Falls back to the gutter's own origin
+    /// for a strip that is not drawn, which only a stale route can ask for.
+    public func lane(_ zone: SceneZone) -> CGFloat { lanes[zone] ?? 0 }
 }
 
 /// One project, as a floor of the building.
@@ -251,17 +473,43 @@ public struct SceneFrame: Sendable, Equatable {
     public let tethers: [SceneTether]
     /// The building's bounding box in layout space. What "fit all" fits.
     public let contentRect: CGRect
+    /// The annexes that are switched on and have anybody in them, in drawing
+    /// order. Empty is the office exactly as it was before they existed.
+    public let zones: [SceneZoneArea]
+    /// Every chair and bench in those annexes.
+    public let seats: [SceneSeat]
+    /// The long tables, one per delegating family.
+    public let tables: [SceneTable]
+    /// Where the gate stands, when there is a garden. Sessions that are over
+    /// walk to it and off the map.
+    public let gate: CGPoint?
+    /// The walkways, for whoever is animating a walk.
+    public let walkways: SceneWalkways
+    /// The floor plan this frame was measured with.
+    public let metrics: SceneMetrics
 
     public init(
         floors: [SceneFloor],
         slots: [SceneSlot],
         tethers: [SceneTether],
-        contentRect: CGRect
+        contentRect: CGRect,
+        zones: [SceneZoneArea] = [],
+        seats: [SceneSeat] = [],
+        tables: [SceneTable] = [],
+        gate: CGPoint? = nil,
+        walkways: SceneWalkways = .empty,
+        metrics: SceneMetrics = .standard
     ) {
         self.floors = floors
         self.slots = slots
         self.tethers = tethers
         self.contentRect = contentRect
+        self.zones = zones
+        self.seats = seats
+        self.tables = tables
+        self.gate = gate
+        self.walkways = walkways
+        self.metrics = metrics
     }
 
     /// An empty building.
@@ -272,6 +520,48 @@ public struct SceneFrame: Sendable, Equatable {
     /// The desk `key` is sitting at, when it has one.
     public func slot(for key: SessionKey) -> SceneSlot? {
         slots.first { $0.session == key }
+    }
+
+    /// The annex seat `key` is in, when it is not at its desk.
+    public func seat(for key: SessionKey) -> SceneSeat? {
+        seats.first { $0.session == key }
+    }
+
+    /// Where one session actually is, whichever part of the map that is.
+    ///
+    /// The one lookup everything that has to *point at* a session uses — the
+    /// delegation lines, the camera, the walkers. Asking for the desk and
+    /// forgetting to check whether its occupant is away is the bug this exists
+    /// to make impossible.
+    public struct Place: Sendable, Equatable {
+        public let anchor: CGPoint
+        public let scale: CGFloat
+        public let kind: SceneSeatKind
+        /// The desk or seat's id, which is what the renderer keys nodes on.
+        public let id: String
+
+        public var zone: SceneZone { kind.zone }
+
+        public init(anchor: CGPoint, scale: CGFloat, kind: SceneSeatKind, id: String) {
+            self.anchor = anchor
+            self.scale = scale
+            self.kind = kind
+            self.id = id
+        }
+    }
+
+    /// Where `key` is sitting, or `nil` when it is not on this frame.
+    public func place(of key: SessionKey) -> Place? {
+        if let seat = seats.first(where: { $0.session == key }) {
+            return Place(anchor: seat.anchor, scale: seat.scale, kind: seat.kind, id: seat.id)
+        }
+        guard let slot = slots.first(where: { $0.session == key }) else { return nil }
+        return Place(anchor: slot.anchor, scale: slot.scale, kind: .desk, id: slot.id)
+    }
+
+    /// The annex under a layout-space point.
+    public func zone(at point: CGPoint) -> SceneZoneArea? {
+        zones.last { $0.frame.contains(point) }
     }
 
     /// Every room a project has, in drawing order.

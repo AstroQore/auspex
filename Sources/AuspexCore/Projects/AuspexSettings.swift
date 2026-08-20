@@ -24,18 +24,30 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// reading them.
     public var didShowSetup: Bool
 
+    /// Which parts of the scene's map are drawn.
+    ///
+    /// A preference about a picture rather than about data, and the reason it
+    /// lives here rather than in `@AppStorage` beside the view mode is that it
+    /// changes what the *layout* produces: a person who switched the garden
+    /// off and finds it back after a relaunch has been told their setting did
+    /// not take, and a person who has to find it in `defaults` has been told
+    /// nothing at all.
+    public var sceneZones: SceneZoneOptions
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
-        didShowSetup: Bool = false
+        didShowSetup: Bool = false,
+        sceneZones: SceneZoneOptions = .all
     ) {
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
         self.didShowSetup = didShowSetup
+        self.sceneZones = sceneZones
     }
 
     private enum CodingKeys: String, CodingKey {
-        case ignoreRules, showsIgnored, didShowSetup
+        case ignoreRules, showsIgnored, didShowSetup, sceneZones
     }
 
     public init(from decoder: any Decoder) throws {
@@ -49,6 +61,14 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     }
 
     public var isEmpty: Bool { ignoreRules.isEmpty && !showsIgnored && !didShowSetup }
+        sceneZones = try container.decodeIfPresent(
+            SceneZoneOptions.self, forKey: .sceneZones
+        ) ?? .all
+    }
+
+    public var isEmpty: Bool {
+        ignoreRules.isEmpty && !showsIgnored && sceneZones == .all
+    }
 }
 
 /// Reads and writes ``AuspexSettings``, with the same bargain the character
