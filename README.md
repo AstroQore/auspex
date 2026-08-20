@@ -87,12 +87,12 @@ The board is dark-first and follows the system appearance
 
 ## Scene view
 
-The same board, read as a room. Every live session is a little person at a
+The same board, read as a place. Every live session is a little person at a
 desk; every project is a room they share; a sub-agent sits at a smaller desk
 beside the agent that spawned it, with a dotted line back to it. Switch with
 the **Board / Scene** control above the grid.
 
-![The scene view: a project room per checkout, each with pixel agents at desks wearing their harness's mark, their monitors lit by what they are doing](docs/screenshots/scene.png)
+![The scene view: a project room per checkout with pixel agents at desks, a meeting room below it where a delegating session sits at the head of a long table with its subagents, and a garden below that where idle and finished sessions rest on benches](docs/screenshots/scene.png)
 
 It exists because the two views answer different questions. The wall of cards
 answers *what is this session doing* precisely — tool name, target file,
@@ -102,19 +102,46 @@ session's state and its rhythm is that state's motion, and the spill lands on
 the desk and the agent. Six rooms of lighting resolve as a pattern before any
 shape does.
 
-| State | The desk | The agent |
+### Where people are is what they are doing
+
+The map is one continuous place with two annexes hanging under the office, and
+sessions **walk** between them, so the question a glance answers first is not
+what colour a monitor is but where somebody is standing.
+
+- **The office** holds everything that is working: thinking, running a tool,
+  writing a file. A session waiting on *you* never leaves its desk, whatever
+  else is true of it — it is the one thing here allowed to interrupt, and it
+  has to do it from somewhere you are already looking.
+- **The meeting room** holds a session that is delegating, at the head of a
+  long table, with the subagents it spawned down the sides. One table per
+  family; a screen at the far end carries the parent's state colour. A subagent
+  working in a *different* repository stays where it is — that crossing is the
+  delegation worth seeing, and seating it at its parent's table would hide it.
+- **The garden** holds everything that has stopped. Idle sessions rest on a
+  bench, ones that have gone quiet mid-tool doze, anything that **finished
+  while you were elsewhere and you have not read it** sits holding a note, and
+  anything that is over walks out through the gate.
+
+Both annexes are on by default and each can be switched off in
+**Settings → Scene**. Off is not "hide those sessions": they stay at their
+desks, which is the office exactly as it was before the annexes existed.
+
+| State | Where | What it looks like |
 | --- | --- | --- |
-| Thinking | screen breathes, blue | head bobs |
-| Tool call | screen flickers, amber | hands alternate, fast |
-| Writing a file | steady green, paper on the desk | hands alternate, half speed |
-| Delegating | steady violet, the tether pulses | stands, holds a note toward the sub-agent |
-| Waiting for permission | strobes red | hand up, red `!` bubble |
-| Idle | dim | slumped, still |
-| Stale | dim | `zzz` |
-| Ended | dark | the agent leaves, the desk stays |
+| Thinking | its desk | screen breathes blue, head bobs |
+| Tool call | its desk | screen flickers amber, hands alternate fast |
+| Writing a file | its desk | steady green, paper on the desk, hands at half speed |
+| Waiting for permission | its desk, always | strobes red, hand up, red `!` bubble |
+| Delegating | head of a table | the screen at the end of the table carries its colour |
+| A subagent it spawned | down the sides of that table | a laptop each, lit by what it is doing |
+| Idle | a bench in the garden | slumped, still |
+| Stale | the garden | dozing, `zzz` |
+| Done, and you have not read it | a bench in the garden | holding a green note |
+| Ended | walking out through the gate | then gone |
 
 Exactly one of those is allowed to shout, and it is the one that will never
-resolve itself without a person.
+resolve itself without a person — which is why it is also the one that never
+leaves the desk.
 
 The canvas is a real scroll view, so two fingers pan and pinch at once the way
 they do in Preview, with the same momentum and the same elastic edges; ⌘-scroll

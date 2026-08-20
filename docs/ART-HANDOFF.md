@@ -202,6 +202,8 @@ Resources/Characters/<character-id>/     app 内置（一 harness 一个默认�
 | **Meeting room 会议室** | 正在 **delegating** 的 session 带着它的子 agent 围坐开会（父坐主位，子 agent 坐两侧；子 agent 出生 = 从门口走进来坐下，结束 = 起身走出去）；一个项目一张桌，多了再开一间 | 长桌边一把椅子（四朝向），状态显示在每人面前的 **laptop**（屏幕挖空同 monitor）；投影幕显示父 session 的状态色 | `tableLongLeft/Mid/Right 32×40`（可拼）、`chairN/S/E/W 16×16`、`laptop 16×10`、`projectorScreen 48×32` + `projectorScreenLit`、`rugBig 96×64`、`waterJug 8×12`、`whiteboardWide 64×24`、`floorCarpetDark 16×16`、`glassWallTop 16×24` |
 | **Garden 花园** | **歇着的**：idle 的 session 在长椅 / 野餐垫上休息；**做完了还没被你看过**的 session 坐在长椅上举着一张便签等你（§8 气泡 `note`）；stale 的在打盹；ended 的走到大门口出画面 | 长椅 `bench 32×16` / 野餐垫 `picnicBlanket 32×24`，状态在头顶气泡或膝上笔记本 | `grass 16×16`（4 变体无缝）、`pathStone 16×16`（直 / 转角 / 丁字）、`treeSmall 24×32`、`treeBig 32×48`、`bush 16×12`、`flowerBed 32×16`、`pond 48×32`（水面两帧闪）、`bench`、`picnicBlanket`、`lantern 8×20`（夜晚亮）、`fence 16×16` + `fenceCorner`、`gate 32×32`（大门，ended 从这里离开）、`gazebo 64×48`（可选） |
 
+**当前实现状态（app 侧，`feat/scene-zones`）**：三个区域、走动、Settings 开关都已经做好了，但**画面全部是 `PlaceholderArt` 里用代码画的像素**——和办公区的桌子 / 椅子 / 显示器一样。`Resources/Tiles/office.png + office.json` 里本表列的会议室 / 花园 tile **全部齐全、命名一致**（只有两处与本文档表格不同：`pond` 实际是 96×32，即两帧 48×32 横排；`pathStone` 三个变体实际叫 `pathStoneStraight / pathStoneCorner / pathStoneT`），但**目前没有任何代码读取这个 atlas**，办公区也一样。所以这批 tile 还没有上屏。等 atlas loader 做出来，程序画的家具会被整体替换掉；在那之前，新增家具请继续按本表命名交付，不要改名。
+
 规则：
 - 办公区 + 已开启的附属区在**同一张图**上同时可见（默认相机拉远看全貌，点项目 / 点人推近）。关掉某个附属区时，本该去那里的人留在工位上（idle 趴桌、delegating 在工位旁拉小桌）——也就是现在这版的行为。
 - 所有 tile 同样 16 px 网格、3/4 俯视、无抗锯齿、透明底；地面类 tile 必须四方连续无缝；三个区域的地面在边界处要有过渡 tile（`floorToGrassN/S/E/W 16×16`、门口 `threshold 16×8`）。

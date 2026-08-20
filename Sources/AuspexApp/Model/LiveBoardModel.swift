@@ -923,7 +923,7 @@ final class LiveBoardModel {
         // change to a picture, and putting the whole board back through the
         // filter for it would be a redraw of every card on the wall for
         // something no card shows.
-        self.sceneZones = sceneZones
+        if self.sceneZones != sceneZones { self.sceneZones = sceneZones }
         guard claims != self.claims || rules != ignoreRules || showsIgnored != self.showsIgnored
         else { return }
         self.claims = claims

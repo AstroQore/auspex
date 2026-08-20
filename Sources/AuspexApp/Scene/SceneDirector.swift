@@ -149,7 +149,6 @@ final class SceneDirector {
     ///   its bounds are still valid.
     @discardableResult
     func apply(_ board: BoardSnapshot, unseenDone: Set<SessionKey> = []) -> Bool {
-        let previous = frame
         let next = layout.update(with: board, zones: options, unseenDone: unseenDone)
         let moved = next != frame
         frame = next
@@ -170,10 +169,14 @@ final class SceneDirector {
             // Everything the cull decided is about rectangles that just moved.
             culledTo = nil
         }
-        // Walks are started from the *difference* between two frames, so this
-        // runs whether or not the geometry moved — a session that walked to a
-        // bench changed which place it is in without moving a single desk.
-        syncWalks(from: previous, sessions: byKey)
+        // Walks are started from the *difference* between two frames, and an
+        // equal frame has no difference in it: a session cannot have changed
+        // which seat it is in without the layout changing, because the seat is
+        // part of the layout. So this is gated on `moved` — otherwise a board
+        // ticking twenty times a second would rebuild a table of every
+        // person's position twenty times a second to conclude, twenty times a
+        // second, that nobody had moved.
+        if moved { syncWalks(sessions: byKey) }
         // Floors are synced every pass, not only when the geometry moved: a
         // header's tallies change when a session changes state, which does not
         // move a single desk. The node compares them itself and returns.
@@ -440,7 +443,7 @@ final class SceneDirector {
     /// they were at a desk, on a bench when they were at a table. The layout
     /// gives every place a stable id, so the two cases are told apart by
     /// comparing ids rather than by guessing from a distance.
-    private func syncWalks(from previous: SceneFrame, sessions: [SessionKey: SessionSnapshot]) {
+    private func syncWalks(sessions: [SessionKey: SessionSnapshot]) {
         // A session that has left the board takes its walk with it: the seat
         // it was heading for is gone, and a walker delivering somebody to a
         // place that no longer exists would leave them standing on the map.
@@ -471,8 +474,7 @@ final class SceneDirector {
                 harness: session.key.harness,
                 from: start,
                 fromZone: walkers[key] == nil ? was.zone : zone(containing: start),
-                to: place,
-                previous: previous
+                to: place
             )
         }
     }
@@ -506,8 +508,7 @@ final class SceneDirector {
         harness: Harness,
         from: CGPoint,
         fromZone: SceneZone,
-        to place: SceneFrame.Place,
-        previous: SceneFrame
+        to place: SceneFrame.Place
     ) {
         let waypoints = SceneRoute.waypoints(
             from: from,
@@ -546,7 +547,6 @@ final class SceneDirector {
             walkers[key] = walker
             walkerLayer.addChild(walker)
         }
-        _ = previous
         walker.travel(
             legs: legs,
             speed: frame.metrics.walkSpeed,

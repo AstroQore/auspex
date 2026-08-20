@@ -11,6 +11,49 @@ Auspex is pre-alpha; there are no released versions yet.
 
 ### Added
 
+- **The scene is a place, not a room: a meeting room and a garden, and people
+  who walk to them.** The map is one continuous plan — the office as it was,
+  with two annexes under it — and a session's *position* is now the first thing
+  a glance reads. A session that is delegating walks to a long table with the
+  subagents it spawned down the sides, one table per family, a screen at the
+  far end carrying the parent's state colour. Anything resting goes to the
+  garden: idle on a bench, gone-quiet dozing, **finished-while-you-were-
+  elsewhere holding a note**, and over walking out through the gate. A session
+  waiting on a person never leaves its desk, whatever else is true of it.
+  Both annexes are on by default and switch off in **Settings → Scene**
+  (persisted in `~/.auspex/settings.json`), and off means everybody stays at
+  their desks — the office exactly as it was, verified by rendering it both
+  ways and diffing the pixels.
+- **`SceneZoning`, `SceneRoute` and the annex half of `SceneLayout`** in
+  `AuspexCore` — all of it pure and tested. Placement is a function of the
+  board, the delegation edges it admits to, and the set of sessions the task
+  ledger calls unread; a table is a family in one project, the same rule a bay
+  follows. A desk is *held* while its occupant is away rather than freed, which
+  is what keeps the office's geometry identical, sits a returning session back
+  down where it was, and gives a walk somewhere to walk from. A route is three
+  straight legs — out to the walkway, along it, back in — with a gutter down
+  the left joining the strips; between two strips it is those with a trip down
+  the gutter in the middle. No pathfinder, and every leg axis-aligned so it is
+  one `SKAction.move` with one walk strip over it.
+- **Walking, at no per-frame cost.** A walk is a node of its own that lives
+  exactly as long as the walk: both ends draw themselves empty and it carries
+  the sprite either would have. It uses the character package's `walkDown` /
+  `walkUp` / `walkRight` strips, mirrored for left, and falls back to the
+  procedural rig for a package that has none. A walk whose whole path is
+  outside the cull is skipped, a session that changes its mind halfway turns
+  round from where it had got to, Reduce Motion has no walking in it at all,
+  and a render lands everybody before the shutter opens.
+- **The demo covers the whole map.** `delegateMany` fans a parent out to two
+  subagents at once (two `delegate` beats in a row are two delegations, so a
+  family of three never existed to photograph); the renderer refreshes
+  staleness against the instant being drawn, against the demo's own compressed
+  threshold, so a still can show a dozing session; and `DemoScript` declares
+  which of its sessions nobody has read, because whether a person has *looked*
+  is the one fact about a board no harness store holds.
+- **`--render-scene … --office-only`** draws the map with both annexes off, so
+  "the annexes changed nothing about the office" is a picture two commands
+  apart rather than a claim.
+
 - **Harness hooks, so "waiting for you" stops being a guess.** A permission
   prompt is the one state no harness writes to disk: from outside, an agent
   waiting for a person and an agent thinking hard are the same silence. The
