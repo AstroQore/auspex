@@ -122,11 +122,30 @@ final class SceneCanvasView: NSView, SceneViewportHost {
         addSubview(skView)
         addSubview(scrollView)
 
+        // The end of a pinch, from the platform's own side of it. The gesture's
+        // last event says the same thing and usually says it first, but a
+        // magnification that ends because the window resigned key or the
+        // gesture was taken over sends no such event — and a canvas left
+        // between two rungs is pixel art with seams through it until somebody
+        // touches it again.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(liveMagnifyEnded),
+            name: NSScrollView.didEndLiveMagnifyNotification,
+            object: scrollView
+        )
+
         scene.host = self
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("SceneCanvasView is not archived") }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func liveMagnifyEnded(_ note: Notification) {
+        settleZoom(atWindowPoint: scrollView.lastPinchLocation)
+    }
 
     // MARK: - Being looked at
 
@@ -397,6 +416,9 @@ final class SceneScrollView: NSScrollView {
     private var lastScrollAt: TimeInterval?
     /// Where the point between the fingers was on the previous magnify event.
     private var pinchCentroid: CGPoint?
+    /// Where the fingers last were, so that a pinch which ends without a final
+    /// event still lands on a rung around the right place.
+    private(set) var lastPinchLocation: CGPoint?
 
     override func scrollWheel(with event: NSEvent) {
         canvas?.cancelFlight()
@@ -447,6 +469,7 @@ final class SceneScrollView: NSScrollView {
         super.magnify(with: event)
 
         let location = event.locationInWindow
+        lastPinchLocation = location
         if event.phase.contains(.began) {
             pinchCentroid = location
             return
