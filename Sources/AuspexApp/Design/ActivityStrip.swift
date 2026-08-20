@@ -30,13 +30,28 @@ import SwiftUI
 /// a few dozen running sessions therefore paid for a full-window layout sixty
 /// times a second, forever.
 ///
-/// Measured with `sample <pid> 3`, release build, live against the real store
-/// with ~700 sessions, window visible, three runs each at matched load:
+/// Measured with `top -l 4 -s 5` and three `sample <pid> 3` per run, release
+/// builds, live against the real store, the two builds launched alternately so
+/// that whatever else the machine was doing — several agents' sessions writing
+/// transcripts, and other copies of this app — landed on both arms equally.
+/// Both arms are *moving*: the display was locked throughout, so the Core
+/// Animation build was measured with its occlusion pause switched off, which is
+/// the only way to compare motion against motion rather than motion against a
+/// held frame.
 ///
 /// | strips | main thread busy | process CPU |
 /// | --- | --- | --- |
-/// | drawn still | 1.2–1.6 % | 7.3–8.2 % |
-/// | SwiftUI animation (what this replaces) | 19.8–20.8 % | 24.5–25.8 % |
+/// | SwiftUI animation (what this replaces) | 39–43 % | 48–61 % |
+/// | Core Animation (this) | 3–8 % | 24–52 % |
+///
+/// The main thread is the column to read. Process CPU on that machine was
+/// dominated by `LiveBoardModel.rebuildVisibleBoard`, which has nothing to do
+/// with the strips and which both arms paid in full; what changed is that the
+/// main thread stopped being the busiest thread in the process at all — under
+/// the old strips it carried more samples than any other thread, and under
+/// these it does not place in the top six. An earlier measurement of the same
+/// two behaviours on a quiet machine put them at 19.8–20.8 % against 1.2–1.6 %
+/// busy, so neither pair of absolute numbers travels but the ratio does.
 ///
 /// Moving the animated property from a fill's alpha to a view `.opacity(_:)`
 /// changed nothing, because the cost is not *what* SwiftUI animates — it is
