@@ -127,3 +127,125 @@ struct ActivityStripTests {
         #expect(!stale.needsLayer(reduceMotion: false, isSnapshotRender: false))
     }
 }
+
+/// What the layers under a moving strip actually hold.
+///
+/// A screenshot cannot answer any of this. A strip whose animation stopped
+/// repeating, or which was handed a duration twice what it should be, draws the
+/// same first frame as a correct one and diverges only later — so the layer is
+/// checked directly, where the mistake is visible immediately.
+@Suite("Activity strip layers")
+@MainActor
+struct ActivityStripViewTests {
+    private func view(_ state: SessionState) -> ActivityStripView {
+        let view = ActivityStripView(frame: NSRect(x: 0, y: 0, width: 200, height: 6))
+        view.apply(StripSpec(rhythm: StripRhythm(state.style.motion), color: state.style.color))
+        return view
+    }
+
+    private func animation(_ layer: CALayer) -> CAAnimation? {
+        layer.animation(forKey: ActivityStripView.animationKey)
+    }
+
+    @Test("Every animation repeats forever and is never taken away")
+    func animationsOutliveTheirFirstRun() {
+        let states: [SessionState] = [
+            .thinking,
+            .toolCalling(name: "Bash"),
+            .delegating(children: 3)
+        ]
+        for state in states {
+            let view = view(state)
+            let animated = [view.ground, view.head] + view.ticks
+            let running = animated.compactMap(animation)
+            #expect(!running.isEmpty, "\(state) should have put an animation on a layer")
+            for animation in running {
+                #expect(animation.repeatCount == .infinity)
+                #expect(animation.isRemovedOnCompletion == false)
+            }
+        }
+    }
+
+    @Test("Thinking breathes on the ground layer's opacity, out and back")
+    func breathIsOneAutoreversingOpacityAnimation() {
+        let view = view(.thinking)
+        guard let breath = animation(view.ground) as? CABasicAnimation else {
+            Issue.record("thinking should animate the ground layer's opacity")
+            return
+        }
+        #expect(breath.keyPath == "opacity")
+        #expect(breath.fromValue as? Double == 0.25)
+        #expect(breath.toValue as? Double == 0.8)
+        // Half a second out and half a second back is the one-second period.
+        #expect(breath.duration == 0.5)
+        #expect(breath.autoreverses)
+        #expect(view.head.isHidden)
+    }
+
+    @Test("A tool sweeps by travelling the gradient's axis, and does not reverse")
+    func sweepMovesTheGradientAxis() {
+        let view = view(.toolCalling(name: "Bash"))
+        #expect(!view.head.isHidden)
+        guard let travel = animation(view.head) as? CAAnimationGroup else {
+            Issue.record("a tool should animate the head gradient")
+            return
+        }
+        #expect(travel.duration == 6)
+        let paths = travel.animations?.compactMap { ($0 as? CABasicAnimation)?.keyPath } ?? []
+        #expect(paths.sorted() == ["endPoint", "startPoint"])
+        // A head that slid back would read as scrubbing rather than as progress.
+        #expect(travel.animations?.allSatisfy { !$0.autoreverses } == true)
+        for step in travel.animations ?? [] {
+            #expect(step.timingFunction == CAMediaTimingFunction(name: .linear))
+        }
+    }
+
+    @Test("Delegating gives every child its own cell, lit in turn")
+    func ticksAreOneLayerPerChild() {
+        let view = view(.delegating(children: 4))
+        #expect(view.ticks.count == 4)
+        #expect(view.ground.isHidden)
+        for (index, tick) in view.ticks.enumerated() {
+            guard let pulse = animation(tick) as? CAKeyframeAnimation else {
+                Issue.record("tick \(index) should pulse")
+                return
+            }
+            #expect(pulse.keyPath == "opacity")
+            #expect(pulse.duration == 1)
+            let values = pulse.values as? [Double] ?? []
+            // One value per cell plus a repeat of the first, so the loop closes
+            // on the frame it started from rather than jumping at the seam.
+            #expect(values.count == 5)
+            #expect(values.first == values.last)
+            // The cell is the lit one exactly once per pass, at its own turn.
+            let lit = values.dropLast().enumerated()
+                .filter { $0.element == StripRhythm.tickLit }
+                .map(\.offset)
+            #expect(lit == [index])
+        }
+    }
+
+    @Test("A strip nobody can see is not running")
+    func offscreenStripsAreStopped() {
+        // No window, which is what a card scrolled out of the grid looks like.
+        let view = view(.toolCalling(name: "Bash"))
+        #expect(view.layer?.speed == 0)
+    }
+
+    @Test("Changing state replaces the animation rather than stacking one on it")
+    func reapplyingDoesNotLayerAnimations() {
+        let view = view(.toolCalling(name: "Bash"))
+        let thinking = SessionState.thinking
+        view.apply(
+            StripSpec(rhythm: StripRhythm(thinking.style.motion), color: thinking.style.color)
+        )
+        #expect(view.head.animationKeys()?.isEmpty ?? true)
+        #expect(view.ground.animationKeys() == [ActivityStripView.animationKey])
+    }
+
+    @Test("The strip is invisible to the mouse, so the card underneath gets the click")
+    func stripDoesNotSwallowClicks() {
+        let view = view(.thinking)
+        #expect(view.hitTest(NSPoint(x: 100, y: 3)) == nil)
+    }
+}

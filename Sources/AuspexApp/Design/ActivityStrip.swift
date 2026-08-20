@@ -313,19 +313,25 @@ private struct StripLayer: NSViewRepresentable {
 /// main thread's whole involvement in the board's motion is this class's
 /// ``apply(_:)``, which runs when a session changes state, and ``layout()``,
 /// which runs when a card is resized.
+///
+/// The three layers are not `private` because the tests read them. There is no
+/// other way to check this: a strip with the wrong duration, or one that has
+/// quietly stopped repeating, looks exactly like a correct one in a screenshot,
+/// and a screenshot is all an `NSView` full of Core Animation offers from the
+/// outside.
 final class ActivityStripView: NSView {
     /// The bar, or the dim ground a sweep's head travels over.
-    private let ground = CALayer()
+    let ground = CALayer()
     /// The travelling head. Hidden unless the rhythm is a sweep.
-    private let head = CAGradientLayer()
+    let head = CAGradientLayer()
     /// One per running child, for a delegating session.
-    private var ticks: [CALayer] = []
+    private(set) var ticks: [CALayer] = []
 
     private var spec: StripSpec?
     private var occlusion: (any NSObjectProtocol)?
 
     /// One key for every animation, so re-applying replaces rather than layers.
-    private static let animationKey = "auspex.strip"
+    static let animationKey = "auspex.strip"
     private static let cornerRadius: CGFloat = 1
 
     override init(frame frameRect: NSRect) {
