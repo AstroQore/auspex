@@ -31,7 +31,6 @@ struct SetupSheet: View {
                     ForEach(model.groups) { group in
                         SetupGroupView(group: group, model: model, detected: detected)
                     }
-                    hooksPlaceholder
                 }
                 .padding(16)
             }
@@ -53,9 +52,10 @@ struct SetupSheet: View {
             }
             Text(
                 "Auspex already watches every agent session on this Mac by reading "
-                    + "the files they write. Registering its MCP server adds the part "
-                    + "reading cannot do: an agent can call you when it needs you, and "
-                    + "claim the task it was given."
+                    + "the files they write. These add the two parts reading cannot do: "
+                    + "an MCP server, so an agent can call you when it needs you and "
+                    + "claim the task it was given — and hooks, so a harness can say it "
+                    + "is waiting for your permission, which none of them write down."
             )
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
@@ -71,51 +71,6 @@ struct SetupSheet: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
-    }
-
-    /// The extension point the hooks branch lands in.
-    ///
-    /// Shown disabled rather than left out, because the sheet is also the
-    /// answer to *what can Auspex be told to do*: a person who wonders whether
-    /// hooks exist should find out here rather than in a changelog.
-    private var hooksPlaceholder: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "square")
-                    .font(.system(size: 11))
-                    .foregroundStyle(AuspexPalette.line2)
-                Text("Install harness hooks")
-                    .font(AuspexType.rowStrong)
-                    .foregroundStyle(AuspexPalette.text3)
-                Text("coming soon")
-                    .auspexLabel(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.text3)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .strokeBorder(AuspexPalette.line, lineWidth: 1)
-                    )
-                Spacer(minLength: 0)
-            }
-            Text(
-                "Permission prompts are the one state no harness writes to disk. "
-                    + "Hooks would let Claude Code, Grok and Cursor push them to Auspex "
-                    + "the moment they happen, instead of Auspex inferring them."
-            )
-            .font(AuspexType.caption)
-            .foregroundStyle(AuspexPalette.text3)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous).fill(AuspexPalette.bg1)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(AuspexPalette.line, style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-        )
     }
 
     private var footer: some View {
@@ -218,6 +173,12 @@ private struct SetupRowView: View {
                         .textSelection(.enabled)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                }
+                if let detail = row.detail {
+                    Text(detail)
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let note = stateNote {
                     Text(note)

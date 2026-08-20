@@ -59,11 +59,11 @@ struct AgentsSettingsView: View {
 
     private var note: some View {
         Text(
-            "Auspex writes into a harness's own files only from here, only inside a "
-                + "block marked `>>> auspex >>>` (or one named `auspex` entry in a JSON "
-                + "config), and only after backing the file up to ~/.auspex/backups/. "
-                + "Removing takes the block out and leaves everything else exactly as it "
-                + "was."
+            "Auspex writes into a harness's own files only from here, only in a region "
+                + "it owns — a block marked `>>> auspex >>>`, one `auspex` entry in a "
+                + "JSON config, or the hook entries that run the Auspex binary — and "
+                + "only after backing the file up to ~/.auspex/backups/. Removing takes "
+                + "back exactly those and leaves everything else as it was."
         )
         .font(AuspexType.caption)
         .foregroundStyle(AuspexPalette.text3)
@@ -111,6 +111,12 @@ private struct AgentsSettingsGroup: View {
                                 .textSelection(.enabled)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                        }
+                        if let detail = row.detail {
+                            Text(detail)
+                                .font(AuspexType.monoSmall)
+                                .foregroundStyle(AuspexPalette.text3)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     Spacer(minLength: 8)

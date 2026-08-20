@@ -26,6 +26,11 @@ final class SetupModel {
         let path: String?
         let displayPath: String?
         let state: HarnessInstaller.State
+        /// The specifics, when a row has any worth naming before it is ticked —
+        /// which events a hook registration covers, in the harness's own
+        /// vocabulary. A person agreeing to "install harness hooks" is entitled
+        /// to know it means eight of them.
+        var detail: String?
         /// What happened the last time this row was acted on.
         var outcome: String?
         var didFail = false
@@ -103,7 +108,10 @@ final class SetupModel {
                             piece: piece,
                             path: offer.path,
                             displayPath: offer.displayPath,
-                            state: offer.state
+                            state: offer.state,
+                            detail: piece == .hooks
+                                ? installer.hookPlan(for: harness)?.summary
+                                : nil
                         )
                     }
                 )

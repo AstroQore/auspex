@@ -443,4 +443,73 @@ struct AuspexMCPServerTests {
         ])))
         #expect(branch["roots"]?.arrayValue?.first?["key"]?.stringValue == child.description)
     }
+
+    // MARK: - Hooks
+
+    private func hookLine(_ target: HookTarget, _ payload: [String: MCPJSON], pid: pid_t) -> Data {
+        Data(HookEvent(
+            target: target, pid: pid, receivedAt: Fixtures.date(90), payload: .object(payload)
+        ).line().dropLast())
+    }
+
+    @Test("a PermissionRequest hook puts the session it names into Needs you")
+    func hookFlipsASessionToNeedsYou() async throws {
+        let (server, host, _) = try makeServer()
+
+        // The line the short-lived `Auspex --hook claude` process writes.
+        #expect(await server.answer(line: hookLine(.claude, [
+            "hook_event_name": "PermissionRequest",
+            "session_id": .string(Self.sessionKey.sessionID),
+            "tool_name": "Bash",
+            "cwd": "/Users/example/Code/widget"
+        ], pid: Self.harnessPID)) == nil, "a notification: the hook does not wait for an answer")
+
+        let observed = await host.observed
+        #expect(observed.count == 1)
+        #expect(observed[0].session == Self.sessionKey)
+        let reducer = SessionStateReducer()
+        var snapshot = try #require(await host.boardSnapshot().sessions.first)
+        snapshot = reducer.reduce(snapshot, event: observed[0])
+        #expect(snapshot.state == .waitingPermission(tool: "Bash"))
+
+        // And the tool running afterwards takes it back out again.
+        _ = await server.answer(line: hookLine(.claude, [
+            "hook_event_name": "PostToolUse",
+            "session_id": .string(Self.sessionKey.sessionID),
+            "tool_name": "Bash"
+        ], pid: Self.harnessPID))
+        let resolved = await host.observed
+        #expect(resolved.count == 2)
+        snapshot = reducer.reduce(snapshot, event: resolved[1])
+        #expect(snapshot.state != .waitingPermission(tool: "Bash"))
+    }
+
+    @Test("a hook with no session id is attributed to the process that ran it")
+    func hookResolvesByProcess() async throws {
+        let (server, host, _) = try makeServer()
+        // Codex's notify carries no session id at all, and the hook is a direct
+        // child of the harness — so the pid it reports is the evidence.
+        _ = await server.answer(line: hookLine(.codexNotify, [
+            "type": "agent-turn-complete",
+            "turn-id": "t1"
+        ], pid: Self.harnessPID))
+
+        let observed = await host.observed
+        #expect(observed.count == 1)
+        #expect(observed[0].session == Self.sessionKey)
+        #expect(observed[0].kind == .turnEnded(reason: .complete))
+    }
+
+    @Test("a hook Auspex cannot attribute changes nothing")
+    func hookWithNothingToAttributeTo() async throws {
+        let (server, host, _) = try makeServer()
+        _ = await server.answer(line: hookLine(.codexNotify, [
+            "type": "agent-turn-complete"
+        ], pid: 4_242))
+        #expect(await host.observed.isEmpty)
+
+        // And a notification that is not a hook event at all is ignored.
+        #expect(await server.answer(line: RPC.line("auspex/hookEvent")) == nil)
+        #expect(await host.observed.isEmpty)
+    }
 }

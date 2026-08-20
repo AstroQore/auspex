@@ -66,7 +66,8 @@ final class MCPController {
         board: LiveBoardModel,
         onNotice: @escaping @Sendable (AgentNotice) async -> Void,
         onReport: @escaping @Sendable (AgentReport) async -> Void,
-        onLedgerChange: @escaping @Sendable () async -> Void
+        onLedgerChange: @escaping @Sendable () async -> Void,
+        onEvents: @escaping @Sendable ([AgentEvent]) async -> Void
     ) {
         self.paths = paths
         self.isReadOnly = isReadOnly
@@ -80,7 +81,8 @@ final class MCPController {
             readBoard: { [weak board] in await MainActor.run { board?.board ?? .empty } },
             onNotice: onNotice,
             onReport: onReport,
-            onLedgerChange: onLedgerChange
+            onLedgerChange: onLedgerChange,
+            onEvents: onEvents
         )
         self.server = AuspexMCPServer(host: host)
     }

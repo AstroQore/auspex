@@ -21,6 +21,8 @@ actor TestMCPHost: AuspexMCPHost {
     private(set) var notices: [AgentNotice] = []
     private(set) var reports: [AgentReport] = []
     private(set) var ledgerChanges = 0
+    /// The events a harness hook produced, in the order the server sent them.
+    private(set) var observed: [AgentEvent] = []
 
     init(
         board: BoardSnapshot = .empty,
@@ -44,6 +46,7 @@ actor TestMCPHost: AuspexMCPHost {
     func didRecordNotice(_ notice: AgentNotice) { notices.append(notice) }
     func didRecordReport(_ report: AgentReport) { reports.append(report) }
     func didChangeLedger() { ledgerChanges += 1 }
+    func didObserve(_ events: [AgentEvent]) { observed.append(contentsOf: events) }
 
     func setBoard(_ board: BoardSnapshot) { self.board = board }
     func setClientPIDs(_ pids: [pid_t]) { self.pids = pids }

@@ -301,6 +301,17 @@ public final class AppEnvironment {
             },
             onLedgerChange: { [weak self] in
                 await MainActor.run { self?.tasks.reload() }
+            },
+            // A hook's events join the stream the tailers feed, so a permission
+            // prompt and a tool call are folded by the same reducer in the
+            // order they arrived. The main-actor hop costs nothing at this
+            // rate: a hook fires a handful of times a minute, against the
+            // hundreds of events a second a burst of transcript can produce.
+            onEvents: { [weak self] events in
+                await MainActor.run {
+                    guard let continuation = self?.eventContinuation else { return }
+                    for event in events { continuation.yield(event) }
+                }
             }
         )
         mcp = controller

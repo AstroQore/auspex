@@ -42,6 +42,8 @@ actor AppMCPHost: AuspexMCPHost {
     private let onReport: @Sendable (AgentReport) async -> Void
     /// Called when a plan or a task moved.
     private let onLedgerChange: @Sendable () async -> Void
+    /// Called with the events a harness's hook implied.
+    private let onEvents: @Sendable ([AgentEvent]) async -> Void
 
     init(
         store: AuspexStore?,
@@ -50,7 +52,8 @@ actor AppMCPHost: AuspexMCPHost {
         readBoard: @escaping @Sendable () async -> BoardSnapshot,
         onNotice: @escaping @Sendable (AgentNotice) async -> Void,
         onReport: @escaping @Sendable (AgentReport) async -> Void,
-        onLedgerChange: @escaping @Sendable () async -> Void
+        onLedgerChange: @escaping @Sendable () async -> Void,
+        onEvents: @escaping @Sendable ([AgentEvent]) async -> Void
     ) {
         self.readBoard = readBoard
         self.store = store
@@ -59,6 +62,7 @@ actor AppMCPHost: AuspexMCPHost {
         self.onNotice = onNotice
         self.onReport = onReport
         self.onLedgerChange = onLedgerChange
+        self.onEvents = onEvents
     }
 
     // MARK: - AuspexMCPHost
@@ -75,6 +79,7 @@ actor AppMCPHost: AuspexMCPHost {
     func didRecordNotice(_ notice: AgentNotice) async { await onNotice(notice) }
     func didRecordReport(_ report: AgentReport) async { await onReport(report) }
     func didChangeLedger() async { await onLedgerChange() }
+    func didObserve(_ events: [AgentEvent]) async { await onEvents(events) }
 
     // MARK: - Fed from outside
 

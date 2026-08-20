@@ -249,7 +249,9 @@ struct HookIngressTests {
         )
         let elapsed = Date().timeIntervalSince(started)
         #expect(code == 0)
-        #expect(elapsed >= 0.2, "it waited for the payload it was promised")
+        // Not exactly 0.2: `poll` takes whole milliseconds and the clock is
+        // read twice, so the wait lands a hair either side of the deadline.
+        #expect(elapsed >= 0.15, "it waited for the payload it was promised")
         // Generous, because a loaded machine running the whole suite is not a
         // real-time system. The point is that it is bounded at all.
         #expect(elapsed < 1.0, "and gave up rather than waiting for the harness")

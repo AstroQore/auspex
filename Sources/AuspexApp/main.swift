@@ -15,11 +15,13 @@ if AuspexStdioBridge.isRequested() {
     exit(AuspexStdioBridge.run())
 }
 
-if arguments.contains("--hook") {
-    FileHandle.standardError.write(
-        Data("auspex: --hook is not implemented yet (planned for M4).\n".utf8)
-    )
-    exit(2)
+// A harness hook: read the payload, write one line to the socket, exit 0.
+// Second only to the bridge, and for the same reason — this process is a
+// synchronous child of a harness that is waiting on it, so it must not touch
+// AppKit, must not read a store, and must not take longer than
+// `HookIngress.deadline` no matter what is on the other end.
+if HookIngress.isRequested(arguments: CommandLine.arguments) {
+    exit(HookIngress.run())
 }
 
 // Renders `docs/screenshots/scene.png` from the demo board, offscreen. Keeping
@@ -344,7 +346,16 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         configured with; it connects to ~/.auspex/mcp.sock
                         (override with AUSPEX_MCP_SOCKET) and pumps bytes.
                         Exits 1 when Auspex is not running.
-          --hook        Handle a harness hook invocation. (M4)
+          --hook <harness> [--then <command>…]
+                        Handle a harness hook invocation: read the
+                        harness's JSON from stdin (or, for Codex's notify,
+                        from the last argument), send it to the running
+                        Auspex on ~/.auspex/mcp.sock, and exit 0 within
+                        200 ms whatever happens. This is the command the
+                        installer writes into a harness's hook table; it is
+                        not meant to be run by hand. `--then` runs the
+                        program Auspex was put in front of, which is how
+                        Codex's single `notify` slot is shared.
           --help        Show this.
 
         """.utf8))
