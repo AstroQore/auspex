@@ -504,21 +504,12 @@ final class OfficeScene: SKScene {
 
     /// The desk under a point on the floor plan.
     private func desk(atLayoutPoint point: CGPoint) -> DeskNode? {
-        for node in nodes(at: SceneGeometry.scene(from: point)) {
-            var current: SKNode? = node
-            while let candidate = current {
-                if let desk = candidate as? DeskNode { return desk }
-                current = candidate.parent
-            }
-        }
-        return nil
+        director.desk(atLayoutPoint: point)
     }
 
-    /// The room under a point on the floor plan. Asked of the layout rather
-    /// than of the scene graph, because a room's panel is a shape node with a
-    /// hit area that would answer for its whole bounding box either way.
+    /// The room under a point on the floor plan.
     private func room(atLayoutPoint point: CGPoint) -> SceneFloor? {
-        director.frame.floor(at: point)
+        director.floor(atLayoutPoint: point)
     }
 
     // MARK: - Backdrop

@@ -46,6 +46,9 @@ final class SceneDirector {
     /// Where each desk stands, in scene coordinates, so culling does not have
     /// to ask a node for its position while it is animating toward one.
     private var deskRects: [String: CGRect] = [:]
+    /// Where everything is on the floor plan, for the pointer. Rebuilt only
+    /// when the layout moves, which on a busy board is almost never.
+    private var hitIndex = SceneHitIndex.empty
     /// What each room tallied on the last frame. The minimap's colours.
     private(set) var floorCounts: [Int: BoardSnapshot.Counts] = [:]
 
@@ -116,6 +119,11 @@ final class SceneDirector {
         if moved {
             syncDesks()
             syncTethers()
+            hitIndex = SceneHitIndex(
+                frame: frame,
+                deskSize: DeskNode.hitSize,
+                deskBaseline: DeskNode.hitBaseline
+            )
             // Everything the cull decided is about rectangles that just moved.
             culledTo = nil
         }
@@ -265,6 +273,20 @@ final class SceneDirector {
     }
 
     // MARK: Lookups
+
+    /// The desk under a point on the floor plan.
+    ///
+    /// Asked of the layout rather than of the scene graph. `SKScene.nodes(at:)`
+    /// walks every node in the office and allocates an array of what it finds,
+    /// and the pointer asks this question faster than the office is drawn; the
+    /// index answers it with a handful of rectangle tests and no allocation.
+    func desk(atLayoutPoint point: CGPoint) -> DeskNode? {
+        guard let hit = hitIndex.desk(at: point) else { return nil }
+        return desks[hit.slotID]
+    }
+
+    /// The room under a point on the floor plan.
+    func floor(atLayoutPoint point: CGPoint) -> SceneFloor? { hitIndex.floor(at: point) }
 
     /// The desk `key` is sitting at.
     func desk(for key: SessionKey) -> DeskNode? { deskBySession[key] }

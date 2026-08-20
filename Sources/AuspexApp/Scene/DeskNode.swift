@@ -100,13 +100,20 @@ final class DeskNode: SKNode {
 
     /// The clickable area, in node space. Wider than the furniture so a click
     /// near a desk selects it rather than falling through to the floor.
+    ///
+    /// It is not a node: the pointer is placed by ``SceneHitIndex``, against
+    /// the floor plan, so this is a *number the layout knows* rather than an
+    /// invisible sprite in every desk for the scene graph to walk past.
     static let hitSize = CGSize(width: 104, height: 78)
+
+    /// How far that area reaches below the point on the floor line the desk
+    /// stands on — the rest of its height is above.
+    static let hitBaseline: CGFloat = 8
 
     /// The vendor mark on the desk front, in points. Small enough that the
     /// monitor's light stays the loudest thing on the desk.
     static let markSize: CGFloat = 11
 
-    private let hitArea = SKSpriteNode(color: .clear, size: DeskNode.hitSize)
     private let chair = SKSpriteNode()
     private let desk = SKSpriteNode()
     private let monitor = SKSpriteNode()
@@ -133,11 +140,6 @@ final class DeskNode: SKNode {
         super.init()
 
         let art = PlaceholderArt.shared
-
-        hitArea.anchorPoint = CGPoint(x: 0.5, y: 0)
-        hitArea.position = CGPoint(x: 0, y: -8)
-        hitArea.zPosition = -1
-        hitArea.name = DeskNode.hitName
 
         glow.texture = art.glow()
         glow.size = CGSize(width: 132, height: 132)
@@ -201,7 +203,6 @@ final class DeskNode: SKNode {
 
         buildNameplate()
 
-        addChild(hitArea)
         addChild(glow)
         addChild(chair)
         addChild(screen)
@@ -216,10 +217,6 @@ final class DeskNode: SKNode {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("DeskNode is not archived") }
-
-    /// The name every desk's hit area carries, so the scene can find one from
-    /// a click without reaching into the node hierarchy.
-    static let hitName = "auspex.desk.hit"
 
     // MARK: Content
 
