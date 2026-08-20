@@ -40,6 +40,19 @@ final class OfficeScene: SKScene {
     private var sessions: [SessionKey: SessionSnapshot] = [:]
     private var hovered: DeskNode?
     private var selected: SessionKey?
+
+    /// Whatever is carrying the office — the scroll view, when there is a
+    /// window. `nil` for the offscreen renderer, which has no view to scroll
+    /// and frames the building by pointing the camera at it directly.
+    weak var host: SceneViewportHost?
+
+    /// `true` once the camera has framed a non-empty building, so a first frame
+    /// arriving after the view has been sized still gets fitted.
+    private var hasFitted = false
+
+    /// Where the pointer was last seen, in layout space, waiting to be acted on
+    /// at the next drawn frame. `.some(nil)` means it left the view.
+    private var pendingHover: CGPoint??
     /// The project the camera is bound to. Held so that the echo of a focus
     /// this scene asked for does not fly the camera a second time.
     private var focusedProject: String??
@@ -102,10 +115,14 @@ final class OfficeScene: SKScene {
     /// office, not a bigger one. Called from the view during a live resize as
     /// well as from SpriteKit, because the two do not always agree about when
     /// a drag has changed the bounds.
+    ///
+    /// When a scroll view is carrying the office it is the clip view that knows
+    /// how big the window is, and this only matters for the first fit and for
+    /// the offscreen renderer.
     func viewSizeChanged(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         cameraController.setViewSize(size)
-        if !cameraController.hasFitted { fitAll() }
+        if !hasFitted { fitAll() }
         cameraDidChange()
     }
 
@@ -128,7 +145,6 @@ final class OfficeScene: SKScene {
         if self.reduceMotion != reduceMotion {
             self.reduceMotion = reduceMotion
             director.reduceMotion = reduceMotion
-            cameraController.reduceMotion = reduceMotion
         }
 
         var byKey: [SessionKey: SessionSnapshot] = [:]
@@ -140,8 +156,9 @@ final class OfficeScene: SKScene {
         overviewIsStale = true
         if moved {
             cameraController.setContentRect(director.contentRect)
+            host?.setWorld(director.frame.contentRect)
             rebuildBackdrop()
-            if !cameraController.hasFitted { fitAll() }
+            if !hasFitted { fitAll() }
             cameraDidChange()
         }
 
@@ -161,57 +178,83 @@ final class OfficeScene: SKScene {
         }
     }
 
+    // MARK: - Pointing the camera
+
+    /// Where the camera is pointed and how close it is.
+    ///
+    /// The scroll view is the answer when there is one: it is what the reader's
+    /// fingers moved, and asking anything else would be asking where the camera
+    /// *was told* to go rather than where it is.
+    var viewport: SceneViewport { host?.viewport ?? cameraController.viewport }
+
+    /// The current zoom, for the overlay's readout.
+    var zoom: CGFloat { viewport.zoom }
+
+    /// The one way the camera moves.
+    ///
+    /// With a scroll view carrying the office the move is the scroll view's, so
+    /// that the scrollers, the elastic edges and the camera cannot disagree;
+    /// the camera follows on the next drawn frame. Without one — the offscreen
+    /// renderer — the camera is written directly, because there is nothing else
+    /// to write.
+    private func setViewport(
+        _ next: SceneViewport,
+        animated: Bool = false,
+        framingEverything: Bool = false
+    ) {
+        if let host {
+            host.apply(next, animated: animated && !reduceMotion, framingEverything: framingEverything)
+        } else {
+            cameraController.mirror(next)
+            cameraDidChange()
+        }
+    }
+
     /// Frames the whole building.
     func fitAll(animated: Bool = false) {
         cameraController.setViewSize(size)
-        cameraController.fit(animated: animated)
-        cameraDidChange()
+        let current = viewport
+        guard current.content.width > 0, current.size.width > 0 else { return }
+        hasFitted = true
+        setViewport(current.fitted(), animated: animated, framingEverything: true)
     }
 
     /// Steps the zoom by rungs of the ladder, for the overlay's buttons and
     /// the keyboard.
     func step(zoom steps: Int, around anchor: CGPoint? = nil) {
-        cameraController.step(steps, around: anchor)
-        cameraDidChange()
-    }
-
-    /// Steps the zoom around a point in the view, for a mouse's ⌘-scroll.
-    func step(zoom steps: Int, atViewPoint point: CGPoint) {
-        guard let view else { return }
-        step(zoom: steps, around: scenePoint(forViewPoint: point, in: view))
+        setViewport(viewport.stepped(steps, around: anchor))
     }
 
     /// Goes to one of the named zooms, keeping the middle of the view fixed.
     func setZoom(_ zoom: CGFloat) {
-        cameraController.setZoom(zoom, animated: true)
-        cameraDidChange()
+        setViewport(viewport.zoomed(to: zoom), animated: true)
     }
 
     /// Points the camera at a place on the map, for a click on the minimap.
     /// The point arrives in layout space, which is what the minimap draws in.
     func jump(toLayoutPoint point: CGPoint) {
-        cameraController.center(on: SceneGeometry.scene(from: point), animated: false)
-        cameraDidChange()
+        setViewport(viewport.centered(on: SceneGeometry.scene(from: point)))
     }
 
     /// Puts the camera on one session, for a double-click.
     func focus(on key: SessionKey, animated: Bool = true) {
         guard let rect = director.deskRect(for: key) else { return }
-        cameraController.focus(on: rect.insetBy(dx: -110, dy: -80), animated: animated)
-        cameraDidChange()
+        hasFitted = true
+        setViewport(viewport.focused(on: rect.insetBy(dx: -110, dy: -80)), animated: animated)
     }
 
     /// Frames one project's room, or the whole building when there is no
     /// project to frame.
     private func apply(focus project: String?, animated: Bool) {
         guard let project else {
-            cameraController.fit(animated: animated)
-            cameraDidChange()
+            fitAll(animated: animated)
             return
         }
         guard let rect = director.frame.focusRect(forProject: project) else { return }
-        cameraController.focus(on: SceneGeometry.scene(from: rect), animated: animated)
-        cameraDidChange()
+        hasFitted = true
+        setViewport(
+            viewport.focused(on: SceneGeometry.scene(from: rect)), animated: animated
+        )
     }
 
     /// Brings a selected session's desk on screen without changing how close
@@ -219,21 +262,19 @@ final class OfficeScene: SKScene {
     /// request to be moved somewhere else.
     private func revealDesk(of key: SessionKey) {
         guard let rect = director.deskRect(for: key) else { return }
-        guard !cameraController.viewport.showsAll(of: rect) else { return }
-        cameraController.center(on: CGPoint(x: rect.midX, y: rect.midY), animated: true)
-        cameraDidChange()
+        let current = viewport
+        guard !current.showsAll(of: rect) else { return }
+        setViewport(
+            current.centered(on: CGPoint(x: rect.midX, y: rect.midY)), animated: true
+        )
     }
-
-    /// The current zoom, for the overlay's readout.
-    var zoom: CGFloat { cameraController.zoom }
-
-    /// Where the camera is pointed and how close it is. Read by the tests that
-    /// stand in for a trackpad nobody can hold in a test.
-    var viewport: SceneViewport { cameraController.viewport }
 
     /// The building's bounds in scene coordinates. What an offscreen render
     /// crops to.
     var contentBounds: CGRect { director.contentRect }
+
+    /// The desk the pointer is on. For the tests that stand in for a hand.
+    var hoveredSlotID: String? { hovered?.slotID }
 
     // MARK: - The clock
 
@@ -257,10 +298,21 @@ final class OfficeScene: SKScene {
     /// cost nothing at all rather than merely cost less.
     override func update(_ currentTime: TimeInterval) {
         super.update(currentTime)
-        // The camera keeps moving for a third of a second after a flight is
-        // started, so both questions are asked of where it actually is rather
-        // than of where it was told to go.
-        let live = cameraController.live
+        // The scroll view is where the reader is. It is read — and any flight
+        // in progress advanced — immediately before the frame that will show
+        // the result, which is what keeps the picture and the scrollers on the
+        // same instant.
+        if let host {
+            host.advance(to: currentTime)
+            if !hasFitted { fitAll() }
+            cameraController.mirror(host.viewport)
+            director.setCameraScale(cameraController.node.xScale)
+        }
+        // At most one hit test per drawn frame, however many times the pointer
+        // moved between them.
+        flushHover()
+
+        let live = cameraController.viewport
         director.cull(to: live.visibleRect, margin: Self.cullMargin)
 
         // A scene nobody is touching publishes nothing: the minimap is a
@@ -345,51 +397,7 @@ final class OfficeScene: SKScene {
         return view.texture(from: self)?.cgImage()
     }
 
-    // MARK: - Gestures
-
-    /// Two fingers moving the map, one scroll event at a time.
-    ///
-    /// The whole gesture arrives here, momentum included: after the fingers
-    /// lift, AppKit keeps sending scroll events with a momentum phase and
-    /// decaying deltas, so inertia is a property of not throwing them away
-    /// rather than something to simulate. While fingers are actually on the
-    /// glass the map may be pulled past its edge against a resistance; when
-    /// they lift, ``settle()`` pulls it back.
-    ///
-    /// - Parameters:
-    ///   - delta: how far to move, in view points, in the scene's axes.
-    ///   - isTouching: whether fingers are still on the trackpad, as opposed
-    ///     to this being momentum or a wheel.
-    func pan(by delta: CGVector, isTouching: Bool) {
-        cameraController.pan(by: delta, rubberBanding: isTouching)
-        cameraDidChange()
-    }
-
-    /// Zooms continuously, for the length of a pinch.
-    ///
-    /// Not stepped: a pinch that jumped between rungs under the fingers would
-    /// feel like a broken gesture, however crisp the pixels were at the end of
-    /// it. The rung is found when the fingers lift, in ``settle(atViewPoint:)``.
-    func magnify(by magnification: CGFloat, atViewPoint point: CGPoint) {
-        guard let view else { return }
-        let anchor = scenePoint(forViewPoint: point, in: view)
-        cameraController.zoom(
-            continuouslyTo: SceneGesture.zoom(cameraController.zoom, magnifiedBy: magnification),
-            around: anchor
-        )
-        cameraDidChange()
-    }
-
-    /// The end of a gesture: the zoom lands on a rung so the pixel grid comes
-    /// back, and anything pulled past the edge springs home.
-    func settle(atViewPoint point: CGPoint? = nil) {
-        let anchor = point.flatMap { location -> CGPoint? in
-            guard let view else { return nil }
-            return scenePoint(forViewPoint: location, in: view)
-        }
-        cameraController.settle(around: anchor)
-        cameraDidChange()
-    }
+    // MARK: - What the pointer is doing
 
     /// A two-finger double tap: frame the room under the pointer, or pull back
     /// to the whole map if it is already framed.
@@ -397,18 +405,16 @@ final class OfficeScene: SKScene {
     /// The same toggle every smart zoom on this platform performs — in, then
     /// out again on the second tap — with "in" meaning the thing under the
     /// pointer rather than a fixed magnification.
-    func smartZoom(atViewPoint point: CGPoint) {
-        guard let view else { return }
-        let scenePoint = scenePoint(forViewPoint: point, in: view)
-        guard let room = room(at: scenePoint) else {
+    func smartZoom(atLayoutPoint point: CGPoint) {
+        guard let room = room(atLayoutPoint: point) else {
             fitAll(animated: true)
             claimFocus(nil)
             return
         }
         let rect = SceneGeometry.scene(from: room.frame)
-        let framed = cameraController.viewport.focused(on: rect)
-        if abs(framed.zoom - cameraController.zoom) < 0.001,
-           cameraController.viewport.showsAll(of: rect) {
+        let current = viewport
+        let framed = current.focused(on: rect)
+        if abs(framed.zoom - current.zoom) < 0.001, current.showsAll(of: rect) {
             fitAll(animated: true)
             claimFocus(nil)
         } else {
@@ -416,17 +422,16 @@ final class OfficeScene: SKScene {
         }
     }
 
-    override func mouseDown(with event: NSEvent) {
-        guard let view else { return }
-        let point = scenePoint(for: event, in: view)
-        guard let desk = desk(at: point), let key = desk.sessionKey else {
+    /// A click on the office, at a point on the floor plan.
+    func click(atLayoutPoint point: CGPoint, clickCount: Int) {
+        guard let desk = desk(atLayoutPoint: point), let key = desk.sessionKey else {
             // Clicking the floor clears the selection, the way clicking the
             // board's background does. Double-clicking one frames the room,
             // which is the fastest way from "the whole office" to "this
             // project" without going near the sidebar.
-            if event.clickCount >= 2, let room = room(at: point) {
+            if clickCount >= 2, let room = room(atLayoutPoint: point) {
                 focus(room: room)
-            } else if event.clickCount == 1 {
+            } else if clickCount == 1 {
                 onSelect?(nil)
             }
             return
@@ -439,20 +444,22 @@ final class OfficeScene: SKScene {
         if let room = director.room(for: key) {
             claimFocus(room.projectKey)
             let rect = SceneGeometry.scene(from: room.frame)
-            if !cameraController.viewport.showsAll(of: rect) {
-                cameraController.focus(on: rect, animated: true)
-                cameraDidChange()
+            if !viewport.showsAll(of: rect) {
+                hasFitted = true
+                setViewport(viewport.focused(on: rect), animated: true)
             }
         }
-        if event.clickCount >= 2 { focus(on: key) }
+        if clickCount >= 2 { focus(on: key) }
     }
 
     /// Frames a room and tells the app which project that was, so the sidebar
     /// and the scene agree about what is being looked at.
     private func focus(room: SceneFloor) {
         claimFocus(room.projectKey)
-        cameraController.focus(on: SceneGeometry.scene(from: room.frame), animated: true)
-        cameraDidChange()
+        hasFitted = true
+        setViewport(
+            viewport.focused(on: SceneGeometry.scene(from: room.frame)), animated: true
+        )
     }
 
     /// Records a focus this scene is about to perform itself, so the value
@@ -463,15 +470,27 @@ final class OfficeScene: SKScene {
         onFocusProject?(project)
     }
 
-    /// Called by the view, which owns the tracking area.
-    func handleHover(at viewPoint: CGPoint?) {
-        guard let viewPoint, let view else {
+    /// The pointer has moved, at a point on the floor plan — or left the view.
+    ///
+    /// Recorded rather than acted on. A trackpad delivers mouse-moved events
+    /// several times faster than the office is drawn, and every one of them
+    /// used to become a hit test whose answer nothing could see until the next
+    /// frame; keeping the last one and answering it in ``update(_:)`` is the
+    /// same picture for a fraction of the work.
+    func hover(atLayoutPoint point: CGPoint?) {
+        pendingHover = .some(point)
+    }
+
+    /// Acts on wherever the pointer was last seen, at most once per frame.
+    private func flushHover() {
+        guard let pending = pendingHover else { return }
+        pendingHover = nil
+        guard let point = pending else {
             hovered?.setHovered(false)
             hovered = nil
             return
         }
-        let point = scenePoint(forViewPoint: viewPoint, in: view)
-        let desk = desk(at: point)
+        let desk = desk(atLayoutPoint: point)
         guard desk !== hovered else { return }
         hovered?.setHovered(false)
         hovered = desk
@@ -483,8 +502,9 @@ final class OfficeScene: SKScene {
 
     // MARK: - Hit testing
 
-    private func desk(at point: CGPoint) -> DeskNode? {
-        for node in nodes(at: point) {
+    /// The desk under a point on the floor plan.
+    private func desk(atLayoutPoint point: CGPoint) -> DeskNode? {
+        for node in nodes(at: SceneGeometry.scene(from: point)) {
             var current: SKNode? = node
             while let candidate = current {
                 if let desk = candidate as? DeskNode { return desk }
@@ -494,30 +514,11 @@ final class OfficeScene: SKScene {
         return nil
     }
 
-    /// The room under a scene point. Asked of the layout rather than of the
-    /// scene graph, because a room's panel is a shape node with a hit area
-    /// that would answer for its whole bounding box either way.
-    private func room(at point: CGPoint) -> SceneFloor? {
-        director.frame.floor(at: SceneGeometry.layout(from: point))
-    }
-
-    /// Where an event happened, in scene coordinates.
-    ///
-    /// Computed from the camera rather than through `convertPoint(fromView:)`
-    /// so that the answer is the same whatever the camera is doing: the scene
-    /// is `resizeFill`, so one view point is one scene point before the camera
-    /// scales it, and the camera's own transform is the whole conversion.
-    private func scenePoint(for event: NSEvent, in view: SKView) -> CGPoint {
-        scenePoint(forViewPoint: view.convert(event.locationInWindow, from: nil), in: view)
-    }
-
-    private func scenePoint(forViewPoint point: CGPoint, in view: SKView) -> CGPoint {
-        cameraController.scenePoint(
-            forViewOffset: CGPoint(
-                x: point.x - view.bounds.midX,
-                y: point.y - view.bounds.midY
-            )
-        )
+    /// The room under a point on the floor plan. Asked of the layout rather
+    /// than of the scene graph, because a room's panel is a shape node with a
+    /// hit area that would answer for its whole bounding box either way.
+    private func room(atLayoutPoint point: CGPoint) -> SceneFloor? {
+        director.frame.floor(at: point)
     }
 
     // MARK: - Backdrop

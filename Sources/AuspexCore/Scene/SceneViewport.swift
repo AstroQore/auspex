@@ -232,51 +232,23 @@ public struct SceneViewport: Sendable, Equatable {
         zoomed(to: Self.rung(steps, from: zoom), around: anchor)
     }
 
-    /// Moved by a delta measured in **view points** — a scroll or a drag as
-    /// the window reports it, in the scene's axis convention. Dividing by the
-    /// zoom is what makes a two-inch drag move two inches of screen whatever
-    /// the camera is doing.
-    ///
-    /// - Parameter rubberBanding: while fingers are still on the glass, let
-    ///   the map be pulled past its edge against a resistance that grows the
-    ///   further it goes, the way every scroll view on this platform does. It
-    ///   is not decoration: a hard stop under a moving finger reads as a
-    ///   dropped gesture, and the give is what says *this is the edge* rather
-    ///   than *this broke*. ``settled()`` is what pulls it back.
-    public func panned(by delta: CGVector, rubberBanding: Bool = false) -> Self {
-        guard zoom > 0 else { return self }
-        var moved = self
-        moved.center = CGPoint(x: center.x + delta.dx / zoom, y: center.y + delta.dy / zoom)
-        guard rubberBanding else { return moved.clamped() }
-
-        let inside = moved.clamped().center
-        // Asymptotic resistance: the first points past the edge cost almost
-        // nothing and the last cost everything, so the map can never be pulled
-        // more than `rubberBandLimit` points off no matter how long the drag.
-        let limit = Self.rubberBandLimit / zoom
-        func damped(_ overshoot: CGFloat) -> CGFloat {
-            overshoot == 0 ? 0 : overshoot * limit / (limit + abs(overshoot))
-        }
-        moved.center = CGPoint(
-            x: inside.x + damped(moved.center.x - inside.x),
-            y: inside.y + damped(moved.center.y - inside.y)
-        )
-        return moved
-    }
-
-    /// How far past the edge of the world a drag can pull the map, in points.
-    public static let rubberBandLimit: CGFloat = 140
-
     /// What the camera does when the fingers lift: the zoom lands on a rung
     /// and anything pulled past the edge springs back.
+    ///
+    /// Panning itself is the scroll view's — momentum, the elastic edge, and
+    /// which way "natural" means are all `NSScrollView`'s. This is the half the
+    /// platform has no opinion about: pixel art wants whole-pixel scale
+    /// factors, so a pinch that ends between rungs is walked onto the nearest
+    /// one, around whatever the fingers were over.
     public func settled(around anchor: CGPoint? = nil) -> Self {
         let rung = min(Self.maxZoom, max(Self.minZoom, Self.snapped(zoom)))
         guard rung != zoom else { return clamped() }
         return zoomed(to: rung, around: anchor, snapping: false).clamped()
     }
 
-    /// `true` when the map has been pulled off its edge and is waiting to
-    /// spring back.
+    /// `true` when the map has been pulled off its edge — which the scroll
+    /// view's elastic scrolling does while the fingers are still on the glass,
+    /// and which is what ``settled(around:)`` puts back.
     public var isOverscrolled: Bool {
         let inside = clamped()
         return abs(inside.center.x - center.x) > 0.5 || abs(inside.center.y - center.y) > 0.5
@@ -302,11 +274,5 @@ public struct SceneViewport: Sendable, Equatable {
         var moved = self
         moved.size = size
         return moved.clamped()
-    }
-
-    /// The scene point a view offset from the middle of the viewport is over.
-    public func scenePoint(forViewOffset offset: CGPoint) -> CGPoint {
-        guard zoom > 0 else { return center }
-        return CGPoint(x: center.x + offset.x / zoom, y: center.y + offset.y / zoom)
     }
 }

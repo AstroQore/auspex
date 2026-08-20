@@ -5,47 +5,16 @@ import Foundation
 ///
 /// ## Why the translation is here and not in the view
 ///
-/// The gesture handlers themselves have to be real AppKit responder methods on
-/// the view that owns the canvas — there is no SwiftUI approximation of
-/// momentum, of a pinch's centroid, or of a two-finger double tap. But what an
-/// `NSEvent`'s numbers *mean* is arithmetic, and arithmetic with a sign in it
-/// is arithmetic that is wrong for a week until somebody with a trackpad says
-/// "it goes the wrong way". So the signs live here, with tests, and the view
-/// is left holding nothing but `event.scrollingDeltaX`.
+/// Scrolling itself is the scroll view's now: momentum, elastic edges, and the
+/// system's scroll-direction preference are `NSScrollView`'s job, and it does
+/// them better than any hand-rolled substitute manages to keep doing. What is
+/// left here is the arithmetic the platform does *not* do for a canvas — a
+/// pinch that has to move the map as well as scale it, and a wheel notch that
+/// has to land on a rung — and arithmetic with a sign in it is arithmetic that
+/// is wrong for a week until somebody with a trackpad says "it goes the wrong
+/// way". So the signs live here, with tests, and the view is left holding
+/// nothing but `event.magnification`.
 public enum SceneGesture {
-    /// How far the camera should move for one scroll event.
-    ///
-    /// ## Which way a canvas goes
-    ///
-    /// A canvas moves *with* the fingers: two fingers pushing left push the
-    /// map left, the way Maps and Preview and every drawing tool on this
-    /// platform behave. That is the same thing as the camera moving right, so
-    /// the camera's delta is the negative of the content's.
-    ///
-    /// AppKit has already applied the system's scroll-direction preference to
-    /// the numbers by the time they arrive: with "natural" scrolling on — the
-    /// default, and what ``NSEvent/isDirectionInvertedFromDevice`` reports —
-    /// the deltas describe the content following the fingers, which is what
-    /// this wants. With it off they arrive reversed, so the sign goes back and
-    /// a wheel keeps behaving like a wheel.
-    ///
-    /// - Parameters:
-    ///   - x: `NSEvent.scrollingDeltaX`.
-    ///   - y: `NSEvent.scrollingDeltaY`.
-    ///   - isDirectionInverted: `NSEvent.isDirectionInvertedFromDevice`.
-    /// - Returns: a delta in view points, in the scene's y-up axes, ready for
-    ///   ``SceneViewport/panned(by:rubberBanding:)``.
-    public static func panDelta(
-        x: CGFloat,
-        y: CGFloat,
-        isDirectionInverted: Bool
-    ) -> CGVector {
-        let sign: CGFloat = isDirectionInverted ? 1 : -1
-        // The y flips once more than the x because the scroll deltas are in
-        // the window's y-down space and the scene is y-up.
-        return CGVector(dx: -sign * x, dy: sign * y)
-    }
-
     /// How far the document has to move so that the map keeps up with a pinch
     /// whose fingers are also travelling.
     ///

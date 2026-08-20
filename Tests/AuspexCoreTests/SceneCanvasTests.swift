@@ -170,15 +170,15 @@ struct SceneCanvasTests {
         )
     }
 
-    @Test("Panning past the edge stops at the edge instead of losing the map")
-    func panningIsClamped() {
-        let panned = Self.camera().panned(by: CGVector(dx: 100_000, dy: -100_000))
-        #expect(Self.world.contains(panned.visibleRect))
-        #expect(panned.visibleRect.maxX == Self.world.maxX)
-        #expect(panned.visibleRect.minY == Self.world.minY)
+    @Test("A camera sent past the edge stops at the edge instead of losing the map")
+    func movingIsClamped() {
+        let moved = Self.camera().centered(on: CGPoint(x: 100_000, y: -100_000))
+        #expect(Self.world.contains(moved.visibleRect))
+        #expect(moved.visibleRect.maxX == Self.world.maxX)
+        #expect(moved.visibleRect.minY == Self.world.minY)
     }
 
-    @Test("A world smaller than the window is centred and cannot be dragged")
+    @Test("A world smaller than the window is centred and stays centred")
     func smallWorldIsPinned() {
         let tiny = SceneViewport(
             content: CGRect(x: 0, y: 0, width: 300, height: 200),
@@ -188,7 +188,7 @@ struct SceneCanvasTests {
         ).clamped()
 
         #expect(tiny.center == CGPoint(x: 150, y: 100))
-        #expect(tiny.panned(by: CGVector(dx: 500, dy: 500)).center == tiny.center)
+        #expect(tiny.centered(on: CGPoint(x: 500, y: 500)).center == tiny.center)
         #expect(tiny.isFullyVisible)
     }
 
@@ -281,51 +281,23 @@ struct SceneCanvasTests {
 
     // MARK: - Trackpad
 
-    @Test("A two-finger scroll moves the map with the fingers")
-    func scrollFollowsTheFingers() {
-        // With natural scrolling on — the default — AppKit's deltas already
-        // describe the content following the fingers.
-        let natural = SceneGesture.panDelta(x: 10, y: 6, isDirectionInverted: true)
-        let classic = SceneGesture.panDelta(x: 10, y: 6, isDirectionInverted: false)
-        #expect(natural.dx == -classic.dx)
-        #expect(natural.dy == -classic.dy)
-        // Fingers pushing the map left move the camera right.
-        #expect(natural.dx < 0)
-        // The scroll deltas are y-down and the scene is y-up.
-        #expect(natural.dy > 0)
-    }
+    // Panning, momentum and the elastic edge belong to `NSScrollView` now, and
+    // what is left of them here is the property they have to leave the camera
+    // in: a map pulled off its edge is *followed* rather than corrected, and
+    // the correction happens when the fingers lift. The scroll view's side of
+    // that is in `SceneScrollTests`.
 
-    @Test("Momentum keeps the map moving and still stops at the edge")
-    func momentumStopsAtTheEdge() {
-        var camera = Self.camera(zoom: 2)
-        // A flick: fingers, then eight momentum events with decaying deltas.
-        camera = camera.panned(by: CGVector(dx: 1_200, dy: 0), rubberBanding: true)
-        var delta: CGFloat = 3_000
-        for _ in 0..<8 {
-            camera = camera.panned(by: CGVector(dx: delta, dy: 0))
-            delta *= 0.7
-        }
-        #expect(camera.visibleRect.maxX == Self.world.maxX)
-        #expect(!camera.isOverscrolled)
-    }
-
-    @Test("The map can be pulled off its edge, but only so far, and it comes back")
-    func rubberBanding() {
-        let camera = Self.camera(zoom: 2)
-        var pulled = camera
-        for _ in 0..<20 {
-            pulled = pulled.panned(by: CGVector(dx: 400, dy: 0), rubberBanding: true)
-        }
-        let clamped = camera.panned(by: CGVector(dx: 8_000, dy: 0))
-
+    @Test("A map pulled off its edge comes back when the fingers lift")
+    func elasticEdgesSpringHome() {
+        // What the clip view looks like mid-gesture: showing air past the
+        // corner of the world.
+        var pulled = Self.camera(zoom: 2)
+        pulled.center = CGPoint(x: Self.world.maxX + 90, y: Self.world.midY)
         #expect(pulled.isOverscrolled)
-        // Past the edge, but never more than the limit however long the drag.
-        let overshoot = pulled.center.x - clamped.center.x
-        #expect(overshoot > 0)
-        #expect(overshoot <= SceneViewport.rubberBandLimit / pulled.zoom + 0.001)
-        // And it springs home when the fingers lift.
-        #expect(!pulled.settled().isOverscrolled)
-        #expect(abs(pulled.settled().center.x - clamped.center.x) < 0.001)
+
+        let settled = pulled.settled()
+        #expect(!settled.isOverscrolled)
+        #expect(settled.visibleRect.maxX == Self.world.maxX)
     }
 
     @Test("A pinch zooms continuously and lands on a rung when the fingers lift")

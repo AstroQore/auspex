@@ -79,7 +79,7 @@ struct LiveSectionView: View {
             Spacer(minLength: 8)
 
             if mode == .scene {
-                Text("Scroll to pan · ⌘-scroll or pinch to zoom · double-click a room · ⌘0 fits")
+                Text("Two fingers pan and pinch · double-click a room · ⌘0 fits")
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.textTertiary)
             }
@@ -396,7 +396,7 @@ final class SceneCommands {
     var pause: () -> Void = {}
 }
 
-/// The `SKView` itself.
+/// The canvas itself: a scroll view over an `SKView`.
 private struct OfficeSceneRepresentable: NSViewRepresentable {
     let board: BoardSnapshot
     let selected: SessionKey?
@@ -407,11 +407,12 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let onFocusProject: (String?) -> Void
     let onOverview: (SceneOverview) -> Void
 
-    func makeNSView(context: Context) -> OfficeSKView {
+    func makeNSView(context: Context) -> SceneCanvasView {
         let theme = SceneTheme.resolved(for: NSApplication.shared.effectiveAppearance)
         let scene = OfficeScene(theme: theme)
-        let view = OfficeSKView(frame: CGRect(x: 0, y: 0, width: 900, height: 640))
-        view.presentScene(scene)
+        let view = SceneCanvasView(
+            scene: scene, frame: CGRect(x: 0, y: 0, width: 900, height: 640)
+        )
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
@@ -425,10 +426,10 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: OfficeSKView, context: Context) {
+    func updateNSView(_ view: SceneCanvasView, context: Context) {
         // Being asked to update is proof the scene is the mode on screen.
         view.refreshPaused()
-        guard let scene = view.scene as? OfficeScene else { return }
+        let scene = view.scene
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
@@ -441,7 +442,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         )
     }
 
-    static func dismantleNSView(_ view: OfficeSKView, coordinator: ()) {
+    static func dismantleNSView(_ view: SceneCanvasView, coordinator: ()) {
         view.stop()
     }
 }
@@ -460,7 +461,9 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
 /// typing hand at ten changes a second, and the difference between 30 and 60 Hz
 /// on that is a difference nobody can see and everybody's fan can hear.
 final class OfficeSKView: SKView {
-    private var tracking: NSTrackingArea?
+    /// Whether a gesture is in flight, which is the one time the office is
+    /// worth drawing at the display's rate.
+    private var isInteracting = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -507,102 +510,21 @@ final class OfficeSKView: SKView {
     /// the one that costs a core.
     func refreshPaused() { updatePaused() }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        tracking = area
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        officeScene?.handleHover(at: convert(event.locationInWindow, from: nil))
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        officeScene?.handleHover(at: nil)
-    }
-
-    // MARK: - Trackpad
-
-    /// Two fingers on the glass, and the momentum they leave behind.
+    /// Says whether a gesture is in flight.
     ///
-    /// ## Why this is here and not in the scene
-    ///
-    /// An `SKScene` is in the responder chain and would receive these too, but
-    /// the view is what the window actually hands the gesture to, it is what
-    /// knows the pointer's position in its own coordinates, and it is the one
-    /// object that still exists while the scene is paused. Everything a
-    /// trackpad can say is handled here and turned into a camera instruction.
-    ///
-    /// Momentum is not simulated: AppKit keeps sending scroll events with
-    /// decaying deltas after the fingers lift, and inertia is what happens
-    /// when they are not thrown away. `phase` says whether fingers are still
-    /// down, which is what decides between pulling the map past its edge and
-    /// stopping at it.
-    override func scrollWheel(with event: NSEvent) {
-        guard let scene = officeScene else { return }
-        let point = convert(event.locationInWindow, from: nil)
-
-        // ⌘-scroll is the mouse's way to zoom. A trackpad reports precise
-        // deltas and gets a continuous zoom; a wheel reports notches and gets
-        // a rung per notch, because half a rung of a wheel is a wheel that
-        // feels broken.
-        if event.modifierFlags.contains(.command) {
-            if event.hasPreciseScrollingDeltas {
-                let magnification = event.scrollingDeltaY / Self.pointsPerDoubling
-                scene.magnify(by: magnification, atViewPoint: point)
-                if event.phase.contains(.ended) || event.momentumPhase.contains(.ended) {
-                    scene.settle(atViewPoint: point)
-                }
-            } else {
-                scene.step(zoom: SceneGesture.rungs(forWheelDelta: event.scrollingDeltaY),
-                           atViewPoint: point)
-            }
-            return
-        }
-
-        let delta = SceneGesture.panDelta(
-            x: event.scrollingDeltaX,
-            y: event.scrollingDeltaY,
-            isDirectionInverted: event.isDirectionInvertedFromDevice
-        )
-        // Fingers down means the map may be pulled past its edge; momentum and
-        // wheels stop at it.
-        let touching = event.phase.contains(.began) || event.phase.contains(.changed)
-        scene.pan(by: delta, isTouching: touching)
-        // The gesture is over twice: once when the fingers lift, and again
-        // when the momentum they left behind runs out. Settling at both is
-        // what stops a flick from being left hanging off the edge.
-        let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
-            || event.momentumPhase.contains(.ended)
-        if ended { scene.settle() }
+    /// The office rests at thirty frames a second — the fastest thing in it is
+    /// a typing hand at ten changes a second — but a *map moving under the
+    /// fingers* is judged by a different standard, and thirty frames of a pan
+    /// is the one place the difference is visible. So the rate goes up for the
+    /// length of a gesture and comes straight back down; the canvas stops
+    /// asking a few hundred milliseconds after the last event, so nothing is
+    /// left paying for it.
+    func setInteracting(_ interacting: Bool) {
+        guard isInteracting != interacting else { return }
+        isInteracting = interacting
+        guard !isPaused else { return }
+        preferredFramesPerSecond = interacting ? Self.gestureFramesPerSecond : Self.framesPerSecond
     }
-
-    /// A pinch, continuously, around the point between the fingers.
-    override func magnify(with event: NSEvent) {
-        guard let scene = officeScene else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        scene.magnify(by: event.magnification, atViewPoint: point)
-        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
-            // The pixel grid comes back when the fingers lift, not while they
-            // are still moving.
-            scene.settle(atViewPoint: point)
-        }
-    }
-
-    /// A two-finger double tap: frame the room under the pointer, or pull back
-    /// out if it is already framed.
-    override func smartMagnify(with event: NSEvent) {
-        officeScene?.smartZoom(atViewPoint: convert(event.locationInWindow, from: nil))
-    }
-
-    /// How far a ⌘-scroll has to travel on a trackpad to double the zoom.
-    private static let pointsPerDoubling: CGFloat = 260
 
     // MARK: - Live resize
 
@@ -689,7 +611,8 @@ final class OfficeSKView: SKView {
             suspend()
             return
         }
-        preferredFramesPerSecond = Self.framesPerSecond
+        preferredFramesPerSecond = isInteracting
+            ? Self.gestureFramesPerSecond : Self.framesPerSecond
         isPaused = false
         scene?.isPaused = false
     }
@@ -698,6 +621,8 @@ final class OfficeSKView: SKView {
     /// snapshots at twenty: the fastest thing in the scene is a typing hand at
     /// ten changes a second.
     private static let framesPerSecond = 30
+    /// What a gesture gets, for as long as it lasts.
+    private static let gestureFramesPerSecond = 60
 }
 
 /// Renders the office to a PNG without a window.
