@@ -43,12 +43,13 @@ protocol SceneViewportHost: AnyObject {
 ///
 /// The `SKView` is deliberately *not* the document view. A document view is
 /// scaled by the magnification, so a Metal-backed one would have to keep a
-/// drawable the size of the whole building times the zoom: a forty-project
-/// campus is about 1 400 × 1 100 points, which at 4× on a Retina display is
-/// 11 200 × 8 800 pixels — some 375 MB of backing store for a picture that is
-/// 900 points wide on screen. Window-sized and camera-driven, it costs the
-/// window and nothing else, and the pixel art stays exactly as crisp because
-/// the camera scales the *scene* rather than a bitmap of it.
+/// drawable the size of the whole building times the zoom. Measured on the
+/// layout: forty projects come to 1 704 × 1 282 points, which at 4× on a
+/// Retina display is 559 MB of backing store, and the six-hundred-session day
+/// this app is built for comes to 4 304 × 3 154 points — 3.5 GB — for a
+/// picture that is 900 points wide on screen. Window-sized and camera-driven
+/// it costs the window and nothing else, and the pixel art stays exactly as
+/// crisp, because the camera scales the *scene* rather than a bitmap of it.
 ///
 /// So the hierarchy is two siblings: the `SKView` fills the frame and draws,
 /// and a transparent scroll view sits over it holding the gestures, the

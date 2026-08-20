@@ -247,8 +247,9 @@ Auspex is pre-alpha; there are no released versions yet.
   pointer, and the landing on the crisp zoom ladder when the fingers lift. The
   `SKView` is deliberately not the document view: a document is scaled by the
   magnification, so a Metal-backed one would need a drawable the size of the
-  building times the zoom — hundreds of megabytes for a picture 900 points
-  wide.
+  building times the zoom — 559 MB for a forty-project office at 4× on a Retina
+  display, and 3.5 GB for a six-hundred-session one, to draw a picture 900
+  points wide.
 - **Hovering costs a rectangle test rather than a walk of the office.** Every
   mouse-moved event used to call `SKScene.nodes(at:)`, which visits every node
   in the scene and allocates; measured on a 600-session office that is 5.0 ms
