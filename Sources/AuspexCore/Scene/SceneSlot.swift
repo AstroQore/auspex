@@ -127,7 +127,7 @@ public struct SceneMetrics: Sendable, Equatable {
     /// The bottom edge of the table surface, from the top of its rectangle.
     public var tableSurfaceBottom: CGFloat { 104 }
     /// The floor line the near row of chairs stands on.
-    public var tableNearSeatY: CGFloat { 136 }
+    public var tableNearSeatY: CGFloat { 132 }
 
     /// The dimensions the scene view uses.
     public static let standard = SceneMetrics()
@@ -582,8 +582,29 @@ public struct SceneFrame: Sendable, Equatable {
     /// The union rather than the first room, because framing one of a
     /// project's two rooms and leaving the other off screen answers the
     /// question "where is this project" with half a lie.
+    ///
+    /// Once a delegating family gets up and walks out, the room it left is a
+    /// row of empty desks — a picture of where a project's people are *not*.
+    /// So when nobody is at a desk of this project's and it has a table, the
+    /// table is what gets framed.
+    ///
+    /// Framing both would be worse than framing either: the annexes hang under
+    /// the whole campus, so the union of a room near the top and a table near
+    /// the bottom is most of the map, and "focus this project" would become
+    /// "fit everything" for any project that happened to be delegating.
     public func focusRect(forProject key: String?) -> CGRect? {
         let rooms = floors(forProject: key)
+        let indices = Set(rooms.map(\.index))
+        let anybodyAtADesk = slots.contains { $0.isOccupied && indices.contains($0.floorIndex) }
+
+        if !anybodyAtADesk {
+            var meeting: CGRect?
+            for table in tables where table.projectKey == key {
+                meeting = meeting.map { $0.union(table.frame) } ?? table.frame
+            }
+            if let meeting { return meeting }
+        }
+
         guard var union = rooms.first?.frame else { return nil }
         for room in rooms.dropFirst() { union = union.union(room.frame) }
         return union

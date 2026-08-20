@@ -394,6 +394,30 @@ struct SceneZoneTests {
         for x in benches { for seat in queue { #expect(seat.anchor.x > x) } }
     }
 
+    @Test("Focusing a project whose room has emptied frames the table instead")
+    func focusFollowsTheFamily() throws {
+        let root = Self.session("root", state: .delegating(children: 1))
+        let child = Self.session("child", parent: root.key)
+        var layout = SceneLayout()
+        let frame = layout.update(with: Self.board([root, child]))
+
+        // Nobody is at a desk of this project's: they are all at the table.
+        let table = try #require(frame.tables.first)
+        #expect(frame.focusRect(forProject: Self.project) == table.frame)
+
+        // One of them goes back to work, and the room is what to look at
+        // again — framing both would be framing most of the map.
+        var back = SceneLayout()
+        let working = back.update(
+            with: Self.board([root, Self.session("child", parent: root.key, state: .thinking),
+                              Self.session("solo", state: .toolCalling(name: "Bash"))])
+        )
+        let rooms = working.floors(forProject: Self.project)
+        let focus = try #require(working.focusRect(forProject: Self.project))
+        for room in rooms { #expect(focus.contains(room.frame)) }
+        for area in working.zones { #expect(!focus.intersects(area.frame)) }
+    }
+
     @Test("An empty board draws no annexes")
     func emptyBoardIsEmpty() {
         var layout = SceneLayout()
