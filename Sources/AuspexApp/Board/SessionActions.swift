@@ -19,6 +19,11 @@ import SwiftUI
 struct SessionActionsMenu: View {
     let identity: SessionIdentity
 
+    /// The control model, when this menu is being built somewhere that has
+    /// one. `nil` in the offscreen renderers, which draw a session's chrome
+    /// into a bitmap and must not offer to signal anything.
+    var control: SessionControlModel?
+
     var body: some View {
         let resume = SessionHandoff.resume(for: identity)
         let directory = SessionHandoff.workingDirectory(for: identity)
@@ -26,15 +31,15 @@ struct SessionActionsMenu: View {
         Group {
             switch resume {
             case let .available(command, shellLine):
-                Button("Resume in Terminal") {
-                    SessionActions.resumeInTerminal(shellLine: shellLine)
+                Button("Resume in \(SessionActions.terminal.name)") {
+                    SessionActions.resume(shellLine: shellLine, directory: directory)
                 }
-                .help("Copies the command and opens Terminal running it")
+                .help("Copies the command and opens \(SessionActions.terminal.name) running it")
                 Button("Copy resume command") {
                     SessionActions.copy(command)
                 }
             case let .unavailable(reason):
-                Button("Resume in Terminal") {}
+                Button("Resume in \(SessionActions.terminal.name)") {}
                     .disabled(true)
                     .help(reason)
                 Text(reason)
@@ -54,6 +59,38 @@ struct SessionActionsMenu: View {
                     SessionActions.open(directory, in: editor)
                 }
             }
+
+            if let control {
+                Divider()
+                SessionSignalItems(identity: identity, control: control)
+            }
+        }
+    }
+}
+
+/// The two items that act on the session's process.
+///
+/// Their own view so that the availability question — which reads a process
+/// table — is asked once, when the menu opens, rather than once per item.
+///
+/// Both are disabled with the reason beside them when there is no process to
+/// signal, for the same reason Resume is: a session with no pid is the common
+/// case, not an error, and an item that quietly vanishes teaches nobody why.
+private struct SessionSignalItems: View {
+    let identity: SessionIdentity
+    let control: SessionControlModel
+
+    var body: some View {
+        let availability = control.availability(for: identity)
+        switch availability {
+        case let .available(target):
+            Button("Interrupt (SIGINT)") { control.interrupt(identity) }
+                .help(SessionControl.interruptHelp(for: identity.key.harness, pid: target.pid))
+            Button("Kill…") { control.requestKill(identity) }
+                .help("Asks first, then sends SIGTERM to pid \(target.pid)")
+        case let .unavailable(reason):
+            Button("Interrupt (SIGINT)") {}.disabled(true).help(reason)
+            Button("Kill…") {}.disabled(true).help(reason)
         }
     }
 }
@@ -61,33 +98,61 @@ struct SessionActionsMenu: View {
 /// The side-effecting half of the handoff.
 ///
 /// Every string it uses is built by ``SessionHandoff`` in Core, where the
-/// quoting is tested. What is left here is the three system calls that cannot
-/// be: the pasteboard, an AppleScript, and `NSWorkspace`.
+/// quoting is tested. What is left here is the system calls that cannot be:
+/// the pasteboard, an AppleScript, `NSWorkspace`, and one notification
+/// observer.
+@MainActor
 enum SessionActions {
     /// The editor shim on this machine, found once.
     ///
     /// Once, because it is a `stat` of four paths and the answer does not
     /// change while the app runs — and because a context menu is built on
     /// every right-click, which is not a place to go to the filesystem.
-    static let editor: SessionHandoff.Editor? = SessionHandoff.detectEditor()
+    nonisolated static let editor: SessionHandoff.Editor? = SessionHandoff.detectEditor()
 
-    /// Copies the resume command and opens Terminal running it.
+    /// The terminal a resume would open in right now.
+    ///
+    /// Read by the menu to name the item — "Resume in iTerm" rather than
+    /// "Resume in Terminal" — because an item that says one terminal and opens
+    /// another is worse than no item.
+    static var terminal: SessionHandoff.Terminal { TerminalChoice.shared.current }
+
+    /// Copies the resume command and opens it in the person's terminal.
     ///
     /// Both, not either. The clipboard is what makes this useful to somebody
-    /// who lives in iTerm, Ghostty, or a tmux session — Terminal.app is the
-    /// only terminal macOS guarantees, and it is the only one this can drive
-    /// without guessing.
-    static func resumeInTerminal(shellLine: String) {
+    /// who lives in Ghostty, kitty, or a tmux session — and it is the whole of
+    /// what a terminal with no scripting dictionary can be given, so the copy
+    /// is not a courtesy, it is the mechanism.
+    static func resume(shellLine: String, directory: String?) {
         copy(shellLine)
-        let script = SessionHandoff.terminalScript(shellLine: shellLine)
-        guard let appleScript = NSAppleScript(source: script) else { return }
+        let terminal = TerminalChoice.shared.current
+        if let script = SessionHandoff.terminalScript(for: terminal, shellLine: shellLine) {
+            run(script)
+            return
+        }
+        // A terminal that cannot be told to run anything gets a window on the
+        // right directory, with the command already on the clipboard. Where
+        // even that is not possible — no directory recorded — Terminal.app
+        // runs it, because a resume that does nothing at all is the one
+        // outcome worth avoiding.
+        if let url = SessionHandoff.terminalURL(for: terminal, directory: directory) {
+            NSWorkspace.shared.open(url)
+        } else {
+            run(SessionHandoff.terminalScript(shellLine: shellLine))
+        }
+    }
+
+    /// Runs an AppleScript, ignoring failure.
+    ///
+    /// A failure here is almost always the automation permission prompt being
+    /// declined, and the command is already on the clipboard — which is the
+    /// outcome the person can act on either way. Nothing is logged: the script
+    /// carries a working directory, and a path is exactly what the house rules
+    /// keep out of log lines.
+    private static func run(_ source: String) {
+        guard let appleScript = NSAppleScript(source: source) else { return }
         var error: NSDictionary?
         appleScript.executeAndReturnError(&error)
-        // A failure here is almost always the automation permission prompt
-        // being declined, and the command is already on the clipboard — which
-        // is the outcome the person can act on either way. Nothing is logged:
-        // the script carries a working directory, and a path is exactly what
-        // the house rules keep out of log lines.
     }
 
     /// Puts a string on the general pasteboard.
@@ -111,5 +176,58 @@ enum SessionActions {
         process.executableURL = URL(fileURLWithPath: editor.executablePath)
         process.arguments = [path]
         try? process.run()
+    }
+}
+
+/// Which terminal the person actually uses, worked out by watching.
+///
+/// macOS will not answer "what is the default terminal", so the honest way to
+/// find out is to notice. Every time an application comes to the front, this
+/// asks whether it is a terminal it knows; when it is, that is the answer from
+/// then on. A person who has been in iTerm all morning gets iTerm, and nobody
+/// had to be asked.
+///
+/// Asking which application is frontmost *at the moment of the click* would
+/// only ever answer "Auspex", which is why this remembers instead of looking.
+///
+/// The installed set is the fallback and is read once: applications do not
+/// appear while the app is running, and `NSWorkspace.urlForApplication` is a
+/// Launch Services round trip that has no business happening inside a menu.
+@MainActor
+final class TerminalChoice {
+    static let shared = TerminalChoice()
+
+    /// The last known terminal that was in front, if one has been.
+    private var lastUsed: String?
+
+    private lazy var installed: Set<String> = Set(
+        SessionHandoff.knownTerminals
+            .map(\.bundleIdentifier)
+            .filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+    )
+
+    private init() {
+        // The one currently in front counts too: Auspex is usually launched
+        // from a terminal, so at startup the answer is often already there.
+        note(NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let bundleIdentifier = app?.bundleIdentifier
+            MainActor.assumeIsolated { self?.note(bundleIdentifier) }
+        }
+    }
+
+    /// The terminal a resume should open in.
+    var current: SessionHandoff.Terminal {
+        SessionHandoff.chooseTerminal(lastUsed: lastUsed) { installed.contains($0) }
+    }
+
+    private func note(_ bundleIdentifier: String?) {
+        guard SessionHandoff.terminal(bundleIdentifier: bundleIdentifier) != nil else { return }
+        lastUsed = bundleIdentifier
     }
 }

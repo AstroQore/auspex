@@ -21,13 +21,26 @@ actor DemoEventSource {
     private let continuation: AsyncStream<AgentEvent>.Continuation
     private let seed: UInt64
 
+    /// The real `/bin/sleep` one demo session borrows a pid from, so that
+    /// Interrupt and Kill can be tried by hand. See ``DemoSignalTarget``.
+    private let signalTarget = DemoSignalTarget()
+
+    /// Whether to start that process at all. Off for the offscreen renderers,
+    /// which draw a bitmap and exit.
+    private let lendsProcess: Bool
+
     /// Pause between loops, so the board visibly settles before the sessions
     /// start over rather than snapping back mid-animation.
     private static let loopGap = Duration.seconds(5)
 
-    init(continuation: AsyncStream<AgentEvent>.Continuation, seed: UInt64 = DemoScript.defaultSeed) {
+    init(
+        continuation: AsyncStream<AgentEvent>.Continuation,
+        seed: UInt64 = DemoScript.defaultSeed,
+        lendsProcess: Bool = true
+    ) {
         self.continuation = continuation
         self.seed = seed
+        self.lendsProcess = lendsProcess
     }
 
     /// Runs until the surrounding task is cancelled.
@@ -41,9 +54,16 @@ actor DemoEventSource {
         }
     }
 
+    /// Ends the stand-in process. Called from the app's own shutdown, so a
+    /// demo run leaves nothing behind.
+    func stop() async {
+        await signalTarget.stop()
+    }
+
     private func replay(generation: Int) async {
         let script = DemoScript.make(seed: seed, startedAt: Date(), generation: generation)
         let start = ContinuousClock.now
+        var lentPID = false
         for step in script.steps {
             let due = start.advanced(by: .seconds(step.offset))
             if due > ContinuousClock.now {
@@ -55,7 +75,33 @@ actor DemoEventSource {
             }
             guard !Task.isCancelled else { return }
             continuation.yield(restamped(step.event))
+
+            // Straight after the first session opens, and once per loop: the
+            // identity patch has to follow the `sessionStarted` it belongs to,
+            // or the registry seeds the session from the patch instead.
+            if lendsProcess, !lentPID, case let .sessionStarted(identity) = step.event.kind {
+                lentPID = true
+                await lendProcess(to: identity.key)
+            }
         }
+    }
+
+    /// Gives one demo session the pid of a live `/bin/sleep`.
+    ///
+    /// Through the ordinary identity patch, so nothing downstream is aware the
+    /// demo did anything unusual — the guard, the menu, and the trace all see
+    /// exactly what they would see for a harness whose store recorded a pid.
+    private func lendProcess(to key: SessionKey) async {
+        guard let stand = await signalTarget.current() else { return }
+        continuation.yield(
+            AgentEvent(
+                session: key,
+                timestamp: Date(),
+                kind: .identityUpdated(
+                    SessionIdentityPatch(pid: stand.pid, procStart: stand.procStart)
+                )
+            )
+        )
     }
 
     /// The same event, happening now.

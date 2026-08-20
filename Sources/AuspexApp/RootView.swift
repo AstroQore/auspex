@@ -49,6 +49,7 @@ struct RootView: View {
                 environment.ignoreDraft = nil
             }
         }
+        .modifier(KillConfirmation(control: environment.control))
         .task { environment.start() }
         .task { await clock.run() }
         .onReceive(

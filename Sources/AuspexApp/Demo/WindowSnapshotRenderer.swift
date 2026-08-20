@@ -55,7 +55,7 @@ enum WindowSnapshotRenderer {
         // policy keeps it out of the Dock and off the menu bar while it does.
         NSApplication.shared.setActivationPolicy(.prohibited)
 
-        let environment = AppEnvironment(mode: .demo)
+        let environment = AppEnvironment(mode: .demo, offersSignalTarget: false)
         environment.board.autoSelectsFirstSession = true
         environment.start()
         for kind in ignore { environment.catalog.add(rule: IgnoreRule(kind: kind)) }

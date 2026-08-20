@@ -12,6 +12,12 @@ import SwiftUI
 struct SessionTraceView: View {
     @Bindable var model: LiveBoardModel
 
+    /// For the header's action menu, which can signal a process. Installed by
+    /// every host that draws this pane, including the offscreen renderers —
+    /// where the control model has no process table and therefore offers
+    /// nothing.
+    @Environment(AppEnvironment.self) private var environment
+
     var body: some View {
         Group {
             if let session = model.selectedSession {
@@ -30,6 +36,7 @@ struct SessionTraceView: View {
                 parent: model.selectedParent,
                 children: model.selectedChildren,
                 projectName: model.selectedProjectName,
+                control: environment.control,
                 onSelect: { model.selectedKey = $0 },
                 onOpenTrajectory: { model.openTrajectory() }
             )
@@ -264,6 +271,9 @@ struct SessionHeaderView: View {
     /// The project this session groups under, inherited from an ancestor when
     /// it recorded no directory of its own.
     var projectName: String?
+    /// Interrupt and kill, when the host has them. `nil` where a header is
+    /// drawn into a bitmap rather than onto a screen.
+    var control: SessionControlModel?
     let onSelect: (SessionKey) -> Void
     /// Opens this session's trajectory. `nil` where there is nowhere to open
     /// it — the offscreen renderer builds this header without a board column
@@ -368,31 +378,56 @@ struct SessionHeaderView: View {
     /// the errand the board exists to remind a person of, and an action that
     /// only exists on right-click is an action most people never find.
     /// Disabled with the reason for the harnesses that have no way back.
+    ///
+    /// One click, no menu. It used to open the whole handoff menu, which was
+    /// fine while every item in it was a way *back into* the session; it stops
+    /// being fine now that one of them stops the session. A control that is
+    /// nine tenths harmless and one tenth destructive is a control people stop
+    /// reading. So the errand keeps its own button and everything else — the
+    /// copy, the editor, the signals — moved next door.
     @ViewBuilder
     private var resumeButton: some View {
         let resume = SessionHandoff.resume(for: session.identity)
+        PillButton(
+            title: "Resume",
+            systemImage: "arrow.uturn.backward",
+            isEnabled: resume.isAvailable,
+            help: resume.reason
+                ?? "Opens \(SessionActions.terminal.name) on this session's own CLI command"
+        ) {
+            guard case let .available(_, shellLine) = resume else { return }
+            SessionActions.resume(
+                shellLine: shellLine,
+                directory: SessionHandoff.workingDirectory(for: session.identity)
+            )
+        }
+    }
+
+    /// Everything else that can be done to this session, including the two
+    /// things that stop it.
+    ///
+    /// The same menu a card's right-click gives, so the two cannot drift
+    /// apart — and behind an unlabelled ellipsis, which is what a row of
+    /// destructive-adjacent actions should look like.
+    private var actionsMenu: some View {
         Menu {
-            SessionActionsMenu(identity: session.identity)
+            SessionActionsMenu(identity: session.identity, control: control)
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 9, weight: .bold))
-                Text("Resume")
-                    .font(AuspexType.pill)
-            }
-            .foregroundStyle(resume.isAvailable ? AuspexPalette.text2 : AuspexPalette.text3)
-            .fixedSize()
+            Image(systemName: "ellipsis")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(AuspexPalette.text2)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
-        .padding(.horizontal, 9)
-        .frame(height: 22)
+        .frame(width: 24, height: 22)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
         )
-        .help(resume.reason ?? "Open this session again in its own CLI")
+        .help("Copy the resume command, open the folder, interrupt or kill this session")
     }
 
     /// The way into the session's whole history.
@@ -401,25 +436,12 @@ struct SessionHeaderView: View {
     /// answers to "and now what": one goes back to the terminal, the other
     /// goes back through what already happened.
     private func trajectoryButton(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: BoardViewMode.trajectory.systemImage)
-                    .font(.system(size: 9, weight: .bold))
-                Text("Open trajectory")
-                    .font(AuspexType.pill)
-            }
-            .foregroundStyle(AuspexPalette.text2)
-            .fixedSize()
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(AuspexPalette.line, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Open this session's whole history as a waterfall (⌘T)")
+        PillButton(
+            title: "Open trajectory",
+            systemImage: BoardViewMode.trajectory.systemImage,
+            help: "Open this session's whole history as a waterfall (⌘T)",
+            action: action
+        )
     }
 
     /// The full name, never an abbreviation, and the three identifiers a
@@ -529,7 +551,44 @@ struct SessionHeaderView: View {
             .fixedSize()
             resumeButton
             if let onOpenTrajectory { trajectoryButton(onOpenTrajectory) }
+            actionsMenu
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The header's outlined 22-point control: a mark, a word, and a border.
+///
+/// One type rather than three copies of the same nine modifiers, so that
+/// Resume, Open trajectory and anything that joins them cannot end up a pixel
+/// apart from each other.
+struct PillButton: View {
+    let title: String
+    let systemImage: String
+    var isEnabled = true
+    var help: String = ""
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 9, weight: .bold))
+                Text(title)
+                    .font(AuspexType.pill)
+            }
+            .foregroundStyle(isEnabled ? AuspexPalette.text2 : AuspexPalette.text3)
+            .fixedSize()
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(AuspexPalette.line, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .help(help)
     }
 }

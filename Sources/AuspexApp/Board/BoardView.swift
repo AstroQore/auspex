@@ -125,7 +125,7 @@ struct BoardView: View {
     @ViewBuilder
     private func actions(for row: BoardRow) -> some View {
         if let session = model.session(for: row.key) {
-            SessionActionsMenu(identity: session.identity)
+            SessionActionsMenu(identity: session.identity, control: environment.control)
         }
     }
 

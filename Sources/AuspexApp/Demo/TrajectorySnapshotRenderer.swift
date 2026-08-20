@@ -32,7 +32,7 @@ enum TrajectorySnapshotRenderer {
     ) throws -> String {
         NSApplication.shared.setActivationPolicy(.prohibited)
 
-        let environment = AppEnvironment(mode: .demo)
+        let environment = AppEnvironment(mode: .demo, offersSignalTarget: false)
         environment.board.autoSelectsFirstSession = true
         environment.start()
         defer { Task { await environment.shutdown() } }

@@ -74,6 +74,11 @@ public final class AppEnvironment {
     /// the board places and filters with.
     let catalog: ProjectCatalogModel
 
+    /// Interrupt and kill: the one place the app acts on a session rather than
+    /// watching it. Every path through it is behind a click, and the
+    /// destructive one is behind a click and a dialog.
+    let control = SessionControlModel()
+
     /// The prefilled "ignore this…" sheet, when one is open.
     ///
     /// Held here rather than in the view that opened it: the menu items that
@@ -102,9 +107,23 @@ public final class AppEnvironment {
     /// them rather than two.
     private static let groupingInterval = Duration.seconds(3)
 
-    public init(paths: AuspexPaths = .default, mode: Mode = .live) {
+    /// Whether a demo run may start a real process for Interrupt and Kill to
+    /// be tried against — see ``DemoSignalTarget``.
+    ///
+    /// Off for the offscreen renderers. They draw the demo board into a
+    /// bitmap and exit; nothing in a bitmap can be clicked, and a renderer
+    /// that spawned a process and then called `exit(0)` would leave it behind
+    /// every time a screenshot was taken.
+    private let offersSignalTarget: Bool
+
+    public init(
+        paths: AuspexPaths = .default,
+        mode: Mode = .live,
+        offersSignalTarget: Bool = true
+    ) {
         self.paths = paths
         self.mode = mode
+        self.offersSignalTarget = offersSignalTarget
         // The demo may not read or write `~/.auspex/`, so its catalog has no
         // stores behind it: whatever it is given lives in memory for as long
         // as the process does.
@@ -202,6 +221,15 @@ public final class AppEnvironment {
         // them, and some harnesses pass credentials in argv.
         let table = ProcessTable(includesArguments: false, includesWorkingDirectory: false)
 
+        // The same table again, for the third reader. A context menu asking
+        // "can this session be signalled" hits the snapshot the last liveness
+        // tick already paid for; only an actual send refreshes it.
+        control.start(table: table)
+        control.onEvent = { [weak self] event in
+            self?.eventContinuation?.yield(event)
+        }
+        control.onNotice = { [board] notice in board.record(notice: notice) }
+
         switch mode {
         case .demo:
             startDemo(into: continuation)
@@ -282,6 +310,10 @@ public final class AppEnvironment {
         eventContinuation = nil
         await coordinator?.stop()
         coordinator = nil
+        // Before dropping it: the demo owns a real `/bin/sleep` for Interrupt
+        // and Kill to be tried against, and letting the actor go without
+        // stopping it would leave the process behind.
+        await demoSource?.stop()
         demoSource = nil
         await registry?.stop()
         registry = nil
@@ -339,7 +371,10 @@ public final class AppEnvironment {
     }
 
     private func startDemo(into continuation: AsyncStream<AgentEvent>.Continuation) {
-        let source = DemoEventSource(continuation: continuation)
+        let source = DemoEventSource(
+            continuation: continuation,
+            lendsProcess: offersSignalTarget
+        )
         demoSource = source
         tasks.append(Task.detached { await source.run() })
     }

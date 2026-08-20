@@ -313,6 +313,26 @@ public enum SessionControl {
                 + "will not be finished."
     }
 
+    /// What the Interrupt item's tooltip says, per harness.
+    ///
+    /// Worth saying out loud for Claude Code because the obvious assumption is
+    /// wrong. A full-screen harness reads its keyboard in raw mode, where ⌃C
+    /// arrives as a byte and never becomes a signal at all — so the TUI's
+    /// "press again to exit" has nothing to do with `SIGINT`, and a real
+    /// `SIGINT` goes to the handler that shuts the session down. Observed
+    /// against a disposable session; see
+    /// `docs/research/claude-messaging-socket.md`.
+    public static func interruptHelp(for harness: Harness, pid: pid_t) -> String {
+        switch harness {
+        case .claudeCode:
+            "Sends SIGINT to pid \(pid). Claude Code takes that as a graceful quit — it saves "
+                + "the session and exits, rather than stopping only the current turn."
+        default:
+            "Sends SIGINT to pid \(pid) — the signal a terminal sends on ⌃C. What the harness "
+                + "does with it is the harness's decision."
+        }
+    }
+
     /// The sentence written into the session's trace after a signal is sent.
     ///
     /// A note rather than a synthesised lifecycle event: this is Auspex saying
