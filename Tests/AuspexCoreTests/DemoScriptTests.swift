@@ -278,6 +278,28 @@ struct DemoScriptTests {
         }
     }
 
+    @Test("the demo's auto review is folded under its root rather than shipped linked")
+    func autoReviewIsFoldedFromItsVariant() throws {
+        let script = DemoScript.make(startedAt: epoch)
+        let identities: [SessionIdentity] = script.steps.compactMap { step in
+            guard case .sessionStarted(let identity) = step.event.kind else { return nil }
+            return identity
+        }
+        let review = try #require(identities.first(where: SessionRelations.isAutoReview))
+        // The script must *not* hand the board the edge: the whole point of
+        // the demo session is that the grouping pass has to derive it from the
+        // variant, the way it does against a real rollout.
+        #expect(review.parent == nil)
+        #expect(review.parentLink == nil)
+
+        let link = try #require(SessionRelations.links(identities: identities).first)
+        #expect(link.child == review.key)
+        #expect(identities.contains { $0.key == link.parent })
+        // Under the root the demo's Codex session already is, so the board
+        // shows a two-deep tree rather than a second orphan.
+        #expect(link.parent.harness == .codex)
+    }
+
     @Test("a script folds through the reducer without producing a stuck session")
     func scriptReducesToASensibleBoard() {
         let script = DemoScript.make(startedAt: epoch)

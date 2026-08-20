@@ -203,13 +203,15 @@ extension DemoScript {
 // MARK: - The cast
 
 extension DemoScript.Blueprint {
-    /// The eleven sessions the demo board shows.
+    /// The twelve sessions the demo board shows.
     ///
     /// Chosen to cover all eight featured harnesses, every state the card can
     /// be in, both grouping axes (five directories, two of them shared by
-    /// different harnesses, plus the one pseudo project), a parent/child pair,
-    /// and both shapes of *done unseen* — one session that closed a turn and
-    /// exited (6), and one that closed a turn and is still sitting open (8).
+    /// different harnesses, plus the one pseudo project), both kinds of
+    /// parent/child pair — one the parent's own log recorded (1 → its
+    /// subagent) and one only an identity records (12 → 2) — and both shapes
+    /// of *done unseen*: one session that closed a turn and exited (6), and
+    /// one that closed a turn and is still sitting open (8).
     ///
     /// Every blueprint opens with a real instruction and answers with real
     /// prose, because that is what the board's ledger lines draw: a demo whose
@@ -597,6 +599,48 @@ extension DemoScript.Blueprint {
                 .idle(11.0)
             ],
             startDelay: 2.6
+        ),
+
+        // 12. Codex Auto Review: the guardian rollout that reviews session 2's
+        //     work. Nothing in either rollout's body mentions the other — the
+        //     only record of the relationship is this session's provider
+        //     variant, `auto-review:<root session id>`, so it is deliberately
+        //     emitted with *no* parent in its identity and left for
+        //     `SessionRelations` to fold. A demo that hard-coded the edge would
+        //     be a picture of the feature rather than a test of it.
+        DemoScript.Blueprint(
+            harness: .codex,
+            sessionID: "0198f6d0-11ac-7e54-8b26-3ad70f9c1e83",
+            cwd: "/Users/example/Code/auspex",
+            gitRoot: "/Users/example/Code/auspex",
+            branch: "feat/codex-adapter",
+            title: "Review the rollout adapter",
+            // The runtime Codex bills a guardian pass against, and half of
+            // what the kit matches on to recognise one.
+            model: "codex-auto-review",
+            // A guardian run holds no writer lock of its own, so nothing
+            // attributes a process to it — the same shape the real adapter
+            // produces.
+            pid: nil,
+            entrypoint: "subagent",
+            variant: "auto-review:0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6",
+            prologue: [
+                .prompt("Review the changes on feat/codex-adapter before they land"),
+                .think(1.1),
+                .tool("shell", .shell, "git diff --stat origin/main...", 0.5),
+                .usage(9_600, 1_120, 5_200),
+                .endTurn
+            ],
+            live: [
+                .prompt("Check the fixture guard too"),
+                .think(2.2),
+                .tool("shell", .shell, "git diff -- Tests/CodexAdapterTests", 7.0),
+                .say("The null-timestamp guard is right, but it swallows a malformed date too."),
+                .usage(14_300, 1_980, 7_400),
+                .endTurn,
+                .idle(12.0)
+            ],
+            startDelay: 1.6
         )
     ]
 }
