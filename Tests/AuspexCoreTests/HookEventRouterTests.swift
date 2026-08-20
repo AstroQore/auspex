@@ -288,6 +288,105 @@ struct HookEventRouterTests {
         #expect(events[0].kind == .turnEnded(reason: .complete))
     }
 
+    @Test("Codex's hook table speaks Claude's schema, and its permission is the point")
+    func codexHookTableEvents() {
+        var router = HookEventRouter()
+        let codex = Fixtures.key(.codex, "0199c0de-0000-7000-8000-00000000000a")
+
+        let requested = router.events(
+            for: hook([
+                "hook_event_name": "PermissionRequest",
+                "session_id": .string(codex.sessionID),
+                "cwd": "/Users/example/Code/widget",
+                "tool_name": "shell",
+                "turn_id": "turn_1"
+            ], target: .codex),
+            known: [codex], fallback: nil
+        )
+        #expect(requested.count == 1)
+        #expect(requested[0].session == codex)
+        guard case let .permissionRequested(id, tool) = requested[0].kind else {
+            Issue.record("expected a permission request, got \(requested[0].kind)")
+            return
+        }
+        #expect(tool == "shell")
+        #expect(router.isWaitingForPermission(codex))
+
+        let resolved = router.events(
+            for: hook([
+                "hook_event_name": "PostToolUse",
+                "session_id": .string(codex.sessionID),
+                "tool_name": "shell",
+                "tool_use_id": "call_01"
+            ], target: .codex),
+            known: [codex], fallback: nil
+        )
+        #expect(resolved.map(\.kind) == [.permissionResolved(id: id, allowed: true)])
+
+        // Boundaries, and no seeded identity: a Codex row is keyed by the
+        // rollout thread id its own tailer reads out of a file name.
+        let started = router.events(
+            for: hook([
+                "hook_event_name": "SessionStart",
+                "session_id": .string(codex.sessionID),
+                "source": "startup",
+                "transcript_path": "/Users/example/.codex/sessions/rollout.jsonl"
+            ], target: .codex),
+            known: [], fallback: nil
+        )
+        #expect(started.map(\.kind) == [.liveness(alive: true)])
+        #expect(!started.contains { if case .sessionStarted = $0.kind { true } else { false } })
+
+        let ended = router.events(
+            for: hook([
+                "hook_event_name": "SessionEnd",
+                "session_id": .string(codex.sessionID),
+                "reason": "other"
+            ], target: .codex),
+            known: [codex], fallback: nil
+        )
+        #expect(ended.map(\.kind) == [.sessionEnded(reason: .exited)])
+
+        // Registered for none of these, and ignored if one arrives anyway.
+        for name in ["PreToolUse", "SubagentStart", "UserPromptSubmit"] {
+            #expect(router.events(
+                for: hook([
+                    "hook_event_name": .string(name),
+                    "session_id": .string(codex.sessionID),
+                    "agent_id": "7f3a"
+                ], target: .codex),
+                known: [codex], fallback: nil
+            ).isEmpty, "\(name)")
+        }
+    }
+
+    @Test("one Codex hooks file serves both harnesses, so the board says which row it is")
+    func codexHooksResolveChatGPTWork() {
+        var router = HookEventRouter()
+        let id = "0199c0de-0000-7000-8000-00000000000b"
+        let work = Fixtures.key(.chatgptWork, id)
+        let events = router.events(
+            for: hook([
+                "hook_event_name": "Stop",
+                "session_id": .string(id)
+            ], target: .codex),
+            known: [work], fallback: nil
+        )
+        // `~/.codex/hooks.json` is read by both, and the payload cannot say
+        // which; the board already knows, because the rollout's originator did.
+        #expect(events.map(\.session) == [work])
+        #expect(events.map(\.kind) == [.turnEnded(reason: .complete)])
+
+        // And when neither row exists, the process the hook ran in answers.
+        var second = HookEventRouter()
+        let byProcess = Fixtures.key(.codex, "0199c0de-0000-7000-8000-00000000000c")
+        let fallen = second.events(
+            for: hook(["hook_event_name": "Stop"], target: .codex),
+            known: [byProcess], fallback: byProcess
+        )
+        #expect(fallen.map(\.session) == [byProcess])
+    }
+
     @Test("an event Auspex cannot attribute is dropped rather than guessed at")
     func unattributable() {
         var router = HookEventRouter()

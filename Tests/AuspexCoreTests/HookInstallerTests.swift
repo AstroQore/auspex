@@ -353,6 +353,154 @@ struct HookInstallerTests {
             == "notify = [\"/Users/example/bin/notify\"]\n")
     }
 
+    // MARK: - Codex, with the hook table switched on
+
+    /// The real file's shape, with a fabricated tool in it: Codex's hook table
+    /// is Claude Code's schema, and on a machine that has the feature on there
+    /// is usually already a notifier in it.
+    private static let codexHooksFile = """
+        {
+          "hooks": {
+            "PermissionRequest": [
+              {
+                "hooks": [
+                  {"command": "'/Users/example/bin/bridge' --source codex", "timeout": 7200, "type": "command"}
+                ]
+              }
+            ],
+            "SessionStart": [
+              {
+                "hooks": [
+                  {"command": "'/Users/example/bin/bridge' --source codex", "timeout": 5, "type": "command"}
+                ],
+                "matcher": "startup|resume|clear"
+              }
+            ]
+          }
+        }
+        """
+
+    /// `[features] hooks = true`, plus the shape of the rest of the file:
+    /// tables above and below, and a `notify` that must stay untouched because
+    /// the wrapper is not what gets installed on this machine.
+    private static let codexFeaturesOn = """
+        model = "gpt-5"
+        notify = ["/Users/example/bin/notify"]
+
+        [features]
+        memories = true
+        hooks = true
+
+        [mcp_servers.other]
+        command = "/Users/example/other"
+        """
+
+    @Test("with the hooks feature on, Codex gets table entries and its notify is left alone")
+    func codexInstallsIntoTheHookTable() throws {
+        let sandbox = try Sandbox()
+        try sandbox.write(Self.codexFeaturesOn, to: ".codex/config.toml")
+        try sandbox.write(Self.codexHooksFile, to: ".codex/hooks.json")
+
+        let offer = sandbox.installer.offer(.codex, .hooks)
+        #expect(offer.state == .absent)
+        #expect(offer.path?.hasSuffix(".codex/hooks.json") == true)
+
+        let plan = try #require(sandbox.installer.hookPlan(for: .codex))
+        #expect(plan.events == ["SessionStart", "SessionEnd", "PermissionRequest", "PostToolUse", "Stop"])
+        // Not the gate: an observer does not stand on the path that decides
+        // whether a tool call runs.
+        #expect(!plan.events.contains("PreToolUse"))
+        #expect(plan.note?.contains("review") == true)
+
+        let report = sandbox.installer.install(.codex, .hooks)
+        #expect(report.succeeded, "\(report.failure ?? "")")
+        #expect(report.path?.hasSuffix(".codex/hooks.json") == true)
+        #expect(report.backupPath?.contains("/.auspex/backups/") == true)
+
+        let table = try #require(try sandbox.json(".codex/hooks.json")["hooks"] as? [String: Any])
+        for event in plan.events {
+            let entries = try #require(table[event] as? [[String: Any]], "\(event) is missing")
+            let commands = entries
+                .compactMap { $0["hooks"] as? [[String: Any]] }
+                .flatMap { $0.compactMap { $0["command"] as? String } }
+            #expect(commands.contains { $0.contains("--hook codex") }, "\(event)")
+            // Never `--hook codex-notify`: the two mechanisms are different
+            // targets, and removing one must not remove the other.
+            #expect(!commands.contains { $0.contains("codex-notify") }, "\(event)")
+        }
+        // Theirs is still there, in both events Auspex joined, matcher and all.
+        let after = try sandbox.read(".codex/hooks.json")
+        #expect(after.components(separatedBy: "/Users/example/bin/bridge").count == 3)
+        #expect(after.contains("\"matcher\": \"startup|resume|clear\""))
+        // And config.toml was not opened at all: no fence, no wrapped notify.
+        let config = try sandbox.read(".codex/config.toml")
+        #expect(config == Self.codexFeaturesOn)
+
+        #expect(sandbox.installer.offer(.codex, .hooks).state == .installed)
+        let second = sandbox.installer.install(.codex, .hooks)
+        #expect(second.succeeded)
+        #expect(!second.didChange)
+        #expect(try sandbox.read(".codex/hooks.json") == after)
+
+        #expect(sandbox.installer.uninstall(.codex, .hooks).didChange)
+        #expect(try sandbox.read(".codex/hooks.json") == Self.codexHooksFile)
+        #expect(try sandbox.read(".codex/config.toml") == Self.codexFeaturesOn)
+    }
+
+    @Test("removing takes back the wrapper too, for a machine that turned the feature on later")
+    func codexUninstallReachesBothMechanisms() throws {
+        let sandbox = try Sandbox()
+        // The wrapper was installed while the feature was off.
+        try sandbox.write("notify = [\"/Users/example/bin/notify\"]\n", to: ".codex/config.toml")
+        #expect(sandbox.installer.install(.codex, .hooks).succeeded)
+        #expect(try sandbox.read(".codex/config.toml").contains("--hook"))
+
+        // Then the person switched it on, and Auspex registered the table.
+        var config = try sandbox.read(".codex/config.toml")
+        config += "\n[features]\nhooks = true\n"
+        try sandbox.write(config, to: ".codex/config.toml")
+        #expect(sandbox.installer.offer(.codex, .hooks).state == .absent, "the table has nothing yet")
+        #expect(sandbox.installer.install(.codex, .hooks).succeeded)
+        #expect(sandbox.exists(".codex/hooks.json"))
+
+        // One Remove, and neither is left behind.
+        #expect(sandbox.installer.uninstall(.codex, .hooks).didChange)
+        #expect(!sandbox.exists(".codex/hooks.json"), "a file only Auspex wrote is not litter to leave")
+        let restored = try sandbox.read(".codex/config.toml")
+        #expect(!restored.contains("--hook"))
+        #expect(!restored.contains(">>> auspex-notify"))
+        #expect(restored.contains("notify = [\"/Users/example/bin/notify\"]"))
+    }
+
+    @Test("the feature gate is read from config.toml, and nothing else is mistaken for it")
+    func codexFeatureGate() {
+        #expect(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\nhooks = true\n"))
+        #expect(CodexHookInstaller.hooksFeatureEnabled(in: "features.hooks = true\n"))
+        #expect(CodexHookInstaller.hooksFeatureEnabled(in: "[features]\nhooks = true # on\n"))
+        #expect(!CodexHookInstaller.hooksFeatureEnabled(in: "[features]\nhooks = false\n"))
+        #expect(!CodexHookInstaller.hooksFeatureEnabled(in: ""))
+        // The trust state Codex keeps for hooks it has already been shown is
+        // not the switch that turns them on.
+        #expect(!CodexHookInstaller.hooksFeatureEnabled(
+            in: "[hooks.state]\n\n[hooks.state.\"a:stop:0:0\"]\ntrusted_hash = \"sha256:00\"\n"
+        ))
+        // A profile's copy is for a profile that may not be the one running.
+        #expect(!CodexHookInstaller.hooksFeatureEnabled(in: "[profiles.x.features]\nhooks = true\n"))
+    }
+
+    @Test("with the feature off, the notify wrapper is still what is offered")
+    func codexFallsBackToNotify() throws {
+        let sandbox = try Sandbox()
+        try sandbox.write("[features]\nhooks = false\nmemories = true\n", to: ".codex/config.toml")
+
+        let plan = try #require(sandbox.installer.hookPlan(for: .codex))
+        #expect(plan.path.hasSuffix(".codex/config.toml"))
+        #expect(plan.events == ["agent-turn-complete"])
+        #expect(sandbox.installer.install(.codex, .hooks).succeeded)
+        #expect(try sandbox.read(".codex/config.toml").contains("--hook\", \"codex-notify\""))
+        #expect(!sandbox.exists(".codex/hooks.json"), "an inert file is not worth writing into")
+    }
+
     // MARK: - Ownership
 
     @Test("an entry is ours when it runs an Auspex with this target, and not otherwise")
@@ -363,6 +511,11 @@ struct HookInstallerTests {
         // two different harnesses, and removing Cursor's must not remove
         // Claude's.
         #expect(!HookCommand.isOurs("\"/x/Auspex\" --hook cursor", target: .claude))
+        // Codex's two mechanisms are two targets. Both can be in one home, and
+        // removing the table's entries must not touch the notify wrapper.
+        #expect(HookCommand.isOurs("\"/x/Auspex\" --hook codex", target: .codex))
+        #expect(!HookCommand.isOurs("\"/x/Auspex\" --hook codex-notify", target: .codex))
+        #expect(!HookCommand.isOurs("\"/x/Auspex\" --hook codex", target: .codexNotify))
         // Somebody else's tool that happens to take a --hook flag.
         #expect(!HookCommand.isOurs("/x/other --hook claude", target: .claude))
         #expect(!HookCommand.isOurs("/x/Auspex --mcp-stdio", target: .claude))

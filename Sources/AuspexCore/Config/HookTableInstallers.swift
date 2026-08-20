@@ -1,12 +1,12 @@
 import AgentSessionKit
 import Foundation
 
-/// The two harnesses that keep a JSON hook table other tools also write into.
+/// The harnesses that keep a JSON hook table other tools also write into.
 ///
-/// Claude Code and Cursor differ only in what one entry looks like and what
-/// their events are called, so they are one installer with two spellings rather
-/// than two installers with one algorithm. Grok uses Claude's schema in a file
-/// of its own and is handled by ``GrokHookInstaller``.
+/// Claude Code, Cursor and Codex differ only in what one entry looks like and
+/// what their events are called, so they are one installer with two spellings
+/// rather than three installers with one algorithm. Grok uses Claude's schema in
+/// a file of its own and is handled by ``GrokHookInstaller``.
 struct JSONHookTableInstaller: HookInstaller {
     /// How one entry is written, and where.
     enum Style: Sendable {
@@ -31,11 +31,19 @@ struct JSONHookTableInstaller: HookInstaller {
     let matchedEvents: Set<String>
     /// What the file looks like when Auspex has to create it.
     let scaffold: String
+    /// One sentence about what this harness will do with the entries, when
+    /// there is something a person could otherwise be surprised by.
+    var note: String?
 
     // MARK: - Reading
 
     func plan() -> HookPlan {
-        HookPlan(path: path, events: events, command: HookCommand.text(binary: binary, target: target))
+        HookPlan(
+            path: path,
+            events: events,
+            command: HookCommand.text(binary: binary, target: target),
+            note: note
+        )
     }
 
     func status() -> HarnessInstaller.State {
@@ -377,5 +385,51 @@ func CursorHookInstaller(home: URL, paths: AuspexPaths, binary: String) -> JSONH
         ],
         matchedEvents: [],
         scaffold: "{\n  \"version\": 1\n}\n"
+    )
+}
+
+// MARK: - Codex, when its hook table exists
+
+/// Codex's hooks, in `~/.codex/hooks.json`.
+///
+/// Codex grew a hook engine that is Claude Code's, name for name: the file is
+/// `{"hooks": {"<Event>": [{"hooks": [{"type": "command", …}]}]}}`, the payload
+/// on stdin carries `hook_event_name`, `session_id`, `cwd`, `transcript_path`,
+/// `tool_name` and `tool_use_id`, and the events are spelled in the same
+/// PascalCase. So this is ``JSONHookTableInstaller`` in Claude's style with a
+/// different path and a shorter event list, and the router reads the payload
+/// with the same vocabulary.
+///
+/// What is *not* registered matters as much as what is:
+///
+/// - **`PreToolUse` is a gate.** Its output can allow or deny the call, and an
+///   observer has no business standing on that path — the same reason Cursor's
+///   `before…` hooks are left alone.
+/// - **`SubagentStart` / `SubagentStop` are left out.** A Codex sub-agent is a
+///   rollout thread of its own, keyed by its thread id, and the payload's
+///   `agent_id` is an agent id rather than that thread id. Registering them
+///   would cost a process per sub-agent to learn nothing the linker in
+///   `CodexSubagentLinker` does not already work out.
+/// - **`PreCompact` / `PostCompact` / `UserPromptSubmit`** are activity the
+///   rollout describes better a moment later.
+///
+/// No `matcher` on any entry, either. An absent matcher matches everything,
+/// which is what an observer wants, and it avoids guessing at how Codex reads a
+/// `"*"` in the two places (tool names, session sources) where its matchers mean
+/// different things.
+func CodexHooksInstaller(
+    harness: Harness, home: URL, paths: AuspexPaths, binary: String
+) -> JSONHookTableInstaller {
+    JSONHookTableInstaller(
+        harness: harness,
+        target: .codex,
+        style: .claude,
+        path: home.appendingPathComponent(".codex/hooks.json").path,
+        paths: paths,
+        binary: binary,
+        events: ["SessionStart", "SessionEnd", "PermissionRequest", "PostToolUse", "Stop"],
+        matchedEvents: [],
+        scaffold: "{\n}\n",
+        note: "Codex asks you to review a new hook the next time it starts."
     )
 }

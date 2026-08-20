@@ -8,13 +8,17 @@ import Foundation
 /// `Harness.rawValue` is: renaming one orphans every config Auspex has ever
 /// written.
 ///
-/// `codexNotify` is a harness *and* a shape. Codex has no hook table; it has a
-/// single `notify` program, and Auspex may have to run in front of one that was
-/// already there — see ``HookIngress``.
+/// Codex has two, because it has two mechanisms and which one exists depends on
+/// the machine. `codexNotify` is the single `notify` program every build has,
+/// which Auspex may have to run in front of one that was already there — see
+/// ``HookIngress``. `codex` is the hook *table* in `~/.codex/hooks.json`, which
+/// only runs when the `hooks` feature is switched on in `config.toml`, and which
+/// speaks Claude Code's schema down to the field names.
 public enum HookTarget: String, Sendable, CaseIterable, Hashable {
     case claude
     case cursor
     case grok
+    case codex
     case codexNotify = "codex-notify"
 
     /// The harness whose sessions these events belong to.
@@ -23,7 +27,7 @@ public enum HookTarget: String, Sendable, CaseIterable, Hashable {
         case .claude: .claudeCode
         case .cursor: .cursor
         case .grok: .grokBuild
-        case .codexNotify: .codex
+        case .codex, .codexNotify: .codex
         }
     }
 

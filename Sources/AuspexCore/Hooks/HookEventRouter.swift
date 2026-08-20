@@ -15,10 +15,11 @@ import Foundation
 ///
 /// Hooks earn their place on exactly the facts that are never written down:
 ///
-/// - **A permission prompt.** Claude Code asks for approval in its UI and puts
-///   nothing in the transcript until the answer arrives. From the outside, an
-///   agent waiting for a person and an agent thinking hard are the same silence.
-///   `PermissionRequest` is the only thing that tells them apart.
+/// - **A permission prompt.** Claude Code and Codex both ask for approval in
+///   their own UI and put nothing in the transcript until the answer arrives.
+///   From the outside, an agent waiting for a person and an agent thinking hard
+///   are the same silence. `PermissionRequest` is the only thing that tells them
+///   apart.
 /// - **When a session started and stopped**, immediately, rather than when a
 ///   file's modification time settles or a process disappears from a sweep.
 /// - **A subagent's boundaries**, for the harnesses whose subagent transcripts
@@ -78,6 +79,8 @@ public struct HookEventRouter: Sendable {
             kinds = claudeShaped(hook, session: session, known: known)
         case .cursor:
             kinds = cursorShaped(hook, session: session)
+        case .codex:
+            kinds = codexHookShaped(hook, session: session)
         case .codexNotify:
             kinds = codexShaped(hook)
         }
@@ -222,8 +225,60 @@ public struct HookEventRouter: Sendable {
 
     // MARK: - Codex
 
-    /// Codex has no hook table — it has one `notify` program, and one event
-    /// worth having in it.
+    /// Codex's hook table speaks Claude Code's schema, and is read with Claude's
+    /// vocabulary: `hook_event_name`, `session_id`, `tool_name`, `tool_use_id`.
+    ///
+    /// Two deliberate differences from ``claudeShaped(_:session:known:)``:
+    ///
+    /// - **`SessionStart` seeds nothing.** Claude's session id *is* its
+    ///   transcript's file name, so a key built from the payload is provably the
+    ///   key the tailer will build. A Codex row is keyed by its rollout thread
+    ///   id, which `CodexLiveAdapter` reads out of a file name Auspex has not
+    ///   seen yet — so a seeded identity here would risk a second row for a
+    ///   session that is about to appear on its own. Liveness is the honest
+    ///   amount of information: the session is alive, now.
+    /// - **No subagent events.** They are not registered, because a Codex
+    ///   sub-agent is a rollout thread of its own and the payload's `agent_id`
+    ///   is not that thread's id.
+    private mutating func codexHookShaped(
+        _ hook: HookEvent,
+        session: SessionKey
+    ) -> [AgentEventKind] {
+        let payload = hook.payload
+        guard let name = Self.name(in: payload) else { return [] }
+        switch name {
+        case "SessionStart":
+            return [.liveness(alive: true)]
+
+        case "SessionEnd":
+            return [.sessionEnded(reason: .exited)]
+
+        case "PermissionRequest":
+            // The whole reason to install a hook table on a harness Auspex can
+            // already tail: Codex asks in its own UI and writes nothing to the
+            // rollout until the answer arrives.
+            let tool = payload["tool_name"]?.stringValue
+            let id = permissionID(payload: payload, tool: tool)
+            remember(permission: id, for: session)
+            return [.permissionRequested(id: id, tool: tool)]
+
+        case "PostToolUse":
+            // A tool that ran is a permission that was answered. The count of
+            // the call itself comes from the rollout, which describes it better.
+            guard let id = release(session) else { return [] }
+            return [.permissionResolved(id: id, allowed: true)]
+
+        case "Stop":
+            _ = release(session)
+            return [.turnEnded(reason: .complete)]
+
+        default:
+            return []
+        }
+    }
+
+    /// Codex's other mechanism — one `notify` program, and one event worth
+    /// having in it.
     private func codexShaped(_ hook: HookEvent) -> [AgentEventKind] {
         switch Self.name(in: hook.payload) {
         case "agent-turn-complete":
@@ -261,13 +316,26 @@ public struct HookEventRouter: Sendable {
         // own agent id. The row it belongs to is the child's, when the board has
         // one — and the parent's when it does not, because a fabricated child
         // row would be worse than an event attributed one level up.
-        if let agent = payload["agent_id"]?.stringValue, !agent.isEmpty,
+        //
+        // Claude's spelling of a child key, and only for the harnesses that use
+        // it: Codex names a sub-agent by its own thread id, so `agent-<id>`
+        // would be a key nothing on its board could ever match.
+        if hook.target == .claude || hook.target == .grok,
+           let agent = payload["agent_id"]?.stringValue, !agent.isEmpty,
            Self.name(in: payload) != "SubagentStart", Self.name(in: payload) != "SubagentStop",
            let child = subagentKey(payload, parent: key), known.contains(child) {
             return child
         }
         if known.contains(key) { return key }
         if hook.target == .claude { return key }
+        // Codex and ChatGPT Work read the same `~/.codex`, so one hooks file
+        // serves both and a payload cannot say which of the two a thread
+        // belongs to. The board can: `CodexOriginator` decided that when it
+        // read the rollout's header.
+        if hook.target == .codex {
+            let sibling = SessionKey(harness: .chatgptWork, sessionID: raw)
+            if known.contains(sibling) { return sibling }
+        }
         return fallback ?? key
     }
 

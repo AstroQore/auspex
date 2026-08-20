@@ -11,14 +11,18 @@ import Foundation
 /// command runs the Auspex binary with `--hook`" and nothing else in the file
 /// is read or rewritten.
 ///
-/// Four shapes, one per harness that has hooks at all:
+/// Five shapes, for the harnesses that have hooks at all:
 ///
 /// | Harness | File | Shape |
 /// | --- | --- | --- |
 /// | Claude Code | `~/.claude/settings.json` | `hooks.<Event>[]`, matcher groups |
 /// | Grok Build | `~/.grok/hooks/auspex.json` | a file of its own, Claude's schema |
 /// | Cursor | `~/.cursor/hooks.json` | `hooks.<event>[]`, bare commands |
+/// | Codex | `~/.codex/hooks.json` | Claude's schema, when the feature is on |
 /// | Codex | `~/.codex/config.toml` | one `notify` program, wrapped if taken |
+///
+/// Codex has two because which one exists depends on the machine — see
+/// ``CodexHookInstaller``.
 ///
 /// AntiGravity and Gemini CLI have no hook mechanism, and Claude Cowork runs
 /// inside Claude.app where its settings are not a file Auspex may name. Those
@@ -48,11 +52,16 @@ public struct HookPlan: Sendable, Equatable {
     public let events: [String]
     /// The command each entry runs.
     public let command: String
+    /// One sentence about what the harness will then do, when there is
+    /// something a person would otherwise be surprised by — Codex, for one,
+    /// asks them to review a hook it has not seen before it will run it.
+    public let note: String?
 
-    public init(path: String, events: [String], command: String) {
+    public init(path: String, events: [String], command: String, note: String? = nil) {
         self.path = path
         self.events = events
         self.command = command
+        self.note = note
     }
 
     /// One line for a settings row: what this actually costs the harness.
@@ -146,7 +155,7 @@ public enum HookInstallers {
         case .cursor:
             return CursorHookInstaller(home: home, paths: paths, binary: command)
         case .codex, .chatgptWork:
-            return CodexNotifyInstaller(
+            return CodexHookInstaller(
                 harness: harness, home: home, paths: paths, binary: command
             )
         case .claudeCowork, .antigravity, .geminiCLI, .grokBot:

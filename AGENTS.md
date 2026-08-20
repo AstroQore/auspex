@@ -127,9 +127,9 @@ Auspex actually observes, and write nothing outside `~/.auspex/`.
 - **One exception, and it is the whole exception: `HarnessInstaller`.**
   Registering Auspex's MCP server with a harness, installing the short
   task-protocol note, and registering the hooks mean writing `~/.claude.json`,
-  `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.cursor/hooks.json`,
-  `~/.claude/CLAUDE.md` and their siblings. That is allowed only through
-  `Sources/AuspexCore/Config/HarnessInstaller.swift` and the
+  `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.codex/hooks.json`,
+  `~/.cursor/hooks.json`, `~/.claude/CLAUDE.md` and their siblings. That is
+  allowed only through `Sources/AuspexCore/Config/HarnessInstaller.swift` and the
   `HookInstaller`s it delegates to, and only under all five of these
   conditions — if a change would break any of them, it does not belong there:
   1. **A person clicked.** Never on launch, never on a timer, never while a

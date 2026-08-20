@@ -100,7 +100,120 @@ struct GrokHookInstaller: HookInstaller {
 
 // MARK: - Codex
 
-/// Codex has no hook table. It has `notify`: one program, run when a turn ends.
+/// Codex has two hook mechanisms, and which one this machine has is a fact
+/// about its `config.toml` rather than about its version.
+///
+/// Every build has `notify`: one program, run when a turn ends, handled by
+/// ``CodexNotifyInstaller``. Recent builds also have a hook *table* —
+/// `~/.codex/hooks.json`, Claude Code's schema name for name — but only when
+/// `hooks` is switched on under `[features]`. Off, the file is inert and
+/// registering entries in it would be writing into somebody's directory to no
+/// effect; on, it is strictly the better mechanism, because `notify` cannot say
+/// anything about a permission prompt and `PermissionRequest` is the one fact no
+/// transcript records.
+///
+/// So the row offers whichever one this machine will actually run, and uninstall
+/// takes back both — a person who turned the feature on after installing the
+/// wrapper would otherwise be left with a `notify` line nothing here admits to
+/// having written.
+///
+/// One thing the table cannot promise and the wrapper can: Codex will not run a
+/// hook it has not seen before. It records a `trusted_hash` per entry under
+/// `[hooks.state]` in `config.toml` after asking, and Auspex does not write
+/// there — granting yourself trust in the file whose whole job is to withhold it
+/// would make the mechanism worthless. The entries land; Codex asks about them
+/// at its next start; the person says yes. That sentence is in the plan's note
+/// so the row can say it before anything is agreed to.
+struct CodexHookInstaller: HookInstaller {
+    let harness: Harness
+    let home: URL
+    let paths: AuspexPaths
+    let binary: String
+
+    var path: String { active.path }
+    func plan() -> HookPlan { active.plan() }
+    func status() -> HarnessInstaller.State { active.status() }
+    func install() -> HarnessInstaller.Report { active.install() }
+
+    /// Takes back both mechanisms.
+    ///
+    /// Cheap and safe when only one was ever written: the notify uninstall is a
+    /// no-op on a `config.toml` with no fence of ours in it, and the table's is
+    /// a no-op on a `hooks.json` that does not exist.
+    func uninstall() -> HarnessInstaller.Report {
+        let first = active.uninstall()
+        let second = other.uninstall()
+        guard second.didChange || second.failure != nil else { return first }
+        return HarnessInstaller.Report(
+            harness: harness,
+            piece: .hooks,
+            didChange: first.didChange || second.didChange,
+            path: first.path,
+            backupPath: first.backupPath ?? second.backupPath,
+            failure: first.failure ?? second.failure
+        )
+    }
+
+    /// The mechanism this machine will actually run.
+    private var active: any HookInstaller { usesHookTable ? table : notify }
+    /// The other one, which uninstall still has to be able to reach.
+    private var other: any HookInstaller { usesHookTable ? notify : table }
+
+    private var table: JSONHookTableInstaller {
+        CodexHooksInstaller(harness: harness, home: home, paths: paths, binary: binary)
+    }
+
+    private var notify: CodexNotifyInstaller {
+        CodexNotifyInstaller(harness: harness, home: home, paths: paths, binary: binary)
+    }
+
+    /// Whether `hooks` is on under `[features]` in `~/.codex/config.toml`.
+    var usesHookTable: Bool {
+        guard let text = try? String(contentsOfFile: notify.path, encoding: .utf8) else {
+            return false
+        }
+        return Self.hooksFeatureEnabled(in: text)
+    }
+
+    /// A line scanner rather than a TOML parse, for the same reason
+    /// ``ConfigTextEditors`` is one: this file is sixteen hundred lines of
+    /// somebody else's settings on a working machine, and the question being
+    /// asked is small enough that reading it as text cannot get it wrong in a
+    /// way that matters. A false negative leaves the `notify` wrapper in place,
+    /// which is the answer that was right before this existed.
+    static func hooksFeatureEnabled(in text: String) -> Bool {
+        var isInFeatures = false
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") {
+                // Exactly `[features]`. A `[profiles.x.features]` is a
+                // different table for a profile that may not be the one
+                // running.
+                isInFeatures = line.hasPrefix("[features]")
+                continue
+            }
+            if isInFeatures, let value = Self.value(ofKey: "hooks", in: line) {
+                return value.hasPrefix("true")
+            }
+            // The dotted spelling, which is legal at the top level and is what
+            // a one-line edit tends to produce.
+            if !isInFeatures, let value = Self.value(ofKey: "features.hooks", in: line) {
+                return value.hasPrefix("true")
+            }
+        }
+        return false
+    }
+
+    /// The right-hand side of `key = …`, when this line is that assignment.
+    private static func value(ofKey key: String, in line: String) -> String? {
+        guard line.hasPrefix(key) else { return nil }
+        let rest = line.dropFirst(key.count).trimmingCharacters(in: .whitespaces)
+        guard rest.hasPrefix("=") else { return nil }
+        return rest.dropFirst().trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// Codex's other mechanism: `notify`, one program, run when a turn ends.
 ///
 /// One slot means registering Auspex there is *displacing* whatever was in it —
 /// on this machine, a computer-use client — and the only honest way to displace
