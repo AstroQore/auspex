@@ -69,146 +69,152 @@ struct BoardInvalidationTests {
 
     /// Runs `body` while watching `read`, and says whether the property was
     /// written during it.
+    ///
+    /// Async because the write happens when the assembled frame comes back
+    /// rather than when the frame was applied: `body` is expected to settle the
+    /// model before it returns.
     private func invalidates(
         reading read: @escaping () -> Void,
-        during body: () -> Void
-    ) -> Bool {
+        during body: () async -> Void
+    ) async -> Bool {
         let flag = Flag()
         withObservationTracking(read) { flag.fired = true }
-        body()
+        await body()
         return flag.fired
     }
 
+    /// Applies a frame and waits for the board to take it.
+    private func applying(
+        _ frame: BoardSnapshot,
+        to model: LiveBoardModel
+    ) -> () async -> Void {
+        { model.apply(frame); await model.settle() }
+    }
+
     @Test("A frame that changes nothing leaves the wall alone")
-    func idempotentFrameDoesNotTouchTheWall() {
+    func idempotentFrameDoesNotTouchTheWall() async {
         let model = LiveBoardModel()
         let sessions = sessions
         model.apply(frame(sessions))
+        await model.settle()
 
         // Same sessions, new snapshot value: exactly what the registry
         // publishes when one session gained an event and the others did not.
-        #expect(
-            !invalidates(reading: { _ = model.rowGroups }, during: { model.apply(frame(sessions)) })
-        )
-        #expect(
-            !invalidates(reading: { _ = model.summary }, during: { model.apply(frame(sessions)) })
-        )
-        #expect(
-            !invalidates(
-                reading: { _ = model.endedRows },
-                during: { model.apply(frame(sessions)) }
-            )
-        )
-        #expect(
-            !invalidates(
-                reading: { _ = model.sessionCount },
-                during: { model.apply(frame(sessions)) }
-            )
-        )
+        let again = applying(frame(sessions), to: model)
+        #expect(await !invalidates(reading: { _ = model.rowGroups }, during: again))
+        #expect(await !invalidates(reading: { _ = model.summary }, during: again))
+        #expect(await !invalidates(reading: { _ = model.endedRows }, during: again))
+        #expect(await !invalidates(reading: { _ = model.sessionCount }, during: again))
     }
 
     @Test("A frame that changes a session does re-lay its section out")
-    func changedSessionTouchesTheWall() {
+    func changedSessionTouchesTheWall() async {
         let model = LiveBoardModel()
         var sessions = sessions
         model.apply(frame(sessions))
+        await model.settle()
 
         sessions[0].toolCallCount = 7
         #expect(
-            invalidates(reading: { _ = model.rowGroups }, during: { model.apply(frame(sessions)) })
+            await invalidates(
+                reading: { _ = model.rowGroups },
+                during: applying(frame(sessions), to: model)
+            )
         )
     }
 
     @Test("A session arriving moves the counts the header and the sidebar read")
-    func newSessionMovesTheCount() {
+    func newSessionMovesTheCount() async {
         let model = LiveBoardModel()
         var sessions = sessions
         model.apply(frame(sessions))
+        await model.settle()
 
         sessions.append(session("4", cwd: "/Users/example/Code/auspex", title: "Ledger"))
         #expect(
-            invalidates(
+            await invalidates(
                 reading: { _ = model.sessionCount },
-                during: { model.apply(frame(sessions)) }
+                during: applying(frame(sessions), to: model)
             )
         )
         #expect(model.sessionCount == 4)
     }
 
     @Test("A frame that does not move the selected session leaves the trace pane alone")
-    func idempotentFrameDoesNotTouchTheTracePane() {
+    func idempotentFrameDoesNotTouchTheTracePane() async {
         let model = LiveBoardModel()
         let sessions = sessions
         model.apply(frame(sessions))
+        await model.settle()
         model.selectedKey = sessions[0].key
         #expect(model.selectedSession?.key == sessions[0].key)
         #expect(model.selectedProjectName != nil)
 
-        #expect(
-            !invalidates(
-                reading: { _ = model.selectedSession },
-                during: { model.apply(frame(sessions)) }
-            )
-        )
-        #expect(
-            !invalidates(
-                reading: { _ = model.selectedChildren },
-                during: { model.apply(frame(sessions)) }
-            )
-        )
-        #expect(
-            !invalidates(
-                reading: { _ = model.selectedProjectName },
-                during: { model.apply(frame(sessions)) }
-            )
-        )
+        let again = applying(frame(sessions), to: model)
+        #expect(await !invalidates(reading: { _ = model.selectedSession }, during: again))
+        #expect(await !invalidates(reading: { _ = model.selectedChildren }, during: again))
+        #expect(await !invalidates(reading: { _ = model.selectedProjectName }, during: again))
     }
 
     @Test("The selected session's own changes still reach the trace pane")
-    func changedSelectionReachesTheTracePane() {
+    func changedSelectionReachesTheTracePane() async {
         let model = LiveBoardModel()
         var sessions = sessions
         model.apply(frame(sessions))
+        await model.settle()
         model.selectedKey = sessions[0].key
 
         sessions[0].turnCount = 9
         #expect(
-            invalidates(
+            await invalidates(
                 reading: { _ = model.selectedSession },
-                during: { model.apply(frame(sessions)) }
+                during: applying(frame(sessions), to: model)
             )
         )
         #expect(model.selectedSession?.turnCount == 9)
     }
 
     @Test("A frame that changes nothing leaves the sidebar's tree alone")
-    func idempotentFrameDoesNotTouchTheTree() {
+    func idempotentFrameDoesNotTouchTheTree() async {
         let projects = ProjectsModel()
         let sessions = sessions
-        projects.rebuild(board: frame(sessions))
+        projects.adopt(tree: ProjectTree.build(board: frame(sessions)))
         #expect(projects.tree.projects.count == 2)
 
         #expect(
-            !invalidates(
+            await !invalidates(
                 reading: { _ = projects.tree },
-                during: { projects.rebuild(board: frame(sessions)) }
+                during: { projects.adopt(tree: ProjectTree.build(board: self.frame(sessions))) }
             )
         )
     }
 
     @Test("A project gaining a session does reach the sidebar's tree")
-    func newProjectReachesTheTree() {
+    func newProjectReachesTheTree() async {
         let projects = ProjectsModel()
         var sessions = sessions
-        projects.rebuild(board: frame(sessions))
+        projects.adopt(tree: ProjectTree.build(board: frame(sessions)))
 
         sessions.append(session("4", cwd: "/Users/example/Code/kit", title: "Kit"))
+        let grown = sessions
         #expect(
-            invalidates(
+            await invalidates(
                 reading: { _ = projects.tree },
-                during: { projects.rebuild(board: frame(sessions)) }
+                during: { projects.adopt(tree: ProjectTree.build(board: self.frame(grown))) }
             )
         )
         #expect(projects.tree.projects.count == 3)
+    }
+
+    @Test("The tree the sidebar takes is the one the frame was assembled with")
+    func treeArrivesWithTheFrame() async {
+        let model = LiveBoardModel()
+        let projects = ProjectsModel()
+        model.onTree = { tree in projects.adopt(tree: tree) }
+        model.apply(frame(sessions))
+        await model.settle()
+
+        #expect(projects.tree.projects.count == 2)
+        #expect(projects.tree == ProjectTree.build(board: model.board))
     }
 }

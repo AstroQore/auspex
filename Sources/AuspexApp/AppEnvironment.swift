@@ -188,6 +188,12 @@ public final class AppEnvironment {
         let registry = SessionRegistry(store: store)
         self.registry = registry
         board.autoSelectsFirstSession = mode == .demo
+        // The sidebar's tree is derived from the same frame the board is, in
+        // the same pass and off the main actor; the names it is labelled with
+        // are the one part only the sidebar's model reads, so they travel the
+        // other way.
+        board.onTree = { [projects] tree in projects.adopt(tree: tree) }
+        projects.onNames = { [board] names in board.setProjectNames(names) }
         board.start(registry: registry, repository: SessionRepository(store: store))
         // The seed goes first: the board reads the ledger as it starts, and a
         // demo whose plan arrived a frame later would show its own empty state
@@ -305,8 +311,7 @@ public final class AppEnvironment {
         // than once per render. The MCP server is not one of them — it reads
         // the frame when an agent asks, which is rarer than a frame by three
         // orders of magnitude.
-        board.onFrame = { [projects, tasks, board] frame in
-            projects.rebuild(board: frame)
+        board.onFrame = { [tasks, board] frame in
             tasks.apply(board: frame, notices: board.notices)
         }
     }

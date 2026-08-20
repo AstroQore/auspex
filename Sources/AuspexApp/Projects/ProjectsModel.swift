@@ -17,10 +17,15 @@ import Observation
 ///   still called by its name rather than by a path component. Refreshed on a
 ///   slow timer because a project is created once and renamed almost never.
 /// - **Disclosure.** Which projects and checkouts the reader has opened.
+///
+/// The names are read here and *used* by ``BoardFrameAssembler``: the tree is
+/// built with the rest of the frame, off the main actor, and arrives already
+/// made. What this model does with a frame is decide what to open — the one
+/// question about the tree that depends on what the reader has already done.
 @MainActor
 @Observable
 final class ProjectsModel {
-    /// The tree the sidebar draws, rebuilt once per applied frame.
+    /// The tree the sidebar draws, assembled once per frame.
     ///
     /// Stored rather than derived in `SidebarView.body`. Building it walks
     /// every session on the board, and a body may run many times for one
@@ -29,12 +34,16 @@ final class ProjectsModel {
     /// auto-expand below happen once per frame rather than once per render.
     private(set) var tree: ProjectTree = .empty
 
-    /// The frame the tree was last built from, so a change of names can
-    /// rebuild it without waiting for the next one.
-    private var lastBoard: BoardSnapshot = .empty
-
     /// Project display names by root path, from the store.
     private(set) var names: [String: String] = [:]
+
+    /// Called when the store's project names change, so the model that owns the
+    /// frame can put them into the next assembly.
+    ///
+    /// A callback rather than a direct write, because the names travel *into*
+    /// the derivation and the tree comes back out of it; a model that both
+    /// pushed and pulled would be a cycle with a frame in the middle of it.
+    var onNames: (([String: String]) -> Void)?
 
     /// Projects the reader has open.
     var expandedProjects: Set<String> = []
@@ -100,18 +109,16 @@ final class ProjectsModel {
         for summary in summaries { mapped[summary.rootPath] = summary.name }
         guard mapped != names else { return }
         names = mapped
-        rebuild(board: lastBoard)
+        onNames?(mapped)
     }
 
-    /// Rebuilds the tree for one frame and opens any project that is live for
-    /// the first time.
+    /// Takes the tree that was assembled with the frame, and opens any project
+    /// that is live for the first time.
     ///
-    /// Called from ``LiveBoardModel/onFrame``, which is the one place a frame
+    /// Called from ``LiveBoardModel/onTree``, which is the one place a frame
     /// arrives. A view must not call this: writing observable state from a
     /// body is what turns a render into a loop.
-    func rebuild(board: BoardSnapshot) {
-        lastBoard = board
-        let tree = ProjectTree.build(board: board, names: names)
+    func adopt(tree: ProjectTree) {
         for project in tree.projects where project.liveCount > 0 {
             guard didAutoExpand.insert(project.key).inserted else { continue }
             expandedProjects.insert(project.key)

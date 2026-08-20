@@ -35,6 +35,10 @@ public struct BoardFrameInputs: Sendable, Equatable {
     public var derivedBriefs: [SessionKey: SessionBrief]
     /// Project display names by root path, from `projects.name`.
     public var projectNames: [String: String]
+    /// What agents called `auspex.notify` about, by session.
+    public var notices: [SessionKey: AgentNotice]
+    /// What agents said they are doing, by session.
+    public var reports: [SessionKey: AgentReport]
 
     public init(
         claims: ProjectClaims = .empty,
@@ -46,7 +50,9 @@ public struct BoardFrameInputs: Sendable, Equatable {
         bucketFilter: TaskLedger.Bucket? = nil,
         seenAt: [SessionKey: Date] = [:],
         derivedBriefs: [SessionKey: SessionBrief] = [:],
-        projectNames: [String: String] = [:]
+        projectNames: [String: String] = [:],
+        notices: [SessionKey: AgentNotice] = [:],
+        reports: [SessionKey: AgentReport] = [:]
     ) {
         self.claims = claims
         self.rules = rules
@@ -58,6 +64,8 @@ public struct BoardFrameInputs: Sendable, Equatable {
         self.seenAt = seenAt
         self.derivedBriefs = derivedBriefs
         self.projectNames = projectNames
+        self.notices = notices
+        self.reports = reports
     }
 }
 
@@ -195,7 +203,9 @@ public actor BoardFrameAssembler {
         let builder = BoardRowBuilder(
             board: board,
             seenAt: inputs.seenAt,
-            briefs: inputs.derivedBriefs
+            briefs: inputs.derivedBriefs,
+            notices: inputs.notices,
+            reports: inputs.reports
         )
         let groups = BoardGrouping.groups(
             for: board,
@@ -248,7 +258,7 @@ public actor BoardFrameAssembler {
             endedRows: inputs.bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows,
             // Counted before the bucket filter, on purpose: a chip that zeroed
             // the others when clicked would leave no way back to them.
-            summary: BoardSummary(sessions: kept, seenAt: inputs.seenAt),
+            summary: BoardSummary(sessions: kept, seenAt: inputs.seenAt, notices: inputs.notices),
             // A builder of its own, deliberately. The sidebar's rows have never
             // carried the seen-at map or the backfilled briefs, so sharing the
             // one above would quietly change what the tree's rows are titled on

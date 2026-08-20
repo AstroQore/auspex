@@ -32,6 +32,23 @@ import Observation
 /// The visible cost is that a row can appear up to a persist interval after
 /// the board reacted to the same event. On a live tail that is a quarter of a
 /// second, and it is bounded rather than drifting.
+///
+/// ## Where the frame is derived
+///
+/// Not here. Turning a ``BoardSnapshot`` into what the window draws — filtering
+/// it, grouping it, building a row per session, sorting the ledger, walking the
+/// delegation forest for the sidebar's tree — is a few milliseconds of value
+/// copying and string hashing on a real store, and it used to happen on this
+/// actor, eight times a second, while the same thread was laying the window
+/// out. It happens on ``BoardFrameAssembler`` instead, and what is left here is
+/// bookkeeping: gather the inputs, hand them over, and assign the fields of the
+/// finished ``AssembledBoardFrame`` when it comes back.
+///
+/// Every path that used to re-derive — a frame arriving, a filter clicked, a
+/// project focused, a card marked seen, the user layer replaced — goes through
+/// ``scheduleAssembly()``. There is no second derivation to keep in step with
+/// the first, and none of them touches the main thread with more than a
+/// handful of `==` comparisons.
 @MainActor
 @Observable
 final class LiveBoardModel {
@@ -98,7 +115,7 @@ final class LiveBoardModel {
 
     /// Whether the ignored sessions are on the board, dimmed, rather than gone.
     var showsIgnored = false {
-        didSet { if oldValue != showsIgnored { rebuildVisibleBoard() } }
+        didSet { if oldValue != showsIgnored { scheduleAssembly() } }
     }
 
     /// The person's own projects, as an index the frame carries.
@@ -182,12 +199,12 @@ final class LiveBoardModel {
     /// is the one fact that stays true while its state changes six times a
     /// minute.
     var groupBy: BoardGroupBy = .project {
-        didSet { if oldValue != groupBy { rebuildGroups() } }
+        didSet { if oldValue != groupBy { scheduleAssembly() } }
     }
 
     /// Which harnesses to show. Empty means all of them.
     var harnessFilter: Set<Harness> = [] {
-        didSet { if oldValue != harnessFilter { rebuildGroups() } }
+        didSet { if oldValue != harnessFilter { scheduleAssembly() } }
     }
 
     /// The one project every surface is bound to, as the key
@@ -205,7 +222,7 @@ final class LiveBoardModel {
     /// that room; three properties would be three chances for the sidebar and
     /// the scene to be looking at different projects.
     var focusedProjectKey: String? {
-        didSet { if oldValue != focusedProjectKey { rebuildGroups() } }
+        didSet { if oldValue != focusedProjectKey { scheduleAssembly() } }
     }
 
     /// The one ledger bucket the board is showing, set by clicking a summary
@@ -215,7 +232,7 @@ final class LiveBoardModel {
     /// make a number actionable: reading "3 done unseen" and then hunting for
     /// which three is the work this saves.
     var bucketFilter: TaskLedger.Bucket? {
-        didSet { if oldValue != bucketFilter { rebuildGroups() } }
+        didSet { if oldValue != bucketFilter { scheduleAssembly() } }
     }
 
     /// When the person last opened each session — Auspex's own record, and the
@@ -272,7 +289,7 @@ final class LiveBoardModel {
             guard let self else { return }
             notices = state.notices
             reports = state.reports
-            rebuildGroups()
+            scheduleAssembly()
         }
     }
 
@@ -280,13 +297,13 @@ final class LiveBoardModel {
     /// the card moves on the same frame the notification arrives on.
     func apply(notice: AgentNotice) {
         notices[notice.session] = notice
-        rebuildGroups()
+        scheduleAssembly()
     }
 
     /// An agent just said what it is doing.
     func apply(report: AgentReport) {
         reports[report.session] = report
-        rebuildGroups()
+        scheduleAssembly()
     }
 
     /// Takes a call off the board — the "Dismiss" on a card.
@@ -296,7 +313,7 @@ final class LiveBoardModel {
     /// way to teach somebody to ignore alerts.
     func dismissNotice(_ key: SessionKey) {
         guard notices.removeValue(forKey: key) != nil else { return }
-        rebuildGroups()
+        scheduleAssembly()
         clearThrough(key)
     }
 
@@ -341,7 +358,23 @@ final class LiveBoardModel {
     func setDerivedBriefs(_ briefs: [SessionKey: SessionBrief]) {
         guard !briefs.isEmpty else { return }
         derivedBriefs = briefs
-        rebuildGroups()
+        scheduleAssembly()
+    }
+
+    /// What the store calls each project, by root path.
+    ///
+    /// Read by the sidebar's tree, which is assembled with the rest of the
+    /// frame. Held here rather than in ``ProjectsModel`` because the assembler
+    /// takes one bundle of inputs and this is one of them; the model that reads
+    /// the names from the store hands them over through
+    /// ``ProjectsModel/onNames``.
+    private(set) var projectNames: [String: String] = [:]
+
+    /// Replaces the project names and redraws from the frame in hand.
+    func setProjectNames(_ names: [String: String]) {
+        guard names != projectNames else { return }
+        projectNames = names
+        scheduleAssembly()
     }
 
     /// The card the detail pane is about.
@@ -408,8 +441,12 @@ final class LiveBoardModel {
     /// The four numbers across the top of the board.
     private(set) var summary = BoardSummary(counts: BoardSnapshot.Counts())
 
-    /// Called after each applied frame, so the sidebar's tree is rebuilt once
-    /// per frame rather than once per body.
+    /// Called with each assembled frame's tree, so the sidebar takes the one
+    /// that was built with the rest of the frame rather than building its own.
+    var onTree: ((ProjectTree) -> Void)?
+
+    /// Called once per adopted frame with the raw board, for readers that are
+    /// not views — the Tasks page keeps its rows in step with the wall here.
     var onFrame: ((BoardSnapshot) -> Void)?
 
     /// The finished rows actually drawn, and how many are left out.
@@ -421,76 +458,148 @@ final class LiveBoardModel {
         showsAllEnded ? 0 : max(0, endedRows.count - EndedSessions.collapsedLimit)
     }
 
-    private func rebuildGroups() {
-        // One builder for the whole frame: it holds the index that turns "what
-        // is my parent called" from a scan of every session on the board, once
-        // per card, into a lookup.
-        var index: [SessionKey: SessionSnapshot] = [:]
-        index.reserveCapacity(board.sessions.count)
-        for session in board.sessions { index[session.key] = session }
-        sessionIndex = index
+    // MARK: Assembly
 
-        let builder = BoardRowBuilder(
-            board: board,
+    /// Where a frame is actually derived. One per model, so two assemblies of
+    /// the same board never overlap.
+    ///
+    /// Internal rather than private so the suite can read how many frames it
+    /// actually built — which is what "a burst of fifty costs one" means.
+    let assembler = BoardFrameAssembler()
+
+    /// The stamp on the next request. Monotonic, so a result that arrives out
+    /// of order can be recognised and dropped.
+    private var nextSequence: UInt64 = 0
+
+    /// The stamp of the newest frame that has been assigned.
+    private var appliedSequence: UInt64 = 0
+
+    /// `true` when something changed since the last request was sent.
+    private var needsAssembly = false
+
+    /// The one task that drives assembly, alive only while there is work.
+    private var assemblyLoop: Task<Void, Never>?
+
+    /// Asks for a frame, and coalesces.
+    ///
+    /// Everything that can change what the window draws comes through here: a
+    /// frame from the pipeline, a filter clicked, a project focused, a card
+    /// marked seen, the user layer replaced. At most one assembly is ever in
+    /// flight, and while it runs, further calls only set a flag — so a burst of
+    /// fifty frames costs one assembly of the fiftieth rather than fifty
+    /// assemblies of which forty-nine are thrown away.
+    ///
+    /// The inputs are read *after* the previous assembly finishes, not when the
+    /// call was made, which is what makes latest-wins true of the user's
+    /// filters as well as of the pipeline's frames.
+    private func scheduleAssembly() {
+        needsAssembly = true
+        guard assemblyLoop == nil else { return }
+        assemblyLoop = Task { [weak self] in
+            while true {
+                guard let self, self.needsAssembly, !Task.isCancelled else { break }
+                self.needsAssembly = false
+                self.nextSequence &+= 1
+                let sequence = self.nextSequence
+                let board = self.rawBoard
+                let inputs = self.assemblyInputs
+                let assembled = await self.assembler.assemble(
+                    board: board,
+                    inputs: inputs,
+                    sequence: sequence
+                )
+                guard !Task.isCancelled else { break }
+                self.adopt(assembled)
+            }
+            // Only the loop that is still the current one clears the handle. A
+            // cancelled loop has already been replaced or dropped by ``stop()``,
+            // and nilling the handle from under its successor would let a third
+            // loop start beside it.
+            if !Task.isCancelled { self?.assemblyLoop = nil }
+        }
+    }
+
+    /// Everything except the frame that shapes what the window draws.
+    private var assemblyInputs: BoardFrameInputs {
+        BoardFrameInputs(
+            claims: claims,
+            rules: ignoreRules,
+            showsIgnored: showsIgnored,
+            groupBy: groupBy,
+            harnessFilter: harnessFilter,
+            focusedProjectKey: focusedProjectKey,
+            bucketFilter: bucketFilter,
             seenAt: seenAt,
-            briefs: derivedBriefs,
+            derivedBriefs: derivedBriefs,
+            projectNames: projectNames,
             notices: notices,
             reports: reports
         )
-        let groups = BoardGrouping.groups(
-            for: board,
-            groupBy: groupBy,
-            harnessFilter: harnessFilter,
-            projectFilter: focusedProjectKey,
-            includesEnded: false
-        )
-        self.groups = groups
-        // Assigned every frame and *published* only when it moved: the
-        // `@Observable` macro compares an `Equatable` value against the one it
-        // is replacing and stays quiet when they match. That is the whole
-        // reason a row is a flat value — a frame arrives whenever any session
-        // changed, most of those changes never reach the wall, and the
-        // comparison that decides is a scan of scalars rather than a re-layout
-        // of the grid.
-        rowGroups = groups.map { group in
-            // A delegation tree keeps its own order: the shape *is* the
-            // information, and re-sorting it by urgency would draw a child
-            // above the parent that spawned it. Everything else is ordered by
-            // the ledger — what needs a person, then what finished while they
-            // were elsewhere.
-            let rows = group.roots.map { Self.flatten($0, builder: builder) }
-                ?? TaskLedger.sorted(builder.rows(for: group.sessions))
-            return BoardRowGroup(
-                id: group.id,
-                title: group.title,
-                harness: group.harness,
-                liveCount: group.counts.live,
-                rows: bucketFilter.map { bucket in TaskLedger.rows(rows, in: bucket) } ?? rows
-            )
-        }
-        // A section header with nothing under it is a filter's leftovers. Only
-        // possible while a bucket filter is on; the grouping never produces an
-        // empty group of its own.
-        .filter { !$0.rows.isEmpty }
+    }
 
-        let kept = BoardGrouping.filtered(
-            board.sessions,
-            harnessFilter: harnessFilter,
-            projectFilter: focusedProjectKey,
-            in: board
-        )
-        // `EndedSessions.split` and not `mostRecentFirst`: the ledger's order
-        // is total and supersedes it, and sorting four hundred finished rows
-        // twice per frame is exactly the kind of redundant work the board's
-        // budget is spent avoiding.
-        let ended = EndedSessions.split(kept).ended
-        let endedRows = TaskLedger.sorted(builder.rows(for: ended))
-        self.endedRows = bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows
-        // Counted before the bucket filter, on purpose: a chip that zeroed the
-        // others when clicked would leave no way back to them.
-        summary = BoardSummary(sessions: kept, seenAt: seenAt, notices: notices)
-        sessionCount = board.sessions.count
+    /// Takes one assembled frame: the whole of what the main actor does per
+    /// frame.
+    ///
+    /// Every assignment here is of a value that was computed elsewhere, and
+    /// each is *published* only when it moved — the `@Observable` macro compares
+    /// an `Equatable` value against the one it is replacing and stays quiet
+    /// when they match. That is the whole reason a row is a flat value: a frame
+    /// arrives whenever any session changed, most of those changes never reach
+    /// the wall, and the comparison that decides is a scan of scalars rather
+    /// than a re-layout of the grid.
+    ///
+    /// Internal rather than private so the suite can hand it a frame out of
+    /// order and check that it is refused.
+    func adopt(_ frame: AssembledBoardFrame) {
+        // Older than what is already on screen. It cannot happen while there is
+        // one assembly in flight at a time, and it is checked anyway: the cost
+        // is a comparison, and the failure it prevents is the board flickering
+        // back to a frame the reader has already seen past.
+        guard frame.sequence > appliedSequence else { return }
+        appliedSequence = frame.sequence
+
+        board = frame.board
+        ignoredKeys = frame.ignoredKeys
+        sessionIndex = frame.sessionIndex
+        groups = frame.groups
+        rowGroups = frame.rowGroups
+        endedRows = frame.endedRows
+        summary = frame.summary
+        sessionCount = frame.sessionCount
         refreshSelection()
+        onTree?(frame.tree)
+        onFrame?(frame.board)
+
+        if !board.sessions.isEmpty { hasEverSeenSession = true }
+
+        if autoSelectsFirstSession, selectedKey == nil, let first = board.sessions.first {
+            selectedKey = first.key
+            return  // the `didSet` already scheduled the load
+        }
+
+        // A frame that did not move the selected session cannot have added a
+        // row to its trace, and re-reading on every tick would query four
+        // times a second for a session nobody is touching.
+        guard let key = selectedKey, let session = sessionIndex[key] else { return }
+        guard session.lastEventAt != lastTraceEventAt else { return }
+        lastTraceEventAt = session.lastEventAt
+        reloadTrace()
+        if viewMode == .trajectory { trajectory.refresh(isAlive: session.isAlive) }
+    }
+
+    /// Waits until every frame the model has asked for has been assigned.
+    ///
+    /// The app never needs it — a frame that lands a beat later is exactly what
+    /// the 120 ms coalescing already allows — but a test that applies a frame
+    /// and then asks what the board says does, and so does anything that draws
+    /// the window once and exits.
+    func settle() async {
+        // Re-read rather than await once: the loop nils itself out only when it
+        // finds nothing pending, so a second loop existing here means a second
+        // frame was asked for while the first was in flight.
+        while let loop = assemblyLoop {
+            await loop.value
+        }
     }
 
     /// Re-derives the four things the trace pane draws about the selection.
@@ -544,7 +653,7 @@ final class LiveBoardModel {
     func markSeen(_ key: SessionKey, at date: Date = Date()) {
         if let existing = seenAt[key], existing >= date { return }
         seenAt[key] = date
-        rebuildGroups()
+        scheduleAssembly()
         guard let repository else { return }
         Task.detached(priority: .utility) {
             try? repository.markSeen(key: key, at: date)
@@ -563,25 +672,8 @@ final class LiveBoardModel {
             for (key, date) in stored where (self.seenAt[key] ?? .distantPast) < date {
                 self.seenAt[key] = date
             }
-            self.rebuildGroups()
+            self.scheduleAssembly()
         }
-    }
-
-    /// A delegation forest as a flat run of rows carrying their depth.
-    ///
-    /// Flat rather than nested: the shape is carried by ``BoardRow/depth``, and
-    /// a flat array is what a `LazyVStack` can be lazy about.
-    private static func flatten(
-        _ roots: [BoardTreeNode],
-        builder: BoardRowBuilder
-    ) -> [BoardRow] {
-        var rows: [BoardRow] = []
-        func walk(_ node: BoardTreeNode) {
-            rows.append(builder.row(for: node.session, depth: node.depth))
-            for child in node.children { walk(child) }
-        }
-        for root in roots { walk(root) }
-        return rows
     }
 
     /// Binds every surface to a project, or unbinds if it is already bound to
@@ -787,9 +879,11 @@ final class LiveBoardModel {
         consumeTask?.cancel()
         traceTask?.cancel()
         searchTask?.cancel()
+        assemblyLoop?.cancel()
         consumeTask = nil
         traceTask = nil
         searchTask = nil
+        assemblyLoop = nil
         trajectory.stop()
     }
 
@@ -812,31 +906,17 @@ final class LiveBoardModel {
         self.claims = claims
         ignoreRules = rules
         if self.showsIgnored != showsIgnored {
-            self.showsIgnored = showsIgnored  // the `didSet` rebuilds
+            self.showsIgnored = showsIgnored  // the `didSet` asks for the frame
         } else {
-            rebuildVisibleBoard()
+            scheduleAssembly()
         }
     }
 
-    /// Turns the frame in hand into the one the views draw.
-    ///
-    /// One pass per applied frame, next to the row derivation that was already
-    /// happening there. The fast path when nothing is claimed and no rule is
-    /// on is a pointer copy: ``BoardFilter`` hands back the frame it was given.
-    private func rebuildVisibleBoard() {
-        let visible = BoardFilter.apply(
-            to: rawBoard,
-            claims: claims,
-            rules: ignoreRules,
-            showsIgnored: showsIgnored
-        )
-        board = visible.board
-        ignoredKeys = visible.ignored
-        rebuildGroups()
-        onFrame?(board)
-    }
-
     /// Applies one frame.
+    ///
+    /// Records it and asks for a derivation; what the window draws changes when
+    /// that comes back, which on a live board is the same beat and in a test is
+    /// one ``settle()`` away.
     ///
     /// Internal rather than private so the suite can hand it a frame: the only
     /// other way in is a live `SessionRegistry` and a real event stream, which
@@ -844,25 +924,7 @@ final class LiveBoardModel {
     /// the pipeline's timing.
     func apply(_ frame: BoardSnapshot) {
         rawBoard = frame
-        // Before the rebuild, so a question the person has already answered is
-        // never drawn as still asking.
-        clearAnsweredNotices()
-        rebuildVisibleBoard()
-        if !board.sessions.isEmpty { hasEverSeenSession = true }
-
-        if autoSelectsFirstSession, selectedKey == nil, let first = board.sessions.first {
-            selectedKey = first.key
-            return  // the `didSet` already scheduled the load
-        }
-
-        // A frame that did not move the selected session cannot have added a
-        // row to its trace, and re-reading on every tick would query four
-        // times a second for a session nobody is touching.
-        guard let key = selectedKey, let session = board.session(for: key) else { return }
-        guard session.lastEventAt != lastTraceEventAt else { return }
-        lastTraceEventAt = session.lastEventAt
-        reloadTrace()
-        if viewMode == .trajectory { trajectory.refresh(isAlive: session.isAlive) }
+        scheduleAssembly()
     }
 
     // MARK: Trace loading
