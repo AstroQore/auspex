@@ -99,6 +99,10 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// How many sessions the frame holds.
     public var sessionCount: Int { board.sessions.count }
 
+    /// The sessions that finished a task the person has not opened since — the
+    /// scene's garden shows *which*, so the set travels with the frame.
+    public let unseenDoneKeys: Set<SessionKey>
+
     public init(
         sequence: UInt64,
         board: BoardSnapshot,
@@ -108,7 +112,8 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         rowGroups: [BoardRowGroup],
         endedRows: [BoardRow],
         summary: BoardSummary,
-        tree: ProjectTree
+        tree: ProjectTree,
+        unseenDoneKeys: Set<SessionKey> = []
     ) {
         self.sequence = sequence
         self.board = board
@@ -119,6 +124,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.endedRows = endedRows
         self.summary = summary
         self.tree = tree
+        self.unseenDoneKeys = unseenDoneKeys
     }
 }
 
@@ -297,7 +303,14 @@ public actor BoardFrameAssembler {
                 board: board,
                 names: inputs.projectNames,
                 builder: BoardRowBuilder(board: board)
-            )
+            ),
+            // The same question the summary's tally answers, kept as the
+            // answers rather than the count: the scene's garden has to know
+            // *which* sessions sit holding a note.
+            unseenDoneKeys: Set(kept.compactMap { session in
+                TaskLedger.isUnseenDone(session, lastSeenAt: inputs.seenAt[session.key])
+                    ? session.key : nil
+            })
         )
     }
 

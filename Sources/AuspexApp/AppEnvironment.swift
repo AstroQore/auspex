@@ -172,8 +172,13 @@ public final class AppEnvironment {
         // Before the pipeline: the first frame should already be placed by the
         // person's projects and filtered by their rules, rather than showing
         // everything for a moment and then settling.
-        catalog.onChange = { [board] claims, rules, showsIgnored in
-            board.setUserLayer(claims: claims, rules: rules, showsIgnored: showsIgnored)
+        catalog.onChange = { [board, catalog] claims, rules, showsIgnored in
+            board.setUserLayer(
+                claims: claims,
+                rules: rules,
+                showsIgnored: showsIgnored,
+                sceneZones: catalog.sceneZones
+            )
         }
         catalog.load()
 

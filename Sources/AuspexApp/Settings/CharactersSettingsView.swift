@@ -32,6 +32,8 @@ struct AuspexSettingsView: View {
             }
             CharactersSettingsView(library: library)
                 .tabItem { Label("Characters", systemImage: "person.and.background.dotted") }
+            SceneSettingsView(catalog: catalog)
+                .tabItem { Label("Scene", systemImage: "map") }
             IgnoreSettingsView(catalog: catalog)
                 .tabItem { Label("Ignore", systemImage: "eye.slash") }
         }

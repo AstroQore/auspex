@@ -124,6 +124,18 @@ final class LiveBoardModel {
     /// What not to show.
     private(set) var ignoreRules: IgnoreRules = .none
 
+    /// Which of the scene's annexes are drawn. Read only by the scene.
+    private(set) var sceneZones = SceneZoneOptions.all
+
+    /// The sessions that finished something nobody has read.
+    ///
+    /// Derived here rather than in the scene because the answer needs
+    /// ``seenAt``, which is Auspex's own record of what the *reader* has
+    /// looked at, and the scene has no business holding it. It is a `Set`, so
+    /// a frame in which nothing was read and nothing finished publishes
+    /// nothing and invalidates nobody.
+    private(set) var unseenDoneKeys: Set<SessionKey> = []
+
     /// How the live sessions are drawn: the grid of cards, or the scene.
     ///
     /// A mode rather than a destination, so switching keeps the selection, the
@@ -566,6 +578,7 @@ final class LiveBoardModel {
         endedRows = frame.endedRows
         summary = frame.summary
         sessionCount = frame.sessionCount
+        unseenDoneKeys = frame.unseenDoneKeys
         refreshSelection()
         onTree?(frame.tree)
         onFrame?(frame.board)
@@ -900,7 +913,17 @@ final class LiveBoardModel {
     /// or a rule. Redrawing from ``rawBoard`` rather than waiting for the next
     /// frame is what makes adding a rule feel like a switch instead of a
     /// request.
-    func setUserLayer(claims: ProjectClaims, rules: IgnoreRules, showsIgnored: Bool) {
+    func setUserLayer(
+        claims: ProjectClaims,
+        rules: IgnoreRules,
+        showsIgnored: Bool,
+        sceneZones: SceneZoneOptions = .all
+    ) {
+        // Its own property and its own guard: switching an annex off is a
+        // change to a picture, and putting the whole board back through the
+        // filter for it would be a redraw of every card on the wall for
+        // something no card shows.
+        self.sceneZones = sceneZones
         guard claims != self.claims || rules != ignoreRules || showsIgnored != self.showsIgnored
         else { return }
         self.claims = claims

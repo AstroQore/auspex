@@ -235,6 +235,20 @@ final class SpriteLibrary {
         return strip(in: package, pose: pose.characterPose)
     }
 
+    /// The walk one session plays while it crosses the map.
+    ///
+    /// A separate lookup from ``strip(for:pose:)`` because walking is not a
+    /// ``ScenePose``: no state puts a session in it, and adding one would mean
+    /// every switch over what a session is doing had to answer for a case the
+    /// board can never produce. Left is not asked for at all — it is
+    /// `walkRight`, mirrored by the caller.
+    func walkStrip(for key: SessionKey, facing direction: SceneWalkDirection) -> Strip? {
+        guard let package = package(for: key),
+              let pose = CharacterPose(rawValue: direction.poseName)
+        else { return nil }
+        return strip(in: package, pose: pose)
+    }
+
     /// The strip for one pose of a named package.
     func strip(in package: CharacterPackage, pose: CharacterPose) -> Strip? {
         let key = "\(package.id)/\(pose.rawValue)"

@@ -177,6 +177,23 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - The scene's map
+
+    /// Which of the scene's annexes are drawn.
+    var sceneZones: SceneZoneOptions { settings.sceneZones }
+
+    /// Switches an annex on or off, and remembers it.
+    ///
+    /// Off is not "hide those sessions": it is "they stay at their desks",
+    /// which is the office exactly as it was before the annexes existed. So
+    /// there is nothing to warn about and nothing to undo beyond ticking the
+    /// box again.
+    func setSceneZones(_ zones: SceneZoneOptions) {
+        guard settings.sceneZones != zones else { return }
+        settings.sceneZones = zones
+        persist()
+    }
+
     // MARK: - Importing
 
     /// Reads every harness registry, off the main actor.

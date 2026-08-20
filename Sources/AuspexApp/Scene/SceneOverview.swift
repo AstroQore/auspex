@@ -79,7 +79,7 @@ struct SceneOverview: Equatable {
         self.world = frame.contentRect
         self.viewport = SceneGeometry.layout(from: camera.visibleRect)
         self.zoom = camera.zoom
-        self.rooms = frame.floors.map { floor in
+        var rooms = frame.floors.map { floor in
             let tally = counts[floor.index] ?? BoardSnapshot.Counts()
             return Room(
                 id: floor.id,
@@ -89,6 +89,24 @@ struct SceneOverview: Equatable {
                 needsYou: tally.waitingPermission > 0
             )
         }
+        // The annexes are rectangles on the map like any other, and leaving
+        // them off would be a minimap that answers "how much is there" with
+        // less than there is — which is the one question it exists for. They
+        // are drawn in the quiet colours on purpose: nothing down there is
+        // working, and a garden that pulled the eye would be the map arguing
+        // with the room it is a map of.
+        rooms.append(
+            contentsOf: frame.zones.map { area in
+                Room(
+                    id: area.id,
+                    rect: area.frame,
+                    tint: Self.tint(for: area.zone),
+                    isFocused: false,
+                    needsYou: false
+                )
+            }
+        )
+        self.rooms = rooms
     }
 
     private init(world: CGRect, viewport: CGRect, rooms: [Room], zoom: CGFloat) {
@@ -112,5 +130,14 @@ struct SceneOverview: Equatable {
         if counts.thinking > 0 { return AuspexPalette.stateThinking }
         if counts.live > 0 { return AuspexPalette.stateIdle }
         return AuspexPalette.stateEnded
+    }
+
+    /// An annex's colour: the state of the thing that happens there.
+    private static func tint(for zone: SceneZone) -> Color {
+        switch zone {
+        case .meeting: AuspexPalette.stateDelegating
+        case .garden: AuspexPalette.stateIdle
+        case .office: AuspexPalette.stateEnded
+        }
     }
 }

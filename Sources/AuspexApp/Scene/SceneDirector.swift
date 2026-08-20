@@ -35,12 +35,21 @@ final class SceneDirector {
     private let floorLayer = SKNode()
     private let tetherLayer = SKNode()
     private let deskLayer = SKNode()
+    /// Above the furniture, because somebody walking past a bench walks in
+    /// front of it.
+    private let walkerLayer = SKNode()
 
     private var layout = SceneLayout()
     private(set) var frame: SceneFrame = .empty
 
+    /// Every place somebody can be, office desks and annex seats alike, keyed
+    /// by the layout's own id. One table because everything a place does —
+    /// hover, selection, culling, the state light — it does the same way
+    /// wherever it is.
     private var desks: [String: DeskNode] = [:]
     private var floors: [String: FloorNode] = [:]
+    private var zones: [String: ZoneNode] = [:]
+    private var tables: [String: TableNode] = [:]
     private var tethers: [String: TetherNode] = [:]
     private var deskBySession: [SessionKey: DeskNode] = [:]
     /// Where each desk stands, in scene coordinates, so culling does not have
@@ -69,15 +78,28 @@ final class SceneDirector {
     /// transition.
     private static let moveDuration: TimeInterval = 0.34
 
+    /// Who is between two places, and the node carrying them there.
+    private var walkers: [SessionKey: WalkerNode] = [:]
+    /// Where everybody was on the last frame, so a place that changed can be
+    /// told apart from a place that moved.
+    private var lastPlace: [SessionKey: SceneFrame.Place] = [:]
+    /// The last board, kept so a walk that finishes between frames can put the
+    /// person it delivered into their seat without waiting for the next one.
+    private var sessions: [SessionKey: SessionSnapshot] = [:]
+    /// Which annexes are switched on.
+    private var options = SceneZoneOptions.all
+
     init(world: SKNode, theme: SceneTheme) {
         self.world = world
         self.theme = theme
         floorLayer.zPosition = 0
         tetherLayer.zPosition = 1
         deskLayer.zPosition = 2
+        walkerLayer.zPosition = 3
         world.addChild(floorLayer)
         world.addChild(tetherLayer)
         world.addChild(deskLayer)
+        world.addChild(walkerLayer)
     }
 
     /// The building's bounds in scene coordinates, for the camera.
@@ -94,12 +116,31 @@ final class SceneDirector {
         PlaceholderArt.shared.use(theme: theme)
         for node in desks.values { node.removeFromParent() }
         for node in floors.values { node.removeFromParent() }
+        for node in zones.values { node.removeFromParent() }
+        for node in tables.values { node.removeFromParent() }
+        for node in walkers.values { node.removeFromParent() }
         desks.removeAll()
         floors.removeAll()
+        zones.removeAll()
+        tables.removeAll()
+        walkers.removeAll()
+        lastPlace.removeAll()
         deskBySession.removeAll()
         deskRects.removeAll()
         culledTo = nil
         frame = .empty
+    }
+
+    /// Adopts a new set of annexes.
+    ///
+    /// Switching one off has to take its walkers with it: a walk in flight is
+    /// heading for a bench that is about to stop existing, and letting it
+    /// arrive would leave somebody standing on the map with nothing under
+    /// them.
+    func apply(zones options: SceneZoneOptions) {
+        guard self.options != options else { return }
+        self.options = options
+        cancelEveryWalk()
     }
 
     /// Brings the scene up to date with one board frame.
@@ -107,14 +148,16 @@ final class SceneDirector {
     /// - Returns: `true` when the layout changed, so the camera knows whether
     ///   its bounds are still valid.
     @discardableResult
-    func apply(_ board: BoardSnapshot) -> Bool {
-        let next = layout.update(with: board)
+    func apply(_ board: BoardSnapshot, unseenDone: Set<SessionKey> = []) -> Bool {
+        let previous = frame
+        let next = layout.update(with: board, zones: options, unseenDone: unseenDone)
         let moved = next != frame
         frame = next
 
         var byKey: [SessionKey: SessionSnapshot] = [:]
         byKey.reserveCapacity(board.sessions.count)
         for session in board.sessions { byKey[session.key] = session }
+        sessions = byKey
 
         if moved {
             syncDesks()
@@ -127,12 +170,65 @@ final class SceneDirector {
             // Everything the cull decided is about rectangles that just moved.
             culledTo = nil
         }
+        // Walks are started from the *difference* between two frames, so this
+        // runs whether or not the geometry moved — a session that walked to a
+        // bench changed which place it is in without moving a single desk.
+        syncWalks(from: previous, sessions: byKey)
         // Floors are synced every pass, not only when the geometry moved: a
         // header's tallies change when a session changes state, which does not
         // move a single desk. The node compares them itself and returns.
         syncFloors(sessions: byKey)
+        syncZones()
         syncContent(sessions: byKey)
         return moved
+    }
+
+    // MARK: The annexes
+
+    private func syncZones() {
+        var live: Set<String> = []
+        for area in frame.zones {
+            live.insert(area.id)
+            let node = zones[area.id] ?? {
+                let created = ZoneNode(zone: area.zone, theme: theme)
+                zones[area.id] = created
+                floorLayer.addChild(created)
+                return created
+            }()
+            node.update(
+                area: area,
+                gate: frame.gate,
+                metrics: frame.metrics,
+                theme: theme
+            )
+            node.setCameraScale(lastCameraScale, width: area.frame.width)
+        }
+        for (id, node) in zones where !live.contains(id) {
+            node.removeFromParent()
+            zones.removeValue(forKey: id)
+        }
+
+        var liveTables: Set<String> = []
+        for table in frame.tables {
+            liveTables.insert(table.id)
+            let node = tables[table.id] ?? {
+                let created = TableNode(theme: theme)
+                tables[table.id] = created
+                floorLayer.addChild(created)
+                return created
+            }()
+            node.update(
+                table: table,
+                state: sessions[table.head]?.state,
+                metrics: frame.metrics,
+                theme: theme,
+                reduceMotion: reduceMotion
+            )
+        }
+        for (id, node) in tables where !liveTables.contains(id) {
+            node.removeFromParent()
+            tables.removeValue(forKey: id)
+        }
     }
 
     // MARK: Floors
@@ -182,30 +278,31 @@ final class SceneDirector {
         var rects: [String: CGRect] = [:]
 
         for slot in frame.slots {
-            live.insert(slot.id)
-            let scenePoint = SceneGeometry.scene(from: slot.anchor)
-            rects[slot.id] = Self.deskRect(at: scenePoint, scale: slot.scale)
-            let node: DeskNode
-            if let existing = desks[slot.id] {
-                node = existing
-                if existing.position != scenePoint {
-                    existing.removeAction(forKey: "move")
-                    if reduceMotion {
-                        existing.position = scenePoint
-                    } else {
-                        let move = SKAction.move(to: scenePoint, duration: Self.moveDuration)
-                        move.timingMode = .easeInEaseOut
-                        existing.run(move, withKey: "move")
-                    }
-                }
-            } else {
-                node = DeskNode(slotID: slot.id, theme: theme)
-                node.position = scenePoint
-                node.setCameraScale(lastCameraScale)
-                desks[slot.id] = node
-                deskLayer.addChild(node)
-            }
-            if let key = slot.session { bySession[key] = node }
+            place(
+                id: slot.id,
+                kind: .desk,
+                session: slot.session,
+                anchor: slot.anchor,
+                scale: slot.scale,
+                live: &live,
+                bySession: &bySession,
+                rects: &rects
+            )
+        }
+        // Seats after desks so that the node a session is *drawn* at wins the
+        // `bySession` entry: while somebody is in the garden, "reveal their
+        // desk" has to mean the bench they are actually on.
+        for seat in frame.seats {
+            place(
+                id: seat.id,
+                kind: seat.kind,
+                session: seat.session,
+                anchor: seat.anchor,
+                scale: seat.scale,
+                live: &live,
+                bySession: &bySession,
+                rects: &rects
+            )
         }
 
         for (id, node) in desks where !live.contains(id) {
@@ -223,6 +320,48 @@ final class SceneDirector {
         }
         deskBySession = bySession
         deskRects = rects
+    }
+
+    /// Adds, moves or keeps the node for one place on the map.
+    ///
+    /// Desks and seats go through the same function because a place is a
+    /// place: it is drawn by a ``DeskNode``, it is culled by its rectangle,
+    /// and it is hit-tested by the layout. What differs is the furniture, and
+    /// that is decided once, when the node is built.
+    private func place(
+        id: String,
+        kind: SceneSeatKind,
+        session: SessionKey?,
+        anchor: CGPoint,
+        scale: CGFloat,
+        live: inout Set<String>,
+        bySession: inout [SessionKey: DeskNode],
+        rects: inout [String: CGRect]
+    ) {
+        live.insert(id)
+        let scenePoint = SceneGeometry.scene(from: anchor)
+        rects[id] = Self.deskRect(at: scenePoint, scale: scale)
+        let node: DeskNode
+        if let existing = desks[id] {
+            node = existing
+            if existing.position != scenePoint {
+                existing.removeAction(forKey: "move")
+                if reduceMotion {
+                    existing.position = scenePoint
+                } else {
+                    let move = SKAction.move(to: scenePoint, duration: Self.moveDuration)
+                    move.timingMode = .easeInEaseOut
+                    existing.run(move, withKey: "move")
+                }
+            }
+        } else {
+            node = DeskNode(slotID: id, kind: kind, theme: theme)
+            node.position = scenePoint
+            node.setCameraScale(lastCameraScale)
+            desks[id] = node
+            deskLayer.addChild(node)
+        }
+        if let session { bySession[session] = node }
     }
 
     /// The area one workstation occupies, in scene coordinates.
@@ -262,14 +401,172 @@ final class SceneDirector {
     private func syncContent(sessions: [SessionKey: SessionSnapshot]) {
         for slot in frame.slots {
             guard let node = desks[slot.id] else { continue }
+            let inTransit = slot.session.map { walkers[$0] != nil } ?? false
             node.apply(
                 session: slot.session.flatMap { sessions[$0] },
+                seat: .desk,
+                isAway: slot.isAway || inTransit,
                 scale: slot.scale,
                 theme: theme,
                 reduceMotion: reduceMotion
             )
             node.setSelected(slot.session != nil && slot.session == selected)
         }
+        for seat in frame.seats {
+            guard let node = desks[seat.id] else { continue }
+            let inTransit = seat.session.map { walkers[$0] != nil } ?? false
+            node.apply(
+                session: seat.session.flatMap { sessions[$0] },
+                seat: seat.kind,
+                isAway: inTransit,
+                scale: seat.scale,
+                theme: theme,
+                reduceMotion: reduceMotion
+            )
+            node.setSelected(seat.session != nil && seat.session == selected)
+        }
+    }
+
+    // MARK: Walking
+
+    /// Starts, retargets and cancels walks from the difference between two
+    /// frames.
+    ///
+    /// ## Why this compares places and not positions
+    ///
+    /// A desk slides when the office reflows, and that is not a walk — it is
+    /// the furniture being rearranged, and it already has an animation. What
+    /// is a walk is somebody being in a *different place*: at a table when
+    /// they were at a desk, on a bench when they were at a table. The layout
+    /// gives every place a stable id, so the two cases are told apart by
+    /// comparing ids rather than by guessing from a distance.
+    private func syncWalks(from previous: SceneFrame, sessions: [SessionKey: SessionSnapshot]) {
+        // A session that has left the board takes its walk with it: the seat
+        // it was heading for is gone, and a walker delivering somebody to a
+        // place that no longer exists would leave them standing on the map.
+        for (key, walker) in walkers where sessions[key] == nil {
+            walker.removeFromParent()
+            walkers.removeValue(forKey: key)
+        }
+
+        guard !reduceMotion else {
+            // Reduce Motion has no walking in it at all: a session appears in
+            // its seat, which is the same information without the journey.
+            cancelEveryWalk()
+            lastPlace = Self.places(of: frame)
+            return
+        }
+
+        let now = Self.places(of: frame)
+        defer { lastPlace = now }
+        for (key, place) in now {
+            guard let was = lastPlace[key], was.id != place.id else { continue }
+            guard let session = sessions[key] else { continue }
+            // Where the walk actually starts: wherever a walk already in
+            // flight had got to, so a session that changes its mind halfway
+            // turns round rather than snapping back to its desk.
+            let start = walkers[key]?.layoutPosition ?? was.anchor
+            begin(
+                walk: key,
+                harness: session.key.harness,
+                from: start,
+                fromZone: walkers[key] == nil ? was.zone : zone(containing: start),
+                to: place,
+                previous: previous
+            )
+        }
+    }
+
+    /// Every session's place on one frame.
+    private static func places(of frame: SceneFrame) -> [SessionKey: SceneFrame.Place] {
+        var result: [SessionKey: SceneFrame.Place] = [:]
+        result.reserveCapacity(frame.slots.count)
+        for slot in frame.slots where slot.session != nil && !slot.isAway {
+            guard let key = slot.session else { continue }
+            result[key] = SceneFrame.Place(
+                anchor: slot.anchor, scale: slot.scale, kind: .desk, id: slot.id
+            )
+        }
+        for seat in frame.seats {
+            guard let key = seat.session else { continue }
+            result[key] = SceneFrame.Place(
+                anchor: seat.anchor, scale: seat.scale, kind: seat.kind, id: seat.id
+            )
+        }
+        return result
+    }
+
+    /// Which strip a layout point is in, for a walk that starts mid-journey.
+    private func zone(containing point: CGPoint) -> SceneZone {
+        frame.zones.last { $0.frame.contains(point) }?.zone ?? .office
+    }
+
+    private func begin(
+        walk key: SessionKey,
+        harness: Harness,
+        from: CGPoint,
+        fromZone: SceneZone,
+        to place: SceneFrame.Place,
+        previous: SceneFrame
+    ) {
+        let waypoints = SceneRoute.waypoints(
+            from: from,
+            to: place.anchor,
+            lanes: (
+                departure: frame.walkways.lane(fromZone),
+                arrival: frame.walkways.lane(place.zone)
+            ),
+            trunk: frame.walkways.trunk
+        )
+        let legs = SceneRoute.legs(waypoints)
+        guard !legs.isEmpty else {
+            walkers.removeValue(forKey: key)?.removeFromParent()
+            return
+        }
+
+        // A walk nobody can see is not worth animating. The office already
+        // pays only for what is on screen; a walker that crossed a culled
+        // corner of the map at thirty frames a second would be the one thing
+        // in the scene whose cost did not depend on the camera.
+        let travelled = SceneGeometry.scene(from: SceneRoute.bounds(of: waypoints))
+        if let culledTo, !culledTo.intersects(travelled.insetBy(dx: -40, dy: -40)) {
+            walkers.removeValue(forKey: key)?.removeFromParent()
+            return
+        }
+
+        let walker: WalkerNode
+        if let existing = walkers[key] {
+            walker = existing
+            walker.retarget(to: place.id)
+        } else {
+            walker = WalkerNode(
+                session: key, harness: harness, destination: place.id, scale: place.scale
+            )
+            walker.position = SceneGeometry.scene(from: from)
+            walkers[key] = walker
+            walkerLayer.addChild(walker)
+        }
+        _ = previous
+        walker.travel(
+            legs: legs,
+            speed: frame.metrics.walkSpeed,
+            scale: place.scale,
+            reduceMotion: reduceMotion
+        ) { [weak self, weak walker] in
+            guard let self, let walker, walkers[key] === walker else { return }
+            walker.removeFromParent()
+            walkers.removeValue(forKey: key)
+            // The person has arrived; the seat can draw them now.
+            syncContent(sessions: sessions)
+        }
+    }
+
+    /// Stops every walk and puts everybody where the layout says they are.
+    private func cancelEveryWalk() {
+        guard !walkers.isEmpty else { return }
+        for walker in walkers.values { walker.removeFromParent() }
+        walkers.removeAll()
+        syncContent(sessions: sessions)
     }
 
     // MARK: Lookups
@@ -349,6 +646,26 @@ final class SceneDirector {
                 node.isPaused = !onScreen
             }
         }
+        // The annexes are culled by the same rule as the rooms: an off-screen
+        // garden is a strip of scenery and a pulsing projector, and a scene
+        // that kept stepping them would be a scene whose cost was the size of
+        // the map rather than the size of the window.
+        for area in frame.zones {
+            guard let node = zones[area.id] else { continue }
+            let onScreen = rect.intersects(SceneGeometry.scene(from: area.frame))
+            if node.isHidden == onScreen {
+                node.isHidden = !onScreen
+                node.isPaused = !onScreen
+            }
+        }
+        for table in frame.tables {
+            guard let node = tables[table.id] else { continue }
+            let onScreen = rect.intersects(SceneGeometry.scene(from: table.frame))
+            if node.isHidden == onScreen {
+                node.isHidden = !onScreen
+                node.isPaused = !onScreen
+            }
+        }
         for tether in frame.tethers {
             guard let node = tethers[tether.id] else { continue }
             let span = CGRect(
@@ -378,10 +695,28 @@ final class SceneDirector {
             node.isHidden = false
             node.isPaused = false
         }
+        for node in zones.values {
+            node.isHidden = false
+            node.isPaused = false
+        }
+        for node in tables.values {
+            node.isHidden = false
+            node.isPaused = false
+        }
         for node in tethers.values {
             node.isHidden = false
             node.isPaused = false
         }
+    }
+
+    /// Puts everybody in their seat and takes the walkers off the map.
+    ///
+    /// A render is one instant of a board, and half a dozen people caught
+    /// mid-stride between two places is a picture of neither. So a snapshot
+    /// lands them first, which is also what Reduce Motion does.
+    func settleWalks() {
+        cancelEveryWalk()
+        lastPlace = Self.places(of: frame)
     }
 
     /// Rings one desk and unrings the rest.
@@ -405,6 +740,15 @@ final class SceneDirector {
         for floor in frame.floors {
             floors[floor.id]?.setCameraScale(scale, width: floor.frame.width)
         }
+        for area in frame.zones {
+            zones[area.id]?.setCameraScale(scale, width: area.frame.width)
+        }
+    }
+
+    /// The room or annex `key` is in, when the map has put it in one.
+    func area(for key: SessionKey) -> SceneZoneArea? {
+        guard let seat = frame.seat(for: key) else { return nil }
+        return frame.zones.last { $0.zone == seat.zone }
     }
 
     private var lastCameraScale: CGFloat = 1

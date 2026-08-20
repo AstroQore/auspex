@@ -53,7 +53,9 @@ public struct SceneMetrics: Sendable, Equatable {
     /// The end of the table the session that delegated sits at, and the width
     /// its chair needs.
     public var tableHeadWidth: CGFloat
-    /// The far end, past the last seat.
+    /// The far end, past the last seat. Wide enough to stand the projector
+    /// screen at, which is where a meeting room puts one and — more to the
+    /// point — the one place on a table that no chair is ever allocated.
     public var tableTailWidth: CGFloat
     /// A whole table, projector screen and both rows of chairs included.
     public var tableHeight: CGFloat
@@ -80,8 +82,8 @@ public struct SceneMetrics: Sendable, Equatable {
         walkSpeed: CGFloat = 208,
         tableSeatSpacing: CGFloat = 68,
         tableHeadWidth: CGFloat = 60,
-        tableTailWidth: CGFloat = 28,
-        tableHeight: CGFloat = 158,
+        tableTailWidth: CGFloat = 64,
+        tableHeight: CGFloat = 150,
         tableGap: CGFloat = 26,
         gardenSeatSpacing: CGFloat = 92,
         gardenRowHeight: CGFloat = 110,

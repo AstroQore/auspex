@@ -58,16 +58,13 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         ) ?? []).compactMap(\.value)
         showsIgnored = try container.decodeIfPresent(Bool.self, forKey: .showsIgnored) ?? false
         didShowSetup = try container.decodeIfPresent(Bool.self, forKey: .didShowSetup) ?? false
-    }
-
-    public var isEmpty: Bool { ignoreRules.isEmpty && !showsIgnored && !didShowSetup }
         sceneZones = try container.decodeIfPresent(
             SceneZoneOptions.self, forKey: .sceneZones
         ) ?? .all
     }
 
     public var isEmpty: Bool {
-        ignoreRules.isEmpty && !showsIgnored && sceneZones == .all
+        ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
     }
 }
 

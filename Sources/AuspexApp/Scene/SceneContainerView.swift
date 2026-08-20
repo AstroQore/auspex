@@ -130,6 +130,11 @@ struct SceneContainerView: View {
         // One property for every surface: the sidebar sets it, the wall keeps
         // that project's sections, and the camera flies to that room.
         let focused = model.focusedProjectKey
+        // Which annexes are drawn, and who is sitting in the garden holding a
+        // note. Both are read here rather than inside `updateNSView` for the
+        // same reason `board` is: observation is tracked in a `body`.
+        let zones = model.sceneZones
+        let unseenDone = model.unseenDoneKeys
 
         ZStack(alignment: .topTrailing) {
             OfficeSceneRepresentable(
@@ -137,6 +142,8 @@ struct SceneContainerView: View {
                 selected: selected,
                 focusedProject: focused,
                 reduceMotion: reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                zones: zones,
+                unseenDone: unseenDone,
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
                 onFocusProject: { model.focusedProjectKey = $0 },
@@ -402,6 +409,8 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let selected: SessionKey?
     let focusedProject: String?
     let reduceMotion: Bool
+    let zones: SceneZoneOptions
+    let unseenDone: Set<SessionKey>
     let commands: SceneCommands
     let onSelect: (SessionKey?) -> Void
     let onFocusProject: (String?) -> Void
@@ -438,7 +447,9 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
             selected: selected,
             focusedProject: focusedProject,
             reduceMotion: reduceMotion,
-            theme: SceneTheme.resolved(for: view.effectiveAppearance)
+            theme: SceneTheme.resolved(for: view.effectiveAppearance),
+            zones: zones,
+            unseenDone: unseenDone
         )
     }
 

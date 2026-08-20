@@ -134,7 +134,9 @@ final class OfficeScene: SKScene {
         selected: SessionKey?,
         focusedProject: String?,
         reduceMotion: Bool,
-        theme: SceneTheme
+        theme: SceneTheme,
+        zones: SceneZoneOptions = .all,
+        unseenDone: Set<SessionKey> = []
     ) {
         if self.theme.id != theme.id {
             self.theme = theme
@@ -146,13 +148,14 @@ final class OfficeScene: SKScene {
             self.reduceMotion = reduceMotion
             director.reduceMotion = reduceMotion
         }
+        director.apply(zones: zones)
 
         var byKey: [SessionKey: SessionSnapshot] = [:]
         byKey.reserveCapacity(board.sessions.count)
         for session in board.sessions { byKey[session.key] = session }
         sessions = byKey
 
-        let moved = director.apply(board)
+        let moved = director.apply(board, unseenDone: unseenDone)
         overviewIsStale = true
         if moved {
             cameraController.setContentRect(director.contentRect)
@@ -353,6 +356,7 @@ final class OfficeScene: SKScene {
         window: CGSize,
         focusing project: String?
     ) -> CGImage? {
+        director.settleWalks()
         director.uncull()
         rebuildBackdrop()
         cameraController.setViewSize(window)
@@ -389,7 +393,10 @@ final class OfficeScene: SKScene {
         // A render frames the whole building at once, so whatever the live
         // camera had culled has to come back before the shutter opens — and
         // the nameplates, which are sized for wherever the camera happened to
-        // be, go back to the one-to-one they are drawn at here.
+        // be, go back to the one-to-one they are drawn at here. Anybody caught
+        // mid-stride is put in their seat: a render is one instant, and half a
+        // walk is a picture of neither end of it.
+        director.settleWalks()
         director.uncull()
         director.setCameraScale(1)
         cameraController.park(at: CGPoint(x: rect.midX, y: rect.midY), scale: 1 / scale)

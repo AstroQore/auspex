@@ -47,6 +47,16 @@ struct SceneTheme: Equatable {
     let ink: NSColor
     /// A dark monitor, before any state lights it.
     let screenOff: NSColor
+    /// The meeting room's carpet, and the tone its tables sit on.
+    let carpet: NSColor
+    /// The garden's ground.
+    let grass: NSColor
+    /// Leaves, hedges, the top of a tree.
+    let leaf: NSColor
+    /// Trunks, benches, the gate.
+    let bark: NSColor
+    /// The path, and the stone the gate is set in.
+    let stone: NSColor
 
     private let harnessAccents: [Harness: NSColor]
     private let stateColors: [String: NSColor]
@@ -120,6 +130,16 @@ struct SceneTheme: Equatable {
             face: furniture(dark: 0xD3C3B4, light: 0xC0AE9E),
             ink: furniture(dark: 0x0A0B10, light: 0x1B2030),
             screenOff: furniture(dark: 0x11141D, light: 0x6E7891),
+            // The annexes are the same room seen from another chair, so their
+            // tones are the furniture palette pushed a step warmer and a step
+            // greener rather than a second colour scheme. A garden that
+            // arrived in daylight green would be the one thing on a dark
+            // board loud enough to read as an alert.
+            carpet: furniture(dark: 0x2A2434, light: 0xB8B0C4),
+            grass: furniture(dark: 0x23342A, light: 0xB3C9B6),
+            leaf: furniture(dark: 0x3C5D43, light: 0x84A88A),
+            bark: furniture(dark: 0x4A3B2E, light: 0x9C8570),
+            stone: furniture(dark: 0x2E3138, light: 0xAEB3BE),
             harnessAccents: accents,
             stateColors: states
         )
@@ -297,6 +317,8 @@ enum BubbleKind: String, Hashable {
     case asleep
     /// Work being handed over.
     case note
+    /// Something finished while you were elsewhere and is waiting to be read.
+    case done
 }
 
 /// The procedural sprite sheet: everything the office is made of, drawn in
@@ -510,10 +532,160 @@ final class PlaceholderArt {
         }
     }
 
+    // MARK: - The annexes
+
+    /// A long table, seen from three quarters on.
+    ///
+    /// Drawn once and stretched: the middle six pixels are the slice that
+    /// repeats, so a table for one pair of chairs and a table for four are the
+    /// same texture with the same ends and no seam. The alternative — a left
+    /// cap, a tiled middle and a right cap as three nodes — is three nodes per
+    /// table for a picture nobody could tell apart.
+    func table() -> SKTexture {
+        cached("table") { theme in
+            let top = theme.deskTop.blended(withFraction: 0.18, of: theme.ink) ?? theme.deskTop
+            var canvas = PixelCanvas(width: 24, height: 15)
+            canvas.fill(0, 0, 24, 1, top.blended(withFraction: 0.28, of: .white) ?? top)
+            canvas.fill(0, 1, 24, 7, top)
+            canvas.fill(0, 8, 24, 1, theme.deskFront)
+            canvas.fill(0, 9, 24, 4, theme.deskLeg)
+            canvas.fill(0, 12, 24, 1, theme.ink)
+            canvas.fill(2, 13, 3, 2, theme.deskLeg)
+            canvas.fill(19, 13, 3, 2, theme.deskLeg)
+            return canvas
+        }
+    }
+
+    /// The slice of ``table()`` that repeats when it is stretched.
+    static let tableCenterRect = CGRect(x: 8.0 / 24, y: 0, width: 8.0 / 24, height: 1)
+
+    /// A laptop, with its screen cut out so the state colour behind it shows
+    /// through — the same trick the monitor plays, so the meeting room and the
+    /// office say a state the same way.
+    func laptop() -> SKTexture {
+        cached("laptop") { theme in
+            let shell = theme.deskLeg
+            var canvas = PixelCanvas(width: 10, height: 8)
+            canvas.fill(1, 0, 8, 6, shell)
+            canvas.erase(2, 1, 6, 4)                  // the lit rectangle
+            canvas.fill(1, 0, 8, 1, shell.blended(withFraction: 0.3, of: .white) ?? shell)
+            canvas.fill(0, 6, 10, 2, shell.blended(withFraction: 0.2, of: .white) ?? shell)
+            return canvas
+        }
+    }
+
+    /// The screen at the far end of a table. Its light is the *parent*
+    /// session's state, so a meeting is readable from across the map exactly
+    /// as a desk is — without it, a table would be the one part of a board
+    /// read by its lighting with no light in it.
+    ///
+    /// A display on a stand rather than a projector screen on a wall: the
+    /// annexes have no walls, and a rectangle hanging in the air over a table
+    /// reads as a bug in the renderer rather than as a screen.
+    func projectorScreen() -> SKTexture {
+        cached("projectorScreen") { theme in
+            let shell = theme.deskLeg
+            var canvas = PixelCanvas(width: 26, height: 20)
+            canvas.fill(0, 0, 26, 15, shell)
+            canvas.erase(2, 2, 22, 10)                // the lit rectangle
+            canvas.fill(1, 1, 24, 1, shell.blended(withFraction: 0.32, of: .white) ?? shell)
+            canvas.fill(11, 15, 4, 2, shell)          // neck
+            canvas.fill(7, 17, 12, 2, theme.ink)      // foot
+            canvas.fill(6, 19, 14, 1, theme.ink)
+            return canvas
+        }
+    }
+
+    /// A garden bench: slats, arms, and two legs.
+    func bench() -> SKTexture {
+        cached("bench") { theme in
+            let wood = theme.bark
+            let lit = wood.blended(withFraction: 0.25, of: .white) ?? wood
+            var canvas = PixelCanvas(width: 20, height: 10)
+            canvas.fill(1, 0, 18, 1, lit)             // back rail
+            canvas.fill(1, 2, 18, 1, wood)
+            canvas.fill(0, 4, 20, 3, lit)             // seat
+            canvas.fill(0, 7, 20, 1, wood)
+            canvas.fill(2, 8, 2, 2, theme.ink)
+            canvas.fill(16, 8, 2, 2, theme.ink)
+            return canvas
+        }
+    }
+
+    /// A picnic blanket, checked, lying flat.
+    func picnicBlanket() -> SKTexture {
+        cached("picnicBlanket") { theme in
+            let cloth = theme.color(for: .waitingPermission(tool: nil))
+                .blended(withFraction: 0.55, of: theme.grass) ?? theme.grass
+            let pale = cloth.blended(withFraction: 0.3, of: .white) ?? cloth
+            var canvas = PixelCanvas(width: 18, height: 11)
+            canvas.fill(1, 0, 16, 11, cloth)
+            canvas.fill(0, 2, 18, 7, cloth)
+            for row in stride(from: 1, to: 10, by: 3) {
+                canvas.fill(0, row, 18, 1, pale, alpha: 0.55)
+            }
+            for column in stride(from: 2, to: 17, by: 4) {
+                canvas.fill(column, 0, 1, 11, pale, alpha: 0.55)
+            }
+            return canvas
+        }
+    }
+
+    /// A tree. Two of them, keyed by size, so a row of them is not a row of
+    /// one tree repeated.
+    func tree(tall: Bool) -> SKTexture {
+        cached("tree.\(tall)") { theme in
+            let height = tall ? 26 : 19
+            let crown = tall ? 16 : 12
+            var canvas = PixelCanvas(width: 16, height: height)
+            let left = (16 - crown) / 2
+            let dark = theme.leaf.blended(withFraction: 0.35, of: theme.ink) ?? theme.leaf
+            canvas.fill(left + 1, 0, crown - 2, 2, theme.leaf)
+            canvas.fill(left, 2, crown, crown - 4, theme.leaf)
+            canvas.fill(left + 1, crown - 2, crown - 2, 2, dark)
+            canvas.fill(7, crown - 1, 2, height - crown + 1, theme.bark)
+            canvas.fill(6, height - 1, 4, 1, dark)
+            return canvas
+        }
+    }
+
+    /// A hedge. The garden's punctuation.
+    func bush() -> SKTexture {
+        cached("bush") { theme in
+            let dark = theme.leaf.blended(withFraction: 0.3, of: theme.ink) ?? theme.leaf
+            var canvas = PixelCanvas(width: 12, height: 7)
+            canvas.fill(1, 1, 10, 5, theme.leaf)
+            canvas.fill(0, 3, 12, 3, theme.leaf)
+            canvas.fill(1, 5, 10, 2, dark)
+            return canvas
+        }
+    }
+
+    /// The gate at the far end of the garden. A session that is over walks to
+    /// it and off the map.
+    func gate() -> SKTexture {
+        cached("gate") { theme in
+            let post = theme.bark
+            let iron = theme.stone
+            var canvas = PixelCanvas(width: 20, height: 22)
+            canvas.fill(0, 2, 3, 20, post)
+            canvas.fill(17, 2, 3, 20, post)
+            canvas.fill(0, 0, 3, 2, post.blended(withFraction: 0.3, of: .white) ?? post)
+            canvas.fill(17, 0, 3, 2, post.blended(withFraction: 0.3, of: .white) ?? post)
+            // The gate itself, standing open: two leaves swung back against
+            // the posts, which is what "somebody just walked out" looks like
+            // without an animation.
+            canvas.fill(3, 6, 2, 14, iron)
+            canvas.fill(15, 6, 2, 14, iron)
+            canvas.fill(3, 6, 14, 1, iron)
+            return canvas
+        }
+    }
+
     // MARK: - Bubbles
 
     /// A speech bubble. Baked in its own colour rather than tinted, because
-    /// there are three of them and they never change hue.
+    /// there are four of them and they never change hue.
     func bubble(_ kind: BubbleKind) -> SKTexture {
         cached("bubble.\(kind.rawValue)") { theme in
             let fill: NSColor
@@ -521,6 +693,9 @@ final class PlaceholderArt {
             case .alert: fill = theme.color(for: .waitingPermission(tool: nil))
             case .asleep: fill = NSColor(sceneRGB: theme.isDark ? 0xB39755 : 0x7C6420)
             case .note: fill = theme.color(for: .delegating(children: 1))
+            // The board's own choice: `done unseen` borrows the writing green,
+            // because it is the same fact one moment later.
+            case .done: fill = theme.color(for: .writingFile(path: nil))
             }
 
             var canvas = PixelCanvas(width: 13, height: 14)
@@ -542,6 +717,12 @@ final class PlaceholderArt {
                 canvas.fill(4, 3, 5, 5, theme.ink)
                 canvas.fill(5, 4, 3, 1, fill)
                 canvas.fill(5, 6, 3, 1, fill)
+            case .done:
+                // A page with a tick on it: written, and waiting to be read.
+                canvas.fill(3, 2, 7, 7, theme.ink)
+                canvas.fill(4, 5, 2, 2, fill)
+                canvas.set(6, 7, fill)
+                canvas.fill(7, 4, 2, 3, fill)
             }
             return canvas
         }

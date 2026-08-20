@@ -1,5 +1,6 @@
 import AgentSessionKit
 import AgentSessionLive
+import AuspexCore
 import SpriteKit
 
 /// One agent, as a little person.
@@ -58,6 +59,8 @@ final class AgentSprite: SKNode {
 
     private var currentPose: ScenePose?
     private var currentReduceMotion: Bool?
+    /// The way it is facing while it walks. `nil` when it is sitting down.
+    private var currentWalk: SceneWalkDirection?
 
     init(harness: Harness, key: SessionKey) {
         self.harness = harness
@@ -99,23 +102,85 @@ final class AgentSprite: SKNode {
     /// `repeatForever` on every frame would reset its phase, so the whole room
     /// would blink in lockstep with the ingest pipeline.
     func apply(pose: ScenePose, reduceMotion: Bool) {
-        guard currentPose != pose || currentReduceMotion != reduceMotion else { return }
+        guard currentWalk != nil || currentPose != pose || currentReduceMotion != reduceMotion
+        else { return }
         currentPose = pose
         currentReduceMotion = reduceMotion
+        currentWalk = nil
 
+        reset()
+        if let strip = SpriteLibrary.shared.strip(for: key, pose: pose) {
+            applyStrip(strip, reduceMotion: reduceMotion)
+        } else {
+            applyProcedural(pose, reduceMotion: reduceMotion)
+        }
+    }
+
+    /// Puts the agent on its feet, facing `direction`.
+    ///
+    /// The strips a character package draws for this are `walkDown`, `walkUp`
+    /// and `walkRight`; left is `walkRight` mirrored, which is what every
+    /// 3/4 scene has done since the eighties and what stops an author from
+    /// drawing the same walk twice.
+    ///
+    /// A package with no walk in it falls back to the procedural rig, which
+    /// cannot walk either — so it does the honest version: the two typing
+    /// poses alternating at a stride's tempo with the whole figure bobbing,
+    /// which reads as movement because the *node* is moving underneath it.
+    func walk(_ direction: SceneWalkDirection, reduceMotion: Bool) {
+        guard currentWalk != direction || currentReduceMotion != reduceMotion else { return }
+        currentWalk = direction
+        currentPose = nil
+        currentReduceMotion = reduceMotion
+
+        reset()
+        atlas.xScale = direction.isMirrored ? -1 : 1
+        body.xScale = direction.isMirrored ? -1 : 1
+        head.xScale = direction.isMirrored ? -1 : 1
+
+        if let strip = SpriteLibrary.shared.walkStrip(for: key, facing: direction) {
+            applyStrip(strip, reduceMotion: reduceMotion)
+            return
+        }
+
+        let art = PlaceholderArt.shared
+        atlas.isHidden = true
+        body.isHidden = false
+        head.isHidden = false
+        head.texture = art.head(harness: harness)
+        let frames = [
+            art.body(harness: harness, pose: .rest),
+            art.body(harness: harness, pose: .type)
+        ]
+        body.texture = frames[0]
+        guard !reduceMotion else { return }
+        body.run(.repeatForever(.animate(with: frames, timePerFrame: 0.14)), withKey: "pose")
+        // The bob is on the head alone: bobbing the whole node would fight the
+        // move action carrying it across the map, and a walk that jittered
+        // vertically against its own path is the one thing worse than a slide.
+        head.run(
+            .repeatForever(
+                .sequence([
+                    .moveBy(x: 0, y: 1.5, duration: 0.14, timing: .easeOut),
+                    .moveBy(x: 0, y: -1.5, duration: 0.14, timing: .easeIn)
+                ])
+            ),
+            withKey: "bob"
+        )
+    }
+
+    /// Back to a standing start: no actions, nothing mirrored, fully opaque.
+    private func reset() {
         removeAllActions()
         body.removeAllActions()
         head.removeAllActions()
         atlas.removeAllActions()
         position.y = 0
         head.position.y = Self.bodySize.height - 2
+        atlas.xScale = 1
+        body.xScale = 1
+        head.xScale = 1
         alpha = 1
-
-        if let strip = SpriteLibrary.shared.strip(for: key, pose: pose) {
-            applyStrip(strip, reduceMotion: reduceMotion)
-        } else {
-            applyProcedural(pose, reduceMotion: reduceMotion)
-        }
     }
 
     /// Redraws the current pose from whatever the library holds now.
@@ -126,7 +191,13 @@ final class AgentSprite: SKNode {
     /// twenty times a second from restarting every loop in the room, and it is
     /// exactly what has to be defeated here.
     func refreshArt() {
-        guard let pose = currentPose, let reduceMotion = currentReduceMotion else { return }
+        guard let reduceMotion = currentReduceMotion else { return }
+        if let direction = currentWalk {
+            currentWalk = nil
+            walk(direction, reduceMotion: reduceMotion)
+            return
+        }
+        guard let pose = currentPose else { return }
         currentPose = nil
         apply(pose: pose, reduceMotion: reduceMotion)
     }

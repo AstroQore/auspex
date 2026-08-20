@@ -83,15 +83,50 @@ final class DeskNode: SKNode {
         var harness: Harness?
         var stateKey: String
         var pose: ScenePose
+        var seat: SceneSeatKind
         var isAlarming: Bool
         var isEnded: Bool
         var isVacant: Bool
+        /// Whether whoever this place belongs to is somewhere else on the map.
+        var isAway: Bool
         var scale: CGFloat
         var reduceMotion: Bool
     }
 
+    /// What a place is made of.
+    ///
+    /// Decided once, at construction, from the kind of seat the layout said
+    /// this is. A desk never becomes a bench: the layout gives a workstation
+    /// and a garden seat different ids, and a node's id is what the director
+    /// diffs on. So the furniture is built once and the per-frame work stays
+    /// what it was — one small value compared, and usually nothing done.
+    enum Furniture {
+        /// A desk, a chair, and a monitor.
+        case workstation
+        /// A chair at a long table, with a laptop on it.
+        case tableSeat
+        /// A bench or a blanket in the garden.
+        case gardenSeat
+        /// Nothing. Somebody on their way out through the gate.
+        case bare
+
+        init(_ kind: SceneSeatKind) {
+            switch kind {
+            case .desk: self = .workstation
+            case .tableHead, .tableNorth, .tableSouth: self = .tableSeat
+            case .bench, .note, .doze: self = .gardenSeat
+            case .gate: self = .bare
+            }
+        }
+    }
+
     /// The desk itself, which outlives whoever is sitting at it.
     let slotID: String
+    /// What this place is made of.
+    let furniture: Furniture
+    /// Which seat it is, which decides where the laptop goes and which way the
+    /// light spills.
+    private let seatKind: SceneSeatKind
     /// Who is sitting here now.
     private(set) var sessionKey: SessionKey?
     private(set) var look: Look?
@@ -121,6 +156,9 @@ final class DeskNode: SKNode {
     private let glow = SKSpriteNode()
     private let paper = SKSpriteNode()
     private let bubble = SKSpriteNode()
+    /// The bench or the blanket a garden seat is, and the laptop a table seat
+    /// has. `nil` for a place that needs neither.
+    private var seatProp: SKSpriteNode?
     /// The harness's vendor mark, on the front of the desk.
     private let mark = SKSpriteNode()
     private let ring = SKShapeNode(
@@ -134,8 +172,10 @@ final class DeskNode: SKNode {
     private var agent: AgentSprite?
     private var theme: SceneTheme
 
-    init(slotID: String, theme: SceneTheme) {
+    init(slotID: String, kind: SceneSeatKind = .desk, theme: SceneTheme) {
         self.slotID = slotID
+        self.seatKind = kind
+        self.furniture = Furniture(kind)
         self.theme = theme
         super.init()
 
@@ -213,6 +253,103 @@ final class DeskNode: SKNode {
         addChild(bubble)
         addChild(ring)
         addChild(nameplate)
+
+        furnish(art)
+    }
+
+    /// Puts out whatever this place is made of, and takes away what it is not.
+    ///
+    /// The office's own sprites are built by the initialiser above and then
+    /// switched off here rather than being built conditionally, because they
+    /// are stored properties: a `let` that only sometimes has a texture is a
+    /// worse trade than four hidden nodes on the seats that are not desks.
+    private func furnish(_ art: PlaceholderArt) {
+        switch furniture {
+        case .workstation:
+            return
+
+        case .tableSeat:
+            desk.isHidden = true
+            monitor.isHidden = true
+            chair.isHidden = true
+            paper.isHidden = true
+            let laptop = SKSpriteNode(texture: art.laptop())
+            laptop.anchorPoint = CGPoint(x: 0.5, y: 0)
+            laptop.size = CGSize(width: 20, height: 16)
+            // A laptop belongs between its owner and the middle of the table.
+            // Which way that is depends on which side of it they are sitting,
+            // and so does whether it is drawn in front of them or behind: on
+            // the near side you see their back and the lid past their head.
+            switch seatKind {
+            case .tableSouth:
+                laptop.position = CGPoint(x: 0, y: 34)
+                laptop.zPosition = 1
+                screen.position = CGPoint(x: 0, y: 42)
+            case .tableHead:
+                laptop.position = CGPoint(x: 16, y: 8)
+                laptop.zPosition = 6
+                screen.position = CGPoint(x: 16, y: 16)
+            default:
+                laptop.position = CGPoint(x: 0, y: -14)
+                laptop.zPosition = 6
+                screen.position = CGPoint(x: 0, y: -6)
+            }
+            screen.size = CGSize(width: 12, height: 8)
+            screen.zPosition = laptop.zPosition - 0.1
+            glow.size = CGSize(width: 96, height: 96)
+            glow.position = screen.position
+            mark.position = CGPoint(x: -18, y: 6)
+            addChild(laptop)
+            seatProp = laptop
+
+        case .gardenSeat:
+            desk.isHidden = true
+            monitor.isHidden = true
+            chair.isHidden = true
+            paper.isHidden = true
+            screen.isHidden = true
+            // Half the garden sits on benches and half on blankets, decided
+            // from the seat's own id so that a bench does not become a blanket
+            // when the person on it goes from resting to waiting to be read.
+            let onBlanket = Self.prefersBlanket(slotID)
+            let prop = SKSpriteNode(
+                texture: onBlanket ? art.picnicBlanket() : art.bench()
+            )
+            prop.anchorPoint = CGPoint(x: 0.5, y: 0)
+            prop.size = onBlanket
+                ? CGSize(width: 46, height: 26)
+                : CGSize(width: 52, height: 24)
+            prop.position = CGPoint(x: 0, y: onBlanket ? -8 : -4)
+            prop.zPosition = onBlanket ? 0.5 : 1
+            glow.size = CGSize(width: 88, height: 88)
+            glow.position = CGPoint(x: 0, y: 26)
+            mark.position = CGPoint(x: 20, y: 6)
+            bubble.position = CGPoint(x: 6, y: 46)
+            addChild(prop)
+            seatProp = prop
+
+        case .bare:
+            desk.isHidden = true
+            monitor.isHidden = true
+            chair.isHidden = true
+            paper.isHidden = true
+            screen.isHidden = true
+            mark.isHidden = true
+            glow.size = CGSize(width: 72, height: 72)
+            glow.position = CGPoint(x: 0, y: 26)
+        }
+    }
+
+    /// Whether this garden seat is a blanket rather than a bench.
+    ///
+    /// Two in five, spread by the seat's index rather than at random: a
+    /// picture that reshuffled its furniture between two renders of the same
+    /// board would not be a picture of the board.
+    private static func prefersBlanket(_ id: String) -> Bool {
+        guard let digits = id.split(separator: ".").last,
+              let index = Int(digits.drop(while: { !$0.isNumber }))
+        else { return false }
+        return index % 5 >= 3
     }
 
     @available(*, unavailable)
@@ -225,6 +362,8 @@ final class DeskNode: SKNode {
     /// Returns without touching anything when nothing that matters changed.
     func apply(
         session: SessionSnapshot?,
+        seat: SceneSeatKind = .desk,
+        isAway: Bool = false,
         scale: CGFloat,
         theme: SceneTheme,
         reduceMotion: Bool
@@ -233,9 +372,11 @@ final class DeskNode: SKNode {
             harness: session?.key.harness,
             stateKey: session.map { SceneTheme.stateKey($0.state) } ?? "vacant",
             pose: session.map { ScenePose.pose(for: $0.state, isStale: $0.isStale) } ?? .ended,
+            seat: seat,
             isAlarming: session?.state.style.isAlarming ?? false,
             isEnded: session?.state.isEnded ?? false,
             isVacant: session == nil,
+            isAway: isAway,
             scale: scale,
             reduceMotion: reduceMotion
         )
@@ -252,7 +393,11 @@ final class DeskNode: SKNode {
     }
 
     private func applyAgent(session: SessionSnapshot?, look: Look) {
-        guard let session, let harness = look.harness else {
+        // A desk whose owner has walked to a table or a bench is drawn empty,
+        // the same as one nobody has taken. The difference is not something a
+        // picture of a desk can carry — it is carried by the person being
+        // visibly somewhere else.
+        guard let session, let harness = look.harness, !look.isAway else {
             agent?.removeFromParent()
             agent = nil
             // An empty desk has its chair pushed in. It is the difference
@@ -268,13 +413,34 @@ final class DeskNode: SKNode {
             agent?.removeFromParent()
             let created = AgentSprite(harness: harness, key: session.key)
             created.name = harness.rawValue
-            created.position = CGPoint(x: -20, y: 4)
+            created.position = Self.agentPosition(for: furniture)
             created.zPosition = 2
             addChild(created)
             agent = created
             sprite = created
         }
-        sprite.apply(pose: look.pose, reduceMotion: look.reduceMotion)
+        // Somebody in the queue for the gate is *leaving*, not gone. The
+        // `ended` pose fades them out where they sit, which is right at a desk
+        // — the chair is what is left — and wrong here, where the whole point
+        // of the walk is that you can watch them go.
+        if look.seat == .gate {
+            sprite.walk(.right, reduceMotion: look.reduceMotion)
+        } else {
+            sprite.apply(pose: look.pose, reduceMotion: look.reduceMotion)
+        }
+    }
+
+    /// Where the person stands inside their place.
+    ///
+    /// The office offsets them to the left so the monitor has the middle of
+    /// the desk; everywhere else the seat *is* the anchor, because a chair at
+    /// a table and a bench in the garden were laid out around the person
+    /// rather than around the furniture.
+    private static func agentPosition(for furniture: Furniture) -> CGPoint {
+        switch furniture {
+        case .workstation: CGPoint(x: -20, y: 4)
+        case .tableSeat, .gardenSeat, .bare: CGPoint(x: 0, y: 0)
+        }
     }
 
     /// One texture per harness, for the whole app.
@@ -301,7 +467,8 @@ final class DeskNode: SKNode {
     }
 
     private func applyDesk(look: Look) {
-        if let harness = look.harness, let texture = Self.markTexture(for: harness) {
+        if let harness = look.harness, let texture = Self.markTexture(for: harness),
+           furniture != .bare, !look.isAway {
             mark.texture = texture
             mark.color = theme.accent(harness)
             mark.isHidden = false
@@ -309,6 +476,8 @@ final class DeskNode: SKNode {
             mark.isHidden = true
         }
         mark.alpha = look.isEnded ? 0.4 : 1
+        seatProp?.alpha = look.isVacant ? 0.55 : 1
+        guard furniture == .workstation else { return }
         paper.isHidden = look.pose != .writing
         paper.removeAllActions()
         if look.pose == .writing, !look.reduceMotion {
@@ -330,7 +499,7 @@ final class DeskNode: SKNode {
         screen.removeAllActions()
         glow.removeAllActions()
 
-        guard let session, !look.isEnded else {
+        guard let session, !look.isEnded, !look.isAway else {
             screen.color = theme.screenOff
             screen.alpha = 1
             glow.alpha = 0
@@ -341,6 +510,16 @@ final class DeskNode: SKNode {
         screen.color = color
         glow.color = color
         screen.alpha = 1
+
+        // Nothing in the garden has a screen in it. The light is still there,
+        // low, because a bench with somebody on it and a bench without one
+        // should not be the same shape in the dark — but the state itself is
+        // said by the bubble over their head, which is the whole reason they
+        // are out here.
+        guard furniture != .gardenSeat, furniture != .bare else {
+            glow.alpha = look.reduceMotion || look.pose != .stale ? 0.14 : 0.1
+            return
+        }
 
         guard !look.reduceMotion else {
             // Static, but not uniform: a still room still has to say which
@@ -411,13 +590,28 @@ final class DeskNode: SKNode {
     private func applyBubble(look: Look) {
         bubble.removeAllActions()
         let kind: BubbleKind?
-        switch look.pose {
-        case .blocked: kind = .alert
-        case .stale: kind = .asleep
-        case .delegating: kind = .note
-        default: kind = nil
+        switch look.seat {
+        // The whole point of the garden: a session that finished while you
+        // were elsewhere sits there holding the note that says so, and that
+        // is readable from further away than any monitor colour.
+        case .note: kind = .done
+        case .doze: kind = .asleep
+        case .bench, .gate: kind = nil
+        // Nothing over anybody's head at a table. The projector at the end of
+        // it already carries the parent's state, and a note bubble on top of
+        // that would be the same fact said twice — once by the room and once
+        // by the person, which is how a reader learns to trust neither.
+        case .tableHead, .tableNorth, .tableSouth:
+            kind = look.pose == .blocked ? .alert : nil
+        default:
+            switch look.pose {
+            case .blocked: kind = .alert
+            case .stale: kind = .asleep
+            case .delegating: kind = .note
+            default: kind = nil
+            }
         }
-        guard let kind else {
+        guard let kind, !look.isAway, !look.isVacant else {
             bubble.isHidden = true
             return
         }
@@ -456,6 +650,19 @@ final class DeskNode: SKNode {
                     .sequence([
                         .fadeAlpha(to: 0.45, duration: 0.6),
                         .fadeAlpha(to: 1, duration: 0.6)
+                    ])
+                ),
+                withKey: "bubble"
+            )
+        case .done:
+            // A slow lift and settle rather than a pulse: it is waiting, not
+            // asking. The only thing in this scene allowed to ask is red.
+            bubble.run(
+                .repeatForever(
+                    .sequence([
+                        .moveBy(x: 0, y: 3, duration: 1.1),
+                        .moveBy(x: 0, y: -3, duration: 1.1),
+                        .wait(forDuration: 0.5)
                     ])
                 ),
                 withKey: "bubble"
