@@ -203,7 +203,11 @@ final class OfficeScene: SKScene {
         framingEverything: Bool = false
     ) {
         if let host {
-            host.apply(next, animated: animated && !reduceMotion, framingEverything: framingEverything)
+            host.apply(
+                next,
+                animated: animated && !reduceMotion,
+                framingEverything: framingEverything
+            )
         } else {
             cameraController.mirror(next)
             cameraDidChange()

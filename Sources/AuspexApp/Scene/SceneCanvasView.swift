@@ -291,7 +291,15 @@ final class SceneCanvasView: NSView, SceneViewportHost {
         let anchor = point.map { geometry.scene(fromDocument: documentPoint(fromWindow: $0)) }
         let settled = current.settled(around: anchor)
         guard settled != current else { return }
-        begin(SceneFlight(from: current, to: settled, duration: SceneFlight.settleDuration))
+        begin(
+            SceneFlight(
+                from: current,
+                to: settled,
+                // Under Reduce Motion the grid comes back the instant the
+                // fingers do, rather than sliding into place.
+                duration: scene.reduceMotion ? 0 : SceneFlight.settleDuration
+            )
+        )
     }
 
     /// Starts a flight from wherever the scroll view has got to.

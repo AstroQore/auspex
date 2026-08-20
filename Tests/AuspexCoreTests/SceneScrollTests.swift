@@ -96,7 +96,8 @@ struct SceneScrollTests {
             .viewport(documentVisible: Self.documentVisible(magnification: 1), magnification: 1)
             .fitted()
         let visible = Self.geometry.documentVisible(for: viewport)
-        #expect(visible.insetBy(dx: -1, dy: -1).contains(CGRect(origin: .zero, size: Self.world.size)))
+        let document = CGRect(origin: .zero, size: Self.world.size)
+        #expect(visible.insetBy(dx: -1, dy: -1).contains(document))
     }
 
     // MARK: - Zooming around a point
@@ -153,7 +154,11 @@ struct SceneScrollTests {
             )
             let zoomed = Self.geometry
                 .viewport(documentVisible: visible, magnification: magnification)
-                .zoomed(to: next, around: Self.geometry.scene(fromDocument: anchor), snapping: false)
+                .zoomed(
+                    to: next,
+                    around: Self.geometry.scene(fromDocument: anchor),
+                    snapping: false
+                )
             visible = Self.geometry.documentVisible(for: zoomed)
             magnification = next
 
