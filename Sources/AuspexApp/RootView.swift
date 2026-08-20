@@ -403,22 +403,6 @@ struct SidebarRow: View {
     }
 }
 
-/// The rule over a block of sidebar rows.
-struct SidebarSectionLabel: View {
-    let title: String
-
-    init(_ title: String) { self.title = title }
-
-    var body: some View {
-        Text(title)
-            .auspexLabel(AuspexType.labelLarge)
-            .foregroundStyle(AuspexPalette.text3)
-            .padding(.horizontal, 10)
-            .padding(.top, 14)
-            .padding(.bottom, 6)
-    }
-}
-
 /// Auspex's own mark: the pixel bird from the app icon, on its dark tile.
 ///
 /// The same drawing at every size the window shows it — the hand-pixelled
