@@ -476,6 +476,13 @@ struct SessionHeaderView: View {
                     tint: AuspexPalette.stateDelegating
                 )
             }
+            // Which flavour of the harness this is — `auto review`, `cli`,
+            // `ide`. Beside the parent's chip, because for a Codex guardian
+            // run the two are one fact: *what* this session is, and *what it
+            // is a review of*.
+            if let variant = SessionVariantLabel.label(for: session.identity) {
+                FactChip(variant, tint: AuspexPalette.text3)
+            }
         }
     }
 

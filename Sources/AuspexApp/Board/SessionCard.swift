@@ -224,6 +224,16 @@ struct SessionCard: View, Equatable {
                 )
                 .fixedSize()
             }
+            // Which flavour of the harness this is, next to the link it
+            // qualifies: "↑ Codex rollout adapter · auto review" is one
+            // sentence read left to right. Muted, because it is a footnote on
+            // the identity and not a fact about the work — and absent from
+            // nearly every card, which is what makes it worth reading on the
+            // ones that have it.
+            if let variant = row.variantLabel {
+                FactChip(variant, tint: AuspexPalette.text3)
+                    .fixedSize()
+            }
             Spacer(minLength: 0)
         }
     }

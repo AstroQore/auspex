@@ -45,6 +45,10 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     public let pid: pid_t?
     /// The model the session is running, when one was recorded.
     public let modelName: String?
+    /// Which flavour of its harness this is, in one word, when that is
+    /// something a reader needs — `auto review`, `cli`, `ide`. `nil` for the
+    /// great majority of sessions; see ``SessionVariantLabel``.
+    public let variantLabel: String?
     /// What it is doing.
     public let state: SessionState
     /// Working, but silent for longer than the reducer's patience.
@@ -112,6 +116,7 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         shortID: String,
         pid: pid_t?,
         modelName: String?,
+        variantLabel: String? = nil,
         state: SessionState,
         isStale: Bool,
         project: String?,
@@ -134,6 +139,7 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         lastTurnEndedAt: Date? = nil,
         isUnseenDone: Bool = false
     ) {
+        self.variantLabel = variantLabel
         self.key = key
         self.harness = harness
         self.title = title
@@ -237,6 +243,7 @@ public struct BoardRowBuilder: Sendable {
             shortID: String(session.key.sessionID.prefix(8)),
             pid: session.identity.pid,
             modelName: session.identity.model,
+            variantLabel: SessionVariantLabel.label(for: session.identity),
             state: session.state,
             isStale: session.isStale,
             project: project,
