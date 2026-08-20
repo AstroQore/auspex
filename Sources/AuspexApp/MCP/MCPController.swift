@@ -63,6 +63,7 @@ final class MCPController {
         store: AuspexStore?,
         table: any ProcessTableReading,
         isReadOnly: Bool,
+        board: LiveBoardModel,
         onNotice: @escaping @Sendable (AgentNotice) async -> Void,
         onReport: @escaping @Sendable (AgentReport) async -> Void,
         onLedgerChange: @escaping @Sendable () async -> Void
@@ -73,6 +74,10 @@ final class MCPController {
             store: store,
             table: table,
             isReadOnly: isReadOnly,
+            // Weak: the server outlives nothing, but a strong reference from an
+            // actor to the main-actor model would be a cycle through the
+            // environment that owns both.
+            readBoard: { [weak board] in await MainActor.run { board?.board ?? .empty } },
             onNotice: onNotice,
             onReport: onReport,
             onLedgerChange: onLedgerChange
@@ -143,15 +148,6 @@ final class MCPController {
         status = .stopped
         clientCount = 0
         socketPath = nil
-    }
-
-    /// Hands the server the frame the board is showing.
-    ///
-    /// Called once per applied frame — the same cadence the wall redraws at —
-    /// rather than pulled per tool call, so a tool answers out of a value that
-    /// is already in hand.
-    func publish(board: BoardSnapshot) {
-        Task { [host] in await host.setBoard(board) }
     }
 
     /// Disconnects one client. The process is not signalled: its bridge sees

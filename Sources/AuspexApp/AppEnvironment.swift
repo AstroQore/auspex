@@ -284,6 +284,7 @@ public final class AppEnvironment {
             store: store,
             table: table,
             isReadOnly: isDemo,
+            board: board,
             onNotice: { [weak self] notice in
                 await MainActor.run { self?.board.apply(notice: notice) }
                 guard !isDemo else { return }
@@ -299,13 +300,14 @@ public final class AppEnvironment {
         mcp = controller
         controller.start()
 
-        // One hook, two readers: the sidebar's tree and the MCP server both
+        // One hook, two readers: the sidebar's tree and the Tasks page both
         // want the frame the wall is drawing, once per applied frame rather
-        // than once per render.
-        board.onFrame = { [projects, tasks, board, weak controller] frame in
+        // than once per render. The MCP server is not one of them — it reads
+        // the frame when an agent asks, which is rarer than a frame by three
+        // orders of magnitude.
+        board.onFrame = { [projects, tasks, board] frame in
             projects.rebuild(board: frame)
             tasks.apply(board: frame, notices: board.notices)
-            controller?.publish(board: frame)
         }
     }
 

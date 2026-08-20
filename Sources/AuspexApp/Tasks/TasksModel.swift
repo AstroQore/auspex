@@ -51,6 +51,15 @@ final class TasksModel {
 
     private var repository: TaskRepository?
     private var live: [SessionKey: LiveSessionState] = [:]
+    /// The sessions any task is attached to.
+    ///
+    /// The whole reason ``apply(board:notices:)`` is affordable. It is called
+    /// from the frame hook, which runs eight times a second whether or not this
+    /// page is on screen, and deriving a title and a project for every session
+    /// on a six-hundred-session board at that rate is exactly the kind of
+    /// always-on cost `AGENTS.md` § 4.1 exists to prevent. A task board with
+    /// nothing linked to it does no work at all.
+    private var linkedKeys: Set<SessionKey> = []
     private var reloadTask: Task<Void, Never>?
 
     /// What a task row knows about a session attached to it.
@@ -133,9 +142,13 @@ final class TasksModel {
     /// Hands the page the frame the board is drawing, so a task row's dot is
     /// the same fact as its card's pill.
     func apply(board: BoardSnapshot, notices: [SessionKey: AgentNotice]) {
+        guard !linkedKeys.isEmpty else {
+            if !live.isEmpty { live = [:]; rebuild() }
+            return
+        }
         var next: [SessionKey: LiveSessionState] = [:]
-        next.reserveCapacity(board.sessions.count)
-        for session in board.sessions {
+        next.reserveCapacity(linkedKeys.count)
+        for session in board.sessions where linkedKeys.contains(session.key) {
             next[session.key] = LiveSessionState(
                 key: session.key,
                 harness: session.key.harness,
@@ -174,6 +187,7 @@ final class TasksModel {
         openCount = latest.tasks.count { $0.status != .done }
 
         let linksByTask = Dictionary(grouping: latest.links) { $0.taskID }
+        linkedKeys = Set(latest.links.map(\.session))
         func row(_ task: AuspexTask) -> TaskRow {
             let attached = (linksByTask[task.id] ?? [])
                 .compactMap { live[$0.session] }

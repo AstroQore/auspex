@@ -12,7 +12,15 @@ import Foundation
 /// once per applied frame instead of pulled per call, which is also what makes
 /// a tool answer in microseconds rather than at the mercy of a layout pass.
 actor AppMCPHost: AuspexMCPHost {
-    private var board: BoardSnapshot = .empty
+    /// Reads the frame the window is drawing, on the main actor.
+    ///
+    /// Pulled rather than pushed, and that is a memory decision. A frame holds
+    /// every session on the board — on a machine with a thousand of them that
+    /// is tens of megabytes — so a copy kept here would keep one whole extra
+    /// frame alive for as long as the app runs, to serve a handful of tool
+    /// calls a minute. Hopping to the main actor when an agent actually asks
+    /// costs a value read at a rate nobody can measure, and retains nothing.
+    private let readBoard: @Sendable () async -> BoardSnapshot
     /// The transport, for the one question only it can answer: who is attached
     /// right now.
     ///
@@ -39,10 +47,12 @@ actor AppMCPHost: AuspexMCPHost {
         store: AuspexStore?,
         table: any ProcessTableReading,
         isReadOnly: Bool,
+        readBoard: @escaping @Sendable () async -> BoardSnapshot,
         onNotice: @escaping @Sendable (AgentNotice) async -> Void,
         onReport: @escaping @Sendable (AgentReport) async -> Void,
         onLedgerChange: @escaping @Sendable () async -> Void
     ) {
+        self.readBoard = readBoard
         self.store = store
         self.table = table
         self.readOnly = isReadOnly
@@ -54,7 +64,7 @@ actor AppMCPHost: AuspexMCPHost {
     // MARK: - AuspexMCPHost
 
     var isReadOnly: Bool { readOnly }
-    func boardSnapshot() -> BoardSnapshot { board }
+    func boardSnapshot() async -> BoardSnapshot { await readBoard() }
     func ledger() -> TaskRepository? { store.map(TaskRepository.init(store:)) }
     func processTable() -> any ProcessTableReading { table }
     func clientPIDs() -> [pid_t] {
@@ -67,9 +77,6 @@ actor AppMCPHost: AuspexMCPHost {
     func didChangeLedger() async { await onLedgerChange() }
 
     // MARK: - Fed from outside
-
-    /// The frame the board is showing. Pushed once per applied frame.
-    func setBoard(_ board: BoardSnapshot) { self.board = board }
 
     /// Hands over the listener once it has bound.
     func setListener(_ listener: MCPSocketServer?) { self.listener = listener }
