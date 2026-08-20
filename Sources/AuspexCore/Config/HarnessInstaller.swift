@@ -53,11 +53,15 @@ public struct HarnessInstaller: Sendable {
         /// The paragraph in the harness's always-loaded instructions telling an
         /// agent when to call `auspex.notify` and how to claim a task.
         case protocolNote
+        /// The entries in the harness's hook table that run
+        /// `Auspex --hook <harness>` when something happens.
+        case hooks
 
         public var title: String {
             switch self {
             case .mcpServer: "Register the Auspex MCP server"
             case .protocolNote: "Install the task-protocol note"
+            case .hooks: "Install harness hooks"
             }
         }
 
@@ -69,6 +73,9 @@ public struct HarnessInstaller: Sendable {
             case .protocolNote:
                 "Appends a fenced paragraph telling agents to call auspex.notify "
                     + "when they need you, and to claim the task id in their brief."
+            case .hooks:
+                "Lets the harness tell Auspex the moment it needs permission, "
+                    + "starts, delegates or stops — the states no transcript records."
             }
         }
     }
@@ -180,11 +187,36 @@ public struct HarnessInstaller: Sendable {
                 harness: harness, piece: piece, path: path,
                 state: noteState(path, harness: harness)
             )
+        case .hooks:
+            guard let hooks = hookInstaller(for: harness) else {
+                return Offer(
+                    harness: harness, piece: piece, path: nil,
+                    state: .unavailable(Self.reasonUnavailable(harness, piece))
+                )
+            }
+            return Offer(
+                harness: harness, piece: piece, path: hooks.path, state: hooks.status()
+            )
         }
+    }
+
+    /// The hook installer for a harness, built with this installer's binary and
+    /// home. `nil` for the harnesses with no hook mechanism.
+    public func hookInstaller(for harness: Harness) -> (any HookInstaller)? {
+        HookInstallers.installer(
+            for: harness, home: homeDirectory, paths: paths, command: command
+        )
+    }
+
+    /// What installing hooks for a harness would register, for a page that
+    /// wants to name the events before anything is agreed to.
+    public func hookPlan(for harness: Harness) -> HookPlan? {
+        hookInstaller(for: harness)?.plan()
     }
 
     /// Why a harness has no row of this kind.
     public static func reasonUnavailable(_ harness: Harness, _ piece: Piece) -> String {
+        if piece == .hooks { return HookInstallers.reasonUnavailable(harness) }
         if let note = HarnessMCPConfigStore.externallyManagedNote(for: harness) {
             return "MCP is \(note)."
         }
@@ -193,6 +225,8 @@ public struct HarnessInstaller: Sendable {
             return "No local MCP config file to write."
         case .protocolNote:
             return "This harness has no always-loaded instruction file Auspex knows about."
+        case .hooks:
+            return HookInstallers.reasonUnavailable(harness)
         }
     }
 
@@ -219,6 +253,24 @@ public struct HarnessInstaller: Sendable {
     /// reports `didChange == false` and touches nothing.
     public func install(_ harness: Harness, _ piece: Piece) -> Report {
         let offer = offer(harness, piece)
+        if piece == .hooks {
+            guard let hooks = hookInstaller(for: harness) else {
+                return Report(
+                    harness: harness, piece: piece, didChange: false,
+                    path: nil, backupPath: nil,
+                    failure: Self.reasonUnavailable(harness, piece)
+                )
+            }
+            // A file Auspex cannot read is a file Auspex must not write: the
+            // only safe edit is one that starts from what is already there.
+            if case let .unreadable(reason) = offer.state {
+                return Report(
+                    harness: harness, piece: piece, didChange: false,
+                    path: hooks.path, backupPath: nil, failure: reason
+                )
+            }
+            return hooks.install()
+        }
         switch offer.state {
         case let .unavailable(reason), let .unreadable(reason):
             // A file Auspex cannot read is a file Auspex must not write: the
@@ -237,6 +289,16 @@ public struct HarnessInstaller: Sendable {
     /// Removes one piece, restoring the file to what it was without it.
     public func uninstall(_ harness: Harness, _ piece: Piece) -> Report {
         let offer = offer(harness, piece)
+        if piece == .hooks {
+            guard let hooks = hookInstaller(for: harness) else {
+                return Report(
+                    harness: harness, piece: piece, didChange: false,
+                    path: nil, backupPath: nil,
+                    failure: Self.reasonUnavailable(harness, piece)
+                )
+            }
+            return hooks.uninstall()
+        }
         guard offer.path != nil else {
             return Report(
                 harness: harness, piece: piece, didChange: false,
@@ -264,69 +326,31 @@ public struct HarnessInstaller: Sendable {
         let location = offer.piece == .mcpServer
             ? HarnessMCPConfigStore.location(for: offer.harness, home: homeDirectory)
             : nil
-        let url = URL(fileURLWithPath: path)
-        let existing = (try? String(contentsOf: url, encoding: .utf8))
-
-        do {
-            let updated = try transform(existing ?? "", location)
-            guard updated != (existing ?? "") else {
-                return Report(
-                    harness: offer.harness, piece: offer.piece, didChange: false,
-                    path: path, backupPath: nil, failure: nil
-                )
-            }
-            // The backup comes before the write and goes under `~/.auspex/`, not
-            // beside the original: a stray `.bak` in `~/.codex/` would itself be
-            // a write into a harness's directory.
-            let backup = existing.flatMap { try? writeBackup($0, for: url, harness: offer.harness) }
-
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try Data(updated.utf8).write(to: url, options: .atomic)
-
-            // Verified by reading it back, not by trusting the string we wrote:
-            // a file another process rewrote underneath us is the case this
-            // catches, and it is the case that would otherwise corrupt one.
-            if let problem = verify(url: url, location: location) {
-                if let backup, let restored = try? String(contentsOf: URL(fileURLWithPath: backup), encoding: .utf8) {
-                    try? Data(restored.utf8).write(to: url, options: .atomic)
-                }
-                return Report(
-                    harness: offer.harness, piece: offer.piece, didChange: false,
-                    path: path, backupPath: backup,
-                    failure: "\(problem) The file was restored from the backup."
-                )
-            }
-            return Report(
-                harness: offer.harness, piece: offer.piece, didChange: true,
-                path: path, backupPath: backup, failure: nil
-            )
-        } catch {
-            return Report(
-                harness: offer.harness, piece: offer.piece, didChange: false,
-                path: path, backupPath: nil, failure: "\(error)"
-            )
-        }
+        let outcome = ConfigFileWriter(paths: paths, harness: offer.harness).edit(
+            path: path,
+            verify: { data in Self.verify(data, location: location) },
+            transform: { text in try transform(text, location) }
+        )
+        return Report(
+            harness: offer.harness,
+            piece: offer.piece,
+            didChange: outcome.didChange,
+            path: path,
+            backupPath: outcome.backupPath,
+            failure: outcome.failure
+        )
     }
 
     /// The file still has to be what it claims to be after the edit.
-    private func verify(url: URL, location: MCPConfigLocation?) -> String? {
-        guard let data = FileManager.default.contents(atPath: url.path) else {
-            return "The file could not be read back after writing."
-        }
+    private static func verify(_ data: Data, location: MCPConfigLocation?) -> String? {
         switch location?.format {
         case .json:
-            guard (try? JSONSerialization.jsonObject(with: data)) != nil else {
-                return "The file is no longer valid JSON after the edit."
-            }
-            guard let names = HarnessMCPConfigStore.jsonServerNames(
+            if let problem = ConfigFileWriter.isStillJSON(data) { return problem }
+            guard HarnessMCPConfigStore.jsonServerNames(
                 in: data, includesScopes: location?.isScoped ?? false
-            ) else {
+            ) != nil else {
                 return "The MCP servers could not be read back after the edit."
             }
-            _ = names
             return nil
         case .toml, .none:
             // Nothing to parse: the TOML scanner is a scanner, and a Markdown
@@ -335,25 +359,6 @@ public struct HarnessInstaller: Sendable {
             return nil
         }
     }
-
-    private func writeBackup(_ contents: String, for url: URL, harness: Harness) throws -> String {
-        let directory = try paths.ensureDirectory(
-            paths.baseDirectory.appendingPathComponent("backups", isDirectory: true)
-        )
-        let stamp = Self.stampFormatter.string(from: Date())
-        let name = "\(harness.rawValue)-\(url.lastPathComponent)-\(stamp).bak"
-        let destination = directory.appendingPathComponent(name)
-        try Data(contents.utf8).write(to: destination, options: .atomic)
-        return destination.path
-    }
-
-    private static let stampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        return formatter
-    }()
 
     // MARK: - The four transforms
 
@@ -374,6 +379,11 @@ public struct HarnessInstaller: Sendable {
             case .json:
                 return try installedJSON(into: text)
             }
+        case .hooks:
+            // Handled by a `HookInstaller` before the edit machinery here is
+            // reached: a hook table is a list somebody else also appends to,
+            // and neither a fence nor a member name can own an element of one.
+            throw InstallError.notATextEdit
         }
     }
 
@@ -394,6 +404,8 @@ public struct HarnessInstaller: Sendable {
             case .json:
                 return try removedJSON(from: text)
             }
+        case .hooks:
+            throw InstallError.notATextEdit
         }
     }
 
@@ -447,21 +459,9 @@ public struct HarnessInstaller: Sendable {
         in text: String,
         objectAt root: String.Index
     ) -> String.Index? {
-        guard let members = JSONTextEditor.members(in: text, objectAt: root),
-              let member = members.first(where: { $0.name == name })
+        guard let start = JSONTextEditor.valueStart(ofMemberNamed: name, in: text, objectAt: root)
         else { return nil }
-        var cursor = member.range.lowerBound
-        var sawColon = false
-        while cursor < member.range.upperBound {
-            let character = text[cursor]
-            if character == ":" , !sawColon {
-                sawColon = true
-            } else if sawColon, !character.isWhitespace {
-                return character == "{" ? cursor : nil
-            }
-            cursor = text.index(after: cursor)
-        }
-        return nil
+        return text[start] == "{" ? start : nil
     }
 
     // MARK: - What gets written
@@ -552,12 +552,14 @@ public struct HarnessInstaller: Sendable {
         case noLocation
         case notAnObject
         case unparsable
+        case notATextEdit
 
         var description: String {
             switch self {
             case .noLocation: "This harness has no MCP config file."
             case .notAnObject: "The config file is not a JSON object."
             case .unparsable: "The config file could not be read closely enough to edit safely."
+            case .notATextEdit: "Hooks are installed by their own installer."
             }
         }
     }

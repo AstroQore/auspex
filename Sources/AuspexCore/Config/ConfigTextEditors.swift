@@ -162,9 +162,38 @@ enum JSONTextEditor {
         return out
     }
 
+    /// Where a named member's value starts — the first non-space character
+    /// after its colon, whatever kind of value it is.
+    ///
+    /// The caller decides whether it wanted an object or an array by looking at
+    /// the character it gets back, which is the only check worth making: a
+    /// `"hooks"` member that holds a string is somebody else's file being
+    /// something Auspex does not understand, and the answer to that is to stop.
+    static func valueStart(
+        ofMemberNamed name: String,
+        in text: String,
+        objectAt root: String.Index
+    ) -> String.Index? {
+        guard let members = members(in: text, objectAt: root),
+              let member = members.first(where: { $0.name == name })
+        else { return nil }
+        var cursor = member.range.lowerBound
+        var sawColon = false
+        while cursor < member.range.upperBound {
+            let character = text[cursor]
+            if character == ":", !sawColon {
+                sawColon = true
+            } else if sawColon, !character.isWhitespace {
+                return cursor
+            }
+            cursor = text.index(after: cursor)
+        }
+        return nil
+    }
+
     // MARK: Scanning
 
-    private static func skippingWhitespace(in text: String, from index: String.Index) -> String.Index {
+    static func skippingWhitespace(in text: String, from index: String.Index) -> String.Index {
         var cursor = index
         while cursor < text.endIndex, text[cursor].isWhitespace {
             cursor = text.index(after: cursor)
@@ -191,7 +220,7 @@ enum JSONTextEditor {
     }
 
     /// The index just past the value starting at `index`.
-    private static func endOfValue(in text: String, from index: String.Index) -> String.Index? {
+    static func endOfValue(in text: String, from index: String.Index) -> String.Index? {
         guard index < text.endIndex else { return nil }
         switch text[index] {
         case "\"":
@@ -275,6 +304,138 @@ enum JSONTextEditor {
               ) as? String
         else { return value }
         return decoded
+    }
+}
+
+// MARK: - JSON arrays
+
+/// The same scanner, for the shape a hook table has: a list somebody else is
+/// also writing into.
+///
+/// An MCP server is a *named* member, so owning one is a matter of owning a
+/// name. A hook is an anonymous element of an array that other tools append to
+/// as well — `~/.claude/settings.json` on a working machine has entries from
+/// two or three of them — so ownership has to be a property of the element's
+/// own content. Auspex's is the element whose command runs the Auspex binary
+/// with `--hook`; ``HookCommand`` is where that test lives, and this type only
+/// moves text.
+enum JSONArrayEditor {
+    /// The span of each element of the array whose `[` is at `start`.
+    ///
+    /// `nil` when the array does not close — a truncated file, which is a thing
+    /// to refuse rather than to patch.
+    static func elements(in text: String, arrayAt start: String.Index) -> [Range<String.Index>]? {
+        guard start < text.endIndex, text[start] == "[" else { return nil }
+        var out: [Range<String.Index>] = []
+        var index = text.index(after: start)
+        while true {
+            index = JSONTextEditor.skippingWhitespace(in: text, from: index)
+            guard index < text.endIndex else { return nil }
+            if text[index] == "]" { return out }
+            if text[index] == "," {
+                index = text.index(after: index)
+                continue
+            }
+            guard let end = JSONTextEditor.endOfValue(in: text, from: index) else { return nil }
+            out.append(index..<end)
+            index = end
+        }
+    }
+
+    /// Adds an element at the end of the array, indented to match the ones that
+    /// are already there.
+    static func append(
+        _ value: String,
+        in text: String,
+        arrayAt start: String.Index
+    ) -> String? {
+        guard let elements = elements(in: text, arrayAt: start) else { return nil }
+        let indent = indentation(in: text, arrayAt: start, elements: elements)
+        let rendered = value.replacingOccurrences(of: "\n", with: "\n" + indent)
+
+        guard let last = elements.last else {
+            var out = text
+            out.insert(
+                contentsOf: "\n\(indent)\(rendered)\n\(String(indent.dropLast(2)))",
+                at: text.index(after: start)
+            )
+            return out
+        }
+        var out = text
+        out.insert(contentsOf: ",\n\(indent)\(rendered)", at: last.upperBound)
+        return out
+    }
+
+    /// Removes elements, and the separators that joined them to their
+    /// neighbours.
+    ///
+    /// Ranges are taken back to front so the earlier ones stay valid while the
+    /// later ones are cut.
+    static func remove(
+        elements ranges: [Range<String.Index>],
+        in text: String,
+        arrayAt start: String.Index
+    ) -> String? {
+        guard !ranges.isEmpty else { return text }
+        guard let all = elements(in: text, arrayAt: start) else { return nil }
+        var out = text
+        for range in ranges.sorted(by: { $0.lowerBound > $1.lowerBound }) {
+            var lower = range.lowerBound
+            var upper = range.upperBound
+            let isFirst = all.first?.lowerBound == range.lowerBound
+            if isFirst {
+                var cursor = JSONTextEditor.skippingWhitespace(in: out, from: upper)
+                if cursor < out.endIndex, out[cursor] == "," {
+                    cursor = out.index(after: cursor)
+                    upper = cursor
+                }
+                let body = out.index(after: start)
+                while lower > body, out[out.index(before: lower)].isWhitespace {
+                    lower = out.index(before: lower)
+                }
+            } else {
+                var cursor = lower
+                while cursor > out.startIndex {
+                    let previous = out.index(before: cursor)
+                    if out[previous] == "," { lower = previous; break }
+                    guard out[previous].isWhitespace else { break }
+                    cursor = previous
+                }
+            }
+            out.removeSubrange(lower..<upper)
+        }
+        return out
+    }
+
+    /// The indentation the file already uses for elements of this array.
+    private static func indentation(
+        in text: String,
+        arrayAt start: String.Index,
+        elements: [Range<String.Index>]
+    ) -> String {
+        guard let first = elements.first else {
+            // No element to copy: match the array's own line and step in once.
+            var cursor = start
+            var indent = ""
+            while cursor > text.startIndex {
+                let previous = text.index(before: cursor)
+                let character = text[previous]
+                if character == "\n" { break }
+                indent = character == " " || character == "\t" ? String(character) + indent : ""
+                cursor = previous
+            }
+            return indent + "  "
+        }
+        var cursor = first.lowerBound
+        var indent = ""
+        while cursor > text.startIndex {
+            let previous = text.index(before: cursor)
+            let character = text[previous]
+            guard character == " " || character == "\t" else { break }
+            indent.append(character)
+            cursor = previous
+        }
+        return indent.isEmpty ? "  " : indent
     }
 }
 
