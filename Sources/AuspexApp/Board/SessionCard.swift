@@ -152,9 +152,17 @@ struct SessionCard: View, Equatable {
         }
     }
 
-    /// Who this session is: the harness's own short id, the process, and the
-    /// model. Three facts nobody reads until they need one, at which point
-    /// they need it exactly.
+    /// Who this session is: the harness's own short id, the process, the
+    /// model, and which flavour of its harness it is. Facts nobody reads until
+    /// they need one, at which point they need it exactly.
+    ///
+    /// The variant belongs here and not in the chip row below, even though the
+    /// chip row is where it reads best — `↑ Codex rollout adapter · auto
+    /// review` is one sentence left to right. The chip row is an `HStack` in a
+    /// grid cell, and at three chips it is already compressing the directory:
+    /// a fourth turns `/Users/…/auspex` into an ellipsis. A card that answers
+    /// *which flavour* by destroying *where* is a worse card. The trace pane's
+    /// chips wrap, so it stays a chip there.
     private var identityLine: some View {
         HStack(spacing: 6) {
             Text(row.shortID)
@@ -168,6 +176,10 @@ struct SessionCard: View, Equatable {
             if let model = row.modelName {
                 separator
                 Text(model).lineLimit(1).truncationMode(.tail).layoutPriority(-1)
+            }
+            if let variant = row.variantLabel {
+                separator
+                Text(variant).fixedSize()
             }
             Spacer(minLength: 0)
         }
@@ -223,16 +235,6 @@ struct SessionCard: View, Equatable {
                     tint: AuspexPalette.stateDelegating
                 )
                 .fixedSize()
-            }
-            // Which flavour of the harness this is, next to the link it
-            // qualifies: "↑ Codex rollout adapter · auto review" is one
-            // sentence read left to right. Muted, because it is a footnote on
-            // the identity and not a fact about the work — and absent from
-            // nearly every card, which is what makes it worth reading on the
-            // ones that have it.
-            if let variant = row.variantLabel {
-                FactChip(variant, tint: AuspexPalette.text3)
-                    .fixedSize()
             }
             Spacer(minLength: 0)
         }
