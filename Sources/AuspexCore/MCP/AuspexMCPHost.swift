@@ -62,19 +62,3 @@ public extension AuspexMCPHost {
     /// Hosts that only answer questions ignore them.
     func didObserve(_ events: [AgentEvent]) async {}
 }
-
-/// A host with no app behind it: an empty board, no store, nothing attached.
-///
-/// What `--mcp-stdio` would fall back to if it ever served in-process, and
-/// what the suite uses as a base to override one method at a time.
-public struct EmptyMCPHost: AuspexMCPHost {
-    public init() {}
-    public var isReadOnly: Bool { get async { true } }
-    public func boardSnapshot() async -> BoardSnapshot { .empty }
-    public func ledger() async -> TaskRepository? { nil }
-    public func processTable() async -> any ProcessTableReading { ProcessTable() }
-    public func clientPIDs() async -> [pid_t] { [] }
-    public func didRecordNotice(_ notice: AgentNotice) async {}
-    public func didRecordReport(_ report: AgentReport) async {}
-    public func didChangeLedger() async {}
-}

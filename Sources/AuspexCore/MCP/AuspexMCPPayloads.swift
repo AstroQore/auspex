@@ -2,19 +2,18 @@ import AgentSessionKit
 import AgentSessionLive
 import Foundation
 
-/// The shapes tool results come back in.
-///
-/// One `Encodable` per answer, encoded once into both the `structuredContent`
-/// a client can parse and the pretty JSON block a model reads — see
-/// ``MCPJSON/encoder(pretty:)``. Two renderings of one value cannot disagree
-/// about a field name or a date format, which is the whole reason these are
-/// types rather than dictionaries built at each call site.
-///
-/// Everything here is already sanitized: the strings came out of the store,
-/// and everything an agent wrote went through ``MCPTextSanitizer`` on the way
-/// in. Nothing carries a transcript, a token, or an absolute path Auspex was
-/// not already showing on its own board.
-enum MCPPayloads {}
+// The shapes tool results come back in.
+//
+// One `Encodable` per answer, encoded once into both the `structuredContent` a
+// client can parse and the pretty JSON block a model reads — see
+// `MCPJSON.encoder(pretty:)`. Two renderings of one value cannot disagree about
+// a field name or a date format, which is the whole reason these are types
+// rather than dictionaries built at each call site.
+//
+// Everything here is already sanitized: the strings came out of the store, and
+// everything an agent wrote went through `MCPTextSanitizer` on the way in.
+// Nothing carries a transcript, a token, or an absolute path Auspex was not
+// already showing on its own board.
 
 // MARK: - Plans and tasks
 
