@@ -13,9 +13,23 @@ struct AuspexSettingsView: View {
     /// The user layer, for the Ignore pane. The pane writes through it, so the
     /// board reacts to a rule the moment it is added.
     let catalog: ProjectCatalogModel
+    /// What Auspex has written into each harness. `nil` where there is no app
+    /// behind the pane — the offscreen renderer, and the previews.
+    var setup: SetupModel?
+    var detected: Set<Harness> = []
+    var socketPath: String?
 
     var body: some View {
         TabView {
+            if let setup {
+                AgentsSettingsView(
+                    model: setup,
+                    detected: detected,
+                    socketPath: socketPath,
+                    onOpenSetup: { setup.present() }
+                )
+                .tabItem { Label("Agents", systemImage: "point.3.connected.trianglepath.dotted") }
+            }
             CharactersSettingsView(library: library)
                 .tabItem { Label("Characters", systemImage: "person.and.background.dotted") }
             IgnoreSettingsView(catalog: catalog)

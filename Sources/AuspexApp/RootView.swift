@@ -60,6 +60,17 @@ struct RootView: View {
             }
         }
         .modifier(KillConfirmation(control: environment.control))
+        .sheet(isPresented: Binding(
+            get: { environment.setup.shouldPresent },
+            set: { if !$0 { environment.setup.markShown() } }
+        )) {
+            SetupSheet(
+                model: environment.setup,
+                detected: environment.harnesses.detected,
+                socketPath: environment.mcp?.socketPath,
+                onClose: { environment.setup.markShown() }
+            )
+        }
         .task { environment.start() }
         .task { await clock.run() }
         .task { routeNotifications() }
@@ -102,7 +113,12 @@ struct RootView: View {
             BoardHeader(model: model, section: section ?? .live)
             Group {
                 if section == .harnesses {
-                    HarnessesView(model: environment.harnesses, board: model.board)
+                    HarnessesView(
+                        model: environment.harnesses,
+                        board: model.board,
+                        mcp: environment.mcp,
+                        onOpenSetup: { environment.setup.present() }
+                    )
                 } else if section == .projects {
                     ProjectsPageView(
                         catalog: environment.catalog,
@@ -116,7 +132,12 @@ struct RootView: View {
                     // sidebar should not be told to go and press a shortcut
                     // instead, and a second implementation would be a second
                     // place for a setting to go missing.
-                    SettingsSectionView(catalog: environment.catalog)
+                    SettingsSectionView(
+                        catalog: environment.catalog,
+                        setup: environment.setup,
+                        detected: environment.harnesses.detected,
+                        socketPath: environment.mcp?.socketPath
+                    )
                 } else if let section, section.isAvailable {
                     // The mode picker lives in the header, so the container is
                     // a plain switch: adding a way of looking at the board is
@@ -442,9 +463,18 @@ struct AuspexMark: View {
 /// they are looking at.
 struct SettingsSectionView: View {
     let catalog: ProjectCatalogModel
+    var setup: SetupModel?
+    var detected: Set<Harness> = []
+    var socketPath: String?
 
     var body: some View {
-        AuspexSettingsView(library: SpriteLibrary.shared, catalog: catalog)
+        AuspexSettingsView(
+            library: SpriteLibrary.shared,
+            catalog: catalog,
+            setup: setup,
+            detected: detected,
+            socketPath: socketPath
+        )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(BoardSurfaceBackground())
     }

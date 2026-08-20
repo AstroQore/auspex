@@ -15,14 +15,27 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// turned it on to check a rule wants it on after a relaunch too, and the
     /// header says how many rows it is adding.
     public var showsIgnored: Bool
+    /// Whether the person has been shown the setup sheet.
+    ///
+    /// A flag rather than "have we installed anything": the sheet is an *offer*
+    /// and skipping it is a complete answer. Deciding to show it again because
+    /// nothing was installed would mean re-asking somebody who already said no,
+    /// which is the behaviour that teaches people to dismiss dialogs without
+    /// reading them.
+    public var didShowSetup: Bool
 
-    public init(ignoreRules: [IgnoreRule] = [], showsIgnored: Bool = false) {
+    public init(
+        ignoreRules: [IgnoreRule] = [],
+        showsIgnored: Bool = false,
+        didShowSetup: Bool = false
+    ) {
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
+        self.didShowSetup = didShowSetup
     }
 
     private enum CodingKeys: String, CodingKey {
-        case ignoreRules, showsIgnored
+        case ignoreRules, showsIgnored, didShowSetup
     }
 
     public init(from decoder: any Decoder) throws {
@@ -32,9 +45,10 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
             forKey: .ignoreRules
         ) ?? []).compactMap(\.value)
         showsIgnored = try container.decodeIfPresent(Bool.self, forKey: .showsIgnored) ?? false
+        didShowSetup = try container.decodeIfPresent(Bool.self, forKey: .didShowSetup) ?? false
     }
 
-    public var isEmpty: Bool { ignoreRules.isEmpty && !showsIgnored }
+    public var isEmpty: Bool { ignoreRules.isEmpty && !showsIgnored && !didShowSetup }
 }
 
 /// Reads and writes ``AuspexSettings``, with the same bargain the character

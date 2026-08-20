@@ -21,10 +21,19 @@ import SwiftUI
 struct HarnessesView: View {
     let model: HarnessStatusModel
     let board: BoardSnapshot
+    /// The MCP listener, when there is one. `nil` in a render with no app
+    /// behind it.
+    var mcp: MCPController?
+    /// Opens the setup sheet. `nil` where there is nowhere to present one.
+    var onOpenSetup: (() -> Void)?
 
     var body: some View {
-        HarnessesPage(rows: model.rows(board: board))
-            .task { await model.refresh() }
+        HarnessesPage(
+            rows: model.rows(board: board),
+            mcp: mcp,
+            onOpenSetup: onOpenSetup
+        )
+        .task { await model.refresh() }
     }
 }
 
@@ -35,14 +44,84 @@ struct HarnessesView: View {
 /// configuration out of a public repository.
 struct HarnessesPage: View {
     let rows: [HarnessStatus]
+    var mcp: MCPController?
+    var onOpenSetup: (() -> Void)?
 
     var body: some View {
         BoardScroll {
-            HarnessesPanel(rows: rows)
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            VStack(alignment: .leading, spacing: 14) {
+                if mcp != nil || onOpenSetup != nil {
+                    MCPServerPanel(mcp: mcp, onOpenSetup: onOpenSetup)
+                }
+                HarnessesPanel(rows: rows)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(AuspexPalette.canvas)
+    }
+}
+
+/// What the MCP server is doing, and the way into the setup sheet.
+///
+/// Above the rack rather than below it: the rack answers *what is installed on
+/// this machine*, and this answers *can those things talk to Auspex* — which is
+/// the question somebody opens this page with once they have read the rack
+/// twice.
+struct MCPServerPanel: View {
+    var mcp: MCPController?
+    var onOpenSetup: (() -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                StateDot(color: dotColor, glows: mcp?.status == .listening)
+                Text("MCP server")
+                    .font(AuspexType.rowStrong)
+                    .foregroundStyle(AuspexPalette.text)
+                Spacer(minLength: 8)
+                if let onOpenSetup {
+                    Button("Set up agents…", action: onOpenSetup)
+                        .buttonStyle(.plain)
+                        .font(AuspexType.pill)
+                        .foregroundStyle(AuspexPalette.stateThinking)
+                        .help("Register Auspex with each harness, and install the task-protocol note")
+                }
+            }
+            Text(mcp?.summary ?? "Not running in this process.")
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text2)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .fixedSize(horizontal: false, vertical: true)
+            if let mcp, !mcp.connections.isEmpty {
+                // Kernel-reported pids only. No command line and no path: those
+                // can carry credentials, and a connection list has no business
+                // with either.
+                Text(
+                    mcp.connections
+                        .map { connection in
+                            connection.processID.map { "pid \($0)" } ?? "an unattributed client"
+                        }
+                        .joined(separator: " · ")
+                )
+                .font(AuspexType.monoSmall)
+                .foregroundStyle(AuspexPalette.text3)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: 1_180, alignment: .leading)
+        .panelChrome()
+    }
+
+    private var dotColor: Color {
+        switch mcp?.status {
+        case .listening: AuspexPalette.stateWriting
+        case .conflict: AuspexPalette.statePermission
+        case .stopped, .none: AuspexPalette.stateIdle
+        }
     }
 }
 
@@ -68,9 +147,11 @@ struct HarnessesPanel: View {
     /// and it is the claim a reader most needs: nothing here is written to.
     private var footnote: some View {
         Text(
-            "Everything here is read-only. Auspex tails each store's own files and never "
-                + "writes into a harness directory; hooks and the auspex MCP entry are opt-in "
-                + "and arrive in M3."
+            "The rack is read-only: Auspex tails each store's own files and never writes "
+                + "into a harness directory on its own. The one exception is the setup "
+                + "above — registering the MCP server and installing the task-protocol "
+                + "note — which happens only when you click it, only inside a fenced "
+                + "block, and can be undone from the same place."
         )
         .font(AuspexType.caption)
         .foregroundStyle(AuspexPalette.text3)

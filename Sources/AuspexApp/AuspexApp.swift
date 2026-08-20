@@ -64,7 +64,13 @@ struct AuspexApp: App {
         }
 
         Settings {
-            AuspexSettingsView(library: SpriteLibrary.shared, catalog: environment.catalog)
+            AuspexSettingsView(
+                library: SpriteLibrary.shared,
+                catalog: environment.catalog,
+                setup: environment.setup,
+                detected: environment.harnesses.detected,
+                socketPath: environment.mcp?.socketPath
+            )
         }
 
         MenuBarExtra {

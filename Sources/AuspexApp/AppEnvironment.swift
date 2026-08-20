@@ -81,6 +81,10 @@ public final class AppEnvironment {
     /// The Tasks page: plans, tasks, and the live sessions on them.
     let tasks = TasksModel()
 
+    /// The one-click setup: what Auspex would write into each harness's
+    /// config, and what has been ticked. Reads on load; writes only on a click.
+    let setup = SetupModel()
+
     /// The projects a person made and the rules they wrote — the user layer
     /// the board places and filters with.
     let catalog: ProjectCatalogModel
@@ -196,6 +200,14 @@ public final class AppEnvironment {
         harnesses.start(
             home: paths.homeDirectory,
             watchRoots: AuspexAdapters.watchRoots(home: paths.homeDirectory.path)
+        )
+        // The setup sheet writes into real harness configs, so a demo never
+        // offers it: a fabricated board must not be able to change the machine.
+        setup.load(
+            paths: paths,
+            command: MCPController.bridgeCommand,
+            detected: harnesses.detected,
+            isEnabled: mode == .live
         )
 
         // Buffered generously: a harness flushing a whole turn can put a few
