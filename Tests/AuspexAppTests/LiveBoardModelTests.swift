@@ -55,6 +55,7 @@ struct LiveBoardModelTests {
         let model = LiveBoardModel()
         model.apply(frame(sessions))
         await model.settle()
+        await model.settle()
         return (model, sessions)
     }
 
@@ -138,6 +139,7 @@ struct LiveBoardModelTests {
         // binding lands where the parent is rather than nowhere.
         let child = session("4", cwd: nil, parent: sessions[0].key)
         model.apply(frame(sessions + [child]))
+        await model.settle()
         await model.settle()
         model.focusProject(of: child.key)
         #expect(model.focusedProjectKey == "/Users/example/Code/auspex")

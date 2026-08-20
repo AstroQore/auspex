@@ -61,14 +61,17 @@ struct AgentNoticeBoardTests {
     // MARK: - The bucket
 
     @Test("a call for a person moves an idle card into needs-you")
-    func notifyMovesTheCard() throws {
+    func notifyMovesTheCard() async throws {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle)]))
+        await model.settle()
         #expect(model.summary.needsYou == 0)
         #expect(model.summary.idle == 1)
         #expect(TaskLedger.bucket(of: try #require(visibleRow(model))) == .idle)
 
         model.apply(notice: notice(.needsInput))
+
+        await model.settle()
 
         let after = try #require(visibleRow(model))
         #expect(after.notice?.kind == .needsInput)
@@ -81,21 +84,26 @@ struct AgentNoticeBoardTests {
     }
 
     @Test("a call from a session that looks busy still counts as blocked")
-    func notifyBeatsTheInferredState() {
+    func notifyBeatsTheInferredState() async {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .thinking)]))
+        await model.settle()
         #expect(model.summary.working == 1)
 
         model.apply(notice: notice(.blocked, "the build cannot find the kit"))
+
+        await model.settle()
         #expect(model.summary.needsYou == 1)
         #expect(model.summary.working == 0)
     }
 
     @Test("done is a receipt, not a call: it lands in done-unseen")
-    func doneLandsInDoneUnseen() throws {
+    func doneLandsInDoneUnseen() async throws {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle)]))
+        await model.settle()
         model.apply(notice: notice(.done, "migration and 12 tests landed", at: 30))
+        await model.settle()
 
         let row = try #require(visibleRow(model))
         #expect(TaskLedger.bucket(of: row) == .doneUnseen)
@@ -104,28 +112,35 @@ struct AgentNoticeBoardTests {
     }
 
     @Test("opening the card is what makes a done receipt read")
-    func doneClearsWhenSeen() {
+    func doneClearsWhenSeen() async {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle)]))
+        await model.settle()
         model.apply(notice: notice(.done, "finished", at: 30))
+        await model.settle()
         #expect(model.summary.doneUnseen == 1)
 
         model.markSeen(Self.key, at: Self.epoch.addingTimeInterval(40))
+
+        await model.settle()
         #expect(model.summary.doneUnseen == 0)
     }
 
     // MARK: - Auto-clear
 
     @Test("answering the session clears its question on the next frame")
-    func promptClearsANeedsInputNotice() {
+    func promptClearsANeedsInputNotice() async {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle, lastPromptAt: 0)]))
+        await model.settle()
         model.apply(notice: notice(.needsInput, at: 10))
+        await model.settle()
         #expect(model.summary.needsYou == 1)
 
         // The person typed into the session's own terminal; the tailer folds a
         // new prompt and the frame carries it.
         model.apply(frame([session(state: .thinking, lastPromptAt: 20)]))
+        await model.settle()
 
         #expect(model.notices.isEmpty)
         #expect(model.summary.needsYou == 0)
@@ -133,33 +148,44 @@ struct AgentNoticeBoardTests {
     }
 
     @Test("a blocker is not answered by the person talking about something else")
-    func promptDoesNotClearABlocker() {
+    func promptDoesNotClearABlocker() async {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle, lastPromptAt: 0)]))
+        await model.settle()
         model.apply(notice: notice(.blocked, "no network", at: 10))
+        await model.settle()
 
         model.apply(frame([session(state: .thinking, lastPromptAt: 20)]))
+
+        await model.settle()
         #expect(model.notices.count == 1)
         #expect(model.summary.needsYou == 1)
     }
 
     @Test("a prompt older than the question does not answer it")
-    func stalepromptDoesNotClear() {
+    func stalepromptDoesNotClear() async {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle, lastPromptAt: 0)]))
+        await model.settle()
         model.apply(notice: notice(.needsInput, at: 100))
+        await model.settle()
         model.apply(frame([session(state: .idle, lastPromptAt: 50)]))
+        await model.settle()
         #expect(model.notices.count == 1)
     }
 
     @Test("dismissing from the card takes it off the board")
-    func dismissClears() {
+    func dismissClears() async {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle)]))
+        await model.settle()
         model.apply(notice: notice(.needsReview, "please look at the diff"))
+        await model.settle()
         #expect(model.summary.needsYou == 1)
 
         model.dismissNotice(Self.key)
+
+        await model.settle()
         #expect(model.notices.isEmpty)
         #expect(model.summary.needsYou == 0)
         #expect(visibleRow(model)?.notice == nil)
@@ -168,12 +194,13 @@ struct AgentNoticeBoardTests {
     // MARK: - Reports
 
     @Test("a report replaces the inferred line until the session speaks again")
-    func reportOverridesTheSaidLine() {
+    func reportOverridesTheSaidLine() async {
         var snapshot = session(state: .thinking)
         snapshot.brief.latestAssistant = "Reading the adapter."
         snapshot.brief.lastAssistantAt = Self.epoch.addingTimeInterval(5)
         let model = LiveBoardModel()
         model.apply(frame([snapshot]))
+        await model.settle()
         #expect(visibleRow(model)?.reportedFocus == nil)
 
         model.apply(report: AgentReport(
@@ -182,12 +209,14 @@ struct AgentNoticeBoardTests {
             progress: "step 2 of 5",
             createdAt: Self.epoch.addingTimeInterval(10)
         ))
+        await model.settle()
         #expect(visibleRow(model)?.reportedFocus == "rewriting the tailer · step 2 of 5")
 
         // The model has spoken since. An observation newer than the claim wins.
         snapshot.brief.latestAssistant = "Done with the cursor handling."
         snapshot.brief.lastAssistantAt = Self.epoch.addingTimeInterval(20)
         model.apply(frame([snapshot]))
+        await model.settle()
         #expect(visibleRow(model)?.reportedFocus == nil)
         #expect(visibleRow(model)?.latestAssistant == "Done with the cursor handling.")
     }
@@ -195,7 +224,7 @@ struct AgentNoticeBoardTests {
     // MARK: - Ordering
 
     @Test("a calling session sorts above everything else on the board")
-    func callersSortFirst() {
+    func callersSortFirst() async {
         let other = SessionKey(harness: .codex, sessionID: "session-2")
         var second = SessionStateReducer.initialSnapshot(
             identity: SessionIdentity(
@@ -211,9 +240,12 @@ struct AgentNoticeBoardTests {
 
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle), second]))
+        await model.settle()
         #expect(model.rowGroups.flatMap(\.rows).first?.key == other)
 
         model.apply(notice: notice(.needsInput))
+
+        await model.settle()
         #expect(model.rowGroups.flatMap(\.rows).first?.key == Self.key)
     }
 }

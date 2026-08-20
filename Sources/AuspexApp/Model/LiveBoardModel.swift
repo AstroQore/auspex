@@ -924,6 +924,10 @@ final class LiveBoardModel {
     /// the pipeline's timing.
     func apply(_ frame: BoardSnapshot) {
         rawBoard = frame
+        // Before the assembly reads the notices: a question the person just
+        // answered in the session's own terminal must not survive into the
+        // frame that carries the answer.
+        clearAnsweredNotices()
         scheduleAssembly()
     }
 
