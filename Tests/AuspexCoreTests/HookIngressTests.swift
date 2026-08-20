@@ -1,4 +1,5 @@
 import AgentSessionKit
+import AgentSessionLive
 import Darwin
 import Foundation
 import Testing
@@ -284,6 +285,56 @@ struct HookIngressTests {
         let params = try #require(listener.line()?["params"])
         #expect(params["target"]?.stringValue == "cursor")
         #expect(params["payload"]?.objectValue?.isEmpty == true)
+    }
+
+    // MARK: - The whole path
+
+    @Test("argv to board event: the real socket, the real server, one card moved")
+    func endToEnd() async throws {
+        let session = Fixtures.key(.claudeCode, "aaaa1111-2222-3333-4444-555555555555")
+        var snapshot = SessionStateReducer.initialSnapshot(
+            identity: Fixtures.identity(key: session, pid: 900)
+        )
+        snapshot.state = .thinking
+        let host = TestMCPHost(
+            board: BoardSnapshot(generatedAt: Fixtures.date(60), sessions: [snapshot]),
+            table: FakeProcessTable(records: [.fake(pid: 900, ppid: 1, name: "claude")])
+        )
+        let server = AuspexMCPServer(host: host)
+
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ax-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let socketPath = directory.appendingPathComponent("s.sock").path
+
+        let listener = MCPSocketServer(handler: server, socketPath: socketPath)
+        try listener.start()
+        defer { listener.stop() }
+
+        #expect(HookIngress.run(
+            arguments: ["Auspex", "--hook", "claude"],
+            environment: [HookIngress.socketEnvironmentKey: socketPath],
+            input: try stdin("""
+                {"hook_event_name":"PermissionRequest",\
+                "session_id":"\(session.sessionID)","tool_name":"Bash",\
+                "tool_input":{"command":"rm -rf build"}}
+                """),
+            installsWatchdog: false
+        ) == 0)
+
+        // The socket is read on the transport's own queue, so the event arrives
+        // a moment after the hook process has already gone home — which is the
+        // whole point of the arrangement.
+        var observed: [AgentEvent] = []
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, observed.isEmpty {
+            observed = await host.observed
+            if observed.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
+        }
+        #expect(observed.count == 1)
+        let moved = SessionStateReducer().reduce(snapshot, event: try #require(observed.first))
+        #expect(moved.state == .waitingPermission(tool: "Bash"))
     }
 
     @Test("an unknown target is somebody's newer config, not a failure")

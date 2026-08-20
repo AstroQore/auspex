@@ -11,6 +11,18 @@ Auspex is pre-alpha; there are no released versions yet.
 
 ### Added
 
+- **Harness hooks, so "waiting for you" stops being a guess.** A permission
+  prompt is the one state no harness writes to disk: from outside, an agent
+  waiting for a person and an agent thinking hard are the same silence. The
+  Settings → Agents page (and the first-launch sheet) now installs hook entries
+  for Claude Code, Grok Build and Cursor, and wraps Codex's single `notify`
+  slot, each naming its file and its events before anything is ticked and each
+  removable from the row that installed it. `Auspex --hook <harness>` is what
+  the entries run: it reads the harness's JSON, writes one line to
+  `~/.auspex/mcp.sock`, and exits 0 within 200 ms whatever happens — a hook
+  that can hang is a harness that can hang. Tool calls are deliberately not
+  reported; the tailer already describes those, and counting them twice would
+  be worse than late.
 - **Vendor marks, not initials.** `HarnessLogo` loads each vendor's own
   single-colour SVG from `Sources/AuspexApp/Resources/ProviderIcons`, draws it
   as a template tinted with the harness accent, and caches it per

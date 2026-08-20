@@ -375,13 +375,29 @@ worker, and puts the id in each brief, so each worker makes one
   `main.swift` *before* `App.main()`, because MCP clients spawn this binary as
   a plain child process — sometimes inside their own sandbox — and bringing up
   NSApplication there is fatal.
-- **`auspex --hook`** is the counterpart for harness hooks: a harness invokes
-  it on a lifecycle event, and it forwards the event over the same socket so
-  the board updates instantly instead of on the next file poll. Hooks are
-  opt-in; file tailing remains the baseline so Auspex works with harnesses
-  that have no hook mechanism.
+- **`auspex --hook <harness>`** is the counterpart for harness hooks: a
+  harness invokes it on a lifecycle event, and it forwards the payload over
+  the same socket so the board updates instantly instead of on the next file
+  poll. Hooks are opt-in; file tailing remains the baseline so Auspex works
+  with harnesses that have no hook mechanism.
 
-`--hook` is not implemented yet and prints a not-implemented line to stderr.
+**A hook must never be able to block the harness that runs it.** It is a
+synchronous child of a working agent, and in most harnesses a non-zero exit is
+a *veto* — Claude Code reads a failed `PermissionRequest` hook as a decision.
+So `HookIngress` exits 0 within 200 ms whatever happens: each blocking call has
+its own deadline, a watchdog thread ends the process at the limit regardless,
+`SO_NOSIGPIPE` keeps a closed socket from killing it with a signal, and Auspex
+not running is not an error. It parses nothing, reads no store, and logs
+nothing: the harness's JSON goes to the socket verbatim, capped at a megabyte,
+with the target, the parent pid and the arrival time attached.
+
+`HookEventRouter`, in the app, is what reads it — and it maps only the facts a
+transcript never contains. Tool calls are deliberately *not* mapped: the tailer
+describes them better, and a `toolCallStarted` reported twice is counted twice.
+What hooks add is `PermissionRequest` (Claude asks for approval in its UI and
+writes nothing until the answer arrives, so waiting for a person and thinking
+hard are the same silence from outside), session and subagent boundaries at the
+instant they happen, and a heartbeat for everything else.
 
 **Identity.** An agent never has to know its own session id. The kernel
 reports the socket's peer pid; `MCPSelfResolver` walks up from it until it
@@ -402,13 +418,14 @@ writing tools by name.
 
 - **No network.** No backend, no telemetry, no update service, no cloud sync.
 - **No writes into harness directories**, with one deliberate exception:
-  `HarnessInstaller`, which registers Auspex's MCP server and installs the
-  task-protocol note. It runs only when a person clicks, writes only inside a
-  `>>> auspex >>>` fence or one named JSON member, backs the file up to
-  `~/.auspex/backups/` first, re-parses it after, and can be undone exactly.
-  The observation layer keeps the absolute rule — see `AGENTS.md` § 6. Acting
-  on a session (M4) means driving the harness through its own supported
-  interface, not editing its files.
+  `HarnessInstaller`, which registers Auspex's MCP server, installs the
+  task-protocol note, and registers the hooks. It runs only when a person
+  clicks, writes only in a region Auspex owns — a `>>> auspex >>>` fence, one
+  named JSON member, or the hook entries whose command runs the Auspex binary
+  — backs the file up to `~/.auspex/backups/` first, re-parses it after, and
+  can be undone exactly. The observation layer keeps the absolute rule — see
+  `AGENTS.md` § 6. Acting on a session (M4) means driving the harness through
+  its own supported interface, not editing its files.
 - **No inference of missing data.** Where a harness log does not record a
   value, the field stays `nil`. A wrong model or a guessed state is worse than
   an empty one.

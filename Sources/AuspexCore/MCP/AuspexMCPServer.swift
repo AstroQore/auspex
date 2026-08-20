@@ -116,6 +116,12 @@ public actor AuspexMCPServer {
     /// builds — and the process the hook ran in otherwise. The hook is a direct
     /// child of the harness, so its parent pid is the strongest evidence
     /// anything in Auspex gets.
+    ///
+    /// Not refused in demo mode, unlike the writing tools. A hook event touches
+    /// no store and no file; it moves a card. And a demo binds no socket unless
+    /// one was named explicitly, so a hook can only reach a fabricated board
+    /// that somebody deliberately pointed at it — which is how this is
+    /// demonstrated.
     private func handleHook(_ params: MCPJSON?) async {
         guard let hook = HookEvent(params: params) else { return }
         let board = await host.boardSnapshot()
