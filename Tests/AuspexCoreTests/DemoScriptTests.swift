@@ -300,6 +300,34 @@ struct DemoScriptTests {
         #expect(link.parent.harness == .codex)
     }
 
+    @Test("the folded review nests under its root in the tree grouping")
+    func autoReviewNestsUnderItsRootOnTheBoard() throws {
+        // The whole path in one assertion: the script's identities, the links
+        // the grouping pass derives from them, and the sections the board
+        // draws. A screenshot shows this too; a test says which part broke.
+        var sessions = demoSnapshots()
+        let links = SessionRelations.links(identities: sessions.map(\.identity))
+        for link in links {
+            guard let index = sessions.firstIndex(where: { $0.key == link.child }) else { continue }
+            sessions[index].identity.parent = link.parent
+            sessions[index].identity.parentLink = link.link
+        }
+
+        let review = try #require(sessions.first { SessionRelations.isAutoReview($0.identity) })
+        let rootKey = try #require(review.identity.parent)
+
+        let board = BoardSnapshot(generatedAt: epoch, sessions: sessions)
+        let groups = BoardGrouping.groups(for: board, groupBy: .tree)
+        let tree = try #require(
+            groups.first { $0.roots?.contains { $0.session.key == rootKey } == true }
+        )
+        let root = try #require(tree.roots?.first { $0.session.key == rootKey })
+        #expect(root.children.map(\.session.key) == [review.key])
+        #expect(root.children.first?.depth == 1)
+        // And it is not also sitting at the top level of some other section.
+        #expect(!groups.contains { $0.roots?.contains { $0.session.key == review.key } == true })
+    }
+
     @Test("a script folds through the reducer without producing a stuck session")
     func scriptReducesToASensibleBoard() {
         let script = DemoScript.make(startedAt: epoch)
