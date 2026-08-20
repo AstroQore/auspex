@@ -312,28 +312,33 @@ public enum HookIngress {
                 Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        if result == 0 { return descriptor }
-        guard errno == EINPROGRESS else {
-            close(descriptor)
-            return nil
+        if result != 0 {
+            guard errno == EINPROGRESS else {
+                close(descriptor)
+                return nil
+            }
+            let remaining = expiry.timeIntervalSinceNow
+            guard remaining > 0 else {
+                close(descriptor)
+                return nil
+            }
+            var fd = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
+            guard poll(&fd, 1, Int32(remaining * 1000)) > 0 else {
+                close(descriptor)
+                return nil
+            }
+            var error: Int32 = 0
+            var size = socklen_t(MemoryLayout<Int32>.size)
+            guard getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &error, &size) == 0, error == 0 else {
+                close(descriptor)
+                return nil
+            }
         }
-
-        let remaining = expiry.timeIntervalSinceNow
-        guard remaining > 0 else {
-            close(descriptor)
-            return nil
-        }
-        var fd = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
-        guard poll(&fd, 1, Int32(remaining * 1000)) > 0 else {
-            close(descriptor)
-            return nil
-        }
-        var error: Int32 = 0
-        var size = socklen_t(MemoryLayout<Int32>.size)
-        guard getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &error, &size) == 0, error == 0 else {
-            close(descriptor)
-            return nil
-        }
+        // Blocking again for the write. `O_NONBLOCK` was for the connect alone;
+        // leaving it on would turn a socket whose buffer is momentarily full
+        // into an `EAGAIN` and a dropped event, when `SO_SNDTIMEO` and the
+        // deadline are the right answer to a slow reader.
+        _ = fcntl(descriptor, F_SETFL, flags)
         return descriptor
     }
 
