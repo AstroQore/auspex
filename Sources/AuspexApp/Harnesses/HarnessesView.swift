@@ -186,22 +186,75 @@ struct HarnessesPanel: View {
 private struct HarnessRackRow: View {
     let status: HarnessStatus
 
-    var body: some View {
+    /// The six columns, when there is room for six columns.
+    ///
+    /// `servers` is wrapped rather than framed directly: it draws nothing for a
+    /// harness whose MCP config Auspex cannot name, and a `frame(maxWidth:
+    /// .infinity)` on an `EmptyView` contributes no layout at all — so those
+    /// rows shrank to their content and put "hooks off" a hundred points left
+    /// of every other row's. A `Spacer` is a real view and always fills.
+    private var wide: some View {
         HStack(alignment: .center, spacing: 16) {
             identity.frame(width: 240, alignment: .leading)
             detection.frame(width: 104, alignment: .leading)
             counters.frame(width: 186, alignment: .leading)
-            Text(RelativeTimeText.since(status.lastEventAt))
-                .font(AuspexType.monoSmall)
-                .foregroundStyle(AuspexPalette.text3)
-                .frame(width: 96, alignment: .leading)
-            servers.frame(maxWidth: .infinity, alignment: .leading)
-            hooks.frame(width: 96, alignment: .leading)
+            lastEvent.frame(width: 96, alignment: .leading)
+            HStack(spacing: 0) {
+                servers
+                Spacer(minLength: 0)
+            }
+            // An ideal width of zero, so the ladder below chooses between one
+            // line and two on the *fixed* columns rather than on how long one
+            // harness's config note happens to be. Otherwise a single row —
+            // "MCP managed by xAI, server-side" — drops to the two-line layout
+            // while the eight beside it stay on one, which looks like a bug in
+            // the row rather than a decision about width.
+            .frame(idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+            hooks.frame(width: Self.hooksWidth, alignment: .trailing)
+        }
+    }
+
+    /// The same facts on two lines, for a column too narrow for one.
+    ///
+    /// Identity, detection and the counts are what the page is scanned for, so
+    /// they keep the first line; the configuration and the hook state — which
+    /// are read one row at a time rather than down a column — go under them.
+    private var narrow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 14) {
+                identity.frame(maxWidth: .infinity, alignment: .leading)
+                detection.fixedSize()
+                lastEvent.fixedSize()
+            }
+            HStack(alignment: .center, spacing: 14) {
+                counters.fixedSize()
+                servers
+                Spacer(minLength: 0)
+                hooks.fixedSize()
+            }
+        }
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            wide
+            narrow
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
         .panelChrome()
         .accessibilityElement(children: .contain)
+    }
+
+    /// Wide enough for "hooks off" and its ring, so the chip is in the same
+    /// place on every row whatever is to its left.
+    private static let hooksWidth: CGFloat = 88
+
+    private var lastEvent: some View {
+        Text(RelativeTimeText.since(status.lastEventAt))
+            .font(AuspexType.monoSmall)
+            .foregroundStyle(AuspexPalette.text3)
+            .lineLimit(1)
     }
 
     /// The vendor's mark, the harness's full name, and the directory Auspex
@@ -214,11 +267,19 @@ private struct HarnessRackRow: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AuspexPalette.text)
                     .lineLimit(1)
-                Text(status.storePath.map(PathDisplay.abbreviate) ?? "—")
+                // Middle truncation, on one line. A store path is
+                // `~/.something/sessions`: the two ends are what identify it
+                // and the middle is what a 240 pt column cannot hold, so
+                // cutting the head threw away the half that says which harness
+                // this is. Where no adapter has told us a root yet, the store
+                // the adapter *would* watch is named instead of an em dash —
+                // it is a constant in this source, not something read off the
+                // machine.
+                Text(storeLine)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
-                    .lineLimit(2)
-                    .truncationMode(.head)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 // Two harnesses read one tree; say so where the path is, or
                 // the rack shows the same store twice with no explanation.
                 if let note = AuspexAdapters.storeNote(for: status.harness) {
@@ -232,8 +293,16 @@ private struct HarnessRackRow: View {
         .help(storeHelp)
     }
 
+    private var storeLine: String {
+        status.storePath.map(PathDisplay.abbreviate)
+            ?? AuspexAdapters.storeDescription(for: status.harness)
+    }
+
     private var storeHelp: String {
-        let parts = [status.storePath, AuspexAdapters.storeNote(for: status.harness)].compactMap { $0 }
+        let parts = [
+            status.storePath ?? AuspexAdapters.storeDescription(for: status.harness),
+            AuspexAdapters.storeNote(for: status.harness)
+        ].compactMap { $0 }
         return parts.isEmpty ? "No adapter watches a store for this harness." : parts.joined(separator: " — ")
     }
 
@@ -293,6 +362,8 @@ private struct HarnessRackRow: View {
                 Text(note)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
     }
