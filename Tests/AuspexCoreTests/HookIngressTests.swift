@@ -333,7 +333,7 @@ struct HookIngressTests {
         // a moment after the hook process has already gone home — which is the
         // whole point of the arrangement.
         var observed: [AgentEvent] = []
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(30)
         while Date() < deadline, observed.isEmpty {
             observed = await host.observed
             if observed.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }

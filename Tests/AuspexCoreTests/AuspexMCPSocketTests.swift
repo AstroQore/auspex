@@ -125,7 +125,9 @@ private struct SocketClient {
             throw SocketClientError.couldNotConnect(errno)
         }
         // A test that hangs is a test that has to be killed by hand.
-        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        // Generous on purpose: a shared CI runner can take seconds to schedule
+        // the first MainActor hop; the production client has its own budget.
+        var timeout = timeval(tv_sec: 30, tv_usec: 0)
         setsockopt(
             descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)
         )
