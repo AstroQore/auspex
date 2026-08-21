@@ -49,6 +49,37 @@ a test, it belongs in Core.
 macOS 26 (Tahoe) or newer on Apple silicon, Xcode 26 / Swift 6.2 or newer.
 Both targets compile in Swift 6 language mode; keep it that way.
 
+### 3.1 Dependencies, and the `agent-session-kit` pin
+
+Three, all pinned in `Package.swift`:
+
+| Package | Pin | Why |
+| --- | --- | --- |
+| `GRDB.swift` | `from: 7.0.0` | The local store. |
+| `agent-session-kit` | `exact: "0.4.2"` | The harness adapters and the live pipeline. |
+| `Sparkle` | `exact: "2.9.4"` | In-app updates (§ 10). |
+
+`Package.resolved` is gitignored, so a release built from a clean checkout of
+a tag has nothing but `Package.swift` to tell it which dependency versions to
+compile in. That is why the two that matter are `exact:` rather than a range:
+the pin *is* the record of what shipped, and two builds of the same Auspex
+commit have to contain the same kit.
+
+**To work on Auspex and the kit side by side**, do not edit the pin. Put the
+kit in edit mode, which is SwiftPM's own answer and leaves the manifest alone:
+
+```sh
+swift package edit agent-session-kit --path ../agent-session-kit
+swift build            # now compiles your working tree of the kit
+swift package unedit agent-session-kit
+```
+
+`.swiftpm/` is gitignored, so the edit-mode state never reaches a commit. When
+the kit change is ready, release it there, then bump the pin here — as its own
+commit, with a reason in the body.
+`.github/workflows/bump-agent-session-kit.yml` opens that pull request on its
+own when the kit publishes a newer release. It never merges anything.
+
 ## 4. Verification Before Completion
 
 Before claiming a change works, run all four:

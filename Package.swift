@@ -16,10 +16,22 @@ let package = Package(
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         // AgentSessionKit / AgentSessionLive provide the harness source
         // adapters, the AgentEvent model, and the live tailing pipeline.
-        // TODO: switch to the git URL once agent-session-kit is published and
-        // tagged; a path dependency is only workable while the two packages
-        // are checked out side by side.
-        .package(path: "../agent-session-kit")
+        //
+        // Pinned to an exact tag rather than a range or a sibling path:
+        // `Package.resolved` is gitignored, so a release built from a clean
+        // checkout of a tag has nothing else to tell it which kit to compile
+        // in. The pin *is* the record of what shipped. Bump it deliberately;
+        // `.github/workflows/bump-agent-session-kit.yml` opens the pull
+        // request when the kit publishes a newer release, and merges nothing.
+        //
+        // To develop the two side by side, put the kit in edit mode instead of
+        // editing this line — see AGENTS.md § 3.1.
+        .package(url: "https://github.com/AstroQore/agent-session-kit.git", exact: "0.4.2"),
+        // Sparkle is the standard update framework for independently
+        // distributed macOS apps. Pinned to the exact reviewed release:
+        // verifying and installing an update is the one thing this app does
+        // that can replace its own binary.
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4")
     ],
     targets: [
         .executableTarget(
@@ -32,7 +44,11 @@ let package = Package(
                 // AuspexCore does not re-export them, so both products are
                 // named here as well.
                 .product(name: "AgentSessionKit", package: "agent-session-kit"),
-                .product(name: "AgentSessionLive", package: "agent-session-kit")
+                .product(name: "AgentSessionLive", package: "agent-session-kit"),
+                // Only the app links Sparkle. Core stays free of it so the
+                // update *policy* — which channel, what that means — can be
+                // tested without a framework that wants a bundle.
+                .product(name: "Sparkle", package: "Sparkle")
             ],
             // The vendor marks every surface identifies a harness with.
             // `.copy` rather than `.process`: these are already the exact
@@ -41,7 +57,14 @@ let package = Package(
             // `Auspex_AuspexApp.bundle` into `Contents/Resources` before
             // signing.
             resources: [.copy("Resources/ProviderIcons"), .copy("Resources/Brand")],
-            swiftSettings: [.swiftLanguageMode(.v6)]
+            swiftSettings: [.swiftLanguageMode(.v6)],
+            // Sparkle ships as a framework, and `build_app.sh` puts it where
+            // every other macOS app keeps one: `Contents/Frameworks`. Without
+            // this rpath the packaged binary looks only where SwiftPM left the
+            // artifact, which is a path that does not exist on a user's Mac.
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@loader_path/../Frameworks"])
+            ]
         ),
         .target(
             name: "AuspexCore",
