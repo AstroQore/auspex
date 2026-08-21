@@ -86,9 +86,15 @@ struct UpdatesSettingsView: View {
                     Text("Auspex \(updates.versionDescription)")
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.textPrimary)
-                    Text(lastCheckDescription)
-                        .font(AuspexType.caption)
-                        .foregroundStyle(AuspexPalette.textTertiary)
+                    // Only when there is an updater to have checked. Telling
+                    // somebody the first check "runs shortly after launch" in
+                    // a build that will never run one is a promise the app
+                    // cannot keep, and the line under it already says why.
+                    if updates.isActive {
+                        Text(lastCheckDescription)
+                            .font(AuspexType.caption)
+                            .foregroundStyle(AuspexPalette.textTertiary)
+                    }
                 }
                 Spacer(minLength: 8)
                 Button("Check now", systemImage: "arrow.triangle.2.circlepath") {

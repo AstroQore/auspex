@@ -1,5 +1,7 @@
+import AppKit
 import AuspexCore
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import AuspexApp
@@ -72,5 +74,35 @@ struct AppUpdateControllerTests {
         // One string, not two. The menu bar row, the Settings pane and the MCP
         // `version` field all have to be quoting the same build.
         #expect(AppUpdateController().versionDescription == AuspexVersion.versionDescription)
+    }
+
+    /// The pane draws in exactly the situation a test process is in — no
+    /// updater behind it — and that branch is the one nobody would open by
+    /// hand. Hosting it and forcing a layout pass is the cheapest way to find
+    /// out that its body evaluates in both appearances.
+    ///
+    /// `NSHostingView` rather than `ImageRenderer`: the pane is a `ScrollView`,
+    /// and `ImageRenderer` hands one no layout pass, so it rasterises the
+    /// background and none of the content — a test that would pass with an
+    /// empty pane.
+    @Test("The Updates pane draws in both appearances", arguments: [AppearanceMode.light, .dark])
+    @MainActor
+    func paneRenders(appearance: AppearanceMode) throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("auspex-updates-pane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let catalog = ProjectCatalogModel(paths: AuspexPaths(homeDirectory: home), persists: false)
+
+        // Touching AppKit at all requires the shared application to exist.
+        _ = NSApplication.shared
+        let host = NSHostingView(
+            rootView: UpdatesSettingsView(catalog: catalog).auspexAppearance(appearance)
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 660, height: 620)
+        host.layoutSubtreeIfNeeded()
+        let rep = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        #expect(rep.pixelsWide > 0)
+        #expect(rep.pixelsHigh > 0)
     }
 }
