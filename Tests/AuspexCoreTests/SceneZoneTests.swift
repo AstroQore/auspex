@@ -516,4 +516,297 @@ struct SceneZoneTests {
         for floor in frame.floors { #expect(frame.walkways.trunk < floor.frame.minX) }
         #expect(frame.walkways.trunk > 0)
     }
+
+    // MARK: The suite
+
+    @Test("A project's rooms are inside that project's own suite")
+    func suiteHoldsItsOwnRooms() throws {
+        let other = "/Users/example/Code/storefront-web"
+        let sessions = [
+            Self.session("boss", state: .delegating(children: 1)),
+            Self.session("kid", parent: Self.key("boss")),
+            Self.session("rest", state: .idle),
+            Self.session("far", harness: .codex, project: other, state: .idle),
+            Self.session("far2", harness: .codex, project: other, state: .thinking)
+        ]
+        var layout = SceneLayout()
+        let frame = layout.update(with: Self.board(sessions))
+
+        // Two companies, and neither has a room in the other's building.
+        #expect(frame.floors.count == 2)
+        for area in frame.zones {
+            let suite = try #require(
+                frame.floors.first { $0.index == area.floorIndex }
+            ).suite
+            #expect(suite.contains(area.frame))
+            #expect(area.projectKey == frame.floors.first { $0.index == area.floorIndex }?.projectKey)
+        }
+        for table in frame.tables {
+            let suite = try #require(
+                frame.floors.first { $0.index == table.floorIndex }
+            ).suite
+            #expect(suite.contains(table.frame))
+        }
+        // And every seat is in the suite of the project its occupant works in.
+        for seat in frame.seats {
+            guard let key = seat.session else { continue }
+            let floor = try #require(frame.floors.first { $0.index == seat.floorIndex })
+            let expected = key == Self.key("far", .codex) ? other : Self.project
+            #expect(floor.projectKey == expected)
+        }
+        // Suites do not overlap each other.
+        let first = try #require(frame.floors.first).suite
+        let second = try #require(frame.floors.last).suite
+        #expect(!first.intersects(second))
+    }
+
+    @Test("A company gets a meeting room per family, and one once it is big enough")
+    func meetingRoomsGrowOnDemand() {
+        // Two sessions and nobody delegating: the talking happens across the
+        // desk.
+        var small = SceneLayout()
+        let quiet = small.update(
+            with: Self.board([Self.session("a"), Self.session("b")])
+        )
+        #expect(quiet.tables.isEmpty)
+
+        // Three, and the company has a meeting room whether or not it is in it.
+        var medium = SceneLayout()
+        let idle = medium.update(
+            with: Self.board([Self.session("a"), Self.session("b"), Self.session("c")])
+        )
+        #expect(idle.tables.count == 1)
+        #expect(idle.tables.first?.head == nil)
+
+        // Two families delegating at once: two rooms, each with its own head.
+        var busy = SceneLayout()
+        let meeting = busy.update(
+            with: Self.board(
+                [
+                    Self.session("one", state: .delegating(children: 1)),
+                    Self.session("one-kid", parent: Self.key("one")),
+                    Self.session("two", state: .delegating(children: 1)),
+                    Self.session("two-kid", parent: Self.key("two"))
+                ]
+            )
+        )
+        #expect(meeting.tables.count == 2)
+        #expect(Set(meeting.tables.compactMap(\.head)) == [Self.key("one"), Self.key("two")])
+    }
+
+    @Test("The waiting bench is inside the project's own break room")
+    func waitingBenchIsInTheBreakRoom() throws {
+        let sessions = [
+            Self.session("asking", state: .thinking),
+            Self.session("busy", state: .toolCalling(name: "Bash"))
+        ]
+        var layout = SceneLayout()
+        let frame = layout.update(
+            with: Self.board(sessions), attention: Self.calling("asking")
+        )
+        let seat = try #require(frame.seat(for: Self.key("asking")))
+        #expect(seat.kind == .call)
+        let room = try #require(frame.zones.first { $0.zone == .breakArea })
+        #expect(room.projectKey == Self.project)
+        #expect(room.frame.contains(seat.anchor))
+        #expect(room.breakKind != nil)
+        // And the door out of the company is in that same room.
+        #expect(frame.door(ofSuite: seat.floorIndex) != nil)
+    }
+
+    // MARK: Break rooms
+
+    @Test("A project's break room is the same kind every time it is asked")
+    func breakKindIsSeeded() {
+        let options = SceneZoneOptions.all
+        let projects = [
+            "/Users/example/Code/auspex",
+            "/Users/example/Code/storefront-web",
+            "/Users/example/Code/ingest-pipeline",
+            "/Users/example/Code/mobile-client",
+            "/Users/example/Code/design-tokens"
+        ]
+        // Stable: the same path answers the same way, run after run. Not
+        // `hashValue`, which is seeded per process — a company whose break room
+        // changed every time the app restarted is one nobody can learn.
+        for project in projects {
+            let first = options.breakKind(forProject: project)
+            #expect(options.breakKind(forProject: project) == first)
+        }
+        // The unplaced suite has one too, and it is not a crash.
+        #expect(SceneZoneOptions.all.breakKind(forProject: nil) == options.breakKind(forProject: nil))
+        // And a handful of real project names does not all land on one kind.
+        let kinds = Set(projects.map(options.breakKind(forProject:)))
+        #expect(kinds.count >= 2)
+    }
+
+    @Test("A pinned style overrides the seed, and an override overrides the style")
+    func breakKindCanBePinned() {
+        var options = SceneZoneOptions.all
+        options.breakStyle = .lounge
+        for project in [Self.project, "/Users/example/Code/other"] {
+            #expect(options.breakKind(forProject: project) == .lounge)
+        }
+        options.breakOverrides[Self.project] = .teaRoom
+        #expect(options.breakKind(forProject: Self.project) == .teaRoom)
+        #expect(options.breakKind(forProject: "/Users/example/Code/other") == .lounge)
+    }
+
+    @Test("A settings file written before the suites existed still decodes")
+    func oldSettingsDecode() throws {
+        let json = Data(#"{"meetingRoom":true,"garden":false}"#.utf8)
+        let options = try JSONDecoder().decode(SceneZoneOptions.self, from: json)
+        #expect(options.meetingRooms)
+        #expect(!options.breakAreas)
+        #expect(options.breakStyle == .perProject)
+        // And a round trip of the new shape survives.
+        var pinned = SceneZoneOptions.all
+        pinned.breakStyle = .teaRoom
+        pinned.breakOverrides[Self.project] = .garden
+        let encoded = try JSONEncoder().encode(pinned)
+        #expect(try JSONDecoder().decode(SceneZoneOptions.self, from: encoded) == pinned)
+    }
+
+    @Test("The kind a project is drawn with is the kind the options say")
+    func frameCarriesTheBreakKind() throws {
+        var options = SceneZoneOptions.all
+        options.breakStyle = .teaRoom
+        var layout = SceneLayout()
+        let frame = layout.update(
+            with: Self.board([Self.session("rest", state: .idle)]), zones: options
+        )
+        let room = try #require(frame.zones.first { $0.zone == .breakArea })
+        #expect(room.breakKind == .teaRoom)
+        #expect(room.title == SceneBreakKind.teaRoom.title)
+        #expect(frame.floors.first?.breakKind == .teaRoom)
+    }
+
+    // MARK: Leaving
+
+    @Test("A session that has walked out is drawn nowhere and holds nothing")
+    func departedIsGone() throws {
+        let sessions = [
+            Self.session("busy", state: .thinking),
+            Self.session("over", state: .ended(reason: .exited))
+        ]
+        var layout = SceneLayout()
+        let board = Self.board(sessions)
+        let leaving = layout.update(with: board)
+
+        // On its way: a place in the queue at its own company's door, and the
+        // desk it is still holding.
+        #expect(leaving.seat(for: Self.key("over"))?.kind == .gate)
+        #expect(leaving.slot(for: Self.key("over"))?.isAway == true)
+
+        let after = layout.update(with: board, departed: [Self.key("over")])
+        #expect(after.place(of: Self.key("over")) == nil)
+        #expect(after.seat(for: Self.key("over")) == nil)
+        #expect(after.slot(for: Self.key("over")) == nil)
+        // The desk it held is released, so the company is one desk narrower.
+        #expect(after.slots.count < leaving.slots.count)
+        // And whoever is still working has not moved.
+        #expect(
+            after.place(of: Self.key("busy"))?.anchor == leaving.place(of: Self.key("busy"))?.anchor
+        )
+    }
+
+    @Test("Everybody leaving empties the suite rather than leaving a stub")
+    func everybodyLeavingClosesTheSuite() {
+        let sessions = (0..<3).map { Self.session("e\($0)", state: .ended(reason: .exited)) }
+        var layout = SceneLayout()
+        let board = Self.board(sessions)
+        _ = layout.update(with: board)
+        let after = layout.update(with: board, departed: Set(sessions.map(\.key)))
+        #expect(after.floors.isEmpty)
+        #expect(after.seats.isEmpty)
+        #expect(after.contentRect == .zero)
+    }
+
+    @Test("With the break rooms off, an ended session keeps its desk")
+    func endedStaysWithoutABreakRoom() {
+        // There is nowhere to walk to, so there is nothing to walk out of.
+        let over = Self.session("over", state: .ended(reason: .exited))
+        var layout = SceneLayout()
+        let frame = layout.update(with: Self.board([over]), zones: .officeOnly)
+        #expect(frame.slot(for: over.key)?.isAway == false)
+        #expect(frame.seats.isEmpty)
+    }
+
+    // MARK: Arcs
+
+    @Test("Nothing focused draws no arcs at all")
+    func arcsAreQuietByDefault() {
+        let root = Self.session("root", state: .delegating(children: 2))
+        let children = (0..<2).map { Self.session("c\($0)", parent: root.key) }
+        var layout = SceneLayout()
+        let frame = layout.update(with: Self.board([root] + children))
+
+        // Every delegation is still on the frame — the arcs are a *drawing*
+        // decision, and a renderer that had to re-derive the family would be a
+        // second place deciding who is related to whom.
+        #expect(frame.tethers.count == 2)
+        #expect(frame.arcs(focus: nil).isEmpty)
+    }
+
+    @Test("Focusing anybody in a family draws that family and no other")
+    func arcsFollowTheFamily() {
+        let root = Self.session("root", state: .delegating(children: 2))
+        let children = (0..<2).map { Self.session("c\($0)", parent: root.key) }
+        let other = Self.session("other", state: .delegating(children: 1))
+        let cousin = Self.session("cousin", parent: other.key)
+        var layout = SceneLayout()
+        let frame = layout.update(with: Self.board([root] + children + [other, cousin]))
+
+        // The parent, and any of its children, all point at the same family.
+        let fromParent = frame.arcs(focus: root.key)
+        #expect(fromParent.count == 2)
+        #expect(Set(fromParent.map(\.child)) == Set(children.map(\.key)))
+        #expect(frame.arcs(focus: children[1].key).map(\.id) == fromParent.map(\.id))
+        // And the other family is not in it.
+        #expect(!fromParent.contains { $0.parent == other.key })
+        #expect(frame.arcs(focus: other.key).map(\.child) == [cousin.key])
+        // Somebody with no delegation either way draws nothing.
+        #expect(frame.arcs(focus: Self.key("nobody")).isEmpty)
+    }
+
+    @Test("A big family draws six arcs, not sixteen")
+    func arcsAreCapped() {
+        let root = Self.session("root", state: .delegating(children: 16))
+        let children = (0..<16).map { Self.session("c\($0)", parent: root.key) }
+        var layout = SceneLayout()
+        let frame = layout.update(with: Self.board([root] + children))
+
+        #expect(frame.tethers.count == 16)
+        #expect(frame.arcs(focus: root.key).count == 6)
+        #expect(frame.arcs(focus: root.key, limit: 2).count == 2)
+        #expect(frame.arcs(focus: root.key, limit: 0).isEmpty)
+        // The count a reader would have made by following them is on the desk
+        // instead.
+        #expect(frame.place(of: root.key) != nil)
+        let seat = frame.seat(for: root.key) ?? frame.seats.first { $0.session == root.key }
+        #expect((seat?.childCount ?? frame.slot(for: root.key)?.childCount) == 16)
+    }
+
+    @Test("A delegation that crosses repositories is still one family")
+    func arcsCrossSuites() throws {
+        let root = Self.session("root", state: .delegating(children: 1))
+        let elsewhere = Self.session(
+            "elsewhere",
+            harness: .codex,
+            project: "/Users/example/Code/storefront-web",
+            parent: root.key
+        )
+        var layout = SceneLayout()
+        let frame = layout.update(with: Self.board([root, elsewhere]))
+
+        let arcs = frame.arcs(focus: root.key)
+        #expect(arcs.count == 1)
+        let arc = try #require(arcs.first)
+        #expect(arc.family == root.key)
+        // The two ends really are in different suites, which is the case the
+        // line exists for.
+        let parent = try #require(frame.place(of: root.key))
+        let child = try #require(frame.place(of: elsewhere.key))
+        #expect(parent.floorIndex != child.floorIndex)
+    }
 }
