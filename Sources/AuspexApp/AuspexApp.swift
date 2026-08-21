@@ -25,8 +25,8 @@ struct AuspexApp: App {
     /// would do rather than where the reader already is.
     private var trajectoryCommandTitle: String {
         environment.board.viewMode == .trajectory
-            ? "Close Trajectory"
-            : "Open Trajectory"
+            ? "Close Flight"
+            : "Open Flight"
     }
 
     var body: some Scene {

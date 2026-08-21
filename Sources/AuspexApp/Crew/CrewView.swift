@@ -58,20 +58,33 @@ struct CrewView: View {
 
     /// How a card arrives and how it leaves.
     ///
-    /// Asymmetric on purpose: a new session should feel like it walked in, so
-    /// it grows the visible 10 %; a card going away should not draw attention
-    /// to itself on the way out, so it barely moves.
-    private static let cardTransition = AnyTransition.asymmetric(
-        insertion: .scale(scale: 0.9).combined(with: .opacity),
-        removal: .scale(scale: 0.96).combined(with: .opacity)
-    )
+    /// ## Why this is opacity and nothing else
+    ///
+    /// It used to be a scale transition over a grid that carried
+    /// `.animation(.spring, value:)` on its contents. On the demo board that
+    /// looked like a card walking in. On a real one — ninety sessions,
+    /// sixty-seven of them in one project — it drew **cards on top of each
+    /// other**: a `LazyVGrid` does not reserve the slot of a view that is
+    /// still transitioning out, and a spring on the grid's contents animates
+    /// the *positions* of everything left, so cards were painted mid-flight
+    /// between slots they no longer occupied.
+    ///
+    /// The rule that replaces it is the one ``CrewAttentionRing`` already
+    /// states: inside a lazy container, animate what is *painted*, never what
+    /// is *measured*. A fade happens entirely within a card's own frame; the
+    /// grid places, and nothing argues with it.
+    private static let cardTransition = AnyTransition.opacity
 
-    /// A card is 200 points wide in the design, and the avatar inside it is
-    /// 120. Below about 170 the avatar stops being readable at a glance, which
-    /// is the whole point of this view, so the grid stops shrinking there and
-    /// drops a column instead.
+    /// A card is 150 points wide and the avatar inside it is 56.
+    ///
+    /// Half what it was. The wall at the old size was legible and enormous —
+    /// five cards filled a laptop screen, and the view exists to let somebody
+    /// take in a *crew* at a glance. At 56 the face still carries its stance,
+    /// which is the only thing the avatar has to do from across a desk.
+    static let avatarSize: CGFloat = 56
+
     private let columns = [
-        GridItem(.adaptive(minimum: 172, maximum: 216), spacing: 16, alignment: .top)
+        GridItem(.adaptive(minimum: 150, maximum: 186), spacing: 12, alignment: .top)
     ]
 
     var body: some View {
@@ -81,7 +94,7 @@ struct CrewView: View {
                     model.focusedProjectKey = nil
                 }
             }
-            if model.groups.isEmpty {
+            if model.unitGroups.isEmpty {
                 BoardEmptyState(model: model)
             } else {
                 grid
@@ -124,9 +137,9 @@ struct CrewView: View {
     /// arrives with a frame like everything else. So a wall with no recently
     /// finished session leaves this loop immediately and costs nothing.
     private var needsClock: Bool {
-        model.groups.contains { group in
-            group.sessions.contains {
-                $0.state.isEnded && !CrewView.hasFolded($0, at: now)
+        model.unitGroups.contains { group in
+            group.units.contains { unit in
+                unit.isEnded && !CrewView.hasFolded(unit, at: now)
             }
         }
     }
@@ -143,69 +156,116 @@ struct CrewView: View {
         return now.timeIntervalSince(endedAt) > CrewMoodMap.endedFold
     }
 
+    /// The same question asked of a whole piece of work: it folds when
+    /// everybody on it has stopped and nothing about it is outstanding.
+    static func hasFolded(_ unit: TaskUnit, at now: Date) -> Bool {
+        guard unit.bucket == .ended else { return false }
+        guard let endedAt = unit.endedAt else { return true }
+        return now.timeIntervalSince(endedAt) > CrewMoodMap.endedFold
+    }
+
     private var grid: some View {
         ScrollView {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                ForEach(model.groups) { group in
-                    let awake = group.sessions.filter { !CrewView.hasFolded($0, at: now) }
-                    let folded = group.sessions.filter { CrewView.hasFolded($0, at: now) }
+                ForEach(model.unitGroups) { group in
+                    let awake = group.units.filter { !CrewView.hasFolded($0, at: now) }
+                    let folded = group.units.filter { CrewView.hasFolded($0, at: now) }
                     Section {
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(awake, id: \.key) { session in
-                                card(for: session)
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(awake) { unit in
+                                card(for: unit)
                                     .transition(Self.cardTransition)
                             }
                         }
                         .padding(.horizontal, 20)
-                        .padding(.top, 14)
-                        .padding(.bottom, folded.isEmpty ? 20 : 4)
-                        // The ids are the session keys and they are stable, so
-                        // a card that moves to another slot when the board
-                        // re-sorts is the *same* view and SwiftUI glides it
-                        // there. All this adds is the curve it glides on — and
-                        // the arrivals and departures above ride the same one.
-                        .animation(
-                            .spring(duration: 0.5, bounce: 0.15),
-                            value: awake.map(\.key)
-                        )
+                        .padding(.top, 10)
+                        .padding(.bottom, folded.isEmpty ? 18 : 4)
 
                         if !folded.isEmpty {
-                            CrewEndedFold(sessions: folded, selected: model.selectedKey) {
+                            CrewEndedFold(
+                                sessions: folded.map(\.lead),
+                                selected: model.selectedKey
+                            ) {
                                 model.selectedKey = $0
                             }
                             .padding(.horizontal, 20)
-                            .padding(.bottom, 20)
-                            .transition(.opacity)
-                            .animation(.easeInOut(duration: 0.4), value: folded.count)
+                            .padding(.bottom, 18)
                         }
                     } header: {
-                        BoardSectionHeader(group: group)
+                        BoardSectionHeader(
+                            title: group.title,
+                            subtitle: group.subtitle,
+                            liveCount: group.liveCount,
+                            harness: group.harness
+                        )
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        // Opaque, on the canvas token. A pinned header is
+                        // drawn *over* the rows it sticks to, and one with a
+                        // clear background reads as a header printed on top of
+                        // an avatar.
+                        .background(AuspexPalette.canvas)
                     }
                 }
             }
         }
+        // A content margin and not padding on the stack. A pinned header pins
+        // to the *container's* top edge, so padding inside the content is
+        // scrolled under it and the first header came out clipped against the
+        // column header above. A margin moves the edge the header pins to.
+        .contentMargins(.top, 12, for: .scrollContent)
         .scrollContentBackground(.hidden)
     }
 
-    private func card(for session: SessionSnapshot) -> some View {
-        // Built inside the lazy grid's builder, so a session scrolled off the
-        // wall costs nothing at all — and clocked one level further down, so a
-        // frame costs a Canvas and not a grid.
-        CrewCard(
-            session: session,
-            isSelected: model.selectedKey == session.key,
-            descendantCount: model.descendantCount(of: session.key),
-            chrome: CrewCardChrome.of(session, attention: model.attention[session.key] ?? .none)
-        ) {
-            CrewLiveAvatar(
+    /// One piece of work, as one avatar.
+    ///
+    /// The lead's face, because the lead is the session a person is talking
+    /// to; the sessions under it are a strip of marks along the bottom edge
+    /// rather than avatars of their own. A delegation of four used to be four
+    /// faces on this wall, and a wall of faces where three of them are steps
+    /// inside the fourth is a wall that has to be decoded rather than read.
+    @ViewBuilder
+    private func card(for unit: TaskUnit) -> some View {
+        if let session = model.session(for: unit.lead.key) {
+            // Built inside the lazy grid's builder, so a card scrolled off the
+            // wall costs nothing at all — and clocked one level further down,
+            // so a frame costs a Canvas and not a grid.
+            CrewCard(
                 session: session,
-                roster: roster,
-                paused: !isOnScreen || reduceMotion,
-                frozen: reduceMotion
-            )
+                title: unit.title,
+                isSelected: model.selectedUnit?.id == unit.id,
+                descendantCount: unit.subagents.count,
+                chrome: CrewCardChrome.of(session, attention: unit.attention)
+            ) {
+                CrewLiveAvatar(
+                    session: session,
+                    roster: roster,
+                    paused: !isOnScreen || reduceMotion,
+                    frozen: reduceMotion
+                )
+            } brood: {
+                CrewBroodRow(
+                    members: Array(unit.subagents),
+                    onSelect: { model.selectedKey = $0 }
+                ) { member in
+                    if let child = model.session(for: member.key) {
+                        CrewLiveChick(
+                            session: child,
+                            roster: roster,
+                            // A chick inherits the card's own pause: a wall
+                            // nobody can see should not be costing frames, and
+                            // there are eight times as many of these as there
+                            // are leads.
+                            paused: !isOnScreen || reduceMotion,
+                            frozen: reduceMotion
+                        )
+                    }
+                }
+            }
+            .onTapGesture { model.selectedKey = unit.lead.key }
+            .onTapGesture(count: 2) { model.openUnitID = unit.id }
+            .accessibilityAddTraits(.isButton)
         }
-        .onTapGesture { model.selectedKey = session.key }
-        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -310,8 +370,12 @@ struct CrewLiveAvatar: View {
 /// The chrome is deliberately thin. The avatar is the content here — a card
 /// that repeated in text everything the body is already showing would be a
 /// board card drawn twice.
-struct CrewCard<Avatar: View>: View {
+struct CrewCard<Avatar: View, Brood: View>: View {
     let session: SessionSnapshot
+    /// What the card is called. The task's title when there is one, so the
+    /// crew wall and the board wall name the same piece of work the same way;
+    /// the session's own headline otherwise.
+    var title: String?
     let isSelected: Bool
     let descendantCount: Int
     /// What the card says over and above the avatar. Defaults to nothing, so
@@ -328,26 +392,31 @@ struct CrewCard<Avatar: View>: View {
     /// which is what a profile of the first version was almost entirely made
     /// of.
     @ViewBuilder var avatar: Avatar
+    /// The brood: one small avatar per session under the lead, built by the
+    /// caller for the same reason ``avatar`` is. Empty for a card that is one
+    /// session, which is most of them.
+    @ViewBuilder var brood: Brood
 
     private var isOver: Bool { chrome == .over || session.state.isEnded }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             avatar
-                .frame(width: 120, height: 120)
+                .frame(width: CrewView.avatarSize, height: CrewView.avatarSize)
                 .overlay(alignment: .bottomTrailing) { childrenBadge }
 
             text
+            brood
         }
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(AuspexPalette.panel)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(
                     isSelected ? session.key.harness.style.accent.opacity(0.75)
                         : AuspexPalette.hairline,
@@ -374,7 +443,7 @@ struct CrewCard<Avatar: View>: View {
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(session.key.harness.displayName), \(title), \(session.state.label)"
+            "\(session.key.harness.displayName), \(cardTitle), \(session.state.label)"
         )
     }
 
@@ -406,7 +475,7 @@ struct CrewCard<Avatar: View>: View {
     private var text: some View {
         CrewCardText(
             harness: session.key.harness,
-            title: title,
+            title: cardTitle,
             state: session.state,
             isStale: session.isStale,
             said: said,
@@ -415,11 +484,12 @@ struct CrewCard<Avatar: View>: View {
         .equatable()
     }
 
-    /// The delegation count, as a corner badge.
+    /// The delegation count, as a corner badge on the lead.
     ///
-    /// The children are already on the wall as their own avatars, so this says
-    /// how many rather than which — thirteen chips would be a card nobody can
-    /// read, and it is the same call the board card makes.
+    /// The brood under the card shows *which*; this shows *how many*, which is
+    /// the number a person reads when the row has run out of room and says
+    /// `+5`. Kept small and in the corner for the reason the status badge is:
+    /// the body's job is to say which harness this is.
     @ViewBuilder
     private var childrenBadge: some View {
         if descendantCount > 0 {
@@ -432,9 +502,7 @@ struct CrewCard<Avatar: View>: View {
             .foregroundStyle(AuspexPalette.stateDelegating)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(
-                Capsule().fill(AuspexPalette.canvas.opacity(0.9))
-            )
+            .background(Capsule().fill(AuspexPalette.canvas.opacity(0.9)))
             .overlay(
                 Capsule().strokeBorder(AuspexPalette.stateDelegating.opacity(0.45), lineWidth: 1)
             )
@@ -442,7 +510,8 @@ struct CrewCard<Avatar: View>: View {
         }
     }
 
-    private var title: String {
+    private var cardTitle: String {
+        if let title, !title.isEmpty { return title }
         if let headline = session.identity.title, !headline.isEmpty { return headline }
         return String(session.key.sessionID.prefix(10))
     }
@@ -478,7 +547,9 @@ struct CrewCard<Avatar: View>: View {
 /// way the sleeping avatar is muted, and clicking one still fills the trace
 /// inspector — nothing is lost, it just stops shouting.
 private struct CrewEndedFold: View {
-    let sessions: [SessionSnapshot]
+    /// The finished work, as one dot each. Rows rather than snapshots: the
+    /// fold draws a harness accent and a key, and both are on a row.
+    let sessions: [BoardRow]
     let selected: SessionKey?
     let onSelect: (SessionKey) -> Void
 
@@ -505,7 +576,7 @@ private struct CrewEndedFold: View {
         )
     }
 
-    private func dot(for session: SessionSnapshot) -> some View {
+    private func dot(for session: BoardRow) -> some View {
         Circle()
             .fill(
                 session.key.harness.style.accent
@@ -637,11 +708,11 @@ private struct CrewCardText: View, @MainActor Equatable {
     private var pillIdentity: String { "\(state.label)|\(isStale)" }
 
     var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                HarnessBadge(harness: harness, size: 16, isMuted: isOver)
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                HarnessBadge(harness: harness, size: 13, isMuted: isOver)
                 Text(title)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(
                         isOver ? AuspexPalette.textTertiary : AuspexPalette.textPrimary
                     )
@@ -670,7 +741,7 @@ private struct CrewCardText: View, @MainActor Equatable {
 
             if let said {
                 Text(said)
-                    .font(.system(size: 11))
+                    .font(.system(size: 9.5))
                     .foregroundStyle(AuspexPalette.textTertiary)
                     .lineLimit(1)
                     .truncationMode(PathDisplay.truncation(for: said))

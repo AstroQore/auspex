@@ -47,8 +47,8 @@ struct BoardHeader: View {
                 )
                 .fixedSize()
                 .help(
-                    "Read the same board as a wall of cards, as a room, "
-                        + "or one session as its trajectory"
+                    "Read the same work as a ledger of cards, as an aviary, "
+                        + "as a flock, or one session as its flight"
                 )
                 TaskFilterMenu(model: model).fixedSize()
                 groupMenu.fixedSize()

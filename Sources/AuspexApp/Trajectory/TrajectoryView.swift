@@ -77,7 +77,7 @@ struct TrajectoryView: View {
         EmptyStateView(
             symbol: BoardViewMode.trajectory.systemImage,
             title: "Select a session",
-            detail: "A trajectory is one session opened out. Pick a card to see its turns."
+            detail: "A flight is one session opened out. Pick a card to see its turns."
         )
         .centredInPane()
     }

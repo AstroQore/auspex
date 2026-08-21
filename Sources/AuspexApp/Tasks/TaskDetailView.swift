@@ -70,13 +70,13 @@ struct TaskDetailView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10, weight: .bold))
-                    Text("Board").font(AuspexType.caption)
+                    Text(BoardViewMode.board.title).font(AuspexType.caption)
                 }
                 .foregroundStyle(AuspexPalette.text2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.auspex)
-            .help("Back to the wall — or press Escape")
+            .help("Back to the ledger — or press Escape")
             Text("›")
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
@@ -110,7 +110,7 @@ struct TaskDetailView: View {
             }
         }
         if unit.counts.live > 0 {
-            actionButton("Open trajectory") {
+            actionButton("Open flight") {
                 board.selectedKey = unit.lead.key
                 board.openUnitID = nil
                 board.openTrajectory()
@@ -317,7 +317,7 @@ struct TaskDetailView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.auspex(cornerRadius: 5))
-            .help("Open this session's trajectory")
+            .help("Open this session's flight")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

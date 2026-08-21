@@ -136,14 +136,15 @@ if let flag = arguments.firstIndex(of: "--render-crew") {
     let avatarTime = numbers.dropFirst().first.flatMap(TimeInterval.init) ?? 1.4
     do {
         let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
-        try CrewSnapshotRenderer.render(
+        let cards = try CrewSnapshotRenderer.render(
             board: board,
             to: URL(fileURLWithPath: path),
             avatarTime: avatarTime,
             appearance: appearance
         )
         let counts = board.counts
-        let summary = "auspex: \(board.sessions.count) avatars at t+\(Int(elapsed))s, "
+        let summary = "auspex: \(cards) tasks (\(board.sessions.count) sessions) "
+            + "at t+\(Int(elapsed))s, "
             + "animation t=\(avatarTime)s — "
             + "\(counts.thinking) thinking, \(counts.tooling) tooling, "
             + "\(counts.delegating) delegating, \(counts.waitingPermission) blocked, "
@@ -394,10 +395,12 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         performance budget is measured without opening
                         anybody's real store. `AUSPEX_DEMO_SCALE` does the
                         same. Capped at 64.
-          --view <board|scene|crew>
+          --view <ledger|aviary|flock|flight>
                         Open the live section in this view instead of the
-                        board. `AUSPEX_VIEW` does the same. What the
-                        performance budget for the scene and the crew is
+                        ledger. `AUSPEX_VIEW` does the same. The old spellings
+                        — `board`, `scene`, `crew`, `trajectory` — still work,
+                        because they are in people's shell histories. What the
+                        performance budget for the aviary and the flock is
                         measured with.
           --appearance <system|light|dark>
                         Draw this launch in that appearance, without changing

@@ -24,7 +24,10 @@ enum CrewSnapshotRenderer {
     ///     still gets its own phase offset, so the wall does not blink in
     ///     unison in the picture either.
     ///   - columns: how many cards per row.
+    /// - Returns: how many cards were drawn — one per piece of work, which is
+    ///   fewer than the sessions on the board and is the number worth quoting.
     @MainActor
+    @discardableResult
     static func render(
         board: BoardSnapshot,
         to url: URL,
@@ -32,7 +35,7 @@ enum CrewSnapshotRenderer {
         columns: Int = 5,
         scale: CGFloat = 2,
         appearance: AppearanceMode = .dark
-    ) throws {
+    ) throws -> Int {
         // Touching AppKit at all requires the shared application to exist; the
         // policy keeps it out of the Dock and off the menu bar while it does.
         NSApplication.shared.setActivationPolicy(.prohibited)
@@ -54,13 +57,36 @@ enum CrewSnapshotRenderer {
             now += 1.0 / 30
         }
         let attention = SceneSnapshotRenderer.demoAttention(board)
-        let cards = board.sessions.map { session -> CrewSnapshotCard in
+        // One card per piece of work, exactly as the live wall draws it — a
+        // renderer that still drew one per session would be a picture of an
+        // app that no longer exists.
+        let units = TaskUnitBuilder.units(
+            sessions: board.sessions,
+            board: board,
+            ledger: .empty,
+            builder: BoardRowBuilder(board: board, now: board.generatedAt),
+            now: board.generatedAt
+        )
+        let cards = units.compactMap { unit -> CrewSnapshotCard? in
+            guard let session = board.session(for: unit.lead.key) else { return nil }
             let instant = roster.instant(for: session, at: avatarTime, frozen: false)
+            // The brood's faces, sampled at the same instant the lead's was.
+            let brood = unit.subagents.compactMap { member -> CrewSnapshotCard.Chick? in
+                guard let child = board.session(for: member.key) else { return nil }
+                let childInstant = roster.instant(for: child, at: avatarTime, frozen: false)
+                return CrewSnapshotCard.Chick(
+                    row: member,
+                    frame: childInstant.frame,
+                    isOver: childInstant.stance == .ended
+                )
+            }
             return CrewSnapshotCard(
                 session: session,
+                title: unit.title,
                 frame: instant.frame,
-                descendants: board.tree.descendants(of: session.key).count,
-                chrome: CrewCardChrome.of(session, attention: attention[session.key] ?? .none),
+                descendants: unit.subagents.count,
+                brood: brood,
+                chrome: CrewCardChrome.of(session, attention: unit.attention),
                 isOver: instant.stance == .ended
             )
         }
@@ -71,6 +97,7 @@ enum CrewSnapshotRenderer {
             throw RenderError.renderFailed
         }
         try writePNG(image, to: url)
+        return cards.count
     }
 
     /// One wall, drawn. Shared with ``CrewMotionRenderer``, which needs dozens
@@ -121,8 +148,22 @@ enum CrewSnapshotRenderer {
 /// them out.
 struct CrewSnapshotCard: Identifiable {
     let session: SessionSnapshot
+    /// The task's title, so the still and the live wall name the same work.
+    var title: String?
     let frame: BloubFrame
     let descendants: Int
+    /// The sessions folded into this card, each with the face it wore at the
+    /// instant the lead's was sampled.
+    var brood: [Chick] = []
+
+    /// One member, drawn without a clock.
+    struct Chick: Identifiable {
+        let row: BoardRow
+        let frame: BloubFrame
+        var isOver: Bool = false
+
+        var id: SessionKey { row.key }
+    }
     /// What the card says over and above the avatar.
     var chrome: CrewCardChrome = .none
     /// Whether the avatar is asleep and grey.
@@ -143,14 +184,17 @@ struct CrewSnapshotSheet: View {
     var appearance: AppearanceMode = .dark
 
     var body: some View {
+        // The live wall's own card width — see ``CrewView/avatarSize`` and the
+        // note beside it on halving the wall.
         let grid = Array(
-            repeating: GridItem(.fixed(200), spacing: 16, alignment: .top),
+            repeating: GridItem(.fixed(160), spacing: 12, alignment: .top),
             count: columns
         )
-        return LazyVGrid(columns: grid, spacing: 16) {
+        return LazyVGrid(columns: grid, spacing: 12) {
             ForEach(cards) { card in
                 CrewCard(
                     session: card.session,
+                    title: card.title,
                     isSelected: false,
                     descendantCount: card.descendants,
                     chrome: card.chrome
@@ -160,12 +204,26 @@ struct CrewSnapshotSheet: View {
                         frame: card.frame,
                         isOver: card.isOver
                     )
+                } brood: {
+                    CrewBroodRow(members: card.brood.map(\.row)) { member in
+                        if let chick = card.brood.first(where: { $0.row.key == member.key }) {
+                            CrewChickAvatar(
+                                harness: member.harness,
+                                frame: chick.frame,
+                                isOver: chick.isOver
+                            )
+                        }
+                    }
                 }
             }
         }
-        .padding(24)
-        .frame(width: CGFloat(columns) * 216 + 32)
-        .environment(\.colorScheme, appearance == .light ? .light : .dark)
+        .padding(20)
+        .frame(width: CGFloat(columns) * 172 + 24)
+        // The ground goes *inside* the appearance, not outside it: a
+        // `.background` added after `.environment` resolves its colour in the
+        // environment above the modifier, so a dark wall came out on a white
+        // page.
         .background(AuspexPalette.canvas)
+        .environment(\.colorScheme, appearance == .light ? .light : .dark)
     }
 }

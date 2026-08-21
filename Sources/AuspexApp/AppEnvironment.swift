@@ -607,7 +607,7 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
         case .live: "Live"
         case .allSessions: "All sessions"
         case .projects: "Projects"
-        case .tasks: "Tasks"
+        case .tasks: "Roost"
         case .harnesses: "Harnesses"
         case .settings: "Settings"
         }
@@ -695,7 +695,7 @@ public struct AppLaunchOptions: Sendable {
             isDemo: rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
                 || (scale ?? 1) > 1,
             demoScale: Self.clampedScale(scale),
-            viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(rawValue:)),
+            viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(named:)),
             appearance: appearance.flatMap(AppearanceMode.init(rawValue:))
         )
     }

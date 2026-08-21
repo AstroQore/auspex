@@ -1,13 +1,24 @@
 import Foundation
 
-/// How the live sessions are drawn.
+/// How the live work is drawn.
 ///
-/// The same board, several ways of looking at it: a grid of cards for reading,
-/// a rendered scene and a crew view for watching, and a trajectory for taking
-/// one session apart. The choice is a mode rather than a separate destination
+/// The same board, four ways of looking at it: a wall of cards for reading,
+/// a room and a wall of faces for watching, and one session opened out for
+/// taking apart. The choice is a mode rather than a separate destination
 /// because it does not change *what* is on screen, only how it is drawn: the
 /// selection, the grouping, the filters, and the trace beside it all survive a
 /// switch.
+///
+/// ## The names
+///
+/// An auspex read birds. The modes are named for what they show rather than
+/// for the widget that shows it: the **Ledger** is what has been written down,
+/// the **Aviary** is the room they are in, the **Flock** is the birds
+/// themselves, and a **Flight** is the path one of them took. The raw values
+/// keep their old spellings — `board`, `scene`, `crew`, `trajectory` — because
+/// they are what `--view` accepts and what a settings file already holds, and
+/// renaming a stored value to improve a label is how a preference silently
+/// resets.
 ///
 /// It lives in Core, and it is an enum rather than a boolean, so that adding
 /// the next way of looking at the board is a case here and a branch in the
@@ -17,10 +28,11 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
     /// The grid of session cards. The default, and the only one that can show
     /// every session at once.
     case board
-    /// The rendered office. Fewer facts per session, but the shape of the
-    /// whole machine at a glance.
+    /// The rendered office. Fewer facts per task, but the shape of the whole
+    /// machine at a glance.
     case scene
-    /// One geometric avatar per session, animated by what it is doing.
+    /// One avatar per piece of work, animated by what it is doing, with the
+    /// sessions inside it as a brood of smaller ones.
     case crew
     /// One session, opened out: a waterfall of its turns, every step it took,
     /// and an inspector on whichever one is selected.
@@ -35,10 +47,10 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
     /// The segment's label in the header's picker.
     public var title: String {
         switch self {
-        case .board: "Board"
-        case .scene: "Scene"
-        case .crew: "Crew"
-        case .trajectory: "Trajectory"
+        case .board: "Ledger"
+        case .scene: "Aviary"
+        case .crew: "Flock"
+        case .trajectory: "Flight"
         }
     }
 
@@ -61,6 +73,24 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
         switch self {
         case .board, .scene, .crew: false
         case .trajectory: true
+        }
+    }
+
+    /// A mode named on the command line or in the environment.
+    ///
+    /// Both spellings, and the raw value first. `--view crew` is what somebody
+    /// has in a shell history and in a script; `--view flock` is what they
+    /// will type after reading the window. A flag that stopped working because
+    /// a label changed would be the rename charging rent.
+    public init?(named raw: String) {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let mode = BoardViewMode(rawValue: name) { self = mode; return }
+        switch name {
+        case "ledger": self = .board
+        case "aviary": self = .scene
+        case "flock": self = .crew
+        case "flight": self = .trajectory
+        default: return nil
         }
     }
 
