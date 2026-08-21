@@ -364,11 +364,15 @@ struct ProjectFilterBar: View {
             Text(name)
                 .font(AuspexType.rowStrong)
                 .foregroundStyle(AuspexPalette.text)
-            Text(PathDisplay.abbreviate(path))
-                .font(AuspexType.monoSmall)
-                .foregroundStyle(AuspexPalette.text3)
-                .lineLimit(1)
-                .truncationMode(.head)
+            // A pseudo project's key is a tag, not a place; the title has
+            // already said everything there is to say about it.
+            if !PseudoProject.isPseudo(path) {
+                Text(PathDisplay.abbreviate(path))
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
             Spacer(minLength: 8)
             Button(action: onClear) {
                 Text("Esc")

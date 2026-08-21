@@ -218,7 +218,12 @@ struct SceneZoneViewTests {
                 .map { CGPoint(x: $0.anchor.x - room.frame.minX, y: $0.anchor.y - room.frame.minY) }
             let after = full.slots.filter { $0.floorIndex == same.index }
                 .map { CGPoint(x: $0.anchor.x - same.frame.minX, y: $0.anchor.y - same.frame.minY) }
-            #expect(before == after)
+            // Relative to a floor origin that itself moved, so compare to a
+            // hair rather than to the last bit of a double.
+            #expect(before.count == after.count)
+            for (b, a) in zip(before, after) {
+                #expect(abs(b.x - a.x) < 0.001 && abs(b.y - a.y) < 0.001)
+            }
         }
         #expect(compared >= 3, "the demo has to have that many projects for this to mean anything")
         // The map is taller with the rooms and no taller without.
