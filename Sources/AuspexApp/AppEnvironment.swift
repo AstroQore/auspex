@@ -313,7 +313,7 @@ public final class AppEnvironment {
             startLive(store: store, table: table, into: continuation)
         }
 
-        startGrouping(registry: registry, table: table)
+        startGrouping(registry: registry, table: table, mode: mode)
     }
 
     /// Brings up the MCP listener and points it at the board.
@@ -428,8 +428,21 @@ public final class AppEnvironment {
     /// the script — which is the point: the demo exercises the same code path
     /// the live board does, and a coordinator that only ran in one of them
     /// would be a coordinator only tested in one of them.
-    private func startGrouping(registry: SessionRegistry, table: any ProcessTableReading) {
-        let grouping = GroupingCoordinator(registry: registry, table: table)
+    ///
+    /// The demo's resolver is told that `/Users/example` is the home, because
+    /// one of the rules it exercises is about where a *home* is:
+    /// ``HarnessSandbox`` recognises the Codex desktop's per-thread scratch by
+    /// its position under one, and a resolver pointed at this Mac's real home
+    /// would answer "an ordinary directory" for the demo's own scratch session.
+    private func startGrouping(
+        registry: SessionRegistry,
+        table: any ProcessTableReading,
+        mode: Mode
+    ) {
+        let placements = mode == .demo
+            ? PlacementService(resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory))
+            : PlacementService()
+        let grouping = GroupingCoordinator(registry: registry, table: table, placements: placements)
         pipelineTasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
     }
 

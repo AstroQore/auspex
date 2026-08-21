@@ -52,6 +52,14 @@ public struct DemoScript: Sendable, Equatable {
     /// five hero harnesses visible and the permission prompt early.
     public static let defaultSeed: UInt64 = 0xA5_9E_C0_DE
 
+    /// The home directory of the invented machine every path here hangs off.
+    ///
+    /// A constant rather than a convention, because one of the rules the demo
+    /// exercises is positional: ``HarnessSandbox`` recognises the Codex
+    /// desktop's per-thread scratch by where it sits under a home, so the
+    /// resolver behind a demo board has to be told which home that is.
+    public static let homeDirectory = "/Users/example"
+
     /// Builds one loop.
     ///
     /// - Parameters:
@@ -306,7 +314,7 @@ extension DemoScript {
 // MARK: - The cast
 
 extension DemoScript.Blueprint {
-    /// The twelve sessions the demo board shows.
+    /// The fourteen sessions the demo board shows.
     ///
     /// Chosen to cover all eight featured harnesses, every state the card can
     /// be in, both grouping axes (five directories, two of them shared by
@@ -315,6 +323,12 @@ extension DemoScript.Blueprint {
     /// subagent) and one only an identity records (12 → 2) — and both shapes
     /// of *done unseen*: one session that closed a turn and exited (6), and
     /// one that closed a turn and is still sitting open (8).
+    ///
+    /// Two of them are about placement rather than about a state. 13 runs in
+    /// the Codex desktop's own per-thread scratch, which is a directory that
+    /// is not a project; 14 is an AntiGravity command line, whose workspace
+    /// and model exist only in the side files the CLI writes beside its
+    /// conversation database. Both used to land under "No project".
     ///
     /// Every blueprint opens with a real instruction and answers with real
     /// prose, because that is what the board's ledger lines draw: a demo whose
@@ -754,6 +768,77 @@ extension DemoScript.Blueprint {
                 .idle(12.0)
             ],
             startDelay: 1.6
+        ),
+
+        // 13. A Codex desktop thread, running where the desktop app put it:
+        //     `~/Documents/Codex/<date>/<name>`, a folder made for this one
+        //     conversation. It has a directory and it is not a project, which
+        //     is the whole of what this session is on the board to show — it
+        //     belongs under "Codex · scratch" with `zhe` on its card, not
+        //     under a project called `zhe` that will mean nothing tomorrow.
+        DemoScript.Blueprint(
+            harness: .codex,
+            sessionID: "0198f7b4-2ce9-7f31-84ad-6b0c7e2915df",
+            cwd: "/Users/example/Documents/Codex/2026-08-19/zhe",
+            gitRoot: nil,
+            branch: nil,
+            title: "Work out the retry backoff",
+            model: "gpt-5.6-sol",
+            pid: 44_902,
+            entrypoint: "desktop",
+            variant: "codex_desktop",
+            prologue: [
+                .prompt("What backoff should a queue use when the downstream is rate limiting?"),
+                .think(1.2),
+                .say("Exponential with full jitter, capped — I will work the numbers."),
+                .endTurn
+            ],
+            live: [
+                .prompt("Show me what that looks like at 200 requests a second"),
+                .think(2.4),
+                .write("backoff.py", 5.0),
+                .tool("shell", .shell, "python backoff.py --rps 200", 6.0),
+                .say("Full jitter settles in four retries; the capped variant takes seven."),
+                .usage(11_400, 1_640, 3_800),
+                .endTurn,
+                .idle(14.0)
+            ],
+            startDelay: 2.2
+        ),
+
+        // 14. AntiGravity's command line, which records neither its workspace
+        //     nor its model in the conversation database — both come from the
+        //     side files the CLI writes beside it. Before the kit read those,
+        //     every session like this one sat under "No project" with a blank
+        //     where the model goes; it is here so a screenshot shows the
+        //     difference rather than a release note claiming it.
+        DemoScript.Blueprint(
+            harness: .antigravity,
+            sessionID: "conv:2026-08-19:9f30c1",
+            cwd: "/Users/example/Code/ingest-pipeline",
+            gitRoot: "/Users/example/Code/ingest-pipeline",
+            branch: "main",
+            title: "Summarise last night's ingest failures",
+            model: "gemini-3.7-flash",
+            pid: 45_118,
+            entrypoint: "terminal",
+            variant: "cli",
+            prologue: [
+                .prompt("Group last night's ingest failures by cause"),
+                .think(1.4),
+                .tool("run_command", .shell, "jq -r .cause logs/ingest-*.jsonl | sort | uniq -c", 0.7),
+                .endTurn
+            ],
+            live: [
+                .prompt("Which of those are new since Friday?"),
+                .think(2.0),
+                .tool("grep_search", .search, "TimeoutError", 4.5),
+                .say("Two causes are new, and both are the same upstream host timing out."),
+                .usage(16_900, 2_480, 5_100),
+                .endTurn,
+                .idle(9.0)
+            ],
+            startDelay: 3.4
         )
     ]
 }

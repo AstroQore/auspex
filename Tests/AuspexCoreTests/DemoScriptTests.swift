@@ -9,6 +9,39 @@ import Testing
 struct DemoScriptTests {
     private let epoch = Fixtures.date(0)
 
+    // MARK: - What the cast is for
+
+    @Test("the demo board carries a desktop thread that is not a project")
+    func theCastHasAScratchThread() async throws {
+        let resolver = ProjectResolver(homeDirectory: DemoScript.homeDirectory)
+        var scratch: [DemoScript.Blueprint] = []
+        for blueprint in DemoScript.Blueprint.all {
+            guard let cwd = blueprint.cwd else { continue }
+            if await resolver.resolve(cwd: cwd).isProjectless { scratch.append(blueprint) }
+        }
+
+        // One, and it is a Codex desktop thread. More than one would be a wall
+        // whose scratch section is the demo rather than a corner of it.
+        #expect(scratch.count == 1)
+        let thread = try #require(scratch.first)
+        #expect(thread.harness == .codex)
+        #expect(thread.gitRoot == nil)
+        #expect(HarnessSandbox.thread(
+            forPath: try #require(thread.cwd), home: DemoScript.homeDirectory)?.name == "zhe")
+    }
+
+    @Test("the demo board carries an AntiGravity command line with a workspace and a model")
+    func theCastHasAnAntigravityCLI() throws {
+        // The case the conversation database cannot answer on its own: both
+        // facts come from the side files the CLI writes beside it, and both
+        // used to be blank.
+        let cli = try #require(
+            DemoScript.Blueprint.all.first { $0.harness == .antigravity && $0.variant == "cli" })
+        #expect(cli.cwd != nil)
+        #expect(cli.model != nil)
+        #expect(cli.gitRoot != nil)
+    }
+
     // MARK: - Determinism
 
     @Test("the same seed and generation produce byte-identical scripts")
