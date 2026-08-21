@@ -271,6 +271,17 @@ if let flag = arguments.firstIndex(of: "--render-board") {
         ?? WindowSnapshotRenderer.defaultSize.height
     let section = positional.dropFirst(2).first
         .flatMap { BoardSection(rawValue: String($0)) } ?? .live
+    // The width, as a keyword, because it is absent from every screenshot in
+    // the repository and present in every check of how a page behaves when it
+    // is squeezed — which is a different job from taking a picture, and the
+    // only way to do it without dragging a real window about.
+    let width = rest.first { $0.hasPrefix("width=") }
+        .flatMap { Double($0.dropFirst(6)) } ?? WindowSnapshotRenderer.defaultSize.width
+    // Which pane of Settings, for the same reason: the two that are grids are
+    // not the first one, and a renderer that could only reach the first could
+    // not photograph either of them.
+    let pane = rest.first { $0.hasPrefix("pane=") }
+        .flatMap { SettingsPane(rawValue: String($0.dropFirst(5))) }
     // The user layer, as `focus=<project key>` and `ignore=<kind>:<value>`
     // among the trailing arguments. Keyword rather than positional because
     // they are the two knobs that are usually absent, and because a picture of
@@ -292,11 +303,12 @@ if let flag = arguments.firstIndex(of: "--render-board") {
         try WindowSnapshotRenderer.render(
             to: URL(fileURLWithPath: path),
             warmup: warmup,
-            size: CGSize(width: WindowSnapshotRenderer.defaultSize.width, height: height),
+            size: CGSize(width: width, height: height),
             section: section,
             focus: focus,
             ignore: ignore,
             groupBy: groupBy,
+            pane: pane,
             appearance: appearance
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
@@ -437,6 +449,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         `.gif` destination writes an animated GIF at 20 fps;
                         anything else writes a 4×4 contact sheet of 16 frames.
           --render-board <path> [seconds] [height] [section]
+                        [width=<points>] [pane=<settings pane>]
                         [focus=<project>] [ignore=<kind>:<value>]
                         [group=<none|harness|project|tree>]
                         [appearance=<light|dark>]
@@ -444,7 +457,13 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         PNG, offscreen, after letting the demo run for
                         `seconds` (default 20), at `height` points (default
                         900), showing `section` (default `live`; `harnesses`
-                        draws the rack, `projects` the projects page).
+                        draws the rack, `projects` the projects page,
+                        `settings` the settings pane).
+                        `width=` draws the window at that width instead of
+                        1440, which is how a page is checked at the sizes a
+                        person actually has one open at; `pane=` picks which
+                        of Settings' seven pages is shown (`agents`,
+                        `characters`, …).
                         `focus=` binds the window to one project the way
                         clicking it in the sidebar does; `ignore=` applies an
                         ignore rule (`pathPrefix`, `project`, `promptPrefix`,

@@ -592,6 +592,9 @@ struct SettingsSectionView: View {
     var setup: SetupModel?
     var detected: Set<Harness> = []
     var socketPath: String?
+    /// Which pane to open on. Only the offscreen renderer passes one — in the
+    /// window, the pane a person last picked is the right answer.
+    var initialPane: SettingsPane?
 
     var body: some View {
         AuspexSettingsView(
@@ -599,7 +602,8 @@ struct SettingsSectionView: View {
             catalog: catalog,
             setup: setup,
             detected: detected,
-            socketPath: socketPath
+            socketPath: socketPath,
+            initialPane: initialPane
         )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             // The one part of the board's column made of AppKit's own controls

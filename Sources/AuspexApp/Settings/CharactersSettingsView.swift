@@ -30,15 +30,12 @@ struct AuspexSettingsView: View {
     var setup: SetupModel?
     var detected: Set<Harness> = []
     var socketPath: String?
+    /// The pane to open on when nobody has picked one — the offscreen
+    /// renderers, which have to be able to photograph a pane that is not the
+    /// first one.
+    var initialPane: SettingsPane?
 
     @State private var pane: SettingsPane?
-
-    /// How wide a column of settings copy is allowed to get.
-    ///
-    /// The window is 660 points and the board's column can be twice that. A
-    /// paragraph run to 1300 points is a paragraph nobody finishes, so the
-    /// content stops here and the extra width stays as margin.
-    private static let measure: CGFloat = 720
 
     private var panes: [SettingsPane] { SettingsPane.available(hasSetup: setup != nil) }
 
@@ -46,8 +43,9 @@ struct AuspexSettingsView: View {
     /// it if the pane they picked is not offered here — which is what happens
     /// to Agents in a render with no app behind it.
     private var shown: SettingsPane {
-        guard let pane, panes.contains(pane) else { return panes.first ?? .appearance }
-        return pane
+        if let pane, panes.contains(pane) { return pane }
+        if let initialPane, panes.contains(initialPane) { return initialPane }
+        return panes.first ?? .appearance
     }
 
     var body: some View {
@@ -56,8 +54,13 @@ struct AuspexSettingsView: View {
             BoardScroll {
                 content
                     .padding(20)
-                    .frame(maxWidth: Self.measure, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Capped, then centred. A pane in the board's column of a
+                    // 1,680 pt window used to be a 720 pt strip against the
+                    // left edge with six hundred points of nothing beside it,
+                    // which reads as a layout that failed rather than as a
+                    // measure that was chosen.
+                    .frame(maxWidth: shown.measure, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .frame(minWidth: 460, minHeight: 360)
@@ -150,10 +153,16 @@ struct CharactersSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
-            harnessDefaults
+            // The prose and the list of pickers keep a paragraph's measure
+            // even where the pane has more: a sentence run to 1,400 points is
+            // a sentence nobody's eye finds the start of again, and a row
+            // whose control is four hundred points from its name is a row
+            // read by following a line of nothing. Only the grid, whose whole
+            // benefit is more cards abreast, takes the width.
+            header.frame(maxWidth: SettingsPane.proseMeasure, alignment: .leading)
+            harnessDefaults.frame(maxWidth: SettingsPane.proseMeasure, alignment: .leading)
             packageGrid
-            folderNote
+            folderNote.frame(maxWidth: SettingsPane.proseMeasure, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task { library.startWatching() }

@@ -20,15 +20,48 @@ struct AgentsSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // The status line and the switch span the pane. They are one
+            // sentence and one control, they belong to the whole page rather
+            // than to any harness, and putting them in a 440 pt column beside
+            // an empty one would say they belong to the card next to them.
             header
             notifications
-            ForEach(model.groups) { group in
-                AgentsSettingsGroup(group: group, model: model, detected: detected)
-            }
+            harnessCards
             note
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
+    /// One card per harness, in as many columns as the pane is wide enough
+    /// for.
+    ///
+    /// Nine harnesses in one column is a page that has to be scrolled to
+    /// answer "which of these is installed" — the one question the pane
+    /// exists for — while two thirds of a wide window sit empty beside it. A
+    /// card is a fixed thing: a title, four rows of pieces, and a column of
+    /// buttons down its right edge. ``cardWidth`` is what those need, and the
+    /// grid fits as many of them as it can: one below about 900 points, two to
+    /// about 1,350, three after that.
+    ///
+    /// The switch above and the note below stay full width. They are one
+    /// sentence each and a sentence in a 440 pt column beside another sentence
+    /// is two things to read where there was one.
+    private var harnessCards: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: Self.cardWidth), spacing: 16, alignment: .top)],
+            alignment: .leading,
+            spacing: 16
+        ) {
+            ForEach(model.groups) { group in
+                AgentsSettingsGroup(group: group, model: model, detected: detected)
+            }
+        }
+    }
+
+    /// The narrowest a harness card works at: a 148 pt label column, a 150 pt
+    /// column of controls, the gaps, the card's padding, and enough left over
+    /// for the file path in the middle to say which file it is.
+    private static let cardWidth: CGFloat = 440
 
     /// Where the socket is, what the last install did, and the way back to the
     /// sheet. The pane's name and the line about what it is for belong to the

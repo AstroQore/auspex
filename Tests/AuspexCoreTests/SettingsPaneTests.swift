@@ -51,4 +51,21 @@ struct SettingsPaneTests {
         // And the order the rest are in does not change when one is dropped.
         #expect(SettingsPane.available(hasSetup: false).first == .appearance)
     }
+
+    /// The two panes that are a grid of cards are allowed to be wider than the
+    /// panes that are prose, and every pane is capped at something: a settings
+    /// page that filled a 1,680 pt window would be one line of text per
+    /// eyeful.
+    @Test("a grid pane may be wider than a paragraph, and both are bounded")
+    func measuresAreBounded() {
+        #expect(SettingsPane.agents.measure == SettingsPane.gridMeasure)
+        #expect(SettingsPane.characters.measure == SettingsPane.gridMeasure)
+        for pane in SettingsPane.allCases where pane != .agents && pane != .characters {
+            #expect(pane.measure == SettingsPane.proseMeasure)
+        }
+        #expect(SettingsPane.proseMeasure < SettingsPane.gridMeasure)
+        // Wide enough for three 440 pt cards and the gaps between them, which
+        // is what "three columns in a big window" means in points.
+        #expect(SettingsPane.gridMeasure >= 440 * 3 + 16 * 2)
+    }
 }

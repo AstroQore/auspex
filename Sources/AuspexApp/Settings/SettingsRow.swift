@@ -15,6 +15,12 @@ enum SettingsLayout {
     /// because the names in it are not Auspex's to shorten.
     static let pickerWidth: CGFloat = 210
     static let columnSpacing: CGFloat = 12
+    /// The narrowest the middle column is any use at.
+    ///
+    /// It holds a file path, a list of hook events, and sometimes a sentence.
+    /// Below this the sentence becomes a word per line and the path becomes an
+    /// ellipsis, so a row this narrow stacks instead — see ``SettingsRow``.
+    static let detailWidth: CGFloat = 220
 }
 
 /// One row of a settings list: what it is, what is true about it, and the one
@@ -52,26 +58,71 @@ struct SettingsRow<Label: View, Detail: View, Action: View>: View {
     @ViewBuilder var action: Action
 
     var body: some View {
-        HStack(alignment: .top, spacing: SettingsLayout.columnSpacing) {
-            label
-                // Wraps to as many lines as it needs, rather than to as many
-                // as the row beside it happens to be tall — which is what an
-                // `HStack` gives a `Text` with no opinion, and why one
-                // "Register the Auspex MCP server" wrapped and the next one
-                // truncated.
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: labelWidth, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                detail
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 8) {
-                Spacer(minLength: 0)
-                action
-            }
-            .frame(width: actionWidth, alignment: .trailing)
+        ViewThatFits(in: .horizontal) {
+            columns
+            stacked
         }
         .padding(.vertical, 3)
+    }
+
+    /// Three columns, when three columns fit.
+    private var columns: some View {
+        HStack(alignment: .top, spacing: SettingsLayout.columnSpacing) {
+            labelColumn.frame(width: labelWidth, alignment: .leading)
+            detailColumn
+                // A real ideal width, so the ladder above can tell a row that
+                // fits from one that has been squeezed into fitting. Without
+                // it the middle column reports nothing, the three-column
+                // layout is chosen at any width at all, and a card 440 points
+                // wide gives the path and the hook list ninety points to wrap
+                // a word at a time in.
+                .frame(
+                    idealWidth: SettingsLayout.detailWidth,
+                    maxWidth: .infinity,
+                    alignment: .leading
+                )
+            actionColumn.frame(width: actionWidth, alignment: .trailing)
+        }
+    }
+
+    /// The same row in a column too narrow for three: what it is and the
+    /// control on one line, everything true about it underneath.
+    ///
+    /// The control keeps the right-hand edge, because the read that the fixed
+    /// action column exists for — *which of these has a button I have not
+    /// pressed* — is the one read that still works when the rows are in a
+    /// grid.
+    private var stacked: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: SettingsLayout.columnSpacing) {
+                labelColumn.frame(maxWidth: .infinity, alignment: .leading)
+                actionColumn.fixedSize()
+            }
+            detailColumn.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var labelColumn: some View {
+        label
+            // Wraps to as many lines as it needs, rather than to as many
+            // as the row beside it happens to be tall — which is what an
+            // `HStack` gives a `Text` with no opinion, and why one
+            // "Register the Auspex MCP server" wrapped and the next one
+            // truncated.
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var detailColumn: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            detail
+        }
+    }
+
+    private var actionColumn: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            action
+        }
     }
 }
 

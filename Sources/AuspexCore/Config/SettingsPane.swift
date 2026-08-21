@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// The panes of Settings, and what each one is for in one line.
@@ -81,4 +82,30 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
     public static func available(hasSetup: Bool) -> [SettingsPane] {
         hasSetup ? allCases : allCases.filter { $0 != .agents }
     }
+
+    /// How wide this pane's content is allowed to get.
+    ///
+    /// Two answers, because Settings holds two kinds of page. A pane that is
+    /// paragraphs and switches is *prose*, and prose has a measure: a line run
+    /// to 1,300 points is a line nobody's eye can get back to the start of, so
+    /// it stops at ``proseMeasure`` and the rest of the window stays as margin
+    /// — margin on both sides, which is a decision, rather than all of it on
+    /// the right, which is what a left-aligned cap looks like.
+    ///
+    /// Agents and Characters are not prose. They are a *grid of cards*, and a
+    /// grid gets better with width: capping it at a paragraph's measure is what
+    /// left nine harness cards in one column down the middle of a 1,680 pt
+    /// window with room for three abreast. So they get ``gridMeasure``, which
+    /// is three 440 pt cards and the gaps between them.
+    public var measure: CGFloat {
+        switch self {
+        case .agents, .characters: Self.gridMeasure
+        case .appearance, .scene, .crew, .ignore, .updates: Self.proseMeasure
+        }
+    }
+
+    /// As wide as a column of settings copy is worth running.
+    public static let proseMeasure: CGFloat = 1_100
+    /// Three cards abreast, their gaps, and the pane's own padding.
+    public static let gridMeasure: CGFloat = 1_400
 }

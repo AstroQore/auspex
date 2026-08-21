@@ -51,6 +51,7 @@ enum WindowSnapshotRenderer {
         focus: String? = nil,
         ignore: [IgnoreRule.Kind] = [],
         groupBy: BoardGroupBy? = nil,
+        pane: SettingsPane? = nil,
         appearance: AppearanceMode = .dark
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
@@ -83,6 +84,7 @@ enum WindowSnapshotRenderer {
                 environment: environment,
                 size: size,
                 section: section,
+                pane: pane,
                 appearance: appearance
             )
         )
@@ -118,6 +120,13 @@ private struct WindowSnapshot: View {
     let environment: AppEnvironment
     let size: CGSize
     var section: BoardSection = .live
+    /// Which pane of Settings to open on, when the section is Settings.
+    ///
+    /// Settings is six pages behind one segmented control, and the two that
+    /// have to be looked at at three window widths — Agents and Characters —
+    /// are the two whose contents are a *grid*. A renderer that could only
+    /// reach the first pane could not photograph either.
+    var pane: SettingsPane?
     /// Which column of the palette to draw with.
     ///
     /// `system` is deliberately not offered by the command line — a screenshot
@@ -155,12 +164,21 @@ private struct WindowSnapshot: View {
                     )
                 case .tasks:
                     TasksPageView(model: environment.tasks, board: environment.board)
+                case .settings:
+                    SettingsSectionView(
+                        catalog: environment.catalog,
+                        setup: environment.setup,
+                        detected: environment.harnesses.detected,
+                        socketPath: environment.mcp?.socketPath,
+                        initialPane: pane
+                    )
                 default:
                     BoardView(model: environment.board)
                 }
             }
             .frame(maxWidth: .infinity)
-            if section != .harnesses, section != .projects, section != .tasks {
+            if section != .harnesses, section != .projects, section != .tasks,
+               section != .settings {
                 divider
                 SessionTraceView(model: environment.board)
                     .frame(width: 420)
