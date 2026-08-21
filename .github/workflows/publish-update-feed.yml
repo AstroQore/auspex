@@ -1,0 +1,151 @@
+name: Publish Sparkle Update Feed
+
+# Publishing a release is what makes it real. This rebuilds the appcast on the
+# machine-managed `updates` branch — the file every installed copy of Auspex
+# reads — from the releases that are actually published, so a draft never
+# reaches anybody and a deleted release leaves the feed.
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # This serializes writes to the `updates` branch, and that is all it does.
+  # It is deliberately not used as an event queue: every surviving run
+  # reconstructs both channel heads from the published releases, so a run
+  # cancelled while queued cannot take a release out of the feed with it.
+  group: sparkle-update-feed
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || startsWith(github.event.release.tag_name, 'v')
+    name: Rebuild the shared stable and dev feed
+    runs-on: macos-26
+    env:
+      TRIGGER_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+
+    steps:
+      - name: Check out the feed publisher
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve the newest published stable and dev releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          feed_dir="$RUNNER_TEMP/auspex-update-feed"
+          mkdir -p "$feed_dir"
+          releases="$feed_dir/releases.json"
+          manifest="$feed_dir/releases.tsv"
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$releases"
+
+          main_tag="$(
+            jq -r '
+              [.[] | select(.draft == false and .prerelease == false)
+                | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))]
+              | sort_by(.published_at) | last | .tag_name // empty
+            ' "$releases"
+          )"
+          dev_tag="$(
+            jq -r '
+              [.[] | select(.draft == false)
+                | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-dev\\.[0-9]+$"))]
+              | sort_by(.published_at) | last | .tag_name // empty
+            ' "$releases"
+          )"
+
+          if [[ -z "$main_tag" && -z "$dev_tag" ]]; then
+            echo "::error::No published release to build a feed from."
+            exit 1
+          fi
+
+          : > "$manifest"
+          for channel in main dev; do
+            if [[ "$channel" == "main" ]]; then tag="$main_tag"; else tag="$dev_tag"; fi
+            [[ -n "$tag" ]] || continue
+            dir="$feed_dir/$channel"
+            mkdir -p "$dir"
+            gh release download "$tag" --pattern '*.zip' --dir "$dir" --clobber
+            archives=("$dir"/*.zip)
+            if [[ ${#archives[@]} -ne 1 || ! -f "${archives[0]}" ]]; then
+              echo "::error::Expected exactly one release ZIP for $tag."
+              exit 1
+            fi
+            printf '%s\t%s\t%s\n' "$channel" "$tag" "${archives[0]}" >> "$manifest"
+          done
+
+          echo "FEED_DIR=$feed_dir" >> "$GITHUB_ENV"
+          echo "RELEASE_MANIFEST=$manifest" >> "$GITHUB_ENV"
+          echo "Stable head: ${main_tag:-none}   Dev head: ${dev_tag:-none}"
+
+      - name: Reconstruct the shared appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "::error::SPARKLE_PRIVATE_KEY is required to sign the feed."
+            exit 1
+          fi
+          # Brings down Sparkle's generate_appcast, which arrives as a binary
+          # artifact of the pinned Sparkle package rather than being built.
+          swift package resolve
+
+          current=""
+          iteration=0
+          while IFS=$'\t' read -r channel tag archive; do
+            iteration=$((iteration + 1))
+            next="$FEED_DIR/appcast-$iteration.xml"
+            args=(--channel "$channel" --tag "$tag" --archive "$archive" --output "$next")
+            if [[ -n "$current" ]]; then
+              args+=(--base-appcast "$current")
+            fi
+            ./Scripts/generate_update_feed.sh "${args[@]}"
+            current="$next"
+          done < "$RELEASE_MANIFEST"
+
+          if [[ -z "$current" || ! -f "$current" ]]; then
+            echo "::error::Feed reconstruction produced no output."
+            exit 1
+          fi
+          cp "$current" "$FEED_DIR/appcast.xml"
+          echo "RELEASE_APPCAST=$FEED_DIR/appcast.xml" >> "$GITHUB_ENV"
+
+      - name: Commit it to the machine-managed updates branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin updates >/dev/null 2>&1; then
+            git fetch --no-tags origin refs/heads/updates:refs/remotes/origin/updates
+            git switch --force-create updates origin/updates
+          else
+            # An orphan branch: the feed is a published artifact, not source,
+            # and it has no business carrying the repository's history.
+            git switch --orphan updates
+          fi
+
+          cp "$RELEASE_APPCAST" appcast.xml
+          if git ls-files --error-unmatch appcast.xml >/dev/null 2>&1 \
+            && git diff --quiet -- appcast.xml; then
+            echo "The feed is already current."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "Rebuild the Sparkle feed after $TRIGGER_TAG"
+          git push origin HEAD:updates

@@ -1,0 +1,320 @@
+name: Build GitHub Release
+
+# A tag is the input and a *draft* release is the output. Nothing reaches a
+# user until somebody reads the draft and presses Publish, and publishing is
+# what triggers `publish-update-feed.yml` to rebuild the feed installed copies
+# actually read. Two gates, because an update is the one thing this project
+# ships that replaces software already running on somebody's Mac.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to package
+        required: true
+        type: string
+      channel:
+        description: Sparkle update channel
+        required: true
+        default: main
+        type: choice
+        options:
+          - main
+          - dev
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Test, package, and draft the release
+    runs-on: macos-26
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      CHANNEL_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || '' }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Verify toolchain
+        run: |
+          sw_vers -productVersion
+          xcode-select -p
+          swift --version
+
+      - name: Resolve the release channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="$CHANNEL_INPUT"
+          if [[ -z "$channel" ]]; then
+            if [[ "$RELEASE_TAG" == v*-dev.* ]]; then
+              channel="dev"
+            else
+              channel="main"
+            fi
+          fi
+          if [[ "$channel" != "main" && "$channel" != "dev" ]]; then
+            echo "::error::Unsupported release channel: $channel"
+            exit 1
+          fi
+          echo "RELEASE_CHANNEL=$channel" >> "$GITHUB_ENV"
+          echo "Releasing $RELEASE_TAG on the $channel channel."
+
+      - name: Check the tag against Info.plist
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(plutil -extract CFBundleShortVersionString raw -o - Resources/Info.plist)"
+          build="$(plutil -extract CFBundleVersion raw -o - Resources/Info.plist)"
+          if [[ "$RELEASE_CHANNEL" == "main" ]]; then
+            expected="v$version"
+          else
+            expected="v$version-dev.$build"
+          fi
+          if [[ "$RELEASE_TAG" != "$expected" ]]; then
+            echo "::error::Tag $RELEASE_TAG does not match the bundle at this commit ($expected)."
+            echo "::error::Cut releases with Scripts/release_app.sh so the two cannot drift."
+            exit 1
+          fi
+          echo "AUSPEX_VERSION=$version" >> "$GITHUB_ENV"
+          echo "AUSPEX_BUILD=$build" >> "$GITHUB_ENV"
+
+      - name: Fetch the current shared appcast
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$RUNNER_TEMP/auspex-appcast.xml"
+          if git ls-remote --exit-code --heads origin updates >/dev/null 2>&1; then
+            git fetch --no-tags origin refs/heads/updates:refs/remotes/origin/updates
+            git show refs/remotes/origin/updates:appcast.xml > "$base"
+            echo "AUSPEX_BASE_APPCAST=$base" >> "$GITHUB_ENV"
+          else
+            echo "No updates branch yet; this release seeds the feed."
+          fi
+
+      - name: Run the tests
+        run: swift test
+
+      - name: Import the Developer ID certificate, when there is one
+        if: ${{ env.MACOS_CERTIFICATE_P12 != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Half-configured signing is worse than none: an app signed with a
+          # Developer ID but never notarized is refused by Gatekeeper outright,
+          # where an ad-hoc build is merely awkward to open. So the presence of
+          # a certificate demands the whole set.
+          for name in MACOS_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::$name is required alongside MACOS_CERTIFICATE_P12."
+              exit 1
+            fi
+          done
+
+          keychain="$RUNNER_TEMP/auspex-release.keychain-db"
+          keychain_password="$(uuidgen)"
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          echo "::add-mask::$keychain_password"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 -D > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" \
+            -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          rm -f "$certificate"
+
+          identity="$(
+            security find-identity -v -p codesigning "$keychain" \
+              | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+              | head -n 1
+          )"
+          if [[ -z "$identity" ]]; then
+            echo "::error::No Developer ID Application identity in the imported certificate."
+            exit 1
+          fi
+          echo "AUSPEX_CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Say plainly that this build is ad-hoc signed
+        if: ${{ env.MACOS_CERTIFICATE_P12 == '' }}
+        run: |
+          echo "::warning::No MACOS_CERTIFICATE_P12 secret. This release is ad-hoc signed:"
+          echo "::warning::GitHub will host it, but Gatekeeper makes every user approve it by hand."
+          echo "::warning::In-app updates are still verified — that is the Sparkle EdDSA signature,"
+          echo "::warning::which is independent of Apple's."
+
+      - name: Build and sign the app
+        shell: bash
+        run: ./Scripts/build_app.sh release
+
+      - name: Verify the signature and the entitlements
+        shell: bash
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 .build/Auspex.app
+          entitlements="$(codesign -d --entitlements - .build/Auspex.app 2>&1)"
+          echo "$entitlements"
+          # Also asserted inside build_app.sh. Repeated here because a
+          # sandboxed Auspex does not crash — it launches and shows an empty
+          # board, which is the kind of failure a release must not be able to
+          # ship past.
+          if grep -q 'com.apple.security.app-sandbox' <<<"$entitlements"; then
+            echo "::error::Refusing to release a sandboxed Auspex bundle."
+            exit 1
+          fi
+          if [[ ! -x .build/Auspex.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle ]]; then
+            echo "::error::Sparkle.framework is missing from the bundle; updates would be dead."
+            exit 1
+          fi
+
+      - name: Package the archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archs="$(lipo -archs .build/Auspex.app/Contents/MacOS/Auspex)"
+          if [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]]; then
+            label="universal"
+          elif [[ " $archs " == *" arm64 "* ]]; then
+            label="arm64"
+          else
+            label="$(tr ' ' '-' <<<"$archs")"
+          fi
+
+          version_label="$AUSPEX_VERSION"
+          if [[ "$RELEASE_CHANNEL" == "dev" ]]; then
+            version_label="$AUSPEX_VERSION-dev.$AUSPEX_BUILD"
+          fi
+
+          rm -rf .build/release
+          mkdir -p .build/release
+          archive=".build/release/Auspex-$version_label-macOS-$label.zip"
+          ditto -c -k --sequesterRsrc --keepParent .build/Auspex.app "$archive"
+          echo "AUSPEX_ARCHIVE=$archive" >> "$GITHUB_ENV"
+
+      - name: Notarize and staple
+        if: ${{ env.MACOS_CERTIFICATE_P12 != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun notarytool submit "$AUSPEX_ARCHIVE" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple .build/Auspex.app
+          xcrun stapler validate .build/Auspex.app
+          spctl --assess --type execute --verbose=2 .build/Auspex.app
+          # Re-packaged because the ticket is stapled into the .app, not into
+          # the zip that was submitted.
+          rm -f "$AUSPEX_ARCHIVE"
+          ditto -c -k --sequesterRsrc --keepParent .build/Auspex.app "$AUSPEX_ARCHIVE"
+
+      - name: Checksum the archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd .build/release && shasum -a 256 "$(basename "$AUSPEX_ARCHIVE")" \
+            > "$(basename "$AUSPEX_ARCHIVE").sha256")
+
+      - name: Sign the appcast item
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "::error::SPARKLE_PRIVATE_KEY is required; without it in-app updates cannot be verified."
+            exit 1
+          fi
+          args=(
+            --channel "$RELEASE_CHANNEL"
+            --tag "$RELEASE_TAG"
+            --archive "$AUSPEX_ARCHIVE"
+            --output .build/release/appcast.xml
+          )
+          if [[ -n "${AUSPEX_BASE_APPCAST:-}" ]]; then
+            args+=(--base-appcast "$AUSPEX_BASE_APPCAST")
+          fi
+          ./Scripts/generate_update_feed.sh "${args[@]}"
+
+      - name: Lift the release notes out of the changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_label="$AUSPEX_VERSION"
+          if [[ "$RELEASE_CHANNEL" == "dev" ]]; then
+            version_label="$AUSPEX_VERSION-dev.$AUSPEX_BUILD"
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          awk -v heading="## [$version_label]" '
+            index($0, heading) == 1 { capture = 1; next }
+            /^## \[/ { capture = 0 }
+            capture { print }
+          ' CHANGELOG.md > "$notes"
+          if [[ -s "$notes" ]]; then
+            echo "AUSPEX_RELEASE_NOTES=$notes" >> "$GITHUB_ENV"
+          else
+            # Not fatal: `release_app.sh` already refuses a stable release with
+            # an empty section, so reaching here means a dev build cut to try
+            # one fix. Let GitHub write the commit list instead of shipping a
+            # release whose body is a blank page.
+            echo "::notice::No changelog section for $version_label; using generated notes."
+          fi
+
+      - name: Create or update the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(.build/release/*.zip .build/release/*.sha256 .build/release/appcast.xml)
+          title="Auspex ${RELEASE_TAG#v}"
+          flags=(--draft --verify-tag)
+          if [[ -n "${AUSPEX_RELEASE_NOTES:-}" ]]; then
+            flags+=(--notes-file "$AUSPEX_RELEASE_NOTES")
+          else
+            flags+=(--generate-notes)
+          fi
+          if [[ "$RELEASE_CHANNEL" == "dev" ]]; then
+            title="Auspex ${RELEASE_TAG#v} (Dev)"
+            flags+=(--prerelease --latest=false)
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+              # A published release is already in somebody's feed. Replacing
+              # its assets would change what a signed appcast item points at.
+              echo "::error::Refusing to replace assets on a published release."
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            if [[ "$RELEASE_CHANNEL" == "dev" ]]; then
+              gh release edit "$RELEASE_TAG" --prerelease --latest=false
+            fi
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --title "$title" "${flags[@]}"
+          fi
+          echo "::notice::Draft release $RELEASE_TAG is ready. Read it, then publish it by hand."
