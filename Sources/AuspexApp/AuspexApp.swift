@@ -60,6 +60,16 @@ struct AuspexApp: App {
                 }
                 .keyboardShortcut("t", modifiers: .command)
                 .disabled(!environment.board.canOpenTrajectory)
+                // The attention model's escape hatch, and it has to be
+                // reachable at any window width. The header carries a button
+                // for it too, but the header's chips are the first thing to
+                // give way when the window narrows and the button goes with
+                // them — a clearing gesture that only exists on a wide screen
+                // is a clearing gesture people learn to do without, which
+                // leaves a board of stale red.
+                Button("Mark All as Seen") { environment.board.markAllSeen() }
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
+                    .disabled(!environment.board.hasAttention)
             }
         }
 

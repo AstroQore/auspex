@@ -33,17 +33,15 @@ struct BoardHeader: View {
                 // its *static* children, and a `ForEach` inside it is one
                 // child whose contents it cannot choose among.
                 ViewThatFits(in: .horizontal) {
-                    chips(limit: nil)
-                    chips(limit: 4)
-                    chips(limit: 3)
-                    chips(limit: 2)
-                    chips(limit: 1)
+                    counts(limit: nil, showsMarkAll: true)
+                    counts(limit: nil, showsMarkAll: false)
+                    counts(limit: 4, showsMarkAll: false)
+                    counts(limit: 3, showsMarkAll: false)
+                    counts(limit: 2, showsMarkAll: false)
+                    counts(limit: 1, showsMarkAll: false)
                     Color.clear.frame(width: 0, height: 0)
                 }
                 Spacer(minLength: 8)
-                if model.hasAttention {
-                    markAllSeen.fixedSize()
-                }
                 if model.ignoredCount > 0 {
                     ignoredToggle.fixedSize()
                 }
@@ -78,13 +76,24 @@ struct BoardHeader: View {
 
     // MARK: Pieces
 
-    private func chips(limit: Int?) -> some View {
-        SummaryChips(
-            summary: model.summary,
-            limit: limit,
-            selected: model.bucketFilter,
-            onSelect: { model.toggleBucketFilter($0) }
-        )
+    /// The chips, and the clear-everything button beside them.
+    ///
+    /// One `ViewThatFits` group rather than two, so the ladder can spend the
+    /// button's width on a chip before it starts dropping chips. A number a
+    /// person came to read outranks a control they can also reach from the
+    /// View menu (⇧⌘K), which is where it goes when it will not fit.
+    private func counts(limit: Int?, showsMarkAll: Bool) -> some View {
+        HStack(spacing: 8) {
+            SummaryChips(
+                summary: model.summary,
+                limit: limit,
+                selected: model.bucketFilter,
+                onSelect: { model.toggleBucketFilter($0) }
+            )
+            if showsMarkAll, model.hasAttention {
+                markAllSeen.fixedSize()
+            }
+        }
     }
 
     private var heading: some View {
@@ -137,14 +146,19 @@ struct BoardHeader: View {
     /// to ignore the red instead.
     private var markAllSeen: some View {
         Button { model.markAllSeen() } label: {
+            // The mark and the number, and no words. The chips beside it are
+            // what a person came to the header to read, and a button spelling
+            // itself out in full is 110 points of the width they need — the
+            // same bargain the ignored toggle makes one place along.
             HStack(spacing: 5) {
                 Image(systemName: "checkmark.circle")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Mark all as seen")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("\(model.attention.count)")
                     .font(AuspexType.caption)
+                    .auspexTabularDigits()
             }
             .foregroundStyle(AuspexPalette.text3)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .frame(height: 28)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -157,8 +171,9 @@ struct BoardHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex(cornerRadius: 8))
+        .accessibilityLabel("Mark all as seen")
         .help(
-            "Clear every card that is asking or reporting. "
+            "Mark all as seen — clear every card that is asking or reporting. "
                 + "A session that is still blocked will say so again."
         )
     }

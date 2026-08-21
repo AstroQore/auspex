@@ -77,7 +77,14 @@ struct SessionCard: View, Equatable {
             // lines to find it.
             AttentionBanner(attention: row.attention, onDismiss: onDismissNotice)
             ledgerLines
-            activityLine(style: style)
+            // Not when the banner above already says it. A harness's wait is
+            // drawn from the same fact the activity line is — the tool it is
+            // blocked on — and printing `execute_command` twice, once as a
+            // sentence and once as a glyph line, is the card arguing with
+            // itself about which of them the reader should look at.
+            if row.attention.source != .harness {
+                activityLine(style: style)
+            }
             chips
             ActivityStrip(motion: style.motion, color: style.color, isStale: row.isStale)
             footer
