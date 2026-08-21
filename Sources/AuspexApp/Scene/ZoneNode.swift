@@ -134,7 +134,9 @@ final class ZoneNode: SKNode {
             )
             labelsNeedFitting = true
         }
-        let summary = Self.summary(zone: zone, occupancy: area.occupancy)
+        let summary = Self.summary(
+            zone: zone, occupancy: area.occupancy, overflow: area.overflow
+        )
         if lastSummary != summary {
             lastSummary = summary
             counts.attributedText = SceneText.label(
@@ -215,10 +217,18 @@ final class ZoneNode: SKNode {
 
     /// What the strip's header says. A count and the word for what they are
     /// doing there, which is the same shape a room's header uses.
-    private static func summary(zone: SceneZone, occupancy: Int) -> String {
+    ///
+    /// The garden seats a bounded number per project and counts the rest, so
+    /// its nameplate carries the remainder: `12 resting · +28 more`. A map
+    /// that silently dropped them would be a map that lies about how much is
+    /// out there, which is the one thing a picture of a machine must not do.
+    private static func summary(zone: SceneZone, occupancy: Int, overflow: Int) -> String {
         switch zone {
         case .meeting: "\(occupancy) meeting"
-        case .garden: "\(occupancy) resting"
+        case .garden:
+            overflow > 0
+                ? "\(occupancy) resting · +\(overflow) more"
+                : "\(occupancy) resting"
         case .office: "\(occupancy) live"
         }
     }

@@ -69,6 +69,24 @@ public struct SceneMetrics: Sendable, Equatable {
     /// the queue of sessions walking out through it.
     public var gateReserve: CGFloat
 
+    // MARK: What the map will draw at all
+
+    /// How many sessions queue at the gate before the rest are simply gone.
+    ///
+    /// A count rather than a distance, and it belongs with the floor plan for
+    /// the same reason ``rowUnits`` does: it is a fact about how much map
+    /// there is. An ended session is drawn for its walk out and then it has
+    /// left — a queue that accumulated every session that ever finished is
+    /// what put 1,176 of them at one gate.
+    public var gateQueueLimit: Int
+    /// How many sessions rest in the garden per project before the rest are
+    /// counted rather than seated.
+    ///
+    /// Per project rather than in total, so a busy repository cannot push a
+    /// quiet one's single bench off the map — the same rule the office follows
+    /// by giving every project a room of its own.
+    public var gardenSeatsPerProject: Int
+
     public init(
         cellWidth: CGFloat = 104,
         rowHeight: CGFloat = 104,
@@ -87,7 +105,9 @@ public struct SceneMetrics: Sendable, Equatable {
         tableGap: CGFloat = 26,
         gardenSeatSpacing: CGFloat = 92,
         gardenRowHeight: CGFloat = 110,
-        gateReserve: CGFloat = 150
+        gateReserve: CGFloat = 150,
+        gateQueueLimit: Int = 8,
+        gardenSeatsPerProject: Int = 12
     ) {
         self.cellWidth = cellWidth
         self.rowHeight = rowHeight
@@ -107,6 +127,8 @@ public struct SceneMetrics: Sendable, Equatable {
         self.gardenSeatSpacing = gardenSeatSpacing
         self.gardenRowHeight = gardenRowHeight
         self.gateReserve = gateReserve
+        self.gateQueueLimit = gateQueueLimit
+        self.gardenSeatsPerProject = gardenSeatsPerProject
     }
 
     /// How wide a table with `children` seats along it is.
@@ -312,6 +334,12 @@ public struct SceneZoneArea: Sendable, Equatable, Identifiable {
     public let rowCount: Int
     /// How many of its seats have somebody in them.
     public let occupancy: Int
+    /// How many more belong here than there are places for.
+    ///
+    /// The garden seats a bounded number per project and counts the rest; this
+    /// is that count, so the nameplate can say `+12 more` instead of the map
+    /// quietly losing them. `0` everywhere else.
+    public let overflow: Int
     /// The `y` of the walkway through it. Everybody in this strip leaves and
     /// arrives on this line, which is what makes a route three straight
     /// segments instead of a pathfinding problem.
@@ -324,7 +352,8 @@ public struct SceneZoneArea: Sendable, Equatable, Identifiable {
         frame: CGRect,
         rowCount: Int,
         occupancy: Int,
-        laneY: CGFloat
+        laneY: CGFloat,
+        overflow: Int = 0
     ) {
         self.id = id
         self.zone = zone
@@ -332,6 +361,7 @@ public struct SceneZoneArea: Sendable, Equatable, Identifiable {
         self.frame = frame
         self.rowCount = rowCount
         self.occupancy = occupancy
+        self.overflow = overflow
         self.laneY = laneY
     }
 }

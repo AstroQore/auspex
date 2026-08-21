@@ -151,7 +151,7 @@ public struct SceneLayout: Sendable, Equatable {
         zones: SceneZoneOptions = .all,
         unseenDone: Set<SessionKey> = []
     ) -> SceneFrame {
-        let plan = Plan(board: board, zones: zones, unseenDone: unseenDone)
+        let plan = Plan(board: board, zones: zones, unseenDone: unseenDone, metrics: metrics)
         sweep(plan)
         seat(plan)
         return geometry(plan)
@@ -181,8 +181,18 @@ public struct SceneLayout: Sendable, Equatable {
         let tableChildren: [SessionKey: [SessionKey]]
         /// Which annexes are switched on.
         let zones: SceneZoneOptions
+        /// The sessions the map does not draw at all — see ``SceneLayout``'s
+        /// note on what is bounded and why.
+        let offMap: Set<SessionKey>
+        /// How many resting sessions the garden counted rather than seated.
+        let gardenOverflow: Int
 
-        init(board: BoardSnapshot, zones: SceneZoneOptions, unseenDone: Set<SessionKey>) {
+        init(
+            board: BoardSnapshot,
+            zones: SceneZoneOptions,
+            unseenDone: Set<SessionKey>,
+            metrics: SceneMetrics
+        ) {
             self.board = board
             self.zones = zones
             self.order = board.sessions.map(\.key)
@@ -265,6 +275,111 @@ public struct SceneLayout: Sendable, Equatable {
             let headSet = Set(heads)
             self.tableHeads = heads
             self.tableChildren = children.filter { headSet.contains($0.key) }
+
+            let bounded = Self.bound(
+                order: order,
+                sessions: board.sessions,
+                placement: placement,
+                floorKey: floorKey,
+                metrics: metrics
+            )
+            self.offMap = bounded.offMap
+            self.gardenOverflow = bounded.gardenOverflow
+        }
+
+        /// Decides what the map will not draw.
+        ///
+        /// ## Why a map has to have a size
+        ///
+        /// Everything else in this file is about *stability* — a desk that
+        /// does not move, a gap that gets reused. This is about *bounds*, and
+        /// it is the only rule here that takes something away. A machine that
+        /// has been running agents for a week hands the office over a thousand
+        /// finished sessions; seating all of them produced a building the
+        /// camera had to sit at 6 % zoom to frame, which is a picture of
+        /// nothing.
+        ///
+        /// Two bounds, and each is a statement about what the picture means
+        /// rather than a number picked to make it fit:
+        ///
+        /// - **The gate is a doorway, not a car park.** An ended session walks
+        ///   out and is gone. The queue holds the most recently finished
+        ///   ``SceneMetrics/gateQueueLimit``; everything that finished before
+        ///   them has left, and leaves no desk behind either — it is never
+        ///   coming back to sit at one.
+        /// - **The garden seats a bounded number per project**, most useful
+        ///   first: a session holding an unread note before one that is merely
+        ///   dozing, and a dozing one before a bench. The rest are counted on
+        ///   the nameplate. Per project rather than in total, so one busy
+        ///   repository cannot push a quiet one's single bench off the map.
+        ///
+        /// Nothing here can remove a session that is working, blocked, or at a
+        /// table: those never reach a garden placement in the first place.
+        private static func bound(
+            order: [SessionKey],
+            sessions: [SessionSnapshot],
+            placement: [SessionKey: SceneZoning.Placement],
+            floorKey: [SessionKey: FloorKey],
+            metrics: SceneMetrics
+        ) -> (offMap: Set<SessionKey>, gardenOverflow: Int) {
+            var byKey: [SessionKey: SessionSnapshot] = [:]
+            byKey.reserveCapacity(sessions.count)
+            for session in sessions { byKey[session.key] = session }
+
+            /// When a session last did anything, for "most recent first".
+            func at(_ key: SessionKey) -> Date {
+                guard let session = byKey[key] else { return .distantPast }
+                return session.endedAt ?? session.lastEventAt ?? session.startedAt ?? .distantPast
+            }
+
+            /// Which of `keys` to keep, `limit` of them, `rank` lowest first
+            /// and the most recent first within a rank. Total, so the same
+            /// board always drops the same sessions.
+            func keep(
+                _ keys: [SessionKey], limit: Int, rank: (SessionKey) -> Int = { _ in 0 }
+            ) -> Set<SessionKey> {
+                guard keys.count > limit else { return Set(keys) }
+                let ordered = keys.sorted { lhs, rhs in
+                    let lhsRank = rank(lhs)
+                    let rhsRank = rank(rhs)
+                    if lhsRank != rhsRank { return lhsRank < rhsRank }
+                    let lhsAt = at(lhs)
+                    let rhsAt = at(rhs)
+                    if lhsAt != rhsAt { return lhsAt > rhsAt }
+                    return lhs.description < rhs.description
+                }
+                return Set(ordered.prefix(limit))
+            }
+
+            var offMap: Set<SessionKey> = []
+
+            let leaving = order.filter { placement[$0]?.kind == .gate }
+            let stillLeaving = keep(leaving, limit: max(0, metrics.gateQueueLimit))
+            for key in leaving where !stillLeaving.contains(key) { offMap.insert(key) }
+
+            var resting: [FloorKey: [SessionKey]] = [:]
+            for key in order where placement[key]?.kind.isGardenRest == true {
+                resting[floorKey[key] ?? .unplaced, default: []].append(key)
+            }
+            var overflow = 0
+            for (_, keys) in resting {
+                // A note is somebody waiting to be read, which is the errand
+                // this whole app exists to hand over; a doze is a session that
+                // may be wrong about working. A bench is the one with nothing
+                // outstanding, so it is the one that gives way.
+                let seated = keep(keys, limit: max(0, metrics.gardenSeatsPerProject)) { key in
+                    switch placement[key]?.kind {
+                    case .note: 0
+                    case .doze: 1
+                    default: 2
+                    }
+                }
+                for key in keys where !seated.contains(key) {
+                    offMap.insert(key)
+                    overflow += 1
+                }
+            }
+            return (offMap, overflow)
         }
 
         /// Where one session goes. The office desk for anything the annexes
@@ -272,6 +387,9 @@ public struct SceneLayout: Sendable, Equatable {
         func place(_ key: SessionKey) -> SceneZoning.Placement {
             placement[key] ?? .desk
         }
+
+        /// Whether the map draws `key` anywhere at all.
+        func draws(_ key: SessionKey) -> Bool { !offMap.contains(key) }
     }
 
     // MARK: Sweep
@@ -286,13 +404,16 @@ public struct SceneLayout: Sendable, Equatable {
                 guard var bay = floor.bays[bayIndex] else { continue }
                 let rootIsStillHere = plan.floorKey[bay.root] == floor.key
                     && plan.bayRoot[bay.root] == bay.root
+                    && plan.draws(bay.root)
                 guard rootIsStillHere else {
                     floor.bays[bayIndex] = nil
                     continue
                 }
                 for seat in bay.seats.indices {
                     guard let child = bay.seats[seat] else { continue }
-                    if plan.bayRoot[child] != bay.root { bay.seats[seat] = nil }
+                    if plan.bayRoot[child] != bay.root || !plan.draws(child) {
+                        bay.seats[seat] = nil
+                    }
                 }
                 floor.bays[bayIndex] = bay
             }
@@ -329,8 +450,8 @@ public struct SceneLayout: Sendable, Equatable {
         }
         while let last = tables.last, last == nil { tables.removeLast() }
 
-        release(&gardenSeats) { plan.place($0).kind.isGardenRest }
-        release(&gateQueue) { plan.place($0).kind == .gate }
+        release(&gardenSeats) { plan.draws($0) && plan.place($0).kind.isGardenRest }
+        release(&gateQueue) { plan.draws($0) && plan.place($0).kind == .gate }
         while let last = gardenSeats.last, last == nil { gardenSeats.removeLast() }
         while let last = gateQueue.last, last == nil { gateQueue.removeLast() }
     }
@@ -363,14 +484,16 @@ public struct SceneLayout: Sendable, Equatable {
             }
         }
 
-        for key in plan.order where plan.bayRoot[key] == key && !seated.contains(key) {
+        for key in plan.order
+        where plan.bayRoot[key] == key && !seated.contains(key) && plan.draws(key) {
             guard let floorKey = plan.floorKey[key] else { continue }
             let floorIndex = allocateFloor(floorKey)
             let bayIndex = allocateBay(root: key, on: floorIndex)
             bayOf[key] = (floorIndex, bayIndex)
         }
 
-        for key in plan.order where plan.bayRoot[key] != key && !seated.contains(key) {
+        for key in plan.order
+        where plan.bayRoot[key] != key && !seated.contains(key) && plan.draws(key) {
             guard let root = plan.bayRoot[key], let location = bayOf[root] else { continue }
             allocateSeat(child: key, floor: location.floor, bay: location.bay)
         }
@@ -404,7 +527,7 @@ public struct SceneLayout: Sendable, Equatable {
         var leaving: Set<SessionKey> = []
         for key in gateQueue { if let key { leaving.insert(key) } }
 
-        for key in plan.order {
+        for key in plan.order where plan.draws(key) {
             let kind = plan.place(key).kind
             if kind.isGardenRest, !resting.contains(key) {
                 Self.claim(key, in: &gardenSeats)
@@ -893,7 +1016,9 @@ public struct SceneLayout: Sendable, Equatable {
         ) {
             guard plan.zones.garden else { return }
             let leavingCount = leaving.count
-            guard !resting.isEmpty || leavingCount > 0 else { return }
+            // The overflow counts too: a garden with twelve benches and forty
+            // more people in it has to be drawn to be able to say so.
+            guard !resting.isEmpty || leavingCount > 0 || plan.gardenOverflow > 0 else { return }
 
             let top = cursor + metrics.floorGap
             // The gate end is kept clear of benches, and it widens with the
@@ -961,7 +1086,8 @@ public struct SceneLayout: Sendable, Equatable {
                     frame: rect,
                     rowCount: rows,
                     occupancy: occupancy,
-                    laneY: rect.maxY - Self.laneInset
+                    laneY: rect.maxY - Self.laneInset,
+                    overflow: plan.gardenOverflow
                 )
             )
             cursor = rect.maxY
