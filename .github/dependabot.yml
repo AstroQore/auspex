@@ -1,0 +1,25 @@
+version: 2
+
+# GitHub Actions only, on purpose.
+#
+# The Swift dependencies are not managed here. `agent-session-kit` and
+# `Sparkle` are pinned `exact:` in Package.swift because the pin *is* the
+# record of what shipped (AGENTS.md § 3.1), and the kit is bumped by
+# `.github/workflows/bump-agent-session-kit.yml`, which knows to run the
+# build and the tests against the new pin. A Dependabot PR that edited the
+# manifest would fight both.
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - ci
+    groups:
+      actions:
+        patterns:
+          - "*"

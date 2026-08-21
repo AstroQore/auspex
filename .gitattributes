@@ -1,0 +1,44 @@
+# Normalise line endings for everything git decides is text.
+* text=auto eol=lf
+
+# Explicitly text, so a diff is a diff and a merge is a merge.
+*.swift    text diff=swift
+*.md       text
+*.yml      text
+*.yaml     text
+*.json     text
+*.jsonc    text
+*.toml     text
+*.plist    text
+*.entitlements text
+*.sh       text eol=lf
+*.py       text
+
+# Binary. Never diffed, never line-ending-converted, never merged by content.
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.icns     binary
+*.pdf      binary
+*.zip      binary
+*.dmg      binary
+*.mov      binary
+*.mp4      binary
+
+# SVG is text (the icon set is hand-editable), but treat it as an image in
+# review so GitHub renders it instead of dumping the markup.
+*.svg      text -diff
+
+# Linguist. Auspex is a Swift app: documentation, generated art and the
+# reference material should not vote in the language bar.
+docs/**             linguist-documentation
+*.md                linguist-documentation
+Resources/Icons/**  linguist-vendored
+Resources/AppIcon.iconcomposer/** linguist-vendored
+Resources/AppIcon.layers/**       linguist-vendored
+
+# Keep the tarball GitHub builds for a release tag free of repo furniture.
+.github/           export-ignore
+.gitattributes     export-ignore
+.editorconfig      export-ignore

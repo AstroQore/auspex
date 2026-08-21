@@ -1,0 +1,13 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security or privacy report
+    url: https://github.com/AstroQore/auspex/security/advisories/new
+    about: >-
+      Anything that could leak a transcript, write into another harness's
+      store, or open a network connection. Report it privately — see
+      SECURITY.md.
+  - name: How it works
+    url: https://github.com/AstroQore/auspex/blob/main/docs/ARCHITECTURE.md
+    about: >-
+      Source adapters, the event stream and reducer, the session registry, the
+      frame assembler, the GRDB store, and the MCP surface.
