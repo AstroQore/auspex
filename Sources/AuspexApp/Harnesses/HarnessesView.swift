@@ -21,6 +21,10 @@ import SwiftUI
 struct HarnessesView: View {
     let model: HarnessStatusModel
     let board: BoardSnapshot
+    /// The units the wall derived, for the three numbers about the task board.
+    /// Empty in a preview and in the offscreen renderer, which draws the row
+    /// without them.
+    var units: [TaskUnit] = []
     /// The MCP listener, when there is one. `nil` in a render with no app
     /// behind it.
     var mcp: MCPController?
@@ -29,7 +33,7 @@ struct HarnessesView: View {
 
     var body: some View {
         HarnessesPage(
-            rows: model.rows(board: board),
+            rows: model.rows(board: board, units: units),
             mcp: mcp,
             onOpenSetup: onOpenSetup
         )
@@ -205,6 +209,7 @@ private struct HarnessRackRow: View {
             identity.frame(width: 240, alignment: .leading)
             detection.frame(width: 104, alignment: .leading)
             counters.frame(width: 186, alignment: .leading)
+            work.frame(width: 176, alignment: .leading)
             lastEvent.frame(width: 96, alignment: .leading)
             HStack(spacing: 0) {
                 servers
@@ -235,6 +240,7 @@ private struct HarnessRackRow: View {
             }
             HStack(alignment: .center, spacing: 14) {
                 counters.fixedSize()
+                work.fixedSize()
                 servers
                 Spacer(minLength: 0)
                 hooks.fixedSize()
@@ -363,6 +369,44 @@ private struct HarnessRackRow: View {
             CountBadge(value: status.liveCount, label: "live", tint: AuspexPalette.stateWriting)
             CountBadge(value: status.idleCount, label: "idle", tint: AuspexPalette.text)
             CountBadge(value: status.totalCount, label: "total", tint: AuspexPalette.text)
+        }
+    }
+
+    /// What this harness has been doing on the task board.
+    ///
+    /// A different question from the counters above, and the one somebody asks
+    /// when they are choosing where to send the next job: how much is it
+    /// holding, how much has it finished, and how long does that take it.
+    /// Absent entirely for a harness that has never claimed anything, which is
+    /// every harness until somebody adopts the task protocol.
+    @ViewBuilder
+    private var work: some View {
+        if !status.work.isEmpty {
+            HStack(spacing: 14) {
+                CountBadge(
+                    value: status.work.claimed,
+                    label: "claimed",
+                    tint: AuspexPalette.stateTool
+                )
+                CountBadge(
+                    value: status.work.closed,
+                    label: "finished",
+                    tint: AuspexPalette.stateWriting
+                )
+                if let median = status.work.medianSeconds {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(DurationText.compact(median))
+                            .font(AuspexType.monoCount)
+                            .auspexTabularDigits()
+                            .foregroundStyle(AuspexPalette.text)
+                        Text("median")
+                            .auspexLabel(AuspexType.labelSmall)
+                            .foregroundStyle(AuspexPalette.text3)
+                    }
+                    .fixedSize()
+                    .help("Median time from claim to finish, over the tasks this harness closed")
+                }
+            }
         }
     }
 
@@ -504,6 +548,29 @@ private struct AuspexSlot: View {
 
 /// How long ago something happened, in the shortest form that is still exact
 /// enough to act on.
+/// A span of time, in one or two characters and a unit.
+///
+/// For the numbers that are *durations* rather than *ages* — how long a
+/// harness takes to finish a task, most of all. `RelativeTimeText` says "3h
+/// ago", which is a different sentence.
+enum DurationText {
+    static func compact(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, seconds)
+        switch seconds {
+        case ..<60: return "\(Int(seconds))s"
+        case ..<3_600: return "\(Int(seconds / 60))m"
+        case ..<86_400:
+            let hours = seconds / 3_600
+            return hours < 10
+                ? String(format: "%.1fh", hours)
+                : "\(Int(hours))h"
+        default:
+            let days = seconds / 86_400
+            return days < 10 ? String(format: "%.1fd", days) : "\(Int(days))d"
+        }
+    }
+}
+
 enum RelativeTimeText {
     static func since(_ date: Date?, now: Date = Date()) -> String {
         guard let date else { return "never" }

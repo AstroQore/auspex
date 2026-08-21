@@ -224,6 +224,7 @@ struct RootView: View {
                     HarnessesView(
                         model: environment.harnesses,
                         board: model.board,
+                        units: model.units,
                         mcp: environment.mcp,
                         onOpenSetup: { environment.setup.present() }
                     )

@@ -360,42 +360,60 @@ struct TaskCard: View, Equatable {
         .padding(1)
     }
 
-    /// The counters, summed over the family.
+    /// The counters, and how full the lead's context window is.
     ///
-    /// Summed and not the lead's: the tokens a delegation spent are the tokens
-    /// all of it spent, and a card that reported only its orchestrator's would
-    /// under-report the thing it exists to make visible.
+    /// The counters are summed over the family: the tokens a delegation spent
+    /// are the tokens all of it spent, and a card reporting only its
+    /// orchestrator's would under-report the thing it exists to make visible.
     ///
-    /// The trailing space is deliberately left open. A context gauge lands
-    /// here from another branch, and a footer packed to the edge would have
-    /// nowhere to put it.
+    /// The gauge is **not** summed, and could not be. A context window is a
+    /// property of one conversation — the lead's, which is the session a person
+    /// is talking to and the one that will hit a compaction. Adding four
+    /// sessions' fills together would produce a number that is not about
+    /// anything; averaging them would hide the one that is nearly full. A
+    /// member close to its limit is a fact for that member's own row, which the
+    /// expanded card and the trace pane both draw.
+    ///
+    /// Its own line rather than a sixth thing on the counters row, for
+    /// ``SessionCard``'s reason: a card is 300 points wide at its narrowest and
+    /// a gauge squeezed in beside four numbers is a bar too short to read a
+    /// fill off.
     @ViewBuilder
     private var footer: some View {
         if unit.hasSessions {
-            HStack(spacing: 12) {
-                HStack(spacing: 5) {
-                    Text(elapsedLabel)
-                        .font(AuspexType.caption)
-                        .foregroundStyle(AuspexPalette.text3)
-                    ElapsedLabel(
-                        since: unit.elapsedSince,
-                        until: unit.endedAt,
-                        tint: unit.lead.state.style.isAlarming
-                            ? unit.lead.state.style.color
-                            : AuspexPalette.text
-                    )
+            VStack(alignment: .leading, spacing: 7) {
+                counters
+                if let context = unit.lead.context {
+                    ContextGaugeView(gauge: context).equatable()
                 }
-                if unit.counts.total > 1 {
-                    MetaField(key: "live", value: "\(unit.counts.live)/\(unit.counts.total)")
-                }
-                Spacer(minLength: 4)
-                Text("\(TokenFormat.compact(unit.tokensIn))/\(TokenFormat.compact(unit.tokensOut))")
-                    .font(AuspexType.monoSmall)
-                    .auspexTabularDigits()
-                    .foregroundStyle(AuspexPalette.text3)
-                    .fixedSize()
-                    .help("Tokens in / out, across every session on this task")
             }
+        }
+    }
+
+    private var counters: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 5) {
+                Text(elapsedLabel)
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                ElapsedLabel(
+                    since: unit.elapsedSince,
+                    until: unit.endedAt,
+                    tint: unit.lead.state.style.isAlarming
+                        ? unit.lead.state.style.color
+                        : AuspexPalette.text
+                )
+            }
+            if unit.counts.total > 1 {
+                MetaField(key: "live", value: "\(unit.counts.live)/\(unit.counts.total)")
+            }
+            Spacer(minLength: 4)
+            Text("\(TokenFormat.compact(unit.tokensIn))/\(TokenFormat.compact(unit.tokensOut))")
+                .font(AuspexType.monoSmall)
+                .auspexTabularDigits()
+                .foregroundStyle(AuspexPalette.text3)
+                .fixedSize()
+                .help("Tokens in / out, across every session on this task")
         }
     }
 

@@ -110,13 +110,14 @@ final class HarnessStatusModel {
     }
 
     /// The page's rows for one frame.
-    func rows(board: BoardSnapshot) -> [HarnessStatus] {
+    func rows(board: BoardSnapshot, units: [TaskUnit] = []) -> [HarnessStatus] {
         HarnessStatus.rows(
             harnesses: harnesses,
             board: board,
             storePaths: storePaths,
             detected: detected,
-            configs: configs
+            configs: configs,
+            units: units
         )
     }
 
