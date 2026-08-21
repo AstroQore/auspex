@@ -247,6 +247,8 @@ final class TableNode: SKNode {
     private let projector = SKSpriteNode()
     private let projection = SKSpriteNode()
     private let glow = SKSpriteNode()
+    /// What the glow hangs from — see `DeskNode`'s holder.
+    private let glowHolder = SKNode()
     private let plate = SKLabelNode()
 
     private var lastFrame: CGRect = .null
@@ -274,16 +276,18 @@ final class TableNode: SKNode {
         projector.zPosition = 0.9
 
         glow.texture = art.glow()
-        glow.blendMode = .add
+        glow.blendMode = theme.glowBlend
         glow.colorBlendFactor = 1
         glow.alpha = 0
-        glow.zPosition = 0.4
+        glowHolder.zPosition = 0.4
+        glowHolder.alpha = theme.glowScale
+        glowHolder.addChild(glow)
 
         plate.horizontalAlignmentMode = .left
         plate.verticalAlignmentMode = .center
         plate.zPosition = 2
 
-        addChild(glow)
+        addChild(glowHolder)
         addChild(projection)
         addChild(projector)
         addChild(surface)
@@ -324,6 +328,12 @@ final class TableNode: SKNode {
             glow.position = screenCentre
             glow.size = CGSize(width: 112, height: 112)
         }
+
+        // Cheap enough to write every update, and the alternative is a second
+        // copy of "has the appearance changed" bookkeeping in a node that does
+        // not otherwise keep the theme.
+        glow.blendMode = theme.glowBlend
+        glowHolder.alpha = theme.glowScale
 
         let key = state.map(SceneTheme.stateKey) ?? "vacant"
         if lastStateKey != key {

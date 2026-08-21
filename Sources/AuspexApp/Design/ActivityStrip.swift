@@ -396,8 +396,14 @@ final class ActivityStripView: NSView {
     }
 
     private func rebuild(_ spec: StripSpec) {
-        let colour = NSColor(spec.color).cgColor
-        let clear = NSColor(spec.color).withAlphaComponent(0).cgColor
+        // Resolved against *this view's* appearance rather than converted and
+        // hoped for. A `CALayer` holds a `CGColor`, which is bytes: asking a
+        // dynamic `NSColor` for its `cgColor` answers with whatever appearance
+        // happened to be current, which for a layer being rebuilt off a model
+        // change is nobody's in particular.
+        let resolved = AuspexPalette.resolve(spec.color, for: effectiveAppearance)
+        let colour = resolved.cgColor
+        let clear = resolved.withAlphaComponent(0).cgColor
         let scale = window?.backingScaleFactor ?? layer?.contentsScale ?? 2
 
         ground.removeAllAnimations()
@@ -507,6 +513,22 @@ final class ActivityStripView: NSView {
             tick.bounds = CGRect(x: 0, y: 0, width: width, height: bounds.height)
             tick.position = CGPoint(x: (width + StripRhythm.tickGap) * CGFloat(index), y: 0)
         }
+    }
+
+    /// The one thing a strip cannot inherit.
+    ///
+    /// Everything else in a card is a dynamic colour SwiftUI re-resolves for
+    /// itself; this is a `CGColor` that was baked when the state last changed,
+    /// and a session that has been thinking since before the sun went down
+    /// would otherwise keep its old blue until it did something. Re-applying
+    /// restarts the animation, which is why it is only done here and not on
+    /// every `updateNSView` — an appearance change is a handful of times a
+    /// day, and a strip that visibly restarts as the whole window repaints is
+    /// invisible inside the repaint.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        guard let spec else { return }
+        apply(spec)
     }
 
     /// Pixel-aligned on the display the window is actually on. A 6 pt strip

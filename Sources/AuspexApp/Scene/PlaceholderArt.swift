@@ -66,6 +66,24 @@ struct SceneTheme: Equatable {
         harnessAccents[harness] ?? textSecondary
     }
 
+    /// How a glow meets the ground it spills onto.
+    ///
+    /// Additive on a dark floor, which is what light does: a lit monitor makes
+    /// the desk around it brighter. Additive on a *white* floor can only make
+    /// white, so a room full of lit desks becomes a room full of colourless
+    /// haze — so in light the glow paints instead, tinting the floor with the
+    /// state's own hue, which is the same information arriving the only way it
+    /// can.
+    var glowBlend: SKBlendMode { isDark ? .add : .alpha }
+
+    /// How much of a glow's dark-appearance strength survives.
+    ///
+    /// Applied once, on the node the glow hangs from, so the dozen alphas and
+    /// fade actions each pose sets stay written in the terms the room was
+    /// designed in. See ``AuspexPalette/glow(_:_:)``, which does the same for
+    /// the board's cards.
+    var glowScale: CGFloat { isDark ? 1 : 0.6 }
+
     /// This state's colour, the same hue the board's pulse line uses.
     func color(for state: SessionState) -> NSColor {
         stateColors[Self.stateKey(state)] ?? textSecondary
@@ -123,23 +141,33 @@ struct SceneTheme: Equatable {
             textPrimary: resolve(AuspexPalette.textPrimary),
             textSecondary: resolve(AuspexPalette.textSecondary),
             textTertiary: resolve(AuspexPalette.textTertiary),
-            deskTop: furniture(dark: 0x39405A, light: 0xB6BFD2),
-            deskFront: furniture(dark: 0x252B3D, light: 0x9CA6BC),
-            deskLeg: furniture(dark: 0x1A1F2D, light: 0x7F8AA2),
-            chair: furniture(dark: 0x2C3247, light: 0x8E98AE),
-            face: furniture(dark: 0xD3C3B4, light: 0xC0AE9E),
-            ink: furniture(dark: 0x0A0B10, light: 0x1B2030),
-            screenOff: furniture(dark: 0x11141D, light: 0x6E7891),
+            // The dark column is unchanged: it is drawn art rather than a
+            // derived scale, the ground only moved from near-black to a warm
+            // charcoal, and a cool desk on a warm floor is a *material*
+            // reading — furniture is not made of wall.
+            //
+            // The light column is a daylit version of the same office rather
+            // than the dark one inverted. It is warmed onto the light ground's
+            // own neutral, and each piece keeps its place in the value order,
+            // so a desk still sits in front of its shadow and a monitor is
+            // still the darkest thing on the desk until something lights it.
+            deskTop: furniture(dark: 0x39405A, light: 0xC0BDB4),
+            deskFront: furniture(dark: 0x252B3D, light: 0xA39F94),
+            deskLeg: furniture(dark: 0x1A1F2D, light: 0x86827A),
+            chair: furniture(dark: 0x2C3247, light: 0x97938B),
+            face: furniture(dark: 0xD3C3B4, light: 0xC7B49F),
+            ink: furniture(dark: 0x0A0B10, light: 0x2A2724),
+            screenOff: furniture(dark: 0x11141D, light: 0x74736E),
             // The annexes are the same room seen from another chair, so their
             // tones are the furniture palette pushed a step warmer and a step
             // greener rather than a second colour scheme. A garden that
             // arrived in daylight green would be the one thing on a dark
             // board loud enough to read as an alert.
-            carpet: furniture(dark: 0x2A2434, light: 0xB8B0C4),
-            grass: furniture(dark: 0x23342A, light: 0xB3C9B6),
-            leaf: furniture(dark: 0x3C5D43, light: 0x84A88A),
-            bark: furniture(dark: 0x4A3B2E, light: 0x9C8570),
-            stone: furniture(dark: 0x2E3138, light: 0xAEB3BE),
+            carpet: furniture(dark: 0x2A2434, light: 0xC2B9C6),
+            grass: furniture(dark: 0x23342A, light: 0xBFCDB8),
+            leaf: furniture(dark: 0x3C5D43, light: 0x8AA884),
+            bark: furniture(dark: 0x4A3B2E, light: 0xA08468),
+            stone: furniture(dark: 0x2E3138, light: 0xB5B2AB),
             harnessAccents: accents,
             stateColors: states
         )
@@ -522,7 +550,7 @@ final class PlaceholderArt {
     /// A sheet of paper on the desk, for a session that is writing files.
     func paper() -> SKTexture {
         cached("paper") { theme in
-            let sheet = NSColor(sceneRGB: theme.isDark ? 0xC9D2E4 : 0xFAFBFF)
+            let sheet = NSColor(sceneRGB: theme.isDark ? 0xC9D2E4 : 0xFDFCF9)
             var canvas = PixelCanvas(width: 7, height: 9)
             canvas.fill(0, 0, 7, 9, sheet)
             for row in stride(from: 2, to: 8, by: 2) {
@@ -695,7 +723,7 @@ final class PlaceholderArt {
             let fill: NSColor
             switch kind {
             case .alert: fill = theme.color(for: .waitingPermission(tool: nil))
-            case .asleep: fill = NSColor(sceneRGB: theme.isDark ? 0xB39755 : 0x7C6420)
+            case .asleep: fill = NSColor(sceneRGB: theme.isDark ? 0xB59A5A : 0x8E6E1F)
             case .note: fill = theme.color(for: .delegating(children: 1))
             // The board's own choice: `done unseen` borrows the writing green,
             // because it is the same fact one moment later.

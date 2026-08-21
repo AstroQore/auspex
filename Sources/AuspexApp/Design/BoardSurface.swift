@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The board's ground: the canvas with a faint measured grid on it.
@@ -13,6 +14,11 @@ import SwiftUI
 struct BoardSurfaceBackground: View {
     var spacing: CGFloat = 28
 
+    /// The tile is bytes, and bytes cannot re-resolve themselves. Reading the
+    /// scheme here is what makes the view re-evaluate — and therefore ask for
+    /// the other tile — the moment the appearance changes.
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         // A tiled bitmap, not a `Canvas`. During a live window resize AppKit
         // stretches a rasterised layer's last contents until the next draw,
@@ -20,25 +26,40 @@ struct BoardSurfaceBackground: View {
         // the non-native feel a board should never have. A tiling image is
         // repeated by the layer itself at every size, so it is always crisp
         // and costs nothing to resize.
-        Image(nsImage: GridTile.image(spacing: spacing))
+        Image(nsImage: GridTile.image(spacing: spacing, isDark: colorScheme == .dark))
             .resizable(resizingMode: .tile)
             .background(AuspexPalette.canvas)
             .accessibilityHidden(true)
     }
 }
 
-/// One cell of the board's grid, drawn once per spacing and cached.
+/// One cell of the board's grid, drawn once per spacing *and appearance*, and
+/// cached.
+///
+/// Keyed by both because the tile is a baked bitmap: a dynamic `NSColor`
+/// resolves when it is *drawn*, and `NSImage(size:flipped:)` draws lazily
+/// under whatever appearance happens to be current at the time — which for a
+/// cached tile is whichever window asked for it first. So the two concrete
+/// values are read out of the palette by hand and each one gets its own entry.
 @MainActor
 private enum GridTile {
-    private static var cache: [CGFloat: NSImage] = [:]
+    private struct Key: Hashable {
+        let spacing: CGFloat
+        let isDark: Bool
+    }
 
-    static func image(spacing: CGFloat) -> NSImage {
-        if let cached = cache[spacing] { return cached }
+    private static var cache: [Key: NSImage] = [:]
+
+    static func image(spacing: CGFloat, isDark: Bool) -> NSImage {
+        let key = Key(spacing: spacing, isDark: isDark)
+        if let cached = cache[key] { return cached }
         let size = NSSize(width: spacing, height: spacing)
+        let ground = AuspexPalette.nsColor(.bg0, dark: isDark)
+        let rule = AuspexPalette.nsColor(.grid, dark: isDark)
         let image = NSImage(size: size, flipped: false) { _ in
-            NSColor(AuspexPalette.canvas).setFill()
+            ground.setFill()
             NSRect(origin: .zero, size: size).fill()
-            NSColor(AuspexPalette.grid).setFill()
+            rule.setFill()
             // One-pixel lines on the cell's left and bottom edges; tiled,
             // they meet into a continuous grid.
             NSRect(x: 0, y: 0, width: 1, height: spacing).fill()
@@ -46,7 +67,7 @@ private enum GridTile {
             return true
         }
         image.resizingMode = .tile
-        cache[spacing] = image
+        cache[key] = image
         return image
     }
 }

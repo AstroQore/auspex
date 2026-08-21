@@ -154,6 +154,11 @@ final class DeskNode: SKNode {
     private let monitor = SKSpriteNode()
     private let screen = SKSpriteNode()
     private let glow = SKSpriteNode()
+    /// What the glow hangs from. SpriteKit multiplies a node's alpha by its
+    /// parent's, so one value here scales every pose's glow — and every fade
+    /// action already in flight — without touching a dozen literals that are
+    /// each about a *pose* rather than about an appearance.
+    private let glowHolder = SKNode()
     private let paper = SKSpriteNode()
     private let bubble = SKSpriteNode()
     /// The bench or the blanket a garden seat is, and the laptop a table seat
@@ -184,10 +189,11 @@ final class DeskNode: SKNode {
         glow.texture = art.glow()
         glow.size = CGSize(width: 132, height: 132)
         glow.position = CGPoint(x: 22, y: 40)
-        glow.blendMode = .add
         glow.colorBlendFactor = 1
         glow.alpha = 0
-        glow.zPosition = 0
+        glowHolder.zPosition = 0
+        glowHolder.addChild(glow)
+        applyGlowGround()
 
         chair.texture = art.chair()
         chair.anchorPoint = CGPoint(x: 0.5, y: 0)
@@ -243,7 +249,7 @@ final class DeskNode: SKNode {
 
         buildNameplate()
 
-        addChild(glow)
+        addChild(glowHolder)
         addChild(chair)
         addChild(screen)
         addChild(desk)
@@ -382,7 +388,9 @@ final class DeskNode: SKNode {
         )
         sessionKey = session?.key
         guard look != next || self.theme.id != theme.id else { return }
+        let appearanceChanged = self.theme.isDark != theme.isDark
         self.theme = theme
+        if appearanceChanged { applyGlowGround() }
         look = next
 
         setScale(scale)
@@ -506,6 +514,13 @@ final class DeskNode: SKNode {
                 withKey: "tick"
             )
         }
+    }
+
+    /// How the spill meets the floor, which is the one thing about a glow that
+    /// is about the room rather than about the session.
+    private func applyGlowGround() {
+        glow.blendMode = theme.glowBlend
+        glowHolder.alpha = theme.glowScale
     }
 
     /// The monitor: colour says which state, rhythm says which state, and the

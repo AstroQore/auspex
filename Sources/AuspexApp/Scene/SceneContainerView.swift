@@ -18,6 +18,10 @@ struct SceneContainerView: View {
     let model: LiveBoardModel
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Which appearance the office is built for. Read here rather than inside
+    /// the representable so that a change to it invalidates this body, which
+    /// is what makes the scene rebake its textures without a relaunch.
+    @Environment(\.colorScheme) private var colorScheme
     /// For the window hint's menu, which is the one control here that changes
     /// a stored setting rather than the camera.
     @Environment(AppEnvironment.self) private var environment
@@ -62,7 +66,8 @@ struct SceneContainerView: View {
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
                 onFocusProject: { model.focusedProjectKey = $0 },
-                onOverview: { [overview] in overview.value = $0 }
+                onOverview: { [overview] in overview.value = $0 },
+                colorScheme: colorScheme
             )
             .ignoresSafeArea()
 
@@ -388,9 +393,28 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let onSelect: (SessionKey?) -> Void
     let onFocusProject: (String?) -> Void
     let onOverview: (SceneOverview) -> Void
+    /// Which appearance the office is built for.
+    ///
+    /// Carried as a *stored property* of the representable rather than read off
+    /// the view's `effectiveAppearance` at update time, for two reasons. A
+    /// stored value that changes is what guarantees SwiftUI calls
+    /// `updateNSView` at all; and the window's appearance and the view's
+    /// settle in an order nobody should have to depend on, so the scene is
+    /// told which appearance to bake for instead of asking.
+    let colorScheme: ColorScheme
+
+    /// The office's textures are bytes — see ``SceneTheme`` — so the whole
+    /// texture cache is thrown away and rebaked when this changes. Deriving it
+    /// from the scheme rather than from AppKit keeps that decision in one
+    /// place.
+    private var appearance: NSAppearance {
+        colorScheme == .dark
+            ? NSAppearance(named: .darkAqua) ?? NSAppearance()
+            : NSAppearance(named: .aqua) ?? NSAppearance()
+    }
 
     func makeNSView(context: Context) -> SceneCanvasView {
-        let theme = SceneTheme.resolved(for: NSApplication.shared.effectiveAppearance)
+        let theme = SceneTheme.resolved(for: appearance)
         let scene = OfficeScene(theme: theme)
         let view = SceneCanvasView(
             scene: scene, frame: CGRect(x: 0, y: 0, width: 900, height: 640)
@@ -420,7 +444,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
             selected: selected,
             focusedProject: focusedProject,
             reduceMotion: reduceMotion,
-            theme: SceneTheme.resolved(for: view.effectiveAppearance),
+            theme: SceneTheme.resolved(for: appearance),
             zones: zones,
             attention: attention
         )

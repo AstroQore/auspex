@@ -116,7 +116,9 @@ final class SceneCanvasView: NSView, SceneViewportHost {
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
-        scrollView.scrollerKnobStyle = .light
+        // `.default`, not `.light`: AppKit picks the knob's colour from the
+        // effective appearance, and a light knob is invisible on a light map.
+        scrollView.scrollerKnobStyle = .default
         scrollView.canvas = self
         document.canvas = self
 
