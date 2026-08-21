@@ -185,6 +185,13 @@ struct HarnessesPanel: View {
 /// left-to-right read instead.
 private struct HarnessRackRow: View {
     let status: HarnessStatus
+    /// The instant the countdown on the quota line is measured against.
+    ///
+    /// Set when the row is built, which is once per board frame — the same
+    /// cadence `RelativeTimeText.since` runs at on the column beside it. A
+    /// clock of its own would be a ticking view on a page nobody watches for
+    /// seconds.
+    private let now = Date()
 
     /// The six columns, when there is room for six columns.
     ///
@@ -236,14 +243,40 @@ private struct HarnessRackRow: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            wide
-            narrow
+        VStack(alignment: .leading, spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                wide
+                narrow
+            }
+            // Under the row rather than in it: the six columns above are all
+            // fixed-width and fully committed, and a seventh would squeeze
+            // "resets in 2 h 10 m" into three characters. A full-width second
+            // line also survives the narrow layout without a second edit.
+            quotaLine
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
         .panelChrome()
         .accessibilityElement(children: .contain)
+    }
+
+    /// What the harness itself said about its plan window, when it said
+    /// anything.
+    ///
+    /// Codex only, today, and read off its rollout — no network call, and no
+    /// claim about anybody's account beyond what a session already wrote down.
+    /// Absent rather than "unknown" for the other eight: a row that said
+    /// "limit unknown" on every harness would be eight lines of nothing.
+    @ViewBuilder
+    private var quotaLine: some View {
+        if let quota = status.quota {
+            Text(quota.label(now: now))
+                .font(AuspexType.monoSmall)
+                .foregroundStyle(AuspexPalette.text3)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(quota.helpText(now: now))
+        }
     }
 
     /// Wide enough for "hooks off" and its ring, so the chip is in the same

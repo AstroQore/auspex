@@ -30,6 +30,13 @@ public struct HarnessStatus: Identifiable, Sendable, Equatable {
     public let lastEventAt: Date?
     /// What its config file says about MCP, when it has one.
     public let mcp: HarnessMCPConfig?
+    /// The plan window this harness last said it was billing against, from the
+    /// freshest session that recorded one.
+    ///
+    /// `nil` for every harness but Codex, which is the only store on this Mac
+    /// that writes a rate limit down. Read off a rollout like everything else
+    /// on this page — Auspex asks no vendor's API what anybody's quota is.
+    public let quota: QuotaLine?
 
     public var id: Harness { harness }
 
@@ -41,7 +48,8 @@ public struct HarnessStatus: Identifiable, Sendable, Equatable {
         idleCount: Int,
         totalCount: Int,
         lastEventAt: Date?,
-        mcp: HarnessMCPConfig?
+        mcp: HarnessMCPConfig?,
+        quota: QuotaLine? = nil
     ) {
         self.harness = harness
         self.storePath = storePath
@@ -51,6 +59,7 @@ public struct HarnessStatus: Identifiable, Sendable, Equatable {
         self.totalCount = totalCount
         self.lastEventAt = lastEventAt
         self.mcp = mcp
+        self.quota = quota
     }
 
     /// Builds the rows for a page.
@@ -87,7 +96,13 @@ public struct HarnessStatus: Identifiable, Sendable, Equatable {
                 idleCount: sessions.count - live,
                 totalCount: sessions.count,
                 lastEventAt: sessions.compactMap(\.lastEventAt).max(),
-                mcp: configs[harness]
+                mcp: configs[harness],
+                // The freshest claim, not the newest session's: a limit is an
+                // account-wide fact, and the session that wrote it down most
+                // recently is the one that knows the most about it.
+                quota: QuotaLine(
+                    sessions.compactMap(\.quota).max { $0.at < $1.at }
+                )
             )
         }
     }

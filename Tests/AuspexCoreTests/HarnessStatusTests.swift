@@ -84,4 +84,60 @@ struct HarnessStatusTests {
         let row = try #require(HarnessStatus.rows(harnesses: [.codex], board: .empty).first)
         #expect(row.mcp == nil)
     }
+    // MARK: - The plan window
+
+    private func quoted(
+        _ harness: Harness,
+        _ id: String,
+        percent: Double,
+        at offset: TimeInterval,
+        recordedAt: TimeInterval
+    ) -> SessionSnapshot {
+        var snapshot = session(harness, id, at: offset)
+        snapshot.quota = SessionQuota(
+            usedPercent: percent,
+            resetsAt: Fixtures.date(recordedAt + 7_800),
+            plan: "pro",
+            at: Fixtures.date(recordedAt)
+        )
+        return snapshot
+    }
+
+    @Test("the freshest claim wins, not the newest session")
+    func freshestQuotaWins() throws {
+        let board = BoardSnapshot(generatedAt: Fixtures.date(200), sessions: [
+            // Newer session, older reading.
+            quoted(.codex, "recent", percent: 12, at: 190, recordedAt: 20),
+            // Older session, newer reading — a limit is an account-wide fact,
+            // and this is the row that knows the most about it.
+            quoted(.codex, "older", percent: 43.2, at: 30, recordedAt: 180)
+        ])
+
+        let row = try #require(
+            HarnessStatus.rows(harnesses: [.codex], board: board).first
+        )
+        let quota = try #require(row.quota)
+        #expect(quota.usedPercent == 43.2)
+        #expect(quota.at == Fixtures.date(180))
+        #expect(quota.label(now: Fixtures.date(180)) == "used 43 % · resets in 2 h 10 m · plan pro")
+    }
+
+    @Test("a harness whose store records no limit has no line")
+    func noQuotaNoLine() throws {
+        let board = BoardSnapshot(generatedAt: Fixtures.date(100), sessions: [
+            session(.claudeCode, "one", at: 40),
+            quoted(.codex, "two", percent: 5, at: 40, recordedAt: 40)
+        ])
+        let rows = HarnessStatus.rows(harnesses: [.claudeCode, .codex], board: board)
+        // Claude Code writes rate limits nowhere. A row saying "limit unknown"
+        // on every harness but one would be eight lines of nothing.
+        #expect(rows.first?.quota == nil)
+        #expect(rows.last?.quota != nil)
+    }
+
+    @Test("an empty board has no limits to report")
+    func emptyBoard() {
+        #expect(HarnessStatus.rows(harnesses: [.codex], board: .empty).first?.quota == nil)
+    }
+
 }
