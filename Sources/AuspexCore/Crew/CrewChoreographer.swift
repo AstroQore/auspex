@@ -28,136 +28,202 @@ public enum CrewLiveliness: String, Codable, Sendable, Hashable, CaseIterable {
     public static let `default` = CrewLiveliness.normal
 }
 
-/// What one avatar state asks the face to do: a loop to live in, a pool to
-/// break it with, and how often.
+/// One entry in a stance's pool: a sequence and how often it comes up.
+///
+/// Weighted rather than uniform because "rare" is a real part of the
+/// choreography — a session that looked *confused* every third thought would
+/// be a session nobody trusts, and one that never did would be a metronome.
+public struct CrewReaction: Sendable, Hashable {
+    public var id: AvatarSequenceID
+    public var weight: Double
+
+    public init(_ id: AvatarSequenceID, _ weight: Double = 1) {
+        self.id = id
+        self.weight = weight
+    }
+}
+
+/// What one stance asks the face to do: a loop to live in, a pool to break it
+/// with, and how often.
 public struct CrewBeat: Sendable, Hashable {
     /// The sequence that plays when nothing else is happening.
     public var base: AvatarSequenceID
     /// What may interrupt it. Empty means the base plays forever, which is
     /// what a session that has ended should do.
-    public var reactions: [AvatarSequenceID]
+    public var reactions: [CrewReaction]
     /// Seconds between one reaction starting and the next, before liveliness
     /// scales it.
     public var minGap: Double
     public var maxGap: Double
+    /// Whether the eyes blink at all. Off for a session that has ended: it is
+    /// asleep, and a blink is the one thing that would say otherwise.
+    public var blinks: Bool
 
     public init(
         base: AvatarSequenceID,
-        reactions: [AvatarSequenceID] = [],
+        reactions: [CrewReaction] = [],
         minGap: Double = 8,
-        maxGap: Double = 30
+        maxGap: Double = 30,
+        blinks: Bool = true
     ) {
         self.base = base
         self.reactions = reactions
         self.minGap = minGap
         self.maxGap = maxGap
+        self.blinks = blinks
+    }
+
+    /// The sequences this beat can ever show.
+    public var vocabulary: Set<AvatarSequenceID> {
+        Set([base] + reactions.map(\.id))
     }
 }
 
-/// Which beat each avatar state gets, and what a change of state is worth.
+/// Which beat each stance gets, and what a change of stance is worth.
 ///
-/// A total switch over ``BloubStateID``, like ``CrewMoodMap/shape(for:)`` and
-/// for the same reason: a state added to the catalogue should fail this switch
-/// rather than quietly get the idle pool.
+/// A total switch over ``CrewStance``, like ``CrewMoodMap/shape(for:)`` and for
+/// the same reason: a stance added later should fail this switch rather than
+/// quietly get the idle pool.
 public enum CrewChoreography {
-    /// The beat for an avatar state.
+    /// The beat for a stance.
     ///
-    /// The states map onto Auspex's own through ``CrewMoodMap/avatarState(for:isStale:isNotifying:isSpawning:)``,
-    /// so this table reads as the session states it came from:
+    /// Every one of them is a **pool**, never a single animation, and that is
+    /// the fix for the complaint this whole branch answers. A stance that named
+    /// one sequence would put every session in that stance on the same loop, so
+    /// twelve working sessions would be twelve copies of one drawing again —
+    /// only a busier one.
     ///
-    /// | avatar state | session state | why this pool |
-    /// | --- | --- | --- |
-    /// | `idle` | idle | the whole range — an idle session is the one thing on the wall that has *time* |
-    /// | `wink` | stale | drowsy and asleep: something that claims to be working and has said nothing |
-    /// | `thinking` | thinking | searching and confused, on a long gap: thinking is not a performance |
-    /// | `orbit`, `play` | tool calls, writing | `working`, occasionally `searching` |
-    /// | `wide` | delegating | `listening`, and the parent is proud or curious about its children |
-    /// | `burst` | delegating, spawning | `excited` — 2.4 s of body, and the face should agree |
-    /// | `alert` | waiting on you | suspicious and confused over a `listening` base, on a short gap. Never idle-looking: this is the one state that will not resolve itself |
-    /// | `notify` | a turn just ended | proud, with celebration on the way in |
-    /// | `sleep` | ended | asleep, and nothing interrupts it |
-    public static func beat(for state: BloubStateID) -> CrewBeat {
-        switch state {
+    /// | stance | base | pool | why |
+    /// | --- | --- | --- | --- |
+    /// | `idle` | `idle` | bored, drowsy, playful, shy, curious | awake, and the one thing on the wall with time |
+    /// | `stale` | `idle` | drowsy, sleeping, bored, waking | claims to be working and has said nothing — but it may still come back, so `waking` is in the pool |
+    /// | `thinking` | `thinking` | searching, curious, confused (rare) | a long gap: thinking is not a performance |
+    /// | `working` | `working` | searching, thinking, proud (rare) | tool calls and file writes read the same from outside |
+    /// | `delegating` | `listening` | working, curious | the parent is watching its children |
+    /// | `spawning` | `excited` | — | 2.4 s, and it is already an event |
+    /// | `blocked` | `listening` | surprised, suspicious, confused, scared (rare) | the shortest gap on the board: it will not resolve itself |
+    /// | `celebrating` | `happy` | proud, laughing, celebrate | twenty seconds of good news |
+    /// | `ended` | `sleeping` | — | asleep. No pool, no blink, nothing |
+    public static func beat(for stance: CrewStance) -> CrewBeat {
+        switch stance {
         case .idle:
             CrewBeat(
                 base: .idle,
-                reactions: [.bored, .drowsy, .curious, .playful, .shy, .sleeping],
+                reactions: [
+                    CrewReaction(.bored), CrewReaction(.drowsy), CrewReaction(.playful),
+                    CrewReaction(.shy), CrewReaction(.curious)
+                ],
                 minGap: 8,
                 maxGap: 30
             )
-        case .wink:
-            // Stale. Same idle loop, a pool that has given up on it, and a
-            // shorter gap, so a session that has gone quiet visibly droops
-            // rather than merely stopping.
+        case .stale:
             CrewBeat(
                 base: .idle,
-                reactions: [.drowsy, .sleeping, .bored],
+                reactions: [
+                    CrewReaction(.drowsy, 3), CrewReaction(.sleeping, 3),
+                    CrewReaction(.bored, 2), CrewReaction(.waking, 1)
+                ],
                 minGap: 9,
                 maxGap: 24
             )
         case .thinking:
-            CrewBeat(base: .thinking, reactions: [.searching, .confused], minGap: 12, maxGap: 40)
-        case .orbit, .play:
-            CrewBeat(base: .working, reactions: [.searching], minGap: 12, maxGap: 40)
-        case .wide:
-            CrewBeat(base: .listening, reactions: [.curious, .proud], minGap: 10, maxGap: 30)
-        case .burst:
-            CrewBeat(base: .excited, reactions: [], minGap: 12, maxGap: 30)
-        case .alert:
-            // The one that must never look idle. `listening` underneath so the
-            // avatar reads as *waiting on you* rather than as stuck, and a gap
-            // short enough that it is always about to ask again.
+            CrewBeat(
+                base: .thinking,
+                reactions: [
+                    CrewReaction(.searching, 3), CrewReaction(.curious, 2),
+                    CrewReaction(.confused, 0.6)
+                ],
+                minGap: 12,
+                maxGap: 40
+            )
+        case .working:
+            CrewBeat(
+                base: .working,
+                reactions: [
+                    CrewReaction(.searching, 3), CrewReaction(.thinking, 2),
+                    CrewReaction(.proud, 0.5)
+                ],
+                minGap: 12,
+                maxGap: 40
+            )
+        case .delegating:
             CrewBeat(
                 base: .listening,
-                reactions: [.suspicious, .confused],
+                reactions: [CrewReaction(.working, 2), CrewReaction(.curious, 2)],
+                minGap: 10,
+                maxGap: 30
+            )
+        case .spawning:
+            // 2.4 seconds of handing work out. It is already an event; a pool
+            // on top of it would be two announcements of one thing.
+            CrewBeat(base: .excited, reactions: [])
+        case .blocked:
+            // The one stance that must never look idle. `listening` underneath,
+            // so the avatar reads as *waiting on you* rather than as stuck, and
+            // the shortest gap on the board, so it is always about to ask
+            // again. The red ring and the "!" badge are on the card, not on
+            // the body: the body still has to say which harness this is.
+            CrewBeat(
+                base: .listening,
+                reactions: [
+                    CrewReaction(.surprised, 2), CrewReaction(.suspicious, 3),
+                    CrewReaction(.confused, 2), CrewReaction(.scared, 0.5)
+                ],
                 minGap: 5,
                 maxGap: 14
             )
-        case .notify:
-            CrewBeat(base: .proud, reactions: [.happy, .celebrate], minGap: 6, maxGap: 16)
-        case .sleep:
-            // Over is over. A pool here would be a finished session miming.
-            CrewBeat(base: .sleeping, reactions: [])
-        case .exclaim:
-            CrewBeat(base: .surprised, reactions: [.scared, .confused], minGap: 6, maxGap: 18)
-        case .comet:
-            CrewBeat(base: .searching, reactions: [.curious], minGap: 10, maxGap: 30)
-        case .egg, .hexagon, .swirl:
-            // Interface states with no session behind them. They keep the idle
-            // loop so an avatar caught in one is still alive, and a narrow
-            // pool so it is not putting on a show.
-            CrewBeat(base: .idle, reactions: [.curious], minGap: 12, maxGap: 34)
+        case .celebrating:
+            CrewBeat(
+                base: .happy,
+                reactions: [
+                    CrewReaction(.proud, 2), CrewReaction(.laughing, 2),
+                    CrewReaction(.celebrate, 1)
+                ],
+                minGap: 5,
+                maxGap: 12
+            )
+        case .ended:
+            // Over is over. No pool — a finished session miming would be a lie
+            // — and no blink, because a blink is exactly what says "awake".
+            CrewBeat(base: .sleeping, reactions: [], blinks: false)
         }
     }
 
-    /// The one-shot that greets a change of state, if it is worth one.
+    /// The one-shot that greets a change of stance, if it is worth one.
     ///
-    /// Not every change is. A state that is already an event — the burst, the
-    /// notification — carries its own accent through the beat it lands on, and
-    /// doubling it would be two announcements of one thing. What gets an accent
-    /// is a change whose *meaning* is not in either pose: work starting, work
-    /// stopping, a session being blocked.
-    public static func accent(from: BloubStateID, to: BloubStateID) -> AvatarSequenceID? {
+    /// Not every change is. A stance that is already an event — a spawn, a
+    /// celebration — carries its own announcement, and doubling it would be
+    /// two announcements of one thing. What gets an accent is a change whose
+    /// *meaning* is not in either pose.
+    public static func accent(from: CrewStance, to: CrewStance) -> AvatarSequenceID? {
         switch (from, to) {
         // Blocked. The loudest thing that can happen to a session, and the one
         // the person watching has to act on.
-        case (_, .alert): .surprised
+        case (_, .blocked): .surprised
         // Released: whatever it was waiting for, it got it.
-        case (.alert, _): .happy
-        // Handing work out.
-        case (_, .burst): .excited
-        // Starting to work, from anywhere that was not working.
-        case (.idle, .thinking), (.idle, .orbit), (.idle, .play), (.wink, _): .excited
-        case (.thinking, .orbit), (.thinking, .play): .excited
-        // Finishing: the turn ended, and `notify` holds `proud` afterwards.
-        case (_, .notify): .celebrate
-        // Going quiet or going away.
-        case (_, .sleep): .drowsy
-        case (_, .wink): .drowsy
-        // A session that has stopped working and has nothing to announce.
-        case (.orbit, .idle), (.play, .idle), (.thinking, .idle): .bored
+        case (.blocked, _): .happy
+        // Work starting.
+        case (.idle, .thinking), (.idle, .working), (.stale, _): .excited
+        case (.thinking, .working): .excited
+        // Work stopping with nothing to announce.
+        case (.working, .idle), (.thinking, .idle), (.delegating, .idle): .bored
+        // Going quiet, or going away. `sleeping` rather than `drowsy` into
+        // `ended`, so the eyes close on the way in rather than after arriving.
+        case (_, .stale): .drowsy
+        case (_, .ended): .sleeping
         default: nil
         }
+    }
+
+    /// How long the morph between two stances takes.
+    ///
+    /// bloub's band, kept, and for the same reason ``BloubTransition`` gives:
+    /// a card is 200 points wide, nobody is looking at any one of them when it
+    /// changes, and the morph has to be the event rather than something hidden.
+    /// Falling asleep gets the long end of the band — an avatar whose eyes
+    /// snapped shut would read as a crash rather than as a session finishing.
+    public static func morph(into stance: CrewStance) -> Double {
+        stance == .ended ? BloubTransition.longest : BloubTransition.shortest
     }
 
     /// The longest a scheduled reaction may run.
@@ -229,27 +295,34 @@ public struct CrewChoreographer: Sendable {
     /// How often reactions come.
     public var liveliness: CrewLiveliness
 
-    /// The beat currently being lived in, and when it started.
-    public private(set) var state: BloubStateID
+    /// The stance currently being lived in, and when it started.
+    public private(set) var stance: CrewStance
     private var beat: CrewBeat
     private var beatAt: Double
-    /// The beat being left, kept for exactly as long as the body's own morph
-    /// into the new state takes.
+    /// The beat being left, kept for exactly as long as the morph into the new
+    /// stance takes.
     ///
-    /// Without it a change of state restarts the base loop at its first step,
-    /// and the face **cuts** to it while the body is still easing across —
-    /// measured at 13 units of face travel in one 60th of a second against 4
-    /// for a normal morph. The engine keeps one slot of state history for the
-    /// same reason and over the same window, so the face and the body arrive
-    /// together.
+    /// Without it a change of stance restarts the base loop at its first step
+    /// and the face **cuts** to it — measured at 136 units of face travel in
+    /// one 60th of a second, against 4 for a normal morph. The engine keeps one
+    /// slot of state history for the same reason and over the same window, so
+    /// the face and the body arrive together.
     private var leaving: (beat: CrewBeat, at: Double)?
     private var leftAt: Double = -1000
     private var morph: Double = BloubTransition.shortest
 
-    /// An explicit one-shot: a state change, a child spawning, a child
+    /// An explicit one-shot: a change of stance, a child spawning, a child
     /// finishing. Outranks whatever the schedule had planned.
     private var accentID: AvatarSequenceID?
     private var accentAt: Double = -1000
+    /// When the blink that punctuates a change of stance is shut.
+    ///
+    /// bloub hides a change of shape inside a blink; this port made the morph
+    /// visible instead and moved the blink to its **midpoint**, so two thirds
+    /// of the change happen with the eyes open. That accent survives the move
+    /// of the state language onto the face — it is the one piece of bloub's
+    /// transition grammar that is about eyes rather than about bodies.
+    private var forcedBlinkAt: Double = -1000
 
     // Salts, distinct from the player's so a reaction's schedule and its
     // contents are two independent draws.
@@ -258,36 +331,41 @@ public struct CrewChoreographer: Sendable {
 
     public init(
         seed: UInt32,
-        state: BloubStateID,
+        stance: CrewStance,
         liveliness: CrewLiveliness = .default,
         at now: Double
     ) {
         self.seed = seed
         self.liveliness = liveliness
-        self.state = state
-        beat = CrewChoreography.beat(for: state)
+        self.stance = stance
+        beat = CrewChoreography.beat(for: stance)
         beatAt = now
     }
 
     // MARK: Dated setters
 
-    /// A change of avatar state: a new beat, and the accent that announces it.
-    public mutating func setState(_ next: BloubStateID, at now: Double) {
-        guard next != state else { return }
-        if let accent = CrewChoreography.accent(from: state, to: next) {
+    /// A change of stance: a new beat, the accent that announces it, and the
+    /// blink at the morph's midpoint.
+    public mutating func setStance(_ next: CrewStance, at now: Double) {
+        guard next != stance else { return }
+        if let accent = CrewChoreography.accent(from: stance, to: next) {
             accentID = accent
             accentAt = now
         }
         leaving = (beat, beatAt)
         leftAt = now
-        morph = BloubTransition.duration(BloubStates.state(next).morph)
-        state = next
+        morph = CrewChoreography.morph(into: next)
+        forcedBlinkAt = now + BloubTransition.blinkStart(
+            morph,
+            blinkDuration: BloubFace.forcedBlinkDuration
+        )
+        stance = next
         beat = CrewChoreography.beat(for: next)
         beatAt = now
     }
 
     /// An explicit one-shot, for something that happened *to* the session and
-    /// is not a change of state — a child spawning, a child finishing.
+    /// is not a change of stance — a child spawning, a child finishing.
     public mutating func accent(_ id: AvatarSequenceID, at now: Double) {
         accentID = id
         accentAt = now
@@ -307,7 +385,7 @@ public struct CrewChoreographer: Sendable {
         guard let interruption = interruption(at: now) else {
             return CrewChoreographedFace(
                 face: base.face,
-                lid: base.lid,
+                lid: min(base.lid, forcedLid(at: now)),
                 sequence: beat.base,
                 isReacting: false,
                 hasSettled: base.hasArrived
@@ -340,14 +418,22 @@ public struct CrewChoreographer: Sendable {
             // The lid takes whichever eye is more shut. A blink that was going
             // to happen anyway should not be cancelled by a reaction starting,
             // and a reaction's own rhythm should not be masked by the base's.
-            lid: min(base.lid, over.lid),
+            lid: min(base.lid, over.lid, forcedLid(at: now)),
             sequence: mix > 0.5 ? interruption.id : beat.base,
             isReacting: true,
             hasSettled: false
         )
     }
 
-    /// The base loop at `now`, the morph out of the state being left included.
+    /// The lid of the blink that punctuates a change of stance.
+    private func forcedLid(at now: Double) -> Double {
+        guard beat.blinks else { return 1 }
+        return BloubFace.forcedLid(
+            (now - forcedBlinkAt) / BloubFace.forcedBlinkDuration
+        )
+    }
+
+    /// The base loop at `now`, the morph out of the stance being left included.
     private func baseFace(at now: Double) -> AvatarSequenceFrame {
         var frame = AvatarSequencePlayer.sample(
             AvatarLabPresets.sequence(beat.base),
@@ -355,6 +441,7 @@ public struct CrewChoreographer: Sendable {
             at: now,
             seed: seed
         )
+        if !beat.blinks { frame.lid = 1 }
         let since = now - leftAt
         // No lower bound on `since`: `BloubTransition.curve` clamps, so a date
         // read from *before* the change gives the beat that was actually
@@ -387,12 +474,16 @@ public struct CrewChoreographer: Sendable {
 
     /// Whether a blink is running at `now` or starts within `lead` of it.
     ///
+    /// `false` for a stance that does not blink at all — a session that has
+    /// ended is asleep, and the wall stops drawing it entirely.
+    ///
     /// What lets a card that is only drifting drop to fifteen frames a second
     /// and still catch a 0.28 s blink — the same bargain
     /// ``BloubFace/blinkImminent(at:lead:)`` makes, asked of the sequence's own
     /// rhythm instead of bloub's global one.
     public func blinkImminent(at now: Double, lead: Double) -> Bool {
-        AvatarSequencePlayer.blinkImminent(
+        guard beat.blinks else { return false }
+        return AvatarSequencePlayer.blinkImminent(
             AvatarLabPresets.sequence(beat.base).blink,
             from: beatAt,
             at: now,
@@ -400,6 +491,9 @@ public struct CrewChoreographer: Sendable {
             seed: seed
         )
     }
+
+    /// What this stance can ever show. The wall's own vocabulary check.
+    public var vocabulary: Set<AvatarSequenceID> { beat.vocabulary }
 
     /// When the current beat began — what the driver compares against to know
     /// whether a change is still settling.
@@ -490,10 +584,17 @@ public struct CrewChoreographer: Sendable {
     ///
     /// A hash rather than a shuffle, so slot 412 can be asked about without
     /// having drawn the 411 before it — the same reason ``BloubRNG/value(index:salt:seed:)``
-    /// exists at all.
+    /// exists at all. Weighted, because "rare" is part of the choreography: a
+    /// session that looked *confused* every third thought would be one nobody
+    /// trusts, and one that never did would be a metronome.
     private func pick(_ index: Int) -> AvatarSequenceID {
-        let draw = BloubRNG.value(index: index, salt: Self.pickSalt, seed: seed)
-        let position = min(Int(draw * Double(beat.reactions.count)), beat.reactions.count - 1)
-        return beat.reactions[position]
+        let total = beat.reactions.reduce(0.0) { $0 + max($1.weight, 0) }
+        guard total > 0 else { return beat.reactions[0].id }
+        var draw = BloubRNG.value(index: index, salt: Self.pickSalt, seed: seed) * total
+        for reaction in beat.reactions {
+            draw -= max(reaction.weight, 0)
+            if draw < 0 { return reaction.id }
+        }
+        return beat.reactions[beat.reactions.count - 1].id
     }
 }

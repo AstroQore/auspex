@@ -28,6 +28,16 @@ struct CrewView: View {
     /// Whether any part of the window is on screen. A wall nobody can see
     /// should not be costing frames.
     @State private var isOnScreen = true
+    /// A coarse clock, for the two things on a card that are about *elapsed*
+    /// time rather than about animation: whether a finished turn is still worth
+    /// a tick, and whether an ended session has been on the wall long enough to
+    /// fold away.
+    ///
+    /// Five seconds, and only while something is actually waiting on it. Both
+    /// windows are twenty seconds and a minute, so five is finer than either
+    /// needs — and when nothing is pending the loop stops entirely rather than
+    /// re-laying out a wall of sixty cards for no reason.
+    @State private var now = Date()
 
     // The wall has no single frame rate any more, and that is the point.
     //
@@ -93,22 +103,53 @@ struct CrewView: View {
         .onChange(of: model.sessionCount) {
             roster.prune(keeping: Set(model.board.sessions.map(\.key)))
         }
+        .task(id: model.sessionCount) {
+            // Runs only while a card is counting down to something. A wall of
+            // settled sessions leaves this loop immediately and costs nothing.
+            while !Task.isCancelled, needsClock {
+                try? await Task.sleep(for: .seconds(5))
+                if Task.isCancelled { return }
+                now = Date()
+            }
+        }
+    }
+
+    /// Whether anything on the wall is waiting on the coarse clock.
+    private var needsClock: Bool {
+        model.board.sessions.contains { session in
+            if session.state.isEnded { return !CrewView.hasFolded(session, at: now) }
+            return CrewCardChrome.of(session, at: now) == .done
+        }
+    }
+
+    /// Whether a finished session has been on the wall long enough to fold.
+    ///
+    /// A minute. Long enough that somebody who was watching sees it fall asleep
+    /// where it was working — which is the whole point of drawing an ended
+    /// session at all — and short enough that a machine which has run two
+    /// hundred sessions today is not a wall of grey.
+    static func hasFolded(_ session: SessionSnapshot, at now: Date) -> Bool {
+        guard session.state.isEnded else { return false }
+        guard let endedAt = session.endedAt else { return true }
+        return now.timeIntervalSince(endedAt) > CrewMoodMap.endedFold
     }
 
     private var grid: some View {
         ScrollView {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                 ForEach(model.groups) { group in
+                    let awake = group.sessions.filter { !CrewView.hasFolded($0, at: now) }
+                    let folded = group.sessions.filter { CrewView.hasFolded($0, at: now) }
                     Section {
                         LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(group.sessions, id: \.key) { session in
+                            ForEach(awake, id: \.key) { session in
                                 card(for: session)
                                     .transition(Self.cardTransition)
                             }
                         }
                         .padding(.horizontal, 20)
                         .padding(.top, 14)
-                        .padding(.bottom, 20)
+                        .padding(.bottom, folded.isEmpty ? 20 : 4)
                         // The ids are the session keys and they are stable, so
                         // a card that moves to another slot when the board
                         // re-sorts is the *same* view and SwiftUI glides it
@@ -116,8 +157,18 @@ struct CrewView: View {
                         // the arrivals and departures above ride the same one.
                         .animation(
                             .spring(duration: 0.5, bounce: 0.15),
-                            value: group.sessions.map(\.key)
+                            value: awake.map(\.key)
                         )
+
+                        if !folded.isEmpty {
+                            CrewEndedFold(sessions: folded, selected: model.selectedKey) {
+                                model.selectedKey = $0
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 20)
+                            .transition(.opacity)
+                            .animation(.easeInOut(duration: 0.4), value: folded.count)
+                        }
                     } header: {
                         BoardSectionHeader(group: group)
                     }
@@ -134,7 +185,8 @@ struct CrewView: View {
         CrewCard(
             session: session,
             isSelected: model.selectedKey == session.key,
-            descendantCount: model.descendantCount(of: session.key)
+            descendantCount: model.descendantCount(of: session.key),
+            chrome: CrewCardChrome.of(session, at: now)
         ) {
             CrewLiveAvatar(
                 session: session,
@@ -155,22 +207,32 @@ struct CrewView: View {
 /// exactly the drawing the app uses, and neither of them has a clock.
 struct CrewStillAvatar: View {
     let harness: Harness
-    let state: SessionState
     let frame: BloubFrame
-    /// The eased pop the driver plays on a state change. 1 when at rest.
+    /// The eased pop the driver plays on a change of stance. 1 when at rest.
     var pop: Double = 1
-    /// How bright a needs-you halo is right now.
-    var glowStrength: Double = 1
+    /// Whether the session is over.
+    ///
+    /// An ended avatar is **asleep and grey**: eyes shut, the harness accent
+    /// mixed most of the way to the page's own grey, and the whole body at
+    /// 55 %. That is the entire idle-versus-ended distinction, and it is worth
+    /// spending colour on: idle is awake — open eyes, blinks, a drifting gaze,
+    /// the occasional reaction, full accent — and ended is none of those. A
+    /// wall where the two look alike is a wall you have to read the pills on.
+    var isOver: Bool = false
 
     var body: some View {
-        let style = state.style
-        return CrewAvatarView(
+        CrewAvatarView(
             frame: frame,
-            ink: harness.style.accent,
-            paper: AuspexPalette.panel,
-            glow: style.isAlarming ? style.color : nil,
-            glowStrength: glowStrength
+            // No halo here any more. A session that needs you says so in the
+            // card's own chrome — a ring and a badge, where the eye already
+            // goes for status — because the body's job is to say which harness
+            // this is, and a shape wearing a red glow stops saying it.
+            ink: isOver
+                ? harness.style.accent.mix(with: AuspexPalette.textTertiary, by: 0.72)
+                : harness.style.accent,
+            paper: AuspexPalette.panel
         )
+        .opacity(isOver ? 0.55 : 1)
         .scaleEffect(pop)
     }
 }
@@ -203,22 +265,6 @@ struct CrewLiveAvatar: View {
     /// rate: a card that has just appeared is inside its own opening morph.
     @State private var interval: Double? = CrewCadence.full
 
-    /// One breath for the whole wall, off the shared clock: cards that are
-    /// waiting on you pulse together, the way a row of indicator lamps does.
-    ///
-    /// Held at a **constant** on every card that has no halo, rather than
-    /// computed and then multiplied away. The halo is two `.shadow`s, and a
-    /// shadow whose radius changes is one SwiftUI reconsiders every frame even
-    /// when its colour is clear, so there is no reason to hand a moving number
-    /// to the ten cards that are not shouting. On a machine loaded by other
-    /// work the saving could not be separated from the noise; it is kept
-    /// because it cannot cost anything and the intent is clearer. Reduce Motion
-    /// holds the other two still as well.
-    private func breath(at now: TimeInterval) -> Double {
-        guard !frozen, session.state.style.isAlarming else { return 1 }
-        return 0.5 - 0.5 * cos(now * (bloubTau / 2.4))
-    }
-
     var body: some View {
         TimelineView(
             .animation(
@@ -230,10 +276,9 @@ struct CrewLiveAvatar: View {
             let instant = roster.instant(for: session, at: now, frozen: frozen)
             CrewStillAvatar(
                 harness: session.key.harness,
-                state: session.state,
                 frame: instant.frame,
                 pop: instant.pop,
-                glowStrength: breath(at: now)
+                isOver: instant.stance == .ended
             )
             .onChange(of: instant.interval) { _, wanted in interval = wanted }
         }
@@ -260,6 +305,9 @@ struct CrewCard<Avatar: View>: View {
     let session: SessionSnapshot
     let isSelected: Bool
     let descendantCount: Int
+    /// What the card says over and above the avatar. Defaults to nothing, so
+    /// a caller that has no clock — the still renderer — gets a plain card.
+    var chrome: CrewCardChrome = .none
     /// The moving half, handed in rather than built here.
     ///
     /// This is the seam that keeps a frame cheap. The card — its background,
@@ -272,7 +320,7 @@ struct CrewCard<Avatar: View>: View {
     /// of.
     @ViewBuilder var avatar: Avatar
 
-    private var isOver: Bool { session.state.isEnded }
+    private var isOver: Bool { chrome == .over || session.state.isEnded }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -280,7 +328,7 @@ struct CrewCard<Avatar: View>: View {
                 .frame(width: 120, height: 120)
                 .overlay(alignment: .bottomTrailing) { childrenBadge }
 
-            chrome
+            text
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 10)
@@ -301,6 +349,17 @@ struct CrewCard<Avatar: View>: View {
                 // click reads as having selected nothing.
                 .animation(.easeInOut(duration: 0.26), value: isSelected)
         )
+        // The attention ring, and the reason it is here rather than around the
+        // avatar. A halo on the body competes with the body's own job — saying
+        // which harness this is — and on a wall of twelve it reads as a
+        // different *kind* of avatar rather than as a different state. On the
+        // card it reads as what it is: this row of the board wants you.
+        .overlay {
+            if let alarm = chrome.ringColour {
+                CrewAttentionRing(colour: alarm)
+            }
+        }
+        .overlay(alignment: .topTrailing) { statusBadge }
         .opacity(isOver ? 0.6 : 1)
         .animation(.easeInOut(duration: 0.4), value: isOver)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -310,11 +369,33 @@ struct CrewCard<Avatar: View>: View {
         )
     }
 
+    /// The corner mark: a "!" for a session that wants you, a tick for one
+    /// whose turn finished while you were elsewhere.
+    ///
+    /// Small, and deliberately in the corner rather than on the body. The
+    /// avatar is already saying what the session is doing with its eyes; the
+    /// badge says whether *you* have something to do, which is a different
+    /// question and belongs where a person scans for answers to it.
+    @ViewBuilder
+    private var statusBadge: some View {
+        if let badge = chrome.badge {
+            Image(systemName: badge.symbol)
+                .font(.system(size: 9, weight: .heavy))
+                .foregroundStyle(AuspexPalette.canvas)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(badge.colour))
+                .overlay(Circle().strokeBorder(AuspexPalette.canvas.opacity(0.6), lineWidth: 1))
+                .padding(7)
+                .accessibilityLabel(badge.label)
+                .transition(.scale.combined(with: .opacity))
+        }
+    }
+
     /// Everything that is not the avatar, held apart so the timeline's thirty
     /// ticks a second do not re-evaluate a stack of text that changes once a
     /// minute.
-    private var chrome: some View {
-        CrewCardChrome(
+    private var text: some View {
+        CrewCardText(
             harness: session.key.harness,
             title: title,
             state: session.state,
@@ -380,8 +461,136 @@ struct CrewCard<Avatar: View>: View {
     }
 }
 
+/// The sessions that have finished and have been finished long enough.
+///
+/// A card is a claim on attention, and a session that ended two minutes ago has
+/// none left to make: it is history, and history belongs in a line rather than
+/// in a grid. So it folds down to a dot in the harness's own colour, muted the
+/// way the sleeping avatar is muted, and clicking one still fills the trace
+/// inspector — nothing is lost, it just stops shouting.
+private struct CrewEndedFold: View {
+    let sessions: [SessionSnapshot]
+    let selected: SessionKey?
+    let onSelect: (SessionKey) -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: "moon.zzz")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AuspexPalette.textTertiary)
+            Text("\(sessions.count) asleep")
+                .auspexLabel(AuspexType.label)
+                .foregroundStyle(AuspexPalette.textTertiary)
+            FlowLayout(spacing: 6, lineSpacing: 6) {
+                ForEach(sessions, id: \.key) { session in
+                    dot(for: session)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(AuspexPalette.panel.opacity(0.5))
+        )
+    }
+
+    private func dot(for session: SessionSnapshot) -> some View {
+        Circle()
+            .fill(
+                session.key.harness.style.accent
+                    .mix(with: AuspexPalette.textTertiary, by: 0.72)
+                    .opacity(0.55)
+            )
+            .frame(width: 10, height: 10)
+            .overlay {
+                if selected == session.key {
+                    Circle().strokeBorder(session.key.harness.style.accent, lineWidth: 1.5)
+                        .frame(width: 14, height: 14)
+                }
+            }
+            .frame(width: 14, height: 14)
+            .contentShape(Circle())
+            .onTapGesture { onSelect(session.key) }
+            .help("\(session.key.harness.displayName) — finished")
+            .accessibilityLabel("\(session.key.harness.displayName), finished")
+    }
+}
+
+/// What the card itself says about a session, over and above the avatar.
+///
+/// The crew's state language is the face, and the face is a mood rather than a
+/// demand. Two things on a board are demands — a session waiting on a person,
+/// and a turn that finished while nobody was looking — and both of them need to
+/// be findable from across a room without decoding an expression. So they are
+/// card chrome: a breathing ring and a corner badge, in the board's own state
+/// colours, exactly where the board already puts status.
+enum CrewCardChrome: Sendable, Hashable {
+    case none
+    /// Waiting on you. It will not resolve itself.
+    case blocked
+    /// A turn finished and nobody has looked yet.
+    case done
+    /// Over.
+    case over
+
+    /// The colour of the breathing ring, or `nil` for no ring.
+    var ringColour: Color? {
+        switch self {
+        case .blocked: AuspexPalette.statePermission
+        case .done: AuspexPalette.stateWriting
+        case .none, .over: nil
+        }
+    }
+
+    var badge: (symbol: String, colour: Color, label: String)? {
+        switch self {
+        case .blocked: ("exclamationmark", AuspexPalette.statePermission, "waiting for you")
+        case .done: ("checkmark", AuspexPalette.stateWriting, "finished")
+        case .none, .over: nil
+        }
+    }
+
+    /// What a session's card is saying at `now`.
+    ///
+    /// Derived from the snapshot rather than read out of the avatar's driver,
+    /// so a renderer with no roster gets the same answer as the live wall.
+    static func of(_ session: SessionSnapshot, at now: Date) -> CrewCardChrome {
+        if session.state.isEnded { return .over }
+        if case .waitingPermission = session.state { return .blocked }
+        if case .idle = session.state, session.turnCount > 0,
+           let last = session.lastEventAt,
+           now.timeIntervalSince(last) < CrewMoodMap.notifyHold {
+            return .done
+        }
+        return .none
+    }
+}
+
+/// The ring that says a card wants you.
+///
+/// Its own clock, and a slow one: a 2.4-second breath cannot use more than a
+/// dozen frames a second, and only the cards that are actually shouting pay for
+/// it. A static ring is a sticker; a breathing one is a thing waiting for you.
+private struct CrewAttentionRing: View {
+    let colour: Color
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 12, paused: false)) { context in
+            let breath = 0.5 - 0.5 * cos(
+                context.date.timeIntervalSinceReferenceDate * (bloubTau / 2.4)
+            )
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(colour.opacity(0.45 + 0.4 * breath), lineWidth: 1.5)
+                .shadow(color: colour.opacity(0.14 + 0.20 * breath), radius: 7 + 5 * breath)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 /// The static half of a card.
-private struct CrewCardChrome: View, @MainActor Equatable {
+private struct CrewCardText: View, @MainActor Equatable {
     let harness: Harness
     let title: String
     let state: SessionState
@@ -389,7 +598,7 @@ private struct CrewCardChrome: View, @MainActor Equatable {
     let said: String?
     let isOver: Bool
 
-    static func == (lhs: CrewCardChrome, rhs: CrewCardChrome) -> Bool {
+    static func == (lhs: CrewCardText, rhs: CrewCardText) -> Bool {
         lhs.harness == rhs.harness && lhs.title == rhs.title && lhs.state == rhs.state
             && lhs.isStale == rhs.isStale && lhs.said == rhs.said && lhs.isOver == rhs.isOver
     }
@@ -459,6 +668,8 @@ private struct CrewCardChrome: View, @MainActor Equatable {
 struct CrewInstant {
     var frame: BloubFrame
     var pop: Double
+    /// What the face is doing — the crew's whole state language.
+    var stance: CrewStance
     /// How long the wall may wait before drawing this avatar again, or `nil`
     /// when it need not draw it at all. See ``CrewAvatarDriver/frameInterval(at:)``.
     var interval: Double?
@@ -519,17 +730,28 @@ final class CrewRoster {
             return CrewInstant(
                 frame: driver.sample(clock),
                 pop: driver.pop(at: clock),
+                stance: driver.mood.stance,
                 interval: driver.frameInterval(at: clock)
             )
         }
-        // A still engine placed on the state, sampled at its most legible
-        // instant. Building it here rather than freezing the live one keeps the
-        // live one's history intact for when Reduce Motion is turned back off.
+        // A still body wearing the stance's own first face. Building it here
+        // rather than freezing the live one keeps the live one's history intact
+        // for when Reduce Motion is turned back off.
+        //
+        // The face is read off a *fresh* choreographer at its own start, so it
+        // is the pose the stance opens on rather than whichever step of the
+        // loop the clock happened to stop in. The shape still says which
+        // harness this is and the eyes still say what it is doing; all that
+        // stops is the drifting, the blinking and the reactions, which is the
+        // request.
         let mood = driver.mood
-        let still = BloubEngine(state: mood.state, shape: mood.shape, expression: mood.expression)
+        var still = BloubEngine(state: .idle, shape: mood.shape, expression: .neutral)
+        still.reset(to: .idle, at: 0)
+        let pose = CrewChoreographer(seed: 0, stance: mood.stance, at: 0).sample(at: 0)
         return CrewInstant(
-            frame: still.sample(BloubStates.poseTime[mood.state] ?? 1),
+            frame: still.sample(1, face: BloubFaceOverride(expression: pose.face, lid: pose.lid)),
             pop: 1,
+            stance: mood.stance,
             interval: nil
         )
     }

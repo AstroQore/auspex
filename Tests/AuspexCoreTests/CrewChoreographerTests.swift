@@ -25,11 +25,11 @@ struct CrewChoreographerTests {
     private static let cut = 184.0 / 5
 
     private func chorus(
-        _ state: BloubStateID,
+        _ stance: CrewStance,
         seed: UInt32,
         liveliness: CrewLiveliness = .normal
     ) -> CrewChoreographer {
-        CrewChoreographer(seed: seed, state: state, liveliness: liveliness, at: 0)
+        CrewChoreographer(seed: seed, stance: stance, liveliness: liveliness, at: 0)
     }
 
     // MARK: Purity
@@ -124,61 +124,156 @@ struct CrewChoreographerTests {
 
     // MARK: The pools
 
-    @Test("every state plays only what its own beat allows")
+    @Test("every stance plays only what its own beat allows")
     func poolsAreRespected() {
-        for state in BloubStateID.allCases {
-            let beat = CrewChoreography.beat(for: state)
-            let allowed = Set([beat.base] + beat.reactions)
+        for stance in CrewStance.allCases {
+            let beat = CrewChoreography.beat(for: stance)
             for seed in Self.seeds.prefix(4) {
-                let one = chorus(state, seed: seed)
+                let one = chorus(stance, seed: seed)
                 let played = Set(
                     stride(from: 0.0, through: 300, by: 0.25).map { one.sample(at: $0).sequence }
                 )
-                #expect(played.isSubset(of: allowed), "\(state) played \(played)")
+                #expect(played.isSubset(of: beat.vocabulary), "\(stance) played \(played)")
                 // And the pool is actually used, not merely permitted.
                 if !beat.reactions.isEmpty {
-                    #expect(played.count > 1, "\(state) never left its base loop")
+                    #expect(played.count > 1, "\(stance) never left its base loop")
                 }
             }
         }
     }
 
+    /// Every stance is a *pool*, never one animation. A stance that named a
+    /// single sequence would put every session in it on the same loop, and
+    /// twelve working sessions would be twelve copies of one drawing again —
+    /// only a busier one. The two exceptions each earn it: a spawn is 2.4
+    /// seconds and already an event, and a session that has ended is asleep.
+    @Test("every stance a session lives in is a pool, not one animation")
+    func stancesArePools() {
+        for stance in CrewStance.allCases where stance != .spawning && stance != .ended {
+            let beat = CrewChoreography.beat(for: stance)
+            #expect(beat.reactions.count >= 2, "\(stance) has \(beat.reactions.count) reactions")
+            #expect(beat.vocabulary.count >= 3, "\(stance) can only show \(beat.vocabulary)")
+        }
+    }
+
+    /// The pools the user asked for, spelled out. Not a tautology: this is the
+    /// product decision, and it is the thing a refactor would quietly drift.
+    @Test("the pools say what the crew was asked to say")
+    func poolTable() {
+        func pool(_ stance: CrewStance) -> Set<AvatarSequenceID> {
+            Set(CrewChoreography.beat(for: stance).reactions.map(\.id))
+        }
+        #expect(CrewChoreography.beat(for: .thinking).base == .thinking)
+        #expect(pool(.thinking) == [.searching, .curious, .confused])
+        #expect(CrewChoreography.beat(for: .working).base == .working)
+        #expect(pool(.working) == [.searching, .thinking, .proud])
+        #expect(CrewChoreography.beat(for: .delegating).base == .listening)
+        #expect(pool(.delegating) == [.working, .curious])
+        #expect(CrewChoreography.beat(for: .blocked).base == .listening)
+        #expect(pool(.blocked) == [.surprised, .suspicious, .confused, .scared])
+        #expect(pool(.celebrating) == [.proud, .laughing, .celebrate])
+        #expect(pool(.idle) == [.bored, .drowsy, .playful, .shy, .curious])
+        #expect(pool(.stale) == [.drowsy, .sleeping, .bored, .waking])
+        #expect(CrewChoreography.beat(for: .ended).base == .sleeping)
+        #expect(pool(.ended).isEmpty)
+    }
+
+    /// "Rare" is part of the choreography. A session that looked *confused*
+    /// every third thought would be one nobody trusts; one that never did
+    /// would be a metronome.
+    @Test("the rare reactions really are rare, and really do happen")
+    func weightsAreHonoured() {
+        for (stance, rare) in [(CrewStance.thinking, AvatarSequenceID.confused),
+                               (.working, .proud),
+                               (.blocked, .scared)] {
+            var seen: [AvatarSequenceID: Int] = [:]
+            for seed in Self.seeds {
+                let one = chorus(stance, seed: seed)
+                var wasReacting = false
+                for t in stride(from: 0.0, through: 900, by: 0.1) {
+                    let reacting = one.isReacting(at: t)
+                    if reacting, !wasReacting {
+                        seen[one.sample(at: t + 0.6).sequence, default: 0] += 1
+                    }
+                    wasReacting = reacting
+                }
+            }
+            let total = seen.values.reduce(0, +)
+            let rareCount = seen[rare] ?? 0
+            #expect(rareCount > 0, "\(stance) never showed \(rare)")
+            #expect(
+                Double(rareCount) / Double(total) < 0.2,
+                "\(stance) showed \(rare) \(rareCount)/\(total) times"
+            )
+        }
+    }
+
     @Test("a session waiting on you never looks idle")
     func blockedIsNeverIdle() {
-        // `alert` is the one state that will not resolve itself, so the face
+        // `blocked` is the one stance that will not resolve itself, so the face
         // has to keep asking. A single frame of the idle loop here would read
         // as a session that had given up.
-        let beat = CrewChoreography.beat(for: .alert)
-        #expect(!([beat.base] + beat.reactions).contains(.idle))
-        #expect(!([beat.base] + beat.reactions).contains(.sleeping))
-        #expect(!([beat.base] + beat.reactions).contains(.drowsy))
+        let beat = CrewChoreography.beat(for: .blocked)
+        #expect(beat.vocabulary.isDisjoint(with: [.idle, .sleeping, .drowsy, .bored]))
         // And it asks often: the gap is the shortest on the board.
-        for state in BloubStateID.allCases where state != .alert {
-            #expect(beat.minGap <= CrewChoreography.beat(for: state).minGap)
+        for stance in CrewStance.allCases where stance != .blocked {
+            let other = CrewChoreography.beat(for: stance)
+            #expect(beat.minGap <= other.minGap || other.reactions.isEmpty)
         }
     }
 
-    @Test("a session that has ended sleeps and stays asleep")
+    @Test("a session that has ended sleeps, does not blink, and stays asleep")
     func endedSleeps() {
-        let one = chorus(.sleep, seed: 0x42)
-        for t in stride(from: 0.0, through: 400, by: 1.0) {
-            #expect(one.sample(at: t).sequence == .sleeping)
+        let one = chorus(.ended, seed: 0x42)
+        for t in stride(from: 0.0, through: 400, by: 0.5) {
+            let face = one.sample(at: t)
+            #expect(face.sequence == .sleeping)
+            #expect(face.lid == 1, "an ended session blinked at \(t)")
             #expect(!one.isReacting(at: t))
+            #expect(!one.blinkImminent(at: t, lead: 0.25))
         }
     }
 
-    @Test("a stale session's pool has given up on it")
+    /// Idle is awake and ended is asleep, and that difference has to be
+    /// visible without reading a word. Awake means open eyes, a blink and the
+    /// occasional reaction; asleep means none of the three.
+    @Test("idle is awake where ended is asleep")
+    func idleIsNotEnded() {
+        let awake = chorus(.idle, seed: 0x5150)
+        let asleep = chorus(.ended, seed: 0x5150)
+        var awakeBlinks = 0
+        var asleepBlinks = 0
+        var awakeReactions = 0
+        for t in stride(from: 0.0, through: 300, by: 0.05) {
+            if awake.sample(at: t).lid < 0.9 { awakeBlinks += 1 }
+            if asleep.sample(at: t).lid < 0.9 { asleepBlinks += 1 }
+            if awake.isReacting(at: t) { awakeReactions += 1 }
+        }
+        #expect(awakeBlinks > 0)
+        #expect(asleepBlinks == 0)
+        #expect(awakeReactions > 0)
+        // And the eyes really are more closed: `sleeping` walks the three
+        // flattest expressions in the vocabulary.
+        let open = awake.sample(at: 30).face
+        let shut = asleep.sample(at: 30).face
+        #expect(shut.eyes.0.height < open.eyes.0.height)
+    }
+
+    /// Stale is drooping but not dead: it may still come back, so `waking` is
+    /// in the pool.
+    @Test("a stale session's pool has given up on it, but not entirely")
     func staleDroops() {
-        let beat = CrewChoreography.beat(for: .wink)
-        #expect(Set(beat.reactions) == Set([.drowsy, .sleeping, .bored]))
+        let beat = CrewChoreography.beat(for: .stale)
+        #expect(Set(beat.reactions.map(\.id)) == Set([.drowsy, .sleeping, .bored, .waking]))
         #expect(beat.base == .idle)
+        #expect(beat.blinks)
     }
 
     // MARK: The rhythm
 
     @Test("the gaps between reactions land inside the declared window")
     func gapsAreInBand() {
-        for state in [BloubStateID.idle, .thinking, .alert, .wide, .notify] {
+        for state in [CrewStance.idle, .thinking, .blocked, .delegating, .celebrating] {
             let beat = CrewChoreography.beat(for: state)
             for liveliness in CrewLiveliness.allCases {
                 let one = chorus(state, seed: 0xBEEF, liveliness: liveliness)
@@ -194,7 +289,7 @@ struct CrewChoreographerTests {
 
     @Test("liveliness scales how often things happen, not how fast they happen")
     func livelinessScales() {
-        for state in [BloubStateID.idle, .thinking, .wide] {
+        for state in [CrewStance.idle, .thinking, .delegating] {
             let counts = CrewLiveliness.allCases.map { liveliness -> Int in
                 reactionStarts(chorus(state, seed: 0x5EED, liveliness: liveliness), through: 900)
                     .count
@@ -212,7 +307,7 @@ struct CrewChoreographerTests {
         // The failure this catches is an avatar in a permanent fit: at the
         // lively setting the gaps come down to five seconds, and a reaction cap
         // that ignored that would fill them.
-        for state in BloubStateID.allCases {
+        for state in CrewStance.allCases {
             guard !CrewChoreography.beat(for: state).reactions.isEmpty else { continue }
             for liveliness in CrewLiveliness.allCases {
                 let one = chorus(state, seed: 0xA5A5, liveliness: liveliness)
@@ -234,36 +329,49 @@ struct CrewChoreographerTests {
 
     // MARK: Accents
 
-    @Test("a change of state is announced by the face, not only by the body")
+    @Test("a change of stance is announced by the face")
     func stateChangesAccent() {
         var one = chorus(.thinking, seed: 0x77)
-        one.setState(.alert, at: 40)
+        one.setStance(.blocked, at: 40)
         // In flight immediately — the hand-over starts on the frame of the
         // change — and speaking by the time it has crossed.
         #expect(one.isReacting(at: 40.01))
         #expect(one.sample(at: 40.8).sequence == .surprised)
         #expect(!one.isReacting(at: 40 + CrewChoreography.accentCap + 0.1))
-        // And it hands back to the beat the new state asked for.
-        let beat = CrewChoreography.beat(for: .alert)
+        // And it hands back to the beat the new stance asked for.
+        let beat = CrewChoreography.beat(for: .blocked)
         #expect(one.sample(at: 40 + CrewChoreography.accentCap + 0.1).sequence == beat.base)
     }
 
     @Test("the accents cover the changes that mean something")
     func accentTable() {
-        #expect(CrewChoreography.accent(from: .idle, to: .alert) == .surprised)
-        #expect(CrewChoreography.accent(from: .orbit, to: .alert) == .surprised)
-        #expect(CrewChoreography.accent(from: .alert, to: .orbit) == .happy)
-        #expect(CrewChoreography.accent(from: .wide, to: .burst) == .excited)
-        #expect(CrewChoreography.accent(from: .thinking, to: .orbit) == .excited)
-        #expect(CrewChoreography.accent(from: .idle, to: .notify) == .celebrate)
-        #expect(CrewChoreography.accent(from: .orbit, to: .sleep) == .drowsy)
-        // And a change that is already its own announcement gets nothing extra.
-        #expect(CrewChoreography.accent(from: .orbit, to: .play) == nil)
+        #expect(CrewChoreography.accent(from: .idle, to: .blocked) == .surprised)
+        #expect(CrewChoreography.accent(from: .working, to: .blocked) == .surprised)
+        #expect(CrewChoreography.accent(from: .blocked, to: .working) == .happy)
+        #expect(CrewChoreography.accent(from: .thinking, to: .working) == .excited)
+        #expect(CrewChoreography.accent(from: .idle, to: .thinking) == .excited)
+        #expect(CrewChoreography.accent(from: .working, to: .idle) == .bored)
+        #expect(CrewChoreography.accent(from: .working, to: .stale) == .drowsy)
+        // Falling asleep, rather than merely looking drowsy: the eyes close on
+        // the way in and stay closed.
+        #expect(CrewChoreography.accent(from: .working, to: .ended) == .sleeping)
+        // A change that is already its own announcement gets nothing extra.
+        #expect(CrewChoreography.accent(from: .delegating, to: .spawning) == nil)
+        #expect(CrewChoreography.accent(from: .idle, to: .celebrating) == nil)
+    }
+
+    /// An avatar whose eyes snapped shut would read as a crash rather than as a
+    /// session finishing, so falling asleep gets the long end of the band.
+    @Test("falling asleep takes longer than any other change")
+    func endedMorphsSlowly() {
+        for stance in CrewStance.allCases where stance != .ended {
+            #expect(CrewChoreography.morph(into: .ended) > CrewChoreography.morph(into: stance))
+        }
     }
 
     @Test("an explicit accent outranks whatever the schedule had planned")
     func accentsWin() {
-        var one = chorus(.wide, seed: 0x31)
+        var one = chorus(.delegating, seed: 0x31)
         // Find an instant where the schedule wanted a reaction, and interrupt
         // it: a child finishing is news, an avatar's own thought is not.
         let scheduled = reactionStarts(one, through: 300).first ?? 30
@@ -279,7 +387,7 @@ struct CrewChoreographerTests {
         // without the hand-over a reaction would appear in one frame. The
         // symptom on the wall is a face that flickers rather than one that
         // changes its mind.
-        for state in [BloubStateID.idle, .thinking, .alert, .notify, .wide] {
+        for state in [CrewStance.idle, .thinking, .blocked, .celebrating, .delegating] {
             for seed in Self.seeds.prefix(3) {
                 let one = chorus(state, seed: seed)
                 var previous: BloubExpression?
@@ -294,10 +402,10 @@ struct CrewChoreographerTests {
         }
     }
 
-    @Test("a state change does not cut either")
+    @Test("a change of stance does not cut either")
     func stateChangesAreSmooth() {
         var one = chorus(.idle, seed: 0x1D1E)
-        one.setState(.orbit, at: 30)
+        one.setStance(.working, at: 30)
         var previous: BloubExpression?
         var worst = 0.0
         for t in stride(from: 25.0, through: 45, by: 1.0 / 60) {

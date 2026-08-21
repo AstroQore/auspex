@@ -220,11 +220,14 @@ enum CrewMotionRenderer {
             }
             if let next = wanted.first, now >= next {
                 wanted.removeFirst()
-                let cards = board.sessions.map { session in
-                    CrewSnapshotCard(
+                let cards = board.sessions.map { session -> CrewSnapshotCard in
+                    let instant = instants[session.key]
+                    return CrewSnapshotCard(
                         session: session,
-                        frame: instants[session.key]?.frame ?? BloubEngine().sample(0),
-                        descendants: board.tree.descendants(of: session.key).count
+                        frame: instant?.frame ?? BloubEngine().sample(0),
+                        descendants: board.tree.descendants(of: session.key).count,
+                        chrome: CrewCardChrome.of(session, at: Date()),
+                        isOver: instant?.stance == .ended
                     )
                 }
                 guard let image = CrewSnapshotRenderer.wallImage(

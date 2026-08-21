@@ -53,11 +53,14 @@ enum CrewSnapshotRenderer {
             }
             now += 1.0 / 30
         }
-        let cards = board.sessions.map { session in
-            CrewSnapshotCard(
+        let cards = board.sessions.map { session -> CrewSnapshotCard in
+            let instant = roster.instant(for: session, at: avatarTime, frozen: false)
+            return CrewSnapshotCard(
                 session: session,
-                frame: roster.instant(for: session, at: avatarTime, frozen: false).frame,
-                descendants: board.tree.descendants(of: session.key).count
+                frame: instant.frame,
+                descendants: board.tree.descendants(of: session.key).count,
+                chrome: CrewCardChrome.of(session, at: Date()),
+                isOver: instant.stance == .ended
             )
         }
 
@@ -108,6 +111,10 @@ struct CrewSnapshotCard: Identifiable {
     let session: SessionSnapshot
     let frame: BloubFrame
     let descendants: Int
+    /// What the card says over and above the avatar.
+    var chrome: CrewCardChrome = .none
+    /// Whether the avatar is asleep and grey.
+    var isOver: Bool = false
 
     var id: SessionKey { session.key }
 }
@@ -131,12 +138,13 @@ struct CrewSnapshotSheet: View {
                 CrewCard(
                     session: card.session,
                     isSelected: false,
-                    descendantCount: card.descendants
+                    descendantCount: card.descendants,
+                    chrome: card.chrome
                 ) {
                     CrewStillAvatar(
                         harness: card.session.key.harness,
-                        state: card.session.state,
-                        frame: card.frame
+                        frame: card.frame,
+                        isOver: card.isOver
                     )
                 }
             }

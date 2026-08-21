@@ -110,6 +110,37 @@ public struct BloubLook: Sendable, Hashable {
     public static let none = BloubLook(yaw: 0, pitch: 0, mix: 0, spin: 0, wander: 1)
 }
 
+/// A face handed to the engine from outside, already blended.
+///
+/// The one channel this port opens that bloub does not have. bloub's states
+/// each carry the face measured for them, and for the body, the decor and the
+/// silhouettes that is still exactly what happens here. But Auspex needs the
+/// **face** to be choreographed — a session that has been idle for ten minutes
+/// should not have worn one expression for ten minutes — and a choreography is
+/// a thing that moves continuously, where an expression id is a thing that
+/// changes discretely.
+///
+/// So ``CrewChoreographer`` owns the face channel end to end: it blends its own
+/// steps, morphs across a change of state on the same window the body does, and
+/// hands the engine a finished pose. The engine's job is to put it on the
+/// sphere and cut the eyes out of whatever silhouette is showing.
+///
+/// It is opt-in per call, and `nil` leaves the engine exactly as it was — which
+/// is what keeps every golden pinned to bloub's own frames valid.
+public struct BloubFaceOverride: Sendable, Hashable {
+    /// The gaze, the spacing and the two capsules.
+    public var expression: BloubExpression
+    /// 1 open, 0 shut. The sequence's own rhythm, which **replaces** bloub's
+    /// global blink schedule rather than adding to it: two independent
+    /// schedules on one pair of eyes is a stutter, not twice the life.
+    public var lid: Double
+
+    public init(expression: BloubExpression, lid: Double = 1) {
+        self.expression = expression
+        self.lid = lid
+    }
+}
+
 /// A clockless engine: ``sample(_:)`` is a pure function of time.
 ///
 /// The practical consequence is that pausing, resuming, slowing down and
@@ -524,7 +555,11 @@ public struct BloubEngine: Sendable {
 
     /// The frame at `now`. A pure function of time: calling it twice with the
     /// same argument gives the same answer, and it mutates nothing.
-    public func sample(_ now: Double) -> BloubFrame {
+    ///
+    /// - Parameter face: a choreographed face to wear instead of the state's
+    ///   own, on the states that draw a face at all. `nil` — the default — is
+    ///   the engine bloub wrote. See ``BloubFaceOverride``.
+    public func sample(_ now: Double, face: BloubFaceOverride? = nil) -> BloubFrame {
         let radius = scale
         let def = BloubStates.state(current)
         let radii = shapeAtTime(now)
@@ -560,13 +595,33 @@ public struct BloubEngine: Sendable {
             }
         }
 
+        // --- the choreographed face ---------------------------------------
+        // Applied AFTER the transition blend, not before, and that is the
+        // whole of the seam. The blend is what carries the *body* across a
+        // state change; the face crossed at the same moment inside the
+        // choreographer, on the same window, so blending it a second time here
+        // would ease it twice and it would arrive late and slow.
+        //
+        // `eyeAlpha` is left alone: a state that draws no face — the thinking
+        // dots, the travelling "!" — still draws none. There is nothing to
+        // choreograph on a body with no eyes.
+        if let face, pose.eyeAlpha > 0.01 {
+            pose.gaze = face.expression.gaze
+            pose.split = face.expression.split
+            pose.eyes = face.expression.eyes
+        }
+
         // --- resting life -------------------------------------------------
         let alive = pose.eyeAlpha > 0.01
         let target = lookAtTime(now)
         let life = BloubFace.liveliness(
             now,
             wander: alive ? target.wander : 0,
-            blink: alive,
+            // A choreographed face brings its own blink rhythm — the sequence's
+            // own, which is slow while an avatar dozes and quick while it is
+            // excited. bloub's global schedule is switched off rather than
+            // added to it: two schedules on one pair of eyes read as a stutter.
+            blink: alive && face == nil,
             drift: drift
         )
 
@@ -585,7 +640,7 @@ public struct BloubEngine: Sendable {
 
         // the blink triggered by the state change, on top of the schedule
         let forced = (now - blinkAt) / BloubFace.forcedBlinkDuration
-        let lid = min(life.lid, BloubFace.forcedLid(forced))
+        let lid = min(life.lid, BloubFace.forcedLid(forced), face?.lid ?? 1)
 
         let offX = pose.offsetX + life.driftX
         let offY = pose.offsetY + life.driftY

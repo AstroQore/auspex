@@ -2,23 +2,58 @@ import AgentSessionKit
 import AgentSessionLive
 import Foundation
 
-/// What one session looks like as a crew avatar: a body shape, an animation
-/// state, and a resting expression.
+/// What a session's face is doing — and the crew's **whole** state language.
+///
+/// ## Why the body stopped saying it
+///
+/// bloub's catalogue says "thinking" by turning the body into three pulsing
+/// dots, "waiting" by turning it into a travelling "!", "tool call" by hanging
+/// six rings around it. Each of those is a lovely piece of animation and each of
+/// them costs the avatar its **identity**: the silhouette that says which
+/// harness this is disappears for as long as the state lasts, so a wall of
+/// twelve working sessions is a wall of twelve identical ring bouquets.
+///
+/// So the division of labour is now clean. The **body** is the harness — one
+/// silhouette per vendor, always visible, never replaced. The **face** is the
+/// state, and it is avatar-lab's vocabulary: 25 expressions and 23 animations,
+/// played from pools. And anything that has to *shout* — a session waiting on
+/// you, a turn that finished while you were elsewhere — is **card chrome**: a
+/// ring and a corner badge, where a person's eye already goes looking for
+/// status, and where it does not have to be decoded out of a shape.
+public enum CrewStance: String, Sendable, Hashable, CaseIterable {
+    /// Awake, nothing to do. Open eyes, blinks, gaze drift, reactions.
+    case idle
+    /// Claims to be working and has said nothing for a while.
+    case stale
+    case thinking
+    /// Tool calls and file writes. One stance: from the outside they are the
+    /// same thing — the session is busy and not asking anything of you.
+    case working
+    case delegating
+    /// A child has just appeared.
+    case spawning
+    /// Waiting on a person: a permission prompt, a question, a review.
+    case blocked
+    /// A turn just finished, and nobody has looked yet.
+    case celebrating
+    /// Over. Asleep, grey, and on its way off the wall.
+    case ended
+}
+
+/// What one session looks like as a crew avatar: a body shape and a stance.
 ///
 /// Identity and activity travel in separate channels, the same split the board
 /// uses. The **shape** says which harness this is and never changes for the
-/// life of a session; the **state** says what it is doing right now. So a
-/// person learns eight silhouettes once and reads activity off the movement
-/// afterwards, rather than decoding a colour-and-shape pair every time.
+/// life of a session; the **stance** says what it is doing right now and is
+/// carried entirely by the face. So a person learns eight silhouettes once and
+/// reads activity off the eyes afterwards.
 public struct CrewMood: Sendable, Hashable {
     public var shape: BloubShapeID
-    public var state: BloubStateID
-    public var expression: BloubExpressionID
+    public var stance: CrewStance
 
-    public init(shape: BloubShapeID, state: BloubStateID, expression: BloubExpressionID) {
+    public init(shape: BloubShapeID, stance: CrewStance) {
         self.shape = shape
-        self.state = state
-        self.expression = expression
+        self.stance = stance
     }
 }
 
@@ -48,15 +83,27 @@ public enum CrewMoodMap {
         }
     }
 
-    /// How long a soft notification holds after a turn ends.
+    /// How long a finished turn is celebrated for.
     ///
-    /// A turn finishing is worth a glance and nothing more, so it is a
-    /// four-second pastille rather than a state: long enough to catch on a wall
-    /// being watched, short enough that a board of finished turns is not a wall
-    /// of blue dots.
-    public static let notifyHold: TimeInterval = 4
+    /// Twenty seconds, not four. A celebration is the one thing on the wall
+    /// that is *good news*, and the point of it is to still be visible when
+    /// somebody looks back at the screen — long enough to catch, short enough
+    /// that a board of finished turns is not a permanent party. The green tick
+    /// on the card stays until it is dismissed; the dance does not.
+    public static let notifyHold: TimeInterval = 20
 
-    /// The avatar state and expression for one session state.
+    /// How long the burst of a spawn runs before the parent settles back into
+    /// delegating.
+    public static let spawnBurst: TimeInterval = 2.4
+
+    /// How long a finished session stays on the wall before folding away.
+    ///
+    /// A minute. Long enough that somebody who was watching sees it fall
+    /// asleep where it was working, short enough that a machine which has run
+    /// two hundred sessions today is not a wall of grey.
+    public static let endedFold: TimeInterval = 60
+
+    /// The stance for one session state.
     ///
     /// Precedence, and why:
     ///
@@ -70,57 +117,28 @@ public enum CrewMoodMap {
     ///    "claims to be working and has said nothing", which is meaningless for
     ///    an idle one.
     /// 5. otherwise the state itself.
-    ///
-    /// The expressions are the ones the reference renders use. They only reach
-    /// the screen on a state that wears the resting face — `idle` — but they
-    /// are carried for every entry so this table stays comparable with the
-    /// design sheet it was drawn from.
-    public static func avatarState(
+    public static func stance(
         for state: SessionState,
         isStale: Bool = false,
         isNotifying: Bool = false,
         isSpawning: Bool = false
-    ) -> (state: BloubStateID, expression: BloubExpressionID) {
+    ) -> CrewStance {
         switch state {
         case .ended:
-            return (.sleep, .sleepy)
+            return .ended
         case .waitingPermission:
-            return (.alert, .surprised)
+            return .blocked
         case .idle:
-            if isNotifying { return (.notify, .attentive) }
-            return (.idle, .neutral)
+            return isNotifying ? .celebrating : .idle
         case .thinking:
-            if isStale { return (.wink, .sleepy) }
-            return (.thinking, .curious)
-        case .toolCalling:
-            if isStale { return (.wink, .sleepy) }
-            return (.orbit, .attentive)
-        case .writingFile:
-            if isStale { return (.wink, .sleepy) }
-            return (.play, .attentive)
+            return isStale ? .stale : .thinking
+        case .toolCalling, .writingFile:
+            return isStale ? .stale : .working
         case .delegating:
-            if isStale { return (.wink, .sleepy) }
-            // Delegating is two beats, not one. The burst is the *act* of
-            // spawning — the body flies apart and the children come out of the
-            // particles — and it resolves in 2.4 s. Holding it after that
-            // leaves the avatar as a lone dot, which is what `sleep` looks
-            // like, so a card that had just handed work out read as one that
-            // had finished. Once the body has re-formed the session goes to
-            // `wide`: eyes open on a body that is the harness's own shape
-            // again, watching. Both halves are bloub's; only the cut is ours.
-            if isSpawning { return (.burst, .excited) }
-            return (.wide, .attentive)
+            if isStale { return .stale }
+            return isSpawning ? .spawning : .delegating
         }
     }
-
-    /// How long the burst runs before the body re-forms.
-    ///
-    /// Read off the state, not chosen: `minDuration` is "the date at which the
-    /// animation resolves", and `burst` puts it at 1.7 + 0.7 — the moment the
-    /// body has finished growing back and the eyes are open again. Cutting
-    /// earlier would leave the body in pieces; later is padding.
-    public static let spawnBurst: TimeInterval =
-        BloubStates.state(.burst).minDuration ?? BloubStates.state(.burst).duration
 
     /// The whole mood for a session.
     public static func mood(
@@ -130,79 +148,60 @@ public enum CrewMoodMap {
         isNotifying: Bool = false,
         isSpawning: Bool = false
     ) -> CrewMood {
-        let resolved = avatarState(
-            for: state,
-            isStale: isStale,
-            isNotifying: isNotifying,
-            isSpawning: isSpawning
-        )
-        return CrewMood(
+        CrewMood(
             shape: shape(for: harness),
-            state: resolved.state,
-            expression: resolved.expression
+            stance: stance(
+                for: state,
+                isStale: isStale,
+                isNotifying: isNotifying,
+                isSpawning: isSpawning
+            )
         )
-    }
-
-    /// How often a held state replays itself, or `nil` when it needs no help.
-    ///
-    /// bloub's states are montage blocks of a couple of seconds. Several tell a
-    /// story that finishes — the "!" travels and comes back, the rings fade in
-    /// and out — and then have nothing left to show. Auspex holds a state for as
-    /// long as the work takes, so those are replayed.
-    ///
-    /// `burst` is deliberately **not** among them: it is played once per act of
-    /// spawning and then handed to `wide`, so looping it would turn one event
-    /// into a nervous tic.
-    ///
-    /// The period is the state's own **resolve** time (`minDuration`, "the date
-    /// at which the animation resolves", read off its constants), falling back
-    /// to its measured hold. Replaying there means nothing is cut and nothing
-    /// is padded.
-    ///
-    /// The others are left alone because they already sustain themselves: the
-    /// thinking dots pulse on a 1.5 s wave, `sleep` bounces on a 0.6 s one,
-    /// and `idle`, `wink` and `notify` are static poses that the resting life
-    /// keeps alive on its own. Replaying a periodic state would put a seam in a
-    /// loop that does not have one.
-    public static func replayPeriod(for state: BloubStateID) -> Double? {
-        switch state {
-        case .alert, .play, .orbit, .comet:
-            let def = BloubStates.state(state)
-            return def.minDuration ?? def.duration
-        case .idle, .thinking, .wink, .wide, .notify, .exclaim, .sleep, .egg, .hexagon,
-             .swirl, .burst:
-            return nil
-        }
     }
 }
 
 /// One avatar's engine plus the bookkeeping Auspex adds around it: which mood
-/// is showing, when a soft notification expires, and when a held state has to
-/// be replayed.
+/// is showing, when a celebration expires, and when a spawn settles.
 ///
 /// A value type, and clockless like the engine underneath: every entry point
 /// takes the time. The view owns one of these per session and feeds it the
 /// shared clock, which is what lets sixty avatars animate off one timeline.
 public struct CrewAvatarDriver: Sendable {
     /// The engine. `sample(_:)` on it is still a pure function of time.
+    ///
+    /// It is parked on ``BloubStateID/idle`` for the whole life of the avatar
+    /// and never leaves it. That is not a limitation, it is the point: `idle`
+    /// is the one catalogue state that wears **the chosen body** and **a face
+    /// handed in from outside**, which is exactly the division this view is
+    /// built on. What the engine still does, and what nothing else could, is
+    /// seat two eye capsules on a sphere inside an arbitrary silhouette, ease
+    /// between shapes, and keep the gaze drifting.
     public private(set) var engine: BloubEngine
+    /// What the face is doing.
+    ///
+    /// The two channels are deliberately separate all the way down: the body
+    /// is bloub's — a silhouette per harness — and the face is avatar-lab's,
+    /// sequenced from this session's own seed. That is what makes twelve idle
+    /// sessions twelve different things to look at rather than twelve copies of
+    /// one drawing.
+    public private(set) var choreographer: CrewChoreographer
     /// Which harness this avatar is. Fixed for the life of the session, and
     /// the only thing the mood cannot be re-derived without.
     public let harness: Harness
     /// The mood currently being played.
     public private(set) var mood: CrewMood
-    /// When the soft notification stops, on the same clock.
+    /// When the celebration stops, on the same clock.
     private var notifyUntil: Double?
-    /// When the spawning burst stops and the body re-forms.
+    /// When a spawn settles back into delegating.
     private var spawnUntil: Double?
     /// How many children the session had last time, so a *new* one can be seen.
     private var lastChildren: Int?
     /// The last session state seen, to spot the edge a turn ending makes.
     private var lastSessionState: SessionState?
-    /// When the avatar last changed state, so the card can pop on it.
+    /// When the avatar last changed stance, so the card can pop on it.
     private var changedAt: Double?
 
-    /// How long the pop that greets a state change lasts.
+    /// How long the pop that greets a change of stance lasts.
     public static let popDuration = 0.32
     /// How far it goes. Four per cent: enough to catch the eye on a 120-point
     /// avatar, small enough that a wall of them changing at once does not look
@@ -215,10 +214,11 @@ public struct CrewAvatarDriver: Sendable {
         isStale: Bool = false,
         at now: Double,
         scale: Double = BloubFrameOfReference.radius,
-        seed: UInt32 = 0
+        seed: UInt32 = 0,
+        liveliness: CrewLiveliness = .default
     ) {
         // A session first seen already delegating has, from the wall's point of
-        // view, just done it: it gets the burst like any other.
+        // view, just done it: it gets the spawn like any other.
         var spawning = false
         if case .delegating(let children) = state, !isStale {
             spawnUntil = now + CrewMoodMap.spawnBurst
@@ -236,9 +236,9 @@ public struct CrewAvatarDriver: Sendable {
         lastSessionState = state
         var engine = BloubEngine(
             scale: scale,
-            state: mood.state,
+            state: .idle,
             shape: mood.shape,
-            expression: mood.expression,
+            expression: .neutral,
             // Every session gets its own resting drift. Sixty avatars reading
             // one clock and one drift function would all look the same way at
             // the same moment, which is the difference between a crew and a
@@ -246,20 +246,29 @@ public struct CrewAvatarDriver: Sendable {
             drift: .wander(seed: seed)
         )
         // The engine starts its clock at zero, and this driver is handed a
-        // clock that has been running since the wall opened. Without this the
-        // avatar would be born several seconds into its own animation — an
-        // orbit whose rings had already faded out, a burst already recomposed —
-        // which is exactly what a session that has just appeared has not done.
-        engine.reset(to: mood.state, at: now)
+        // clock that has been running since the wall opened.
+        engine.reset(to: .idle, at: now)
         self.engine = engine
+        choreographer = CrewChoreographer(
+            seed: seed,
+            stance: mood.stance,
+            liveliness: liveliness,
+            at: now
+        )
+    }
+
+    /// How often this avatar reacts. Changing it does not disturb whatever is
+    /// playing — the setting is about the *next* reaction, not this one.
+    public mutating func setLiveliness(_ value: CrewLiveliness) {
+        choreographer.setLiveliness(value)
     }
 
     /// Feeds the driver the session's current state and the clock.
     ///
-    /// Call it on every frame: it is what starts a soft notification when a
-    /// turn ends, ends it four seconds later, fires the spawning burst, and
-    /// replays a held state. Idempotent for a given `now`, so calling it twice
-    /// in one frame changes nothing.
+    /// Call it on every frame: it is what starts a celebration when a turn
+    /// ends, ends it twenty seconds later, fires the spawn, and accents a child
+    /// finishing. Idempotent for a given `now`, so calling it twice in one
+    /// frame changes nothing.
     public mutating func update(state: SessionState, isStale: Bool, at now: Double) {
         // A turn that just ended: the session was doing something and is now
         // idle. Not `ended` — a finished session is not news, it is history.
@@ -270,13 +279,16 @@ public struct CrewAvatarDriver: Sendable {
 
         if let until = notifyUntil, now >= until { notifyUntil = nil }
 
-        // The burst is an event, not a condition: it fires when the session
+        // The spawn is an event, not a condition: it fires when the session
         // starts delegating and again whenever it hands out *more* work. A
-        // count that stays put, or drops as children finish, is the same act
-        // still in progress and must not restart it.
+        // count that stays put is the same act still in progress.
         if case .delegating(let children) = state, !isStale {
             if lastChildren == nil || children > (lastChildren ?? 0) {
                 spawnUntil = now + CrewMoodMap.spawnBurst
+            } else if let last = lastChildren, children < last {
+                // A child finished. The stance has nothing to say about it —
+                // the parent is still delegating — so the face says it instead.
+                choreographer.accent(.proud, at: now)
             }
             lastChildren = children
         } else {
@@ -292,29 +304,26 @@ public struct CrewAvatarDriver: Sendable {
             isNotifying: notifyUntil != nil,
             isSpawning: spawnUntil != nil
         )
-        if next.state != mood.state {
-            // The morph, the blink at its midpoint and the eyes' 60 ms lag all
-            // belong to the engine; what the driver adds is the date, so the
-            // card knows when to pop.
-            engine.setState(next.state, at: now)
-            mood.state = next.state
+        if next.stance != mood.stance {
+            // The eased morph, the accent that announces the change and the
+            // blink at the morph's midpoint all belong to the choreographer;
+            // what the driver adds is the date, so the card knows when to pop.
+            choreographer.setStance(next.stance, at: now)
+            mood.stance = next.stance
             changedAt = now
-        }
-        if next.expression != mood.expression {
-            engine.setExpression(next.expression, at: now)
-            mood.expression = next.expression
-        }
-
-        if let period = CrewMoodMap.replayPeriod(for: mood.state),
-           engine.elapsed(at: now) >= period {
-            engine.replay(at: now)
         }
     }
 
-    /// The frame at `now`.
-    public func sample(_ now: Double) -> BloubFrame { engine.sample(now) }
+    /// The frame at `now`: the harness's body wearing avatar-lab's face.
+    public func sample(_ now: Double) -> BloubFrame {
+        let face = choreographer.sample(at: now)
+        return engine.sample(
+            now,
+            face: BloubFaceOverride(expression: face.face, lid: face.lid)
+        )
+    }
 
-    /// The avatar's own scale at `now`: a 4 % pop on each state change.
+    /// The avatar's own scale at `now`: a 4 % pop on each change of stance.
     ///
     /// A pure function of time like everything else here, and deliberately not
     /// a SwiftUI animation. The wall already has a clock ticking every frame;
@@ -343,61 +352,42 @@ public struct CrewAvatarDriver: Sendable {
     /// time, and it is only ever the few that are working that need sixty
     /// frames a second.
     ///
-    /// Every branch is decided by the fastest thing the state puts on screen,
-    /// and each is justified where ``CrewCadence`` defines the tier.
+    /// Now that the body no longer animates — it is a silhouette that only
+    /// moves when the shape morphs — the rate is decided entirely by the face:
+    ///
+    /// - **full** for a reaction, which is an event and the one thing on an
+    ///   otherwise still card a person's eye is meant to be caught by; for the
+    ///   first second after a change of stance, which covers the morph, the
+    ///   blink inside it and the card's pop; and around a blink, which at
+    ///   fifteen frames a second would get two frames and read as a glitch;
+    /// - **half** for a step morph inside the base loop — a continuous
+    ///   movement of two capsules, not an event;
+    /// - **low** for a face that is simply held, with the gaze drifting under
+    ///   it. A 2–5 s random walk and a 3.4 s breath cannot use more;
+    /// - **nothing at all** for a session that has ended, which is asleep and
+    ///   does not even blink.
     public func frameInterval(at now: Double) -> Double? {
-        // Anything in flight — a morph, a replay, the pop — plus the second
-        // after it. `elapsed` covers `replay(at:)` as well as `setState`,
-        // which is why it is asked rather than the pop's own date.
-        if engine.elapsed(at: now) < CrewCadence.settle { return CrewCadence.full }
-
-        switch mood.state {
-        case .sleep:
-            // A session that is over is over. The measured 0.6 s bounce has
-            // had its second and stops where it is; there is no jump, because
-            // pausing a timeline leaves the last frame standing.
+        if mood.stance == .ended, now - (changedAt ?? -1000) > CrewCadence.settle {
+            // Asleep. The eyes are shut, there is no blink schedule and no
+            // pool, so there is nothing left to draw. Pausing a timeline leaves
+            // the last frame standing, so there is no jump either.
             return nil
-
-        case .burst:
-            // Five particles with a 0.55 s life spiralling into the core: the
-            // fastest decor in the catalogue, and it runs for 2.4 s, well past
-            // the settle window.
-            return CrewCadence.full
-
-        case .orbit:
-            // The exception, and it was checked rather than assumed:
-            // `--render-crew-strip x.png orbit orbit 30` against the same at
-            // 60. The body turns at 1.25 turns a second, which 30 fps carries
-            // easily — but the six rings turn at 3 to 3.7, which is 36° to 44°
-            // of arc between frames. At that step a ring cannot be followed
-            // from one frame to the next and the bouquet strobes; at 60 fps it
-            // is 18° to 22° and each ring stays the same ring. Tool calls are
-            // also the state a person watches, so this is the one to spend on.
-            return CrewCadence.full
-
-        case .thinking, .play, .alert, .comet:
-            // Checked the same way. The thinking dots ride a 1.5 s wave, the
-            // "!" crosses in 1.5 s, the swoosh's arcs turn at 0.3 turns a
-            // second and the comet's ribbons at 210°/s — 7° between frames at
-            // this rate against the orbit's 40°. Consecutive frames differ by
-            // a pixel or two.
-            return CrewCadence.half
-
-        case .idle, .wink, .wide, .notify, .exclaim, .egg, .hexagon, .swirl:
-            // A still pose plus resting life. The blink is the one thing here
-            // that fifteen frames a second cannot draw — 0.18 s would get two
-            // of them — so the card goes back to sixty around each one. It can
-            // only do that because the schedule is pre-drawn.
-            return BloubFace.blinkImminent(at: now, lead: CrewCadence.blinkLead)
-                ? CrewCadence.full
-                : CrewCadence.low
         }
+        if engine.elapsed(at: now) < CrewCadence.settle { return CrewCadence.full }
+        if let changedAt, now - changedAt < CrewCadence.settle { return CrewCadence.full }
+
+        let face = choreographer.sample(at: now)
+        if face.isReacting { return CrewCadence.full }
+        if choreographer.blinkImminent(at: now, lead: CrewCadence.blinkLead) {
+            return CrewCadence.full
+        }
+        return face.hasSettled ? CrewCadence.low : CrewCadence.half
     }
 
-    /// Whether a soft notification is showing.
-    public var isNotifying: Bool { notifyUntil != nil }
+    /// Whether a celebration is showing.
+    public var isCelebrating: Bool { notifyUntil != nil }
 
-    /// Whether the spawning burst is still playing.
+    /// Whether a spawn is still playing.
     public var isSpawning: Bool { spawnUntil != nil }
 }
 
@@ -405,34 +395,31 @@ public struct CrewAvatarDriver: Sendable {
 ///
 /// The wall holds a clock per card, so the rate can follow what the card is
 /// actually doing rather than what the busiest card on the wall is doing. That
-/// is the whole saving: a session that has been idle for ten minutes is drifting
-/// its gaze and breathing, and neither of those needs sixty frames a second —
-/// while the half-second when it changes state needs every one of them.
+/// is the whole saving: a session that has been idle for ten minutes is
+/// drifting its gaze and breathing, and neither of those needs sixty frames a
+/// second — while the half-second when it changes stance needs every one of
+/// them.
 ///
 /// The tiers are decided by *how fast the fastest thing on screen moves*, never
 /// by how important the state is:
 ///
-/// - **full** — anything in flight: a morph, a replay, the pop, the burst's
-///   particles. Also the whole second after a state change, which is longer
-///   than any of them and saves splitting hairs about which is still running.
-/// - **half** — states whose motion is continuous but slow: the orbit's rings,
-///   the thinking dots' 1.5 s wave, the swoosh crossing the triangle, the "!"
-///   travelling. Verified frame by frame at this rate, not assumed.
-/// - **low** — states that are a still pose plus resting life. Gaze drift is a
-///   2–5 s random walk and the breath a 3.4 s sine; fifteen frames a second is
-///   more than either can use. A blink is the exception and it is handled by
-///   ``CrewAvatarDriver/frameInterval(at:)``.
-/// - **paused** — nothing moves at all.
+/// - **full** — anything in flight: a stance morph, a reaction, the pop, a
+///   blink. Also the whole second after a change, which is longer than any of
+///   them and saves splitting hairs about which is still running.
+/// - **half** — a step morph inside the base loop: continuous but slow.
+/// - **low** — a held face plus resting life. Gaze drift is a 2–5 s random walk
+///   and the breath a 3.4 s sine; fifteen frames a second is more than either
+///   can use.
+/// - **paused** — a session that has ended. Nothing moves at all.
 public enum CrewCadence {
     public static let full = 1.0 / 60
     public static let half = 1.0 / 30
     public static let low = 1.0 / 15
 
-    /// How long after a state change an avatar keeps the full rate.
+    /// How long after a change of stance an avatar keeps the full rate.
     ///
-    /// Longer than the longest morph (0.66 s including the eyes' lag) and than
-    /// the pop (0.32 s), so "is anything still moving" is one comparison rather
-    /// than four.
+    /// Longer than the longest morph (0.6 s) and than the pop (0.32 s), so "is
+    /// anything still moving" is one comparison rather than three.
     public static let settle = 1.0
 
     /// How far ahead of a scheduled blink to go back to the full rate.

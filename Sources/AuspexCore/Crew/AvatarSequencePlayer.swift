@@ -205,7 +205,7 @@ public enum AvatarSequencePlayer {
     ) -> Bool {
         guard blink.isEnabled, blink.duration > 0 else { return false }
         let schedule = BlinkSchedule(blink, seed: seed, jitter: jitter)
-        return schedule.startCovering(t + lead, from: t0, back: lead) != nil
+        return schedule.startCovering(t, from: t0, lead: lead) != nil
     }
 
     // MARK: The schedules
@@ -378,17 +378,24 @@ public enum AvatarSequencePlayer {
 
         /// The start of the blink covering `t`, if there is one.
         ///
-        /// - Parameter back: how far before `t` a blink may have started and
-        ///   still count. The lid asks about the blink's own length; the
-        ///   frame-rate question asks about a whole lead time.
-        func startCovering(_ t: Double, from t0: Double, back: Double? = nil) -> Double? {
+        /// - Parameter lead: how far *ahead* of `t` to look. Zero asks "is a
+        ///   blink running right now", which is what the lid needs; a lead asks
+        ///   "is one running or about to start", which is what a card sampling
+        ///   fifteen times a second needs in order to go back to sixty in time
+        ///   to draw it.
+        ///
+        ///   The two windows have to be one function and they have to overlap.
+        ///   Asking the question about `t + lead` with a window of `lead`
+        ///   instead — which is what this did first — leaves a hole: a blink
+        ///   that started more than `lead - duration` ago is still shutting the
+        ///   eye and is no longer announced, so the card drops to fifteen
+        ///   frames in the middle of it and the blink reads as a glitch.
+        func startCovering(_ t: Double, from t0: Double, lead: Double = 0) -> Double? {
             let elapsed = t - t0
-            let window = back ?? blink.duration
-            guard elapsed >= blink.initialDelay - phase - window else { return nil }
             let guess = Int(((elapsed - blink.initialDelay + phase) / cadence).rounded())
-            for index in max(0, guess - 1)...(guess + 1) {
+            for index in max(0, guess - 1)...(max(0, guess) + 2) {
                 let at = start(index)
-                if at <= elapsed, elapsed < at + max(window, blink.duration) {
+                if at <= elapsed + lead, elapsed < at + blink.duration {
                     return t0 + at
                 }
             }
