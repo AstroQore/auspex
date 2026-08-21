@@ -165,7 +165,15 @@ struct CrewView: View {
     }
 
     private var grid: some View {
-        ScrollView {
+        // `BoardScroll`, not a bare `ScrollView`, for the two reasons every
+        // other scrolling page in this window uses it. It carries the sizing
+        // gate that keeps the window's own height question from measuring a
+        // wall of sixty cards on every graph update — a lazy stack answers
+        // "how tall are you" by materialising every row — and it is what makes
+        // the wall drawable offscreen at all: an `ImageRenderer` has no scroll
+        // view, so the crew page rendered as an empty grey column. See
+        // ``ScrollSizeGate``.
+        BoardScroll {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                 ForEach(model.unitGroups) { group in
                     let awake = group.units.filter { !CrewView.hasFolded($0, at: now) }
@@ -268,6 +276,7 @@ struct CrewView: View {
         }
     }
 }
+
 
 /// One avatar, drawn at one instant. Everything the wall's clock feeds it.
 ///

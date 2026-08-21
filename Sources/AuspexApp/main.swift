@@ -282,6 +282,10 @@ if let flag = arguments.firstIndex(of: "--render-board") {
     // not photograph either of them.
     let pane = rest.first { $0.hasPrefix("pane=") }
         .flatMap { SettingsPane(rawValue: String($0.dropFirst(5))) }
+    // Which way of looking at the board. The window has four and the renderer
+    // had one, so three of them could only ever be checked by opening the app.
+    let viewMode = rest.first { $0.hasPrefix("view=") }
+        .flatMap { BoardViewMode(rawValue: String($0.dropFirst(5))) }
     // The user layer, as `focus=<project key>` and `ignore=<kind>:<value>`
     // among the trailing arguments. Keyword rather than positional because
     // they are the two knobs that are usually absent, and because a picture of
@@ -309,6 +313,7 @@ if let flag = arguments.firstIndex(of: "--render-board") {
             ignore: ignore,
             groupBy: groupBy,
             pane: pane,
+            viewMode: viewMode,
             appearance: appearance
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
@@ -463,7 +468,8 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         1440, which is how a page is checked at the sizes a
                         person actually has one open at; `pane=` picks which
                         of Settings' seven pages is shown (`agents`,
-                        `characters`, …).
+                        `characters`, …); `view=` picks the way of looking at
+                        the board (`board`, `scene`, `crew`, `trajectory`).
                         `focus=` binds the window to one project the way
                         clicking it in the sidebar does; `ignore=` applies an
                         ignore rule (`pathPrefix`, `project`, `promptPrefix`,

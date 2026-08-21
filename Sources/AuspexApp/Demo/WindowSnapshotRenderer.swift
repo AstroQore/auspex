@@ -52,6 +52,7 @@ enum WindowSnapshotRenderer {
         ignore: [IgnoreRule.Kind] = [],
         groupBy: BoardGroupBy? = nil,
         pane: SettingsPane? = nil,
+        viewMode: BoardViewMode? = nil,
         appearance: AppearanceMode = .dark
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
@@ -64,6 +65,7 @@ enum WindowSnapshotRenderer {
         for kind in ignore { environment.catalog.add(rule: IgnoreRule(kind: kind)) }
         environment.board.focusedProjectKey = focus
         if let groupBy { environment.board.groupBy = groupBy }
+        if let viewMode { environment.board.viewMode = viewMode }
         defer { Task { await environment.shutdown() } }
 
         // The pipeline runs on detached tasks; spinning the main run loop is
@@ -173,12 +175,24 @@ private struct WindowSnapshot: View {
                         initialPane: pane
                     )
                 default:
-                    BoardView(model: environment.board)
+                    // The same switch the window has, for the same reason: a
+                    // way of looking at the board that the renderer cannot
+                    // reach is a way of looking at the board nobody can take a
+                    // picture of.
+                    switch environment.board.viewMode {
+                    case .board: BoardView(model: environment.board)
+                    case .scene: SceneContainerView(model: environment.board)
+                    case .crew:
+                        CrewView(
+                            model: environment.board,
+                            liveliness: environment.catalog.crewLiveliness
+                        )
+                    case .trajectory: TrajectoryView(model: environment.board)
+                    }
                 }
             }
             .frame(maxWidth: .infinity)
-            if section != .harnesses, section != .projects, section != .tasks,
-               section != .settings {
+            if showsTrace {
                 divider
                 SessionTraceView(model: environment.board)
                     .frame(width: 420)
@@ -200,5 +214,20 @@ private struct WindowSnapshot: View {
 
     private var divider: some View {
         Rectangle().fill(AuspexPalette.line).frame(width: 1)
+    }
+
+    /// Whether the trace column is drawn.
+    ///
+    /// The status pages do not have one. Neither does a window too narrow to
+    /// hold three columns: the real split view will not take the board's
+    /// column below `navigationSplitViewColumnWidth(min: 460)` and closes a
+    /// column instead, and an `HStack` that does not know that overflows its
+    /// own frame — which draws a picture of a window nobody can have, with the
+    /// sidebar clipped on one edge and the trace on the other.
+    private var showsTrace: Bool {
+        guard section != .harnesses, section != .projects, section != .tasks,
+              section != .settings
+        else { return false }
+        return size.width >= 232 + 1 + 460 + 1 + 420
     }
 }
