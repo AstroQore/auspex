@@ -901,9 +901,8 @@ final class LiveBoardModel {
             .flatMap { board.tree.node(for: $0) }?
             .children.compactMap { sessionIndex[$0.key] } ?? []
 
-        selectedProjectName = session
-            .flatMap { board.projectKey(for: $0) }
-            .map(BoardGrouping.projectName(forPath:))
+        selectedProjectKey = session.flatMap { board.projectKey(for: $0) }
+        selectedProjectName = selectedProjectKey.map(BoardGrouping.projectName(forPath:))
     }
 
     /// Turns the bucket filter on, or off if it is already on this bucket.
@@ -1097,6 +1096,14 @@ final class LiveBoardModel {
 
     /// What the selected session's project is called, for the trace header.
     private(set) var selectedProjectName: String?
+
+    /// The key behind that name — the path the board groups it under.
+    ///
+    /// Derived beside the name rather than looked up in the header, for the
+    /// reason the whole block exists: a view that reached into ``board`` for
+    /// it would be invalidated by every session on the machine. It is what the
+    /// header's project chip binds the board to when it is clicked.
+    private(set) var selectedProjectKey: String?
 
     /// The directory a session is actually working in, unabbreviated.
     ///

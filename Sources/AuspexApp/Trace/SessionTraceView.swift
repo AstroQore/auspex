@@ -49,11 +49,22 @@ struct SessionTraceView: View {
                 onOpenContext: { model.loadContextComposition() },
                 onSelect: { model.selectedKey = $0 },
                 onOpenTrajectory: { model.openTrajectory() },
-                onDismissNotice: { model.dismissNotice(session.key) }
+                onDismissNotice: { model.dismissNotice(session.key) },
+                projectKey: model.selectedProjectKey,
+                onFocusProject: { model.focusedProjectKey = $0 },
+                // The board divided along the delegation tree, which is the
+                // one arrangement in which a family of sixty-six is together
+                // rather than scattered across a wall sorted by urgency.
+                onExpandInBoard: {
+                    model.groupBy = .tree
+                    model.viewMode = .board
+                }
             )
             tabBar
             traceList
         }
+        // The pane the copies happen in is the pane that says so.
+        .auspexCopyToast()
     }
 
     // MARK: Tabs
@@ -352,9 +363,21 @@ struct SessionHeaderView: View {
     /// Clears the call. `nil` on the offscreen renderer, which has nowhere to
     /// send a click.
     var onDismissNotice: (() -> Void)?
+    /// The key of the project this session groups under, for the chip that
+    /// binds the board to it. `nil` where the board could not place it.
+    var projectKey: String?
+    /// Binds the board to a project. `nil` where there is no board to bind —
+    /// the offscreen renderers.
+    var onFocusProject: ((String) -> Void)?
+    /// Divides the board along the delegation tree, so a family that is
+    /// scattered across the wall reads as one. `nil` in a render.
+    var onExpandInBoard: (() -> Void)?
 
     /// Whether the reader has opened the assignment out past its fold.
     @State private var showsWholeTask = false
+    /// Whether the pointer is over the assignment, which is what puts its copy
+    /// button on screen.
+    @State private var isOverTask = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -387,17 +410,13 @@ struct SessionHeaderView: View {
         HStack(alignment: .center, spacing: 10) {
             HarnessBadge(harness: session.key.harness, size: 26, isMuted: session.state.isEnded)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(AuspexType.paneTitle)
-                    .foregroundStyle(AuspexPalette.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Text(identityLine)
-                    .font(AuspexType.monoSmall)
-                    .foregroundStyle(AuspexPalette.text3)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
+                CopyFact(
+                    text: title,
+                    what: "the title",
+                    font: AuspexType.paneTitle,
+                    tint: AuspexPalette.text
+                )
+                identityFacts
             }
             Spacer(minLength: 6)
             if session.isStale, notice == nil { StaleTag() }
@@ -424,10 +443,33 @@ struct SessionHeaderView: View {
     private var assignment: some View {
         if let task = session.brief.firstPrompt, !task.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
-                Text("asked for")
-                    .font(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.text3.opacity(0.75))
-                    .tracking(AuspexType.labelTracking)
+                HStack(spacing: 6) {
+                    Text("asked for")
+                        .font(AuspexType.labelSmall)
+                        .foregroundStyle(AuspexPalette.text3.opacity(0.75))
+                        .tracking(AuspexType.labelTracking)
+                    Spacer(minLength: 0)
+                    // On hover, because the brief is a paragraph a person
+                    // reads rather than a control, and a button parked over it
+                    // all day would be a button in the way of the words. The
+                    // text stays selectable either way — this is the whole
+                    // paragraph in one click, including the half that is
+                    // folded away.
+                    if isOverTask {
+                        Button {
+                            CopyToast.copy(task, what: "the assignment")
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(AuspexPalette.text3)
+                                .frame(width: 18, height: 16)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.auspex)
+                        .help("Copy everything this session was asked for")
+                        .transition(.opacity)
+                    }
+                }
                 Text(task)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text2)
@@ -449,6 +491,13 @@ struct SessionHeaderView: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(AuspexPalette.bg1)
             )
+            .onHover { isOverTask = $0 }
+            .animation(.easeOut(duration: 0.12), value: isOverTask)
+            .contextMenu {
+                Button("Copy the assignment") {
+                    CopyToast.copy(task, what: "the assignment")
+                }
+            }
         }
     }
 
@@ -532,12 +581,58 @@ struct SessionHeaderView: View {
     }
 
     /// The full name, never an abbreviation, and the three identifiers a
-    /// person needs to find this session in their own terminal.
-    private var identityLine: String {
-        var parts = [session.key.harness.displayName, String(session.key.sessionID.prefix(8))]
-        if let pid = session.identity.pid { parts.append("pid \(pid)") }
-        if let model = session.identity.model { parts.append(model) }
-        return parts.joined(separator: " · ")
+    /// person needs to find this session in their own terminal — each of them
+    /// a click away from the clipboard.
+    ///
+    /// It was one `Text` with a selection enabled on it, which is the affordance
+    /// nobody found: selecting eight characters of an eleven-point monospaced
+    /// id with a mouse, inside a pane that scrolls, is a thing people give up
+    /// on. The facts a person came here to *take somewhere else* are the
+    /// facts that have to be one click each.
+    ///
+    /// The ladder drops the least useful part first when the pane is narrow.
+    /// Nothing dropped is lost: the full id, the directory and the resume
+    /// command are all in the ⋯ menu, which does not change width.
+    private var identityFacts: some View {
+        ViewThatFits(in: .horizontal) {
+            factLine(showsHarness: true, showsModel: true)
+            factLine(showsHarness: false, showsModel: true)
+            factLine(showsHarness: false, showsModel: false)
+        }
+    }
+
+    private func factLine(showsHarness: Bool, showsModel: Bool) -> some View {
+        HStack(spacing: 6) {
+            if showsHarness {
+                // Never an abbreviation, and not a copy target either: it is
+                // the one part of this line nobody needs on a clipboard.
+                Text(session.key.harness.displayName)
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(1)
+                separator
+            }
+            CopyFact(
+                text: String(session.key.sessionID.prefix(8)),
+                value: session.key.sessionID,
+                what: "the session ID"
+            )
+            if let pid = session.identity.pid {
+                separator
+                CopyFact(text: "pid \(pid)", value: "\(pid)", what: "the pid")
+            }
+            if showsModel, let model = session.identity.model {
+                separator
+                CopyFact(text: model, what: "the model")
+            }
+        }
+        .fixedSize()
+    }
+
+    private var separator: some View {
+        Text("·")
+            .font(AuspexType.monoSmall)
+            .foregroundStyle(AuspexPalette.text3.opacity(0.6))
     }
 
     private var title: String {
@@ -556,14 +651,49 @@ struct SessionHeaderView: View {
     private var chips: some View {
         FlowLayout(spacing: 6, lineSpacing: 6) {
             if let projectName {
-                FactChip(place(projectName))
+                // The one chip whose click is *not* a copy, and the one that
+                // looks like a place rather than like a value: binding the
+                // board to a project is what a person means by clicking the
+                // name of one.
+                ActionChip(
+                    title: projectName,
+                    help: onFocusProject == nil
+                        ? projectName
+                        : "Show only this project on the board",
+                    action: { onFocusProject?(projectKey ?? projectName) }
+                )
+                .disabled(onFocusProject == nil)
+            }
+            if let branch = session.identity.gitBranch, !branch.isEmpty {
+                // Its own chip rather than "project · branch" in one: a branch
+                // is the thing that gets pasted into a `git switch`, and half
+                // a chip cannot be copied.
+                CopyChip(title: branch, what: "the branch")
             }
             if let cwd = session.identity.cwd ?? session.identity.gitRoot {
-                FactChip(PathDisplay.abbreviate(cwd), isMono: true)
+                ActionChip(
+                    title: PathDisplay.abbreviate(cwd),
+                    isMono: true,
+                    help: "Click to copy the working directory · ⌥-click to reveal it in Finder\n"
+                        + cwd,
+                    action: { CopyToast.copy(cwd, what: "the working directory") },
+                    onOption: { SessionActions.reveal(cwd) }
+                ) {
+                    Button("Copy path") { CopyToast.copy(cwd, what: "the working directory") }
+                    Button("Reveal in Finder") { SessionActions.reveal(cwd) }
+                    Button("Open in \(SessionActions.terminal.name)") {
+                        SessionActions.openTerminal(at: cwd)
+                    }
+                }
             }
             if let worktreeTask = session.identity.worktreePath
                 .flatMap(ProjectResolver.agentWorktreeTask(in:)) {
-                FactChip(worktreeTask, tint: AuspexPalette.stateWriting, isMono: true)
+                CopyChip(
+                    title: worktreeTask,
+                    tint: AuspexPalette.stateWriting,
+                    isMono: true,
+                    what: "the worktree task"
+                )
             }
             if let parent {
                 Button { onSelect(parent.key) } label: {
@@ -580,9 +710,14 @@ struct SessionHeaderView: View {
                 )
             }
             if !children.isEmpty {
-                FactChip(
-                    children.count == 1 ? "↳ 1 child" : "↳ \(children.count) children",
-                    tint: AuspexPalette.stateDelegating
+                // A count that could not be opened was the loudest dead thing
+                // in this header: sixty-six children is exactly the number a
+                // person wants to look *into*, and the chip answered by
+                // sitting there.
+                ChildrenChip(
+                    children: children,
+                    onSelect: onSelect,
+                    onExpandInBoard: onExpandInBoard
                 )
             }
             // Which flavour of the harness this is — `auto review`, `cli`,
@@ -593,11 +728,6 @@ struct SessionHeaderView: View {
                 FactChip(variant, tint: AuspexPalette.text3)
             }
         }
-    }
-
-    private func place(_ project: String) -> String {
-        guard let branch = session.identity.gitBranch, !branch.isEmpty else { return project }
-        return "\(project) · \(branch)"
     }
 
     private func name(of session: SessionSnapshot) -> String {
@@ -692,5 +822,128 @@ struct PillButton: View {
         .buttonStyle(.auspex)
         .disabled(!isEnabled)
         .help(help)
+    }
+}
+
+/// The `↳ N children` chip, and what is behind it.
+///
+/// ## Why a popover and not a link
+///
+/// The number is the answer to "how much did this delegate", and the next
+/// question is always "to what". Sixty-six children is a family a person
+/// cannot hold in their head and cannot find on the wall — the board sorts by
+/// urgency, so a family is scattered across it — and the only two useful
+/// answers are *show me the list* and *put them together on the board*. This
+/// is both, in the place the number already is.
+///
+/// The list is capped. A popover is a thing you glance at; past two dozen rows
+/// it is a window, and the board's tree grouping is the right surface for that
+/// — which is what the link at the bottom switches to.
+private struct ChildrenChip: View {
+    let children: [SessionSnapshot]
+    let onSelect: (SessionKey) -> Void
+    var onExpandInBoard: (() -> Void)?
+
+    @State private var isOpen = false
+
+    /// How many rows the popover draws before it says how many more there are.
+    private static let limit = 24
+
+    var body: some View {
+        ActionChip(
+            title: children.count == 1 ? "↳ 1 child" : "↳ \(children.count) children",
+            tint: AuspexPalette.stateDelegating,
+            help: "What this session delegated to",
+            action: { isOpen.toggle() }
+        )
+        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+            list
+        }
+    }
+
+    private var list: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Text(children.count == 1 ? "1 child" : "\(children.count) children")
+                    .auspexLabel(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                Spacer(minLength: 8)
+                if let onExpandInBoard {
+                    Button("Expand all in board") {
+                        isOpen = false
+                        onExpandInBoard()
+                    }
+                    .buttonStyle(.link)
+                    .font(AuspexType.caption)
+                    .help("Divide the board along the delegation tree, so this family reads as one")
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(AuspexPalette.line).frame(height: 1)
+            }
+
+            BoardScroll {
+                LazyVStack(spacing: 0) {
+                    ForEach(children.prefix(Self.limit), id: \.key) { child in
+                        Button {
+                            isOpen = false
+                            onSelect(child.key)
+                        } label: {
+                            ChildRow(session: child)
+                        }
+                        .buttonStyle(.auspex)
+                        Divider().overlay(AuspexPalette.line)
+                    }
+                    if children.count > Self.limit {
+                        Text("and \(children.count - Self.limit) more")
+                            .font(AuspexType.caption)
+                            .foregroundStyle(AuspexPalette.text3)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+        }
+        .frame(width: 380)
+        .background(AuspexPalette.canvas)
+    }
+}
+
+/// One delegated session, as a row in the children popover.
+private struct ChildRow: View {
+    let session: SessionSnapshot
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HarnessBadge(harness: session.key.harness, size: 18, isMuted: session.state.isEnded)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(AuspexType.body)
+                    .foregroundStyle(AuspexPalette.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(RelativeTimeText.since(session.lastEventAt))
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            StatePill(state: session.state, isStale: session.isStale)
+                .fixedSize()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    private var title: String {
+        if let title = session.identity.title, !title.isEmpty { return title }
+        if let task = session.brief.firstPrompt, !task.isEmpty { return task }
+        return String(session.key.sessionID.prefix(10))
     }
 }

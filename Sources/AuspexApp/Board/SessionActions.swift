@@ -36,7 +36,7 @@ struct SessionActionsMenu: View {
                 }
                 .help("Copies the command and opens \(SessionActions.terminal.name) running it")
                 Button("Copy resume command") {
-                    SessionActions.copy(command)
+                    CopyToast.copy(command, what: "the resume command")
                 }
             case let .unavailable(reason):
                 Button("Resume in \(SessionActions.terminal.name)") {}
@@ -48,11 +48,44 @@ struct SessionActionsMenu: View {
 
             Divider()
 
+            // The facts, as things a person can take away with them.
+            //
+            // Every one of these is also one click on the trace header, and
+            // both are here on purpose: the header is where somebody looking
+            // at a session finds them, and this menu is where somebody looking
+            // at a *card* does — a card has no room to make four identifiers
+            // clickable, and a right-click is what a person tries next.
+            Button("Copy session ID") {
+                CopyToast.copy(identity.key.sessionID, what: "the session ID")
+            }
+            Button("Copy working directory") {
+                if let directory { CopyToast.copy(directory, what: "the working directory") }
+            }
+            .disabled(directory == nil)
+            .help(directory == nil ? "This session's store records no directory" : "")
+
+            Divider()
+
             Button("Reveal working directory in Finder") {
                 if let directory { SessionActions.reveal(directory) }
             }
             .disabled(directory == nil)
             .help(directory == nil ? "This session's store records no directory" : "")
+
+            // The transcript itself: the file Auspex is reading, which is the
+            // one thing a person cannot find from anywhere else in the window
+            // and the first thing they want when they doubt what it says.
+            Button("Reveal transcript in Finder") {
+                SessionActions.reveal(identity.sourcePath)
+            }
+            .help(identity.sourcePath)
+
+            if let directory {
+                Button("Open in \(SessionActions.terminal.name)") {
+                    SessionActions.openTerminal(at: directory)
+                }
+                .help("A window on that directory. Nothing is run in it.")
+            }
 
             if let editor = SessionActions.editor, let directory {
                 Button("Open in \(editor.name)") {
@@ -162,9 +195,34 @@ enum SessionActions {
         pasteboard.setString(value, forType: .string)
     }
 
-    /// Selects a directory in Finder.
+    /// Selects a directory — or a file — in Finder.
     static func reveal(_ path: String) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    /// Opens a terminal window on a directory, and runs nothing in it.
+    ///
+    /// The difference from ``resume(shellLine:directory:)`` is the whole
+    /// reason it exists: this starts no agent and spends no tokens. It is the
+    /// answer to "I want to be *in* that directory", which is what a person
+    /// means when they right-click a working directory.
+    static func openTerminal(at path: String) {
+        let terminal = TerminalChoice.shared.current
+        if let url = SessionHandoff.terminalURL(for: terminal, directory: path) {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        // The terminals with no URL scheme open a folder the way any other
+        // application does. Nothing is typed into the window and nothing runs
+        // in it, which is the point.
+        guard let application = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: terminal.bundleIdentifier
+        ) else { return }
+        NSWorkspace.shared.open(
+            [URL(fileURLWithPath: path)],
+            withApplicationAt: application,
+            configuration: NSWorkspace.OpenConfiguration()
+        )
     }
 
     /// Opens a directory in the detected editor.
