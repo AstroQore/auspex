@@ -29,6 +29,17 @@ BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 EXEC_PATH="$BIN_DIR/Auspex"
 APP_DIR="$ROOT/.build/Auspex.app"
 ENTITLEMENTS="$ROOT/Resources/Auspex.entitlements"
+SPARKLE_FRAMEWORK="$APP_DIR/Contents/Frameworks/Sparkle.framework"
+# Sparkle ships as a binary xcframework, so SwiftPM leaves it in the artifacts
+# directory rather than building it. The path carries the version, which is why
+# it is searched for rather than written down twice.
+SPARKLE_SOURCE="$(
+    find "$ROOT/.build/artifacts/sparkle" \
+        -type d \
+        -path '*/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework' \
+        -print \
+        -quit
+)"
 
 if [[ ! -x "$EXEC_PATH" ]]; then
     echo "Executable not found at $EXEC_PATH" >&2
@@ -38,14 +49,25 @@ if [[ ! -f "$ENTITLEMENTS" ]]; then
     echo "Entitlements file not found at $ENTITLEMENTS" >&2
     exit 1
 fi
+if [[ -z "$SPARKLE_SOURCE" || ! -x "$SPARKLE_SOURCE/Versions/B/Sparkle" ]]; then
+    echo "Sparkle framework artifact not found after SwiftPM build." >&2
+    echo "Run 'swift package resolve' and try again." >&2
+    exit 1
+fi
 
 echo "==> packaging $APP_DIR"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
+mkdir -p "$APP_DIR/Contents/Frameworks"
 
 cp "$EXEC_PATH" "$APP_DIR/Contents/MacOS/Auspex"
 cp "$ROOT/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+# `ditto` rather than `cp -R`: a framework is a bundle of symlinks
+# (`Versions/Current`, the top-level `Sparkle`), and a copy that turned them
+# into duplicate files would be a bundle codesign refuses to seal.
+echo "==> bundling Sparkle.framework"
+ditto "$SPARKLE_SOURCE" "$SPARKLE_FRAMEWORK"
 
 # A signed macOS app may only contain its conventional Contents tree, so any
 # SwiftPM resource bundle has to be copied under Contents/Resources rather
@@ -86,6 +108,30 @@ for art in Tiles MenuBar Icons UI; do
 done
 
 printf '%s' "APPL????" > "$APP_DIR/Contents/PkgInfo"
+
+# Nested code is sealed inside-out: every helper Sparkle carries has to be
+# signed before the framework, and the framework before the app, or the app's
+# seal covers a signature that is about to change. Sparkle's own Developer ID
+# signature does not survive being copied here anyway — the app around it is
+# signed with a different identity, and `--deep --strict` checks each one.
+SPARKLE_VERSION_DIR="$SPARKLE_FRAMEWORK/Versions/B"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+    SPARKLE_SIGN_ARGS=(--force --sign - --options runtime)
+else
+    SPARKLE_SIGN_ARGS=(--force --sign "$SIGN_IDENTITY" --options runtime --timestamp)
+fi
+
+echo "==> signing Sparkle helper components"
+codesign "${SPARKLE_SIGN_ARGS[@]}" "$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc"
+# The downloader is the one piece of Sparkle that is itself sandboxed, so its
+# entitlements are kept rather than replaced with ours.
+codesign \
+    "${SPARKLE_SIGN_ARGS[@]}" \
+    --preserve-metadata=entitlements \
+    "$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc"
+codesign "${SPARKLE_SIGN_ARGS[@]}" "$SPARKLE_VERSION_DIR/Autoupdate"
+codesign "${SPARKLE_SIGN_ARGS[@]}" "$SPARKLE_VERSION_DIR/Updater.app"
+codesign "${SPARKLE_SIGN_ARGS[@]}" "$SPARKLE_FRAMEWORK"
 
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
     echo "==> ad-hoc codesign with entitlements"

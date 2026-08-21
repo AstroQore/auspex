@@ -176,6 +176,13 @@ public final class AppEnvironment {
         AuspexVersion.displayString
     }
 
+    /// Sparkle, and what the surfaces say about it.
+    ///
+    /// Not stored: the updater is process-wide, and the Settings window is a
+    /// scene of its own that inherits nothing from this environment, so the
+    /// pane has to be able to reach the same one by name.
+    var updates: AppUpdateController { .shared }
+
     // MARK: Lifecycle
 
     /// Brings the pipeline up. Idempotent; the window's `task` calls it.
@@ -196,6 +203,12 @@ public final class AppEnvironment {
             )
         }
         catalog.load()
+
+        // After the load, so the first check already goes to the stream the
+        // person chose rather than to stable and then to theirs. A demo asks
+        // for nothing: it promises to read nothing and write nothing, and a
+        // background check writes a timestamp into the app's defaults.
+        updates.activate(channel: catalog.updateChannel, enabled: mode == .live)
 
         guard let store else {
             board.record(

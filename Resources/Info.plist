@@ -35,5 +35,23 @@
 	<string>Copyright © 2026 AstroQore. Licensed under AGPL-3.0.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/AstroQore/auspex/updates/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>zs9VIopKBgtWkMf5APihKchZYDNy3O9dpfpHdZAae14=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUShowReleaseNotes</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

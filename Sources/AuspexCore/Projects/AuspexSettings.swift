@@ -80,6 +80,12 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// showing somebody's desktop through it is noise.
     public var translucentSidebar: Bool
 
+    /// Which release stream in-app updates come from.
+    ///
+    /// Here rather than in `@AppStorage` because it decides which binary is
+    /// allowed to replace this one. See ``UpdateChannel``.
+    public var updateChannel: UpdateChannel
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
@@ -89,7 +95,8 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         sessionWindow: SessionWindow = .standard,
         notifiesOnDone: Bool = true,
         appearance: AppearanceMode = .standard,
-        translucentSidebar: Bool = true
+        translucentSidebar: Bool = true,
+        updateChannel: UpdateChannel = .standard
     ) {
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
@@ -100,11 +107,13 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         self.notifiesOnDone = notifiesOnDone
         self.appearance = appearance
         self.translucentSidebar = translucentSidebar
+        self.updateChannel = updateChannel
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
         case sessionWindow, notifiesOnDone, appearance, translucentSidebar
+        case updateChannel
     }
 
     public init(from decoder: any Decoder) throws {
@@ -145,12 +154,18 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
             ?? .standard
         translucentSidebar = (try? container.decode(Bool.self, forKey: .translucentSidebar))
             ?? true
+        // Absent means stable, which is also what an unrecognised value means:
+        // the safe end of this setting is the one that installs less, so a
+        // hand-edited typo must not silently opt somebody into preview builds.
+        updateChannel = (try? container.decode(UpdateChannel.self, forKey: .updateChannel))
+            ?? .standard
     }
 
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
             && crewLiveliness == nil && sessionWindow == .standard && notifiesOnDone
             && appearance == .standard && translucentSidebar
+            && updateChannel == .standard
     }
 }
 

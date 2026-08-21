@@ -270,6 +270,24 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - Updates
+
+    /// Which release stream in-app updates come from.
+    var updateChannel: UpdateChannel { settings.updateChannel }
+
+    /// Sets it, and remembers it.
+    ///
+    /// Nothing is downloaded here. `AppUpdateController` watches this and asks
+    /// Sparkle to restart its check cycle, so switching to the preview stream
+    /// finds a waiting preview build within moments rather than at tomorrow's
+    /// scheduled check — a channel picker that appears to do nothing is a
+    /// channel picker people press twice.
+    func setUpdateChannel(_ channel: UpdateChannel) {
+        guard settings.updateChannel != channel else { return }
+        settings.updateChannel = channel
+        persist()
+    }
+
     // MARK: - Importing
 
     /// Reads every harness registry, off the main actor.

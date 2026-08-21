@@ -50,6 +50,14 @@ struct AuspexApp: App {
         // inside the mode it opens can only ever close it. A menu item is
         // also the one place on macOS where a shortcut is discoverable.
         .commands {
+            // Where every Mac app keeps it: directly under "About Auspex", in
+            // the application menu. A person looking for the version and a
+            // person looking for the update are the same person, and this is
+            // the first place they look.
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates\u{2026}") { environment.updates.checkForUpdates() }
+                    .disabled(!environment.updates.canCheckForUpdates)
+            }
             CommandGroup(after: .toolbar) {
                 Button(trajectoryCommandTitle) {
                     if environment.board.viewMode == .trajectory {
@@ -258,6 +266,17 @@ struct MenuBarContent: View {
                 MenuBarCommandLabel(title: "Settings\u{2026}", shortcut: "\u{2318},")
             }
             .buttonStyle(.auspex)
+            // No shortcut, so the right-hand column carries the version
+            // instead. The two questions a person has about an update — what
+            // am I on, is there a newer one — are then answered by one row.
+            Button { environment.updates.checkForUpdates() } label: {
+                MenuBarCommandLabel(
+                    title: "Check for Updates\u{2026}",
+                    shortcut: environment.updates.versionDescription
+                )
+            }
+            .buttonStyle(.auspex)
+            .disabled(!environment.updates.canCheckForUpdates)
             MenuBarCommand(title: "Quit", key: "q", modifiers: .command) {
                 NSApplication.shared.terminate(nil)
             }
