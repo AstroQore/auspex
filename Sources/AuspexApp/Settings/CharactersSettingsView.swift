@@ -121,6 +121,7 @@ struct AuspexSettingsView: View {
         case .scene: SceneSettingsView(catalog: catalog)
         case .crew: CrewSettingsView(catalog: catalog)
         case .ignore: IgnoreSettingsView(catalog: catalog)
+        case .updates: UpdatesSettingsView(catalog: catalog)
         }
     }
 }

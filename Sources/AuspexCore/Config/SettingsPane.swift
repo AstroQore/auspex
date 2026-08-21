@@ -22,6 +22,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
     case scene
     case crew
     case ignore
+    case updates
 
     public var id: String { rawValue }
 
@@ -35,6 +36,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
         case .scene: "Scene"
         case .crew: "Crew"
         case .ignore: "Ignore"
+        case .updates: "Updates"
         }
     }
 
@@ -55,6 +57,8 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
             "How often the wall of faces moves."
         case .ignore:
             "Everything the board is not showing, and why."
+        case .updates:
+            "Which channel this copy follows, and when it last asked."
         }
     }
 
@@ -67,6 +71,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
         case .scene: "map"
         case .crew: "face.smiling"
         case .ignore: "eye.slash"
+        case .updates: "arrow.down.circle"
         }
     }
 
