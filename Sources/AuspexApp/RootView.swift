@@ -34,11 +34,21 @@ struct RootView: View {
     /// notification it will ever route.
     @State private var notifications = AgentNotificationDelegate()
 
+    /// Which columns are on screen.
+    ///
+    /// Bound rather than left to the split view, which is the whole of the fix
+    /// for a window that could come up with no sidebar and no way to ask for
+    /// one back: the split view persists its own column state, so one stray
+    /// ⌘⌥S used to be permanent. ``SidebarVisibility`` owns the rule — every
+    /// launch opens with all three, and a state that hides the board is
+    /// corrected the moment it is reported.
+    @State private var columns = SidebarVisibility.restored(from: nil)
+
     var body: some View {
         @Bindable var model = environment.board
         @Bindable var environment = environment
 
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: splitViewColumns) {
             SidebarView(
                 section: $section,
                 model: model,
@@ -79,6 +89,23 @@ struct RootView: View {
         ) { _ in
             Task { await environment.shutdown() }
         }
+    }
+
+    /// The split view's binding, in the app's own vocabulary.
+    ///
+    /// A computed binding rather than `$columns` so that the correction is
+    /// applied where the split view *writes*: a state that would hide the
+    /// board never reaches ``columns`` at all, rather than being fixed up a
+    /// frame later, and the window cannot flicker through a picture it is
+    /// about to leave.
+    private var splitViewColumns: Binding<NavigationSplitViewVisibility> {
+        Binding(
+            get: { columns.splitViewVisibility },
+            set: { visibility in
+                let reported = SidebarColumns(visibility)
+                columns = SidebarVisibility.correction(for: reported) ?? reported
+            }
+        )
     }
 
     /// Points the notification centre's two actions at the board.
@@ -173,6 +200,33 @@ struct RootView: View {
             // separate screen that would show the same cards twice.
             if new == .allSessions { model.showsAllEnded = true }
             if new == .live { model.showsAllEnded = false }
+        }
+    }
+}
+
+extension SidebarColumns {
+    /// SwiftUI's name for the same three states.
+    var splitViewVisibility: NavigationSplitViewVisibility {
+        switch self {
+        case .all: .all
+        case .boardAndTrace: .doubleColumn
+        case .traceOnly: .detailOnly
+        }
+    }
+
+    /// One of SwiftUI's states, read back.
+    ///
+    /// `.automatic` — what a split view reports before it has decided — is
+    /// read as everything, because that is what a three-column window resolves
+    /// it to and because guessing "collapsed" from "undecided" is exactly the
+    /// mistake this whole type exists to stop.
+    init(_ visibility: NavigationSplitViewVisibility) {
+        if visibility == .detailOnly {
+            self = .traceOnly
+        } else if visibility == .doubleColumn {
+            self = .boardAndTrace
+        } else {
+            self = .all
         }
     }
 }
@@ -283,7 +337,11 @@ struct SidebarView: View {
         // middle, so a long path keeps its ends — and 480 is where somebody
         // who reads the tree rather than the wall can see a whole branch name.
         .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 480)
-        .toolbar(removing: .sidebarToggle)
+        // The system toggle stays. It is plain chrome in a window whose every
+        // other pixel is drawn by hand, and it is the only affordance macOS
+        // offers for "the sidebar is gone, bring it back" — which is worth
+        // more than a tidy title bar. Removing it is what turned one stray
+        // ⌘⌥S into a window a person could not navigate.
     }
 
     /// The rule over the tree, with the way into the Projects page on it.
