@@ -31,7 +31,7 @@ enum CrewSnapshotRenderer {
         avatarTime: TimeInterval = 1.4,
         columns: Int = 5,
         scale: CGFloat = 2,
-        appearance: NSAppearance = NSAppearance(named: .darkAqua) ?? NSAppearance()
+        appearance: AppearanceMode = .dark
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
         // policy keeps it out of the Dock and off the menu bar while it does.
@@ -65,7 +65,9 @@ enum CrewSnapshotRenderer {
             )
         }
 
-        guard let image = wallImage(cards: cards, columns: columns, scale: scale) else {
+        guard let image = wallImage(
+            cards: cards, columns: columns, scale: scale, appearance: appearance
+        ) else {
             throw RenderError.renderFailed
         }
         try writePNG(image, to: url)
@@ -76,8 +78,17 @@ enum CrewSnapshotRenderer {
     /// filmstrip of a second, simpler renderer would prove nothing about this
     /// one.
     @MainActor
-    static func wallImage(cards: [CrewSnapshotCard], columns: Int, scale: CGFloat) -> CGImage? {
-        let renderer = ImageRenderer(content: CrewSnapshotSheet(cards: cards, columns: columns))
+    static func wallImage(
+        cards: [CrewSnapshotCard],
+        columns: Int,
+        scale: CGFloat,
+        appearance: AppearanceMode = .dark
+    ) -> CGImage? {
+        let renderer = ImageRenderer(
+            content: CrewSnapshotSheet(
+                cards: cards, columns: columns, appearance: appearance
+            )
+        )
         renderer.scale = scale
         renderer.isOpaque = true
         return renderer.cgImage
@@ -128,6 +139,8 @@ struct CrewSnapshotCard: Identifiable {
 struct CrewSnapshotSheet: View {
     let cards: [CrewSnapshotCard]
     let columns: Int
+    /// Which column of the palette to draw with. See `WindowSnapshot`.
+    var appearance: AppearanceMode = .dark
 
     var body: some View {
         let grid = Array(
@@ -152,7 +165,7 @@ struct CrewSnapshotSheet: View {
         }
         .padding(24)
         .frame(width: CGFloat(columns) * 216 + 32)
+        .environment(\.colorScheme, appearance == .light ? .light : .dark)
         .background(AuspexPalette.canvas)
-        .environment(\.colorScheme, .dark)
     }
 }

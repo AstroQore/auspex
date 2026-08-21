@@ -658,12 +658,13 @@ enum SceneSnapshotRenderer {
         focusing project: String? = nil,
         zones: SceneZoneOptions = .all,
         attention: [SessionKey: AttentionState] = [:],
-        appearance: NSAppearance = NSAppearance(named: .darkAqua) ?? NSAppearance()
+        appearance: AppearanceMode = .dark
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
         // policy keeps it out of the Dock and off the menu bar while it does.
         NSApplication.shared.setActivationPolicy(.prohibited)
 
+        let appearance = appearance.nsAppearance
         let theme = SceneTheme.resolved(for: appearance)
         let scene = OfficeScene(theme: theme)
         // The board is applied before the view exists, because the view has to

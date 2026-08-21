@@ -28,7 +28,8 @@ enum TrajectorySnapshotRenderer {
         to url: URL,
         warmup: TimeInterval = 20,
         size: CGSize = defaultSize,
-        scale: CGFloat = 2
+        scale: CGFloat = 2,
+        appearance: AppearanceMode = .dark
     ) throws -> String {
         NSApplication.shared.setActivationPolicy(.prohibited)
 
@@ -55,7 +56,9 @@ enum TrajectorySnapshotRenderer {
         pump(for: 0.4)
 
         let renderer = ImageRenderer(
-            content: TrajectorySnapshot(environment: environment, size: size)
+            content: TrajectorySnapshot(
+                environment: environment, size: size, appearance: appearance
+            )
         )
         renderer.scale = scale
         let image = renderer.nsImage
@@ -166,6 +169,8 @@ enum TrajectorySnapshotRenderer {
 private struct TrajectorySnapshot: View {
     let environment: AppEnvironment
     let size: CGSize
+    /// Which column of the palette to draw with. See `WindowSnapshot`.
+    var appearance: AppearanceMode = .dark
 
     @State private var clock = BoardClock()
 
@@ -190,11 +195,12 @@ private struct TrajectorySnapshot: View {
                 .frame(width: 380)
         }
         .frame(width: size.width, height: size.height)
-        .background(AuspexPalette.canvas)
         .environment(clock)
         .environment(environment)
         .environment(\.isSnapshotRender, true)
-        .preferredColorScheme(.dark)
+        .environment(\.colorScheme, appearance == .light ? .light : .dark)
+        .background(AuspexPalette.canvas)
+        .tint(AuspexPalette.accent)
     }
 
     private var divider: some View {

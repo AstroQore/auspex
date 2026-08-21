@@ -50,7 +50,8 @@ enum WindowSnapshotRenderer {
         scale: CGFloat = 2,
         focus: String? = nil,
         ignore: [IgnoreRule.Kind] = [],
-        groupBy: BoardGroupBy? = nil
+        groupBy: BoardGroupBy? = nil,
+        appearance: AppearanceMode = .dark
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
         // policy keeps it out of the Dock and off the menu bar while it does.
@@ -78,7 +79,12 @@ enum WindowSnapshotRenderer {
         }
 
         let renderer = ImageRenderer(
-            content: WindowSnapshot(environment: environment, size: size, section: section)
+            content: WindowSnapshot(
+                environment: environment,
+                size: size,
+                section: section,
+                appearance: appearance
+            )
         )
         renderer.scale = scale
         guard let image = renderer.nsImage,
@@ -108,6 +114,13 @@ private struct WindowSnapshot: View {
     let environment: AppEnvironment
     let size: CGSize
     var section: BoardSection = .live
+    /// Which column of the palette to draw with.
+    ///
+    /// `system` is deliberately not offered by the command line — a screenshot
+    /// whose colours depend on what the machine's appearance happened to be
+    /// when the build ran is not a reproducible artefact — but the type is the
+    /// app's own so the two cannot drift.
+    var appearance: AppearanceMode = .dark
 
     @State private var clock = BoardClock()
 
@@ -150,11 +163,17 @@ private struct WindowSnapshot: View {
             }
         }
         .frame(width: size.width, height: size.height)
-        .background(AuspexPalette.canvas)
         .environment(clock)
         .environment(environment)
         .environment(\.isSnapshotRender, true)
-        .preferredColorScheme(.dark)
+        // The scheme is set on the *environment* rather than preferred: there
+        // is no window here for a preference to reach, and `ImageRenderer`
+        // resolves a dynamic colour against the environment it is handed.
+        // The background comes after it, so the ground is the token this
+        // scheme resolves to rather than the one the process launched in.
+        .environment(\.colorScheme, appearance == .light ? .light : .dark)
+        .background(AuspexPalette.canvas)
+        .tint(AuspexPalette.accent)
     }
 
     private var divider: some View {

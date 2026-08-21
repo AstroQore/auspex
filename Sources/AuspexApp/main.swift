@@ -24,6 +24,34 @@ if HookIngress.isRequested(arguments: CommandLine.arguments) {
     exit(HookIngress.run())
 }
 
+/// `appearance=light|dark` among a subcommand's trailing arguments.
+///
+/// Keyword rather than positional because it is absent from almost every
+/// invocation, and it has to be reachable on four different renderers whose
+/// positional arguments are all different. Absent means dark, which is what
+/// every screenshot in the repository was before there was a light column and
+/// is what `docs/screenshots/*.png` still are; `*-light.png` is the same
+/// command with this on the end.
+///
+/// `system` is deliberately not accepted: a picture whose colours depend on
+/// what the machine's appearance happened to be when the build ran is not a
+/// reproducible artefact, and the whole reason these renderers exist rather
+/// than a capture script is reproducibility.
+func renderAppearance<S: Sequence<String>>(in arguments: S) -> AppearanceMode? {
+    guard let argument = arguments.first(where: { $0.hasPrefix("appearance=") })
+    else { return .dark }
+    return AppearanceMode.rendered(from: String(argument.dropFirst(11)))
+}
+
+/// Complains about a bad `appearance=` and exits, so the four call sites do
+/// not each invent their own wording.
+func exitOnBadAppearance() -> Never {
+    FileHandle.standardError.write(
+        Data("auspex: appearance= takes `light` or `dark`.\n".utf8)
+    )
+    exit(2)
+}
+
 // Renders `docs/screenshots/scene.png` from the demo board, offscreen. Keeping
 // it in the binary rather than in a capture script is what makes the screenshot
 // in the README reproducible and safe to publish: it draws fabricated sessions
@@ -42,7 +70,10 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
     // than only in Settings is what makes "the annexes changed nothing about
     // the office" a picture two commands apart rather than a claim.
     let officeOnly = rest.contains("--office-only")
-    let positional = rest.dropFirst().filter { !$0.hasPrefix("-") }
+    guard let appearance = renderAppearance(in: rest) else { exitOnBadAppearance() }
+    let positional = rest.dropFirst().filter {
+        !$0.hasPrefix("-") && !$0.contains("=")
+    }
     let elapsed = positional.first.flatMap(TimeInterval.init) ?? 16
     let focus = positional.dropFirst().first
     do {
@@ -61,7 +92,8 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
             to: URL(fileURLWithPath: path),
             focusing: project,
             zones: zones,
-            attention: attention
+            attention: attention,
+            appearance: appearance
         )
         // Report what was drawn. Choosing *when* in the demo loop to render is
         // the whole job of picking a good screenshot, and this tally is how it
@@ -98,14 +130,17 @@ if let flag = arguments.firstIndex(of: "--render-crew") {
         )
         exit(2)
     }
-    let elapsed = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 16
-    let avatarTime = rest.dropFirst(2).first.flatMap(TimeInterval.init) ?? 1.4
+    guard let appearance = renderAppearance(in: rest) else { exitOnBadAppearance() }
+    let numbers = rest.dropFirst().filter { !$0.contains("=") }
+    let elapsed = numbers.first.flatMap(TimeInterval.init) ?? 16
+    let avatarTime = numbers.dropFirst().first.flatMap(TimeInterval.init) ?? 1.4
     do {
         let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
         try CrewSnapshotRenderer.render(
             board: board,
             to: URL(fileURLWithPath: path),
-            avatarTime: avatarTime
+            avatarTime: avatarTime,
+            appearance: appearance
         )
         let counts = board.counts
         let summary = "auspex: \(board.sessions.count) avatars at t+\(Int(elapsed))s, "
@@ -226,12 +261,14 @@ if let flag = arguments.firstIndex(of: "--render-board") {
         )
         exit(2)
     }
-    let warmup = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 20
+    guard let appearance = renderAppearance(in: rest) else { exitOnBadAppearance() }
+    let positional = rest.dropFirst().filter { !$0.contains("=") }
+    let warmup = positional.first.flatMap(TimeInterval.init) ?? 20
     // A taller frame is how the parts of the board below the artboard's fold —
     // the collapsed `Ended` section, most of all — get looked at.
-    let height = rest.dropFirst(2).first.flatMap(Double.init)
+    let height = positional.dropFirst().first.flatMap(Double.init)
         ?? WindowSnapshotRenderer.defaultSize.height
-    let section = rest.dropFirst(3).first
+    let section = positional.dropFirst(2).first
         .flatMap { BoardSection(rawValue: String($0)) } ?? .live
     // The user layer, as `focus=<project key>` and `ignore=<kind>:<value>`
     // among the trailing arguments. Keyword rather than positional because
@@ -258,7 +295,8 @@ if let flag = arguments.firstIndex(of: "--render-board") {
             section: section,
             focus: focus,
             ignore: ignore,
-            groupBy: groupBy
+            groupBy: groupBy,
+            appearance: appearance
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
         exit(0)
@@ -281,16 +319,19 @@ if let flag = arguments.firstIndex(of: "--render-trajectory") {
         )
         exit(2)
     }
-    let warmup = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 20
-    let height = rest.dropFirst(2).first.flatMap(Double.init)
+    guard let appearance = renderAppearance(in: rest) else { exitOnBadAppearance() }
+    let positional = rest.dropFirst().filter { !$0.contains("=") }
+    let warmup = positional.first.flatMap(TimeInterval.init) ?? 20
+    let height = positional.dropFirst().first.flatMap(Double.init)
         ?? TrajectorySnapshotRenderer.defaultSize.height
-    let width = rest.dropFirst(3).first.flatMap(Double.init)
+    let width = positional.dropFirst(2).first.flatMap(Double.init)
         ?? TrajectorySnapshotRenderer.defaultSize.width
     do {
         let summary = try TrajectorySnapshotRenderer.render(
             to: URL(fileURLWithPath: path),
             warmup: warmup,
-            size: CGSize(width: width, height: height)
+            size: CGSize(width: width, height: height),
+            appearance: appearance
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path) — \(summary)\n".utf8))
         exit(0)
@@ -316,7 +357,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         board. `AUSPEX_VIEW` does the same. What the
                         performance budget for the scene and the crew is
                         measured with.
-          --render-scene <path> [seconds] [project]
+          --render-scene <path> [seconds] [project] [appearance=…]
                         Render the scene view's office to a PNG, offscreen,
                         from the demo board at `seconds` into its loop
                         (default 16). Used to build the README screenshot.
@@ -324,7 +365,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         is bound to that room instead of framing the whole
                         map, which is what the scene does when a project is
                         picked in the sidebar.
-          --render-crew <path> [seconds] [animation seconds]
+          --render-crew <path> [seconds] [animation seconds] [appearance=…]
                         Render the crew view's avatars to a PNG, offscreen,
                         from the demo board at `seconds` into its loop
                         (default 16), with every avatar frozen `animation
@@ -347,6 +388,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
           --render-board <path> [seconds] [height] [section]
                         [focus=<project>] [ignore=<kind>:<value>]
                         [group=<none|harness|project|tree>]
+                        [appearance=<light|dark>]
                         Render the whole window — sidebar, board, trace — to a
                         PNG, offscreen, after letting the demo run for
                         `seconds` (default 20), at `height` points (default
@@ -360,12 +402,18 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         only way to reach the tree grouping headlessly.
                         Reads no harness store and writes nothing.
           --render-trajectory <path> [seconds] [height] [width]
+                        [appearance=<light|dark>]
                         Render one session's Trajectory — the waterfall, the
                         step list, and the inspector — to a PNG, offscreen,
                         after letting the demo run for `seconds` (default 20),
                         at `height` x `width` points (default 980 x 1600). The
                         session shown is whichever demo session has the most to
                         show. Reads no harness store.
+                        `appearance=` on any of the four renderers picks which
+                        column of the palette to draw with — `dark` (the
+                        default) or `light`. Not `system`: a picture whose
+                        colours depend on what the machine was set to when the
+                        build ran is not a reproducible artefact.
           --mcp-stdio   Serve the running Auspex's task board over MCP on
                         stdio. This is the command an MCP client is
                         configured with; it connects to ~/.auspex/mcp.sock
