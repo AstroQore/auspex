@@ -34,18 +34,7 @@ struct BoardHeader: View {
                 // squeezed to forty points is a picker nobody can hit; a chip
                 // that is not on screen is a number they can still read off
                 // the sidebar and the cards.
-                // Written out rather than looped: `ViewThatFits` picks between
-                // its *static* children, and a `ForEach` inside it is one
-                // child whose contents it cannot choose among.
-                ViewThatFits(in: .horizontal) {
-                    counts(limit: nil, showsMarkAll: true)
-                    counts(limit: nil, showsMarkAll: false)
-                    counts(limit: 4, showsMarkAll: false)
-                    counts(limit: 3, showsMarkAll: false)
-                    counts(limit: 2, showsMarkAll: false)
-                    counts(limit: 1, showsMarkAll: false)
-                    Color.clear.frame(width: 0, height: 0)
-                }
+                counts(limit: fit.chips, showsMarkAll: fit.showsMarkAll)
                 Spacer(minLength: 8)
                 if model.ignoredCount > 0 {
                     ignoredToggle.fixedSize()
@@ -61,6 +50,7 @@ struct BoardHeader: View {
                     "Read the same board as a wall of cards, as a room, "
                         + "or one session as its trajectory"
                 )
+                TaskFilterMenu(model: model).fixedSize()
                 groupMenu.fixedSize()
                 windowMenu.fixedSize()
                 searchField
@@ -81,16 +71,66 @@ struct BoardHeader: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(AuspexPalette.line).frame(height: 1)
         }
+        // One measurement, read by one rule — see ``fit``. A `GeometryReader`
+        // in the background proposes nothing to the bar and lays nothing out;
+        // it reports the width the bar was given.
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { width = proxy.size.width }
+                    .onChange(of: proxy.size.width) { _, new in width = new }
+            }
+        )
+    }
+
+    /// The bar's own width, measured once and re-measured when it changes.
+    @State private var width: CGFloat = 0
+
+    /// How many chips fit, and whether the clear-everything button fits beside
+    /// them.
+    ///
+    /// ## Why this is arithmetic and not `ViewThatFits`
+    ///
+    /// `ViewThatFits` picks between its children by *laying each of them out*
+    /// until one fits. Six candidates over five chips meant the header
+    /// measured up to thirty chips on every pass, and a `sample` of the window
+    /// at `--demo-scale 12` had `TextChildQuery → ResolvedTextFilter` under it
+    /// as one of the two largest things on the main thread — for a bar whose
+    /// contents change when a number does.
+    ///
+    /// The widths below are the resting widths of controls this file draws, so
+    /// they are as true as a measurement and cost nothing. Being a few points
+    /// out costs one chip at one window width, which is the same thing the
+    /// ladder did.
+    private var fit: (chips: Int?, showsMarkAll: Bool) {
+        guard width > 0 else { return (nil, true) }
+        // Everything to the right of the chips, none of which may be squeezed.
+        var reserved: CGFloat = 40  // the bar's own padding
+        reserved += 150  // the heading and its count
+        reserved += 12 * 5  // the gaps between the controls
+        reserved += 196  // the mode picker
+        reserved += 46  // the filter menu
+        reserved += 108  // the grouping menu
+        reserved += 92  // the window menu
+        reserved += 150  // the search field
+        if model.ignoredCount > 0 { reserved += 96 }
+        let free = width - reserved
+        guard free > 0 else { return (0, false) }
+        // A chip is a mark, two or three digits, and a word: 86 points covers
+        // "in review", which is the widest of the four.
+        let fits = Int(free / 86)
+        let wanted = model.summary.chips.count
+        if fits >= wanted, free - CGFloat(wanted) * 86 >= 60 { return (nil, true) }
+        return (min(fits, wanted), false)
     }
 
     // MARK: Pieces
 
     /// The chips, and the clear-everything button beside them.
     ///
-    /// One `ViewThatFits` group rather than two, so the ladder can spend the
-    /// button's width on a chip before it starts dropping chips. A number a
-    /// person came to read outranks a control they can also reach from the
-    /// View menu (⇧⌘K), which is where it goes when it will not fit.
+    /// One group rather than two, so the width can be spent on a chip before
+    /// the button. A number a person came to read outranks a control they can
+    /// also reach from the View menu (⇧⌘K).
     private func counts(limit: Int?, showsMarkAll: Bool) -> some View {
         HStack(spacing: 8) {
             SummaryChips(
@@ -247,6 +287,21 @@ struct BoardHeader: View {
             }
             .pickerStyle(.inline)
             .labelsHidden()
+            Divider()
+            // The wall's one density switch. A card folds its subagents into a
+            // strip of dots, which is what makes twelve pieces of work
+            // readable rather than forty processes; this is for the person who
+            // wants the old density back on every card at once. A single card
+            // still opens on its own chevron either way.
+            Button {
+                environment.catalog.setShowsSubagents(!model.showsSubagents)
+            } label: {
+                if model.showsSubagents {
+                    Label("Show subagents", systemImage: "checkmark")
+                } else {
+                    Text("Show subagents")
+                }
+            }
         } label: {
             HStack(spacing: 6) {
                 Text("By").foregroundStyle(AuspexPalette.text3)
@@ -264,7 +319,10 @@ struct BoardHeader: View {
         .padding(.horizontal, 10)
         .frame(height: 28)
         .background(fieldBackground)
-        .help("Divide the board into sections")
+        .help(
+            "Divide the board into sections, and choose whether every card "
+                + "lists the sessions inside it"
+        )
     }
 
     /// How far back the board reaches, beside the axis it is divided along.

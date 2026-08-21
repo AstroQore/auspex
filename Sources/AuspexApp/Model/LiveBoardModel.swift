@@ -312,6 +312,15 @@ final class LiveBoardModel {
     /// What each session's agent said it is doing.
     private(set) var reports: [SessionKey: AgentReport] = [:]
 
+    /// What has been filed: tasks, links, milestones.
+    ///
+    /// The other half of a frame. Read whole whenever the ledger changes —
+    /// which is a few times a minute, when an agent calls a tool or somebody
+    /// drags a card — and then passed into every assembly unchanged, because
+    /// the frame path is the one place `AGENTS.md` § 4.1 will not have a
+    /// query. See ``TaskLedgerFrame``.
+    private(set) var ledgerFrame = TaskLedgerFrame.empty
+
     /// The sessions calling for a person right now, in board order. What the
     /// menu bar lists and what the header's chip counts.
     var callingSessions: [SessionKey] {
@@ -334,12 +343,18 @@ final class LiveBoardModel {
             let state = await Task.detached(priority: .utility) {
                 (
                     notices: (try? ledger.liveNotices()) ?? [:],
-                    reports: (try? ledger.allReports()) ?? [:]
+                    reports: (try? ledger.allReports()) ?? [:],
+                    frame: TaskLedgerFrame(
+                        tasks: (try? ledger.tasks(limit: 1_000)) ?? [],
+                        links: (try? ledger.allLinks()) ?? [],
+                        plans: (try? ledger.plans(includingArchived: true)) ?? []
+                    )
                 )
             }.value
             guard let self else { return }
             notices = state.notices
             reports = state.reports
+            ledgerFrame = state.frame
             scheduleAssembly()
         }
     }
@@ -501,9 +516,81 @@ final class LiveBoardModel {
     /// body would be one refactor away from being lost.
     private(set) var endedRows: [BoardRow] = []
 
+    /// The wall: sections of task cards, subagents folded into them.
+    ///
+    /// What ``rowGroups`` used to be for. The rows are still derived — the
+    /// sidebar draws them, and so does an opened card's member list — but the
+    /// top-level unit of the board is a piece of work rather than a process.
+    private(set) var unitGroups: [TaskUnitGroup] = []
+
+    /// The units whose sessions have all stopped with nothing outstanding.
+    private(set) var endedUnits: [TaskUnit] = []
+
+    /// Every unit on the frame by id, for the detail page and the palette.
+    private(set) var unitIndex: [String: TaskUnit] = [:]
+
+    /// What the wall is narrowed to beyond its project.
+    var filters = TaskFilters.none {
+        didSet { if oldValue != filters { scheduleAssembly() } }
+    }
+
+    /// What the filter bar can offer, from what is on this frame.
+    private(set) var filterOptions = TaskFilters.Options.none
+
+    /// Which unit each session is folded into.
+    private(set) var unitBySession: [SessionKey: String] = [:]
+
+    /// The unit the selected session belongs to, when there is one.
+    var selectedUnit: TaskUnit? {
+        guard let key = selectedKey, let id = unitBySession[key] else { return nil }
+        return unitIndex[id]
+    }
+
+    /// The unit whose detail page is open, if any.
+    var openUnitID: String?
+
+    /// The unit the detail page is about.
+    var openUnit: TaskUnit? { openUnitID.flatMap { unitIndex[$0] } }
+
+    /// The finished units actually drawn, and how many are left out.
+    var visibleEndedUnits: [TaskUnit] {
+        showsAllEnded ? endedUnits : Array(endedUnits.prefix(EndedSessions.collapsedLimit))
+    }
+
+    var hiddenEndedUnitCount: Int {
+        showsAllEnded ? 0 : max(0, endedUnits.count - EndedSessions.collapsedLimit)
+    }
+
     /// Whether the reader has asked for every finished session rather than the
     /// most recent handful.
     var showsAllEnded = false
+
+    /// Whether every card lists the sessions folded into it.
+    ///
+    /// The wall's one density switch, held here and persisted in
+    /// `settings.json` — see ``AuspexSettings/showsSubagents``. Off, a card
+    /// shows a strip of member dots; on, it lists its sessions and the sidebar
+    /// lists them too.
+    private(set) var showsSubagents = false
+
+    /// The cards a person has opened by hand, keyed on
+    /// ``TaskUnit/promotionKey`` so a card that gains a filed task stays open.
+    var expandedUnits: Set<String> = []
+
+    /// Whether a card's members are listed: the global switch, the tree axis,
+    /// or this one card's own chevron.
+    func isExpanded(_ unit: TaskUnit) -> Bool {
+        showsSubagents || groupBy == .tree || expandedUnits.contains(unit.promotionKey)
+    }
+
+    /// Opens or folds one card.
+    func toggleExpanded(_ unit: TaskUnit) {
+        if expandedUnits.contains(unit.promotionKey) {
+            expandedUnits.remove(unit.promotionKey)
+        } else {
+            expandedUnits.insert(unit.promotionKey)
+        }
+    }
 
     /// The four numbers across the top of the board.
     private(set) var summary = BoardSummary(counts: BoardSnapshot.Counts())
@@ -611,7 +698,10 @@ final class LiveBoardModel {
             derivedBriefs: derivedBriefs,
             projectNames: projectNames,
             notices: notices,
-            reports: reports
+            reports: reports,
+            ledger: ledgerFrame,
+            filters: filters,
+            showsSubagents: showsSubagents
         )
     }
 
@@ -671,6 +761,11 @@ final class LiveBoardModel {
         // The crew wall gets it the moment it is switched to; see `viewMode`.
         if viewMode == .crew { groups = frame.groups }
         rowGroups = frame.rowGroups
+        unitGroups = frame.unitGroups
+        endedUnits = frame.endedUnits
+        unitIndex = frame.unitIndex
+        filterOptions = frame.filterOptions
+        unitBySession = frame.unitBySession
         endedRows = frame.endedRows
         summary = frame.summary
         sessionCount = frame.sessionCount
@@ -1185,7 +1280,8 @@ final class LiveBoardModel {
         rules: IgnoreRules,
         showsIgnored: Bool,
         sceneZones: SceneZoneOptions = .all,
-        sessionWindow: SessionWindow = .standard
+        sessionWindow: SessionWindow = .standard,
+        showsSubagents: Bool = false
     ) {
         // Its own property and its own guard: switching an annex off is a
         // change to a picture, and putting the whole board back through the
@@ -1196,7 +1292,11 @@ final class LiveBoardModel {
         // board at all, so it goes through the derivation like the rules do.
         let windowMoved = self.sessionWindow != sessionWindow
         if windowMoved { self.sessionWindow = sessionWindow }
-        guard windowMoved || claims != self.claims || rules != ignoreRules
+        // Through the derivation too: it decides what the sidebar's tree
+        // contains, and the tree is built with the rest of the frame.
+        let subagentsMoved = self.showsSubagents != showsSubagents
+        if subagentsMoved { self.showsSubagents = showsSubagents }
+        guard windowMoved || subagentsMoved || claims != self.claims || rules != ignoreRules
             || showsIgnored != self.showsIgnored
         else { return }
         self.claims = claims

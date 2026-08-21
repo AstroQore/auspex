@@ -5,38 +5,66 @@ import SwiftUI
 
 /// The wall.
 ///
-/// A scrolling grid of session cards, divided into sections by whatever the
-/// header's grouping menu says, with the finished sessions collected into one
+/// A scrolling grid of **task** cards — one per piece of work, with the
+/// sessions doing it folded inside — divided into sections by whatever the
+/// header's grouping menu says, with the finished ones collected into one
 /// collapsed section at the bottom.
+///
+/// ## Why the unit is a task
+///
+/// A session is a process. Half the processes on a busy machine are subagents:
+/// a step inside somebody else's job, spawned and finished inside one turn.
+/// Drawing each as a peer of the thing that spawned it produced a wall where a
+/// delegation of four read as four independent pieces of work, and the reader
+/// had to reassemble the family in their head every time they looked at it.
+/// See ``TaskUnit``.
+///
+/// It is also the board's largest performance property after the ended fold:
+/// folding subagents roughly halves the number of cards a real machine draws,
+/// and it does it by removing exactly the cards with the least to say.
 ///
 /// ## Why the finished ones are not cards
 ///
 /// A machine that has run agents for a week has a few dozen live sessions and
-/// several hundred finished ones. Drawing all of them as cards is the single
-/// most expensive thing this view could do, and it would spend that cost on
-/// the rows with the least to say: a finished session has no state to watch,
-/// nothing to animate, and nothing anybody has to act on. So they leave the
-/// grid entirely — see ``EndedSessions`` — and the board's cost scales with
-/// what is *running*.
+/// several hundred finished ones. A finished unit has no state to watch,
+/// nothing to animate, and nothing anybody has to act on — so it leaves the
+/// grid entirely and the board's cost scales with what is *running*. Work
+/// waiting to be reviewed is not finished and stays on the wall, however dead
+/// its processes.
 ///
-/// ## Why it renders rows and not snapshots
+/// ## Why only some sections are laid out
 ///
-/// Every value a view holds is a value SwiftUI compares to decide what to
-/// re-render, and a `SessionSnapshot` is expensive to compare: a dictionary of
-/// open tool calls, a set of open children, fifteen optionals of identity. So
-/// this view holds ``BoardRow``s, derived once per frame by the model — see
-/// ``LiveBoardModel/rowGroups``.
-///
-/// The grid is adaptive rather than a fixed column count: a card is legible
-/// somewhere between 300 and 520 points wide, and letting the window decide
-/// how many fit is what makes the same view work on a laptop and on the second
-/// display it will actually live on.
+/// A `LazyVGrid` inside a `LazyVStack` is not lazy: the outer stack has to
+/// know how tall each section is before it can place the next one, so every
+/// section's grid is laid out on the first pass whether or not it is anywhere
+/// near the viewport. On a machine with sixty projects that pass was the
+/// largest thing on the main thread — `LazyStack.initialPlacement →
+/// boundingRect → applyNodes`. So a section past the first handful draws as a
+/// one-line header until it is scrolled to, at which point it opens and stays
+/// open. See ``eagerSections``.
 struct BoardView: View {
     @Bindable var model: LiveBoardModel
 
     private let columns = [
-        GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 14, alignment: .top)
+        GridItem(.adaptive(minimum: 320, maximum: 520), spacing: 14, alignment: .top)
     ]
+
+    /// How many sections are laid out before the reader has scrolled anywhere.
+    ///
+    /// Six is comfortably more than fits on a laptop screen at this card
+    /// width, so the wall a person opens onto is complete; everything past it
+    /// costs one line until they reach it. The number is a bound on the
+    /// *initial placement* pass, which is the one that was measured.
+    private static let eagerSections = 6
+
+    /// The sections whose cards are drawn: the first few, plus everything the
+    /// reader has scrolled past.
+    ///
+    /// Grows and never shrinks within a launch. Collapsing a section again on
+    /// its way off screen would halve the steady-state cost and buy a wall
+    /// that reflows under the reader's cursor every time they scroll back —
+    /// a bad trade for a board somebody watches all day.
+    @State private var revealed: Set<String> = []
 
     @Environment(AppEnvironment.self) private var environment
 
@@ -47,7 +75,8 @@ struct BoardView: View {
                     model.focusedProjectKey = nil
                 }
             }
-            if model.rowGroups.isEmpty, model.endedRows.isEmpty {
+            if !model.filters.isEmpty { TaskFilterBar(model: model) }
+            if model.unitGroups.isEmpty, model.endedUnits.isEmpty {
                 BoardEmptyState(model: model)
             } else {
                 grid
@@ -59,17 +88,10 @@ struct BoardView: View {
     private var grid: some View {
         BoardScroll {
             LazyVStack(alignment: .leading, spacing: 22) {
-                ForEach(model.rowGroups) { group in
-                    VStack(alignment: .leading, spacing: 12) {
-                        BoardSectionHeader(
-                            title: group.title,
-                            liveCount: group.liveCount,
-                            harness: group.harness
-                        )
-                        body(of: group)
-                    }
+                ForEach(Array(model.unitGroups.enumerated()), id: \.element.id) { index, group in
+                    section(group, isEager: index < Self.eagerSections)
                 }
-                if !model.endedRows.isEmpty { endedSection }
+                if !model.endedUnits.isEmpty { endedSection }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 18)
@@ -77,104 +99,91 @@ struct BoardView: View {
         }
     }
 
-    /// A section is a grid of cards, unless it is a delegation tree — in which
-    /// case it is a column, because a tree drawn across an adaptive grid is a
-    /// tree whose shape depends on the window width.
+    /// One section: its header, then its milestones, then their cards — unless
+    /// it is past the fold and has not been reached yet, in which case the
+    /// header is the whole of it.
     @ViewBuilder
-    private func body(of group: BoardRowGroup) -> some View {
-        if group.rows.contains(where: { $0.depth > 0 }) {
-            BoardTreeColumn(rows: group.rows) { card(for: $0) }
-        } else {
-            LazyVGrid(columns: columns, spacing: 14) {
-                ForEach(group.rows) { row in
-                    card(for: row)
+    private func section(_ group: TaskUnitGroup, isEager: Bool) -> some View {
+        let isOpen = isEager || revealed.contains(group.id)
+        VStack(alignment: .leading, spacing: 12) {
+            BoardSectionHeader(
+                title: group.title,
+                subtitle: isOpen ? group.subtitle : "\(group.unitCount)",
+                liveCount: isOpen ? group.liveCount : nil,
+                harness: group.harness
+            )
+            if isOpen {
+                ForEach(group.milestones) { milestone in
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let title = milestone.title { MilestoneHeader(title: title) }
+                        LazyVGrid(columns: columns, spacing: 14) {
+                            ForEach(milestone.units) { unit in
+                                card(for: unit)
+                            }
+                        }
+                    }
                 }
             }
         }
+        // The signal that this section has been scrolled to. A lazy stack
+        // builds a subview when it comes into range and this is the cheapest
+        // thing that can be hung off that; the collapsed header is one line,
+        // so the wall's scroll extent is right before anything opens.
+        .onAppear {
+            guard !isEager, !revealed.contains(group.id) else { return }
+            revealed.insert(group.id)
+        }
     }
 
-    private func card(for row: BoardRow) -> some View {
-        let isIgnored = model.ignoredKeys.contains(row.key)
-        return SessionCard(
-            row: row,
-            isSelected: model.selectedKey == row.key,
-            onSelectParent: { key in model.selectedKey = key },
+    private func card(for unit: TaskUnit) -> some View {
+        TaskCard(
+            unit: unit,
+            isSelected: model.selectedUnit?.id == unit.id,
+            isExpanded: model.isExpanded(unit),
+            onToggleExpanded: { model.toggleExpanded(unit) },
+            onOpenDetail: { model.openUnitID = unit.id },
+            onSelectMember: { model.selectedKey = $0 },
             // Only when there is something to clear, so the closure stays out
-            // of `==` for the ordinary card — see `SessionCard.==`, which
-            // compares the row and nothing else.
-            onDismissNotice: row.notice == nil
-                ? nil
-                : { model.dismissNotice(row.key) }
+            // of `==` for the ordinary card.
+            onDismissNotice: unit.attentionKey.map { key in
+                { model.dismissNotice(key) }
+            }
         )
         .equatable()
-        // Dimmed rather than removed while "show ignored" is on: the point of
-        // revealing them is to see which rows a rule is catching, and a row
-        // that looks exactly like the others would not answer that.
-        .opacity(isIgnored ? 0.4 : 1)
-        .onTapGesture { model.selectedKey = row.key }
-        // A card is the thing a person drags onto a task to say "this session
-        // is the one doing that". The same relationship `tasks.claim` records,
-        // made by hand — see `TaskDragPayload`.
-        .draggable(TaskDragPayload.session(row.key))
-        .contextMenu {
-            // What to do *with* this session, then where it belongs, then what
-            // to do about seeing it: the handoff is about the agent, the tasks
-            // are about the work, the rules are about the board.
-            actions(for: row)
-            Divider()
-            LinkToTaskMenu(key: row.key, tasks: environment.tasks)
-            Divider()
-            SessionRowMenu(row: row, model: model, environment: environment)
-        }
+        .opacity(model.ignoredKeys.contains(unit.lead.key) ? 0.4 : 1)
+        .onTapGesture(count: 2) { model.openUnitID = unit.id }
+        .onTapGesture { model.selectedKey = unit.lead.key }
+        // A card is what a person drags onto a task to say "this work is that
+        // task". The lead's key, because that is the session a claim records.
+        .draggable(TaskDragPayload.session(unit.lead.key))
+        .contextMenu { TaskCardMenu(unit: unit, model: model, environment: environment) }
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The handoff menu, built from the live identity rather than from the
-    /// row: a resume command needs the session id, the variant, and the
-    /// working directory, and putting three more strings on every row of a
-    /// four-hundred-card board to save one dictionary lookup on right-click is
-    /// the wrong way round.
-    @ViewBuilder
-    private func actions(for row: BoardRow) -> some View {
-        if let session = model.session(for: row.key) {
-            SessionActionsMenu(identity: session.identity, control: environment.control)
-        }
-    }
-
-    /// The finished sessions, as one-line rows under one header.
+    /// The finished units, as one-line rows under one header.
     private var endedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             BoardSectionHeader(
                 title: "Ended",
-                subtitle: "\(model.endedRows.count)",
+                subtitle: "\(model.endedUnits.count)",
                 harness: nil
             )
             LazyVStack(spacing: 0) {
-                ForEach(model.visibleEndedRows) { row in
-                    EndedSessionRow(row: row, isSelected: model.selectedKey == row.key)
+                ForEach(model.visibleEndedUnits) { unit in
+                    EndedTaskRow(unit: unit, isSelected: model.selectedUnit?.id == unit.id)
                         .equatable()
-                        .opacity(model.ignoredKeys.contains(row.key) ? 0.4 : 1)
-                        .onTapGesture(count: 2) {
-                            model.selectedKey = row.key
-                            model.openTrajectory()
-                        }
-                        .onTapGesture { model.selectedKey = row.key }
+                        .onTapGesture(count: 2) { model.openUnitID = unit.id }
+                        .onTapGesture { model.selectedKey = unit.lead.key }
                         .contextMenu {
-                            actions(for: row)
-                            Divider()
-                            SessionRowMenu(row: row, model: model, environment: environment)
+                            TaskCardMenu(unit: unit, model: model, environment: environment)
                         }
                 }
             }
             .panelChrome()
             HStack(spacing: 10) {
-                if model.hiddenEndedCount > 0 || model.showsAllEnded {
+                if model.hiddenEndedUnitCount > 0 || model.showsAllEnded {
                     showAllToggle
                 }
-                // What the *window* is holding back, which "show all" cannot
-                // reach: those sessions are not on the board at all. Under the
-                // finished rows because that is where a person goes looking
-                // for the afternoon they cannot find.
                 if let hint = model.olderHiddenHint {
                     olderHiddenToggle(hint)
                 }
@@ -213,7 +222,7 @@ struct BoardView: View {
             Text(
                 model.showsAllEnded
                     ? "Show the most recent \(EndedSessions.collapsedLimit)"
-                    : "Show all \(model.endedRows.count)"
+                    : "Show all \(model.endedUnits.count)"
             )
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.text2)
@@ -225,39 +234,66 @@ struct BoardView: View {
             )
         }
         .buttonStyle(.auspex)
-        .help("Finished sessions are collapsed so the board's cost tracks what is running")
+        .help("Finished work is collapsed so the board's cost tracks what is running")
     }
 }
 
-/// One finished session, as a row rather than as a card.
+/// A milestone's sub-heading inside a project's section.
 ///
-/// Everything a card says about *activity* is gone, because there is none.
-/// What is left is what a person looks for in history: whose session it was,
-/// what it was called, where it ran, and when it stopped.
+/// A rule with a word on it rather than a second section header: a milestone
+/// is a *label inside* a project, not a container beside it, and giving it the
+/// same weight as the project would be saying the containment runs the other
+/// way.
+struct MilestoneHeader: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "flag")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(AuspexPalette.text3)
+            Text(title)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text2)
+                .lineLimit(1)
+            Rectangle()
+                .fill(AuspexPalette.line.opacity(0.6))
+                .frame(height: 1)
+        }
+        .padding(.leading, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One finished piece of work, as a row rather than as a card.
 ///
-/// One exception, and it is the reason this section is worth scrolling to: a
-/// row whose agent reported finishing keeps its mark bright, gains the green
-/// mark, and says `reported` where the others say how they ended. A finished
-/// session is history; one that filed a receipt nobody has read is an errand.
-struct EndedSessionRow: View, Equatable {
-    let row: BoardRow
+/// Everything about *activity* is gone, because there is none. What is left is
+/// what a person looks for in history: what it was called, whose it was, where
+/// it ran, and when it stopped.
+struct EndedTaskRow: View, Equatable {
+    let unit: TaskUnit
     let isSelected: Bool
 
-    nonisolated static func == (lhs: EndedSessionRow, rhs: EndedSessionRow) -> Bool {
-        lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
+    nonisolated static func == (lhs: EndedTaskRow, rhs: EndedTaskRow) -> Bool {
+        lhs.unit == rhs.unit && lhs.isSelected == rhs.isSelected
     }
 
     var body: some View {
-        let isReported = row.isDoneReported
-        return HStack(spacing: 10) {
-            HarnessBadge(harness: row.harness, size: 16, isMuted: !isReported)
-            if isReported { AttentionBadge(attention: row.attention, size: 13) }
-            Text(row.title)
+        HStack(spacing: 10) {
+            TaskStatusIcon(status: unit.status, size: 12, isMuted: true)
+            HarnessBadge(harness: unit.lead.harness, size: 14, isMuted: true)
+            Text(unit.title)
                 .font(AuspexType.caption)
-                .foregroundStyle(isReported ? AuspexPalette.text : AuspexPalette.text2)
+                .foregroundStyle(AuspexPalette.text2)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if let project = row.project {
+            if unit.memberCount > 1 {
+                Text("↳ \(unit.subagents.count)")
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .fixedSize()
+            }
+            if let project = unit.lead.project {
                 Text(project)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
@@ -265,13 +301,11 @@ struct EndedSessionRow: View, Equatable {
                     .layoutPriority(-1)
             }
             Spacer(minLength: 8)
-            Text(isReported ? "reported" : reason)
+            Text(unit.shortID)
                 .font(AuspexType.monoSmall)
-                .foregroundStyle(
-                    isReported ? AuspexPalette.stateWriting : AuspexPalette.text3
-                )
+                .foregroundStyle(AuspexPalette.text3.opacity(0.7))
                 .fixedSize()
-            Text(RelativeTimeText.since(row.endedAt ?? row.lastEventAt))
+            Text(RelativeTimeText.since(unit.endedAt ?? unit.lastEventAt))
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
                 .frame(width: 74, alignment: .trailing)
@@ -281,52 +315,6 @@ struct EndedSessionRow: View, Equatable {
         .background(isSelected ? AuspexPalette.selection : .clear)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-    }
-
-    private var reason: String {
-        if case .ended(let reason) = row.state { return reason.rawValue }
-        return "ended"
-    }
-}
-
-/// A section drawn as a delegation tree rather than as a grid.
-///
-/// The rows arrive flat, each carrying the depth the model worked out, and the
-/// inset is drawn from that. Flat rather than recursive because a `LazyVStack`
-/// can only be lazy about a flat collection — and because a recursive view over
-/// nested snapshots is exactly the shape that made the old board compare arrays
-/// of them on every graph update.
-struct BoardTreeColumn<Card: View>: View {
-    let rows: [BoardRow]
-    @ViewBuilder let card: (BoardRow) -> Card
-
-    /// One step per level. A card is legible from about 300 points, so the
-    /// inset has to be small enough that three levels still leave one room.
-    private static var step: CGFloat { 22 }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(rows) { row in
-                card(row)
-                    .frame(maxWidth: 480, alignment: .leading)
-                    .padding(.leading, Self.step * CGFloat(row.depth))
-                    .overlay(alignment: .leading) {
-                        // A rail per level, the same hairline device the
-                        // sidebar's tree uses, so one idiom means one thing
-                        // across the window.
-                        HStack(spacing: 0) {
-                            ForEach(0..<row.depth, id: \.self) { _ in
-                                Rectangle()
-                                    .fill(AuspexPalette.stateDelegating.opacity(0.35))
-                                    .frame(width: 1)
-                                    .frame(width: Self.step, alignment: .center)
-                            }
-                        }
-                        .frame(maxHeight: .infinity)
-                    }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -294,6 +294,16 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
     /// Whether every session in it has stopped.
     public var isEnded: Bool { counts.live == 0 }
 
+    /// Whether anybody has actually started on it.
+    ///
+    /// `false` for a filed task nobody has claimed, whose ``lead`` is a
+    /// placeholder standing in for the row rather than a session. Everything
+    /// that describes *activity* — the state pill, the tool line, the moving
+    /// strip, the stopwatch — is suppressed for those, because a card that
+    /// reported a harness and an elapsed time for work nobody has begun would
+    /// be inventing both.
+    public var hasSessions: Bool { counts.total > 0 }
+
     /// Whether the unit still has work in it as far as a person is concerned.
     public var isOpen: Bool { status.isOpen }
 

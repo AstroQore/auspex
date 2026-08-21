@@ -411,6 +411,26 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         dependsOn.filter { known.contains($0) && !closed.contains($0) }
     }
 
+    /// The same task, in another column.
+    ///
+    /// For the optimistic redraw a drag needs: the person dropped the card on
+    /// this frame and the board should show it on this frame, rather than one
+    /// store round trip later.
+    public func moved(to status: AuspexTaskStatus, at date: Date = Date()) -> AuspexTask {
+        AuspexTask(
+            id: id, planID: planID, title: title, body: body, status: status,
+            priority: priority, projectID: projectID, projectKey: projectKey,
+            createdBy: createdBy, claimRole: claimRole, claimScope: claimScope,
+            claimedBy: claimedBy, claimedAt: claimedAt,
+            // The stamp is when the *work* finished. Moving a card into Review
+            // or Done does not restamp it, and moving it back out clears it —
+            // the same rule the store applies.
+            completedAt: status == .done || status == .review ? (completedAt ?? date) : nil,
+            result: result, source: source, kind: kind, labels: labels,
+            dependsOn: dependsOn, createdAt: createdAt, updatedAt: date
+        )
+    }
+
     /// The same task, with its dependencies filled in.
     ///
     /// The row decoder cannot fetch them — an edge lives in another table —

@@ -4,16 +4,26 @@ import AuspexCore
 import SwiftUI
 
 /// The sidebar's project tree: every repository on the board, the checkouts
-/// inside it, and the sessions inside those.
+/// inside it, and the **tasks** inside those.
 ///
-/// ## Three rows, three meanings
+/// ## Four rows, four meanings
 ///
 /// A project row *focuses* the wall on that project and opens it; a checkout
-/// row only opens; a session row *selects a card* and fills the trace. Drawing
-/// the rows rather than reaching for `OutlineGroup` is what makes those three
-/// behaviours explicit — a `List(selection:)` binds one type, and this column
-/// has three — and it lets the tree carry the board's own chrome instead of
-/// the system's blue capsule.
+/// row only opens; a task row *selects its lead's card* and fills the trace;
+/// a session row inside an opened task selects that session. Drawing the rows
+/// rather than reaching for `OutlineGroup` is what makes those behaviours
+/// explicit — a `List(selection:)` binds one type, and this column has three —
+/// and it lets the tree carry the board's own chrome instead of the system's
+/// blue capsule.
+///
+/// ## Why a task and not a session
+///
+/// This column used to list every session on the machine, and a machine with
+/// a dozen agents in one checkout put every one of them here permanently.
+/// Most of them were subagents: a step inside somebody else's job, listed as
+/// a peer of it. A task row is the piece of work, with a `↳ N` for what is
+/// inside it, and the sessions appear only for a task somebody has opened —
+/// or for everybody, if they turned "Show subagents" on.
 ///
 /// ## Depth is leading space, not a rail
 ///
@@ -76,7 +86,7 @@ struct ProjectsSidebar: View {
             }
             if !tree.ungrouped.isEmpty {
                 UngroupedRow(count: tree.ungrouped.count + tree.ungroupedHidden)
-                sessionRows(
+                unitRows(
                     tree.ungrouped,
                     id: Self.ungroupedID,
                     depth: 1,
@@ -101,19 +111,29 @@ struct ProjectsSidebar: View {
     ///   - finished: how many sessions of this branch have ended. They are
     ///     never listed here; the row says where they went.
     @ViewBuilder
-    private func sessionRows(
-        _ rows: [BoardRow],
+    private func unitRows(
+        _ units: [TaskUnit],
         id: String,
         depth: Int,
         finished: Int
     ) -> some View {
         let fold = SidebarFold.make(
-            rows: rows.count,
+            rows: units.count,
             finished: finished,
             isOpen: openedInFull.contains(id)
         )
-        ForEach(rows.prefix(fold.shown)) { row in
-            sessionRow(row, depth: depth + row.depth)
+        ForEach(units.prefix(fold.shown)) { unit in
+            unitRow(unit, depth: depth)
+            // The sessions, for a task somebody opened — or for everybody,
+            // when the wall's density switch is on. Never by default: a
+            // delegation of four used to be four rows in a 180-point column,
+            // and every one of them was a view SwiftUI compared on every graph
+            // update whether or not it was scrolled into sight.
+            if unit.memberCount > 1, board.isExpanded(unit) {
+                ForEach(unit.members, id: \.key) { row in
+                    sessionRow(row, depth: depth + 1)
+                }
+            }
         }
         if fold.needsRow {
             MoreRow(depth: depth, fold: fold) {
@@ -125,6 +145,22 @@ struct ProjectsSidebar: View {
             }
         }
     }
+
+    /// One piece of work.
+    private func unitRow(_ unit: TaskUnit, depth: Int) -> some View {
+        UnitRow(
+            unit: unit,
+            depth: depth,
+            isSelected: selectedKey == unit.lead.key,
+            isExpanded: board.isExpanded(unit),
+            onSelect: { onSelectSession(unit.lead.key) },
+            onToggle: unit.memberCount > 1 ? { board.toggleExpanded(unit) } : nil
+        )
+        .equatable()
+        .contextMenu { TaskCardMenu(unit: unit, model: board, environment: environment) }
+    }
+
+    private var board: LiveBoardModel { environment.board }
 
     /// What the fold under "No project" is remembered as. A fixed string
     /// rather than a checkout id, because that branch has no checkout.
@@ -199,8 +235,8 @@ struct ProjectsSidebar: View {
             )
         }
         if isImplied || model.isExpanded(checkout: checkout) {
-            sessionRows(
-                checkout.sessions,
+            unitRows(
+                checkout.units,
                 id: checkout.id,
                 depth: isImplied ? 1 : 2,
                 finished: checkout.hiddenCount
@@ -372,7 +408,66 @@ private struct CheckoutRow: View {
                     .foregroundStyle(AuspexPalette.text3)
             }
         }
-        .help(isExpanded ? "Hide these sessions" : "Show these sessions")
+        .help(isExpanded ? "Hide this checkout's tasks" : "Show this checkout's tasks")
+    }
+}
+
+/// A task: where it stands, what it is called, how many sessions are inside
+/// it, and whether any of them wants a person.
+///
+/// A status ring rather than a state dot, because a row in this column now
+/// answers *where is this piece of work* rather than *what is that process
+/// doing*. The `↳ N` is the fold: it is a control, and clicking it lists the
+/// sessions rather than opening the card.
+private struct UnitRow: View, Equatable {
+    let unit: TaskUnit
+    let depth: Int
+    let isSelected: Bool
+    let isExpanded: Bool
+    let onSelect: () -> Void
+    /// `nil` for a task with one session in it, which has nothing to fold.
+    var onToggle: (() -> Void)?
+
+    nonisolated static func == (lhs: UnitRow, rhs: UnitRow) -> Bool {
+        lhs.unit == rhs.unit && lhs.depth == rhs.depth && lhs.isSelected == rhs.isSelected
+            && lhs.isExpanded == rhs.isExpanded
+    }
+
+    var body: some View {
+        TreeRow(depth: depth, isLit: isSelected, action: onSelect) {
+            TaskStatusIcon(status: unit.status, size: 12)
+            Text(unit.title)
+                .font(AuspexType.row)
+                .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            if let onToggle {
+                Button(action: onToggle) {
+                    HStack(spacing: 3) {
+                        Text("↳ \(unit.subagents.count)")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 7, weight: .bold))
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .foregroundStyle(AuspexPalette.stateDelegating)
+                    .fixedSize()
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.auspex(cornerRadius: 4))
+                .help(isExpanded ? "Fold these sessions away" : "List the sessions on this task")
+            }
+            if let colour = AttentionStyle.colour(unit.attention) {
+                StateDot(color: colour, glows: unit.needsPerson)
+            } else if unit.counts.working > 0 {
+                StateDot(color: unit.lead.state.style.color, glows: true)
+            }
+        }
+        .help(
+            AttentionStyle.label(unit.attention).map { "\(unit.title) — \($0)" }
+                ?? "\(unit.shortID) \(unit.title) — \(unit.status.label)"
+        )
     }
 }
 

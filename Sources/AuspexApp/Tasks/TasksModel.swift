@@ -425,18 +425,85 @@ final class TasksModel {
         Task.detached(priority: .userInitiated) {
             _ = try? repository.updateTask(id: taskID, status: status)
         }
-        optimistically { task in
-            guard task.id == taskID else { return task }
-            return AuspexTask(
-                id: task.id, planID: task.planID, title: task.title, body: task.body,
-                status: status, priority: task.priority, projectID: task.projectID,
-                projectKey: task.projectKey,
-                createdBy: task.createdBy, claimRole: task.claimRole, claimScope: task.claimScope,
-                claimedBy: task.claimedBy, claimedAt: task.claimedAt,
-                completedAt: status == .done ? (task.completedAt ?? Date()) : nil,
-                result: task.result, source: task.source,
-                createdAt: task.createdAt, updatedAt: Date()
+        optimistically { $0.id == taskID ? $0.moved(to: status) : $0 }
+        reload()
+    }
+
+    /// Closes a task. The one gesture only a person makes.
+    ///
+    /// `tasks.complete` puts a task in Review; this is what ends it. Keeping
+    /// them apart is the whole of the Review state: an agent saying it
+    /// finished is a claim about its own work, and a board that let it close
+    /// its own task would have one number on it that an agent could move.
+    func close(unit: TaskUnit) {
+        guard let repository, let id = unit.origin.taskID else { return }
+        Task.detached(priority: .userInitiated) { _ = try? repository.closeTask(id: id) }
+        optimistically { $0.id == id ? $0.moved(to: .done) : $0 }
+        reload()
+    }
+
+    /// Puts a closed task back in flight.
+    func reopen(unit: TaskUnit) {
+        guard let repository, let id = unit.origin.taskID else { return }
+        Task.detached(priority: .userInitiated) {
+            _ = try? repository.updateTask(id: id, status: .doing)
+        }
+        optimistically { $0.id == id ? $0.moved(to: .doing) : $0 }
+        reload()
+    }
+
+    /// Turns a unit the board derived into a task somebody filed.
+    ///
+    /// The card does not move: it keeps its position, its expansion and its
+    /// members, because every surface keys on ``TaskUnit/promotionKey`` and
+    /// that is the root session either way. What changes is that there is now
+    /// a row to close, to give a milestone, to depend on, and to write notes
+    /// against.
+    func promote(unit: TaskUnit) {
+        guard let repository, unit.origin.isImplicit else { return }
+        let title = unit.title
+        let projectKey = unit.projectKey
+        let session = unit.lead.key
+        let role = unit.lead.harness.displayName
+        Task.detached(priority: .userInitiated) {
+            guard let task = try? repository.createTask(
+                title: title, projectKey: projectKey, source: "ui"
+            ) else { return }
+            // Claimed by the session that was already doing it, so the card
+            // gains a claim chip rather than reading as unclaimed work that
+            // somebody is mysteriously doing.
+            _ = try? repository.claimTask(
+                id: task.id, role: role, scope: nil, by: session, projectKey: projectKey
             )
+        }
+        reload()
+    }
+
+    /// Lets go of a claim whose session did not live to finish it.
+    func releaseClaim(taskID: Int64) {
+        guard let repository else { return }
+        Task.detached(priority: .userInitiated) {
+            _ = try? repository.releaseTask(id: taskID, by: nil)
+        }
+        reload()
+    }
+
+    /// Writes one line into a task's history.
+    func log(taskID: Int64, kind: TaskNoteKind, message: String, ref: String?) {
+        guard let repository, !message.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        Task.detached(priority: .userInitiated) {
+            try? repository.appendLog(
+                taskID: taskID, actor: nil, kind: kind.rawValue, message: message, ref: ref
+            )
+        }
+        reload()
+    }
+
+    /// Sets what a task waits on.
+    func setDependencies(_ ids: [Int64], of taskID: Int64) {
+        guard let repository else { return }
+        Task.detached(priority: .userInitiated) {
+            try? repository.setDependencies(ids, of: taskID)
         }
         reload()
     }

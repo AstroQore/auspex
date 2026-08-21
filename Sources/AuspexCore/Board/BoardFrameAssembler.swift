@@ -57,6 +57,8 @@ public struct BoardFrameInputs: Sendable, Equatable {
     /// absence costs nothing: with an empty ledger every unit is implicit and
     /// the wall still folds every delegation family into one card.
     public var ledger: TaskLedgerFrame
+    /// What the wall is narrowed to beyond its project — see ``TaskFilters``.
+    public var filters: TaskFilters
     /// Whether the reader has asked to see the sessions inside each task.
     ///
     /// Here rather than in the view because it changes what the *sidebar's*
@@ -80,9 +82,11 @@ public struct BoardFrameInputs: Sendable, Equatable {
         notices: [SessionKey: AgentNotice] = [:],
         reports: [SessionKey: AgentReport] = [:],
         ledger: TaskLedgerFrame = .empty,
+        filters: TaskFilters = .none,
         showsSubagents: Bool = false
     ) {
         self.ledger = ledger
+        self.filters = filters
         self.showsSubagents = showsSubagents
         self.claims = claims
         self.rules = rules
@@ -128,6 +132,8 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// Every unit on the frame by id, for the surfaces that look one up —
     /// the task detail page, the command palette, a drop target.
     public let unitIndex: [String: TaskUnit]
+    /// What the filter bar can offer, from what is actually on this frame.
+    public let filterOptions: TaskFilters.Options
     /// Which unit each session is folded into, so selecting a card and
     /// selecting a session are the same gesture seen from two ends.
     public let unitBySession: [SessionKey: String]
@@ -190,6 +196,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         unitGroups: [TaskUnitGroup] = [],
         endedUnits: [TaskUnit] = [],
         unitIndex: [String: TaskUnit] = [:],
+        filterOptions: TaskFilters.Options = .none,
         unitBySession: [SessionKey: String] = [:],
         endedRows: [BoardRow],
         summary: BoardSummary,
@@ -202,6 +209,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.unitGroups = unitGroups
         self.endedUnits = endedUnits
         self.unitIndex = unitIndex
+        self.filterOptions = filterOptions
         self.unitBySession = unitBySession
         self.sequence = sequence
         self.board = board
@@ -265,6 +273,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             unitGroups: kept(unitGroups, previous.unitGroups),
             endedUnits: kept(endedUnits, previous.endedUnits),
             unitIndex: kept(unitIndex, previous.unitIndex),
+            filterOptions: kept(filterOptions, previous.filterOptions),
             unitBySession: kept(unitBySession, previous.unitBySession),
             endedRows: kept(endedRows, previous.endedRows),
             summary: kept(summary, previous.summary),
@@ -466,7 +475,7 @@ public actor BoardFrameAssembler {
             builder: builder,
             now: raw.generatedAt
         )
-        let unitSplit = TaskUnitGrouping.split(allUnits)
+        let unitSplit = TaskUnitGrouping.split(inputs.filters.apply(to: allUnits))
         let liveUnits = inputs.bucketFilter.map { bucket in
             unitSplit.live.filter { $0.bucket == bucket }
         } ?? unitSplit.live
@@ -515,6 +524,10 @@ public actor BoardFrameAssembler {
                 ? unitSplit.ended
                 : unitSplit.ended.filter { $0.bucket == inputs.bucketFilter },
             unitIndex: unitIndex,
+            // Over every unit rather than over the filtered ones: a menu that
+            // dropped the option a person is *about* to swap to would make the
+            // bar a trap you can only get out of by clearing it.
+            filterOptions: TaskFilters.options(for: allUnits),
             unitBySession: unitBySession,
             endedRows: inputs.bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows,
             // Over units, and counted before the bucket filter, on purpose: the
@@ -522,22 +535,12 @@ public actor BoardFrameAssembler {
             // thing, and a chip that zeroed the others when clicked would leave
             // no way back to them.
             summary: BoardSummary(units: allUnits),
-            tree: ProjectTree.build(
-                board: board,
-                names: inputs.projectNames,
-                // Its own builder, deliberately, and told only about what the
-                // sidebar draws. The seen-at map and the backfilled briefs are
-                // withheld because they change what a tree row is *titled*, and
-                // unifying that is a decision about what the sidebar says. The
-                // notices are not: a project drawn in red because one of its
-                // sessions is asking is the sidebar's whole job at that width.
-                builder: BoardRowBuilder(
-                    board: board,
-                    notices: inputs.notices,
-                    acknowledgedAt: inputs.acknowledgedAt,
-                    now: raw.generatedAt
-                )
-            ),
+            // The same units the wall draws, and deliberately the *unfiltered*
+            // ones: the sidebar is how a person finds work, and a column that
+            // hid what the filter bar is hiding would leave them no way back
+            // to it. Ended units are dropped here as they always were — see
+            // ``ProjectTree/listable(_:)``.
+            tree: ProjectTree.build(board: board, names: inputs.projectNames, units: allUnits),
             attention: attention,
             olderHidden: windowed.hidden
         )

@@ -45,6 +45,28 @@ struct ProjectTreeTests {
         BoardSnapshot(generatedAt: Fixtures.date(1_000), sessions: sessions)
     }
 
+    /// The tree as the assembler builds it: over the units the wall draws,
+    /// which is what the sidebar has listed since the board became a task
+    /// board. A tree built without them would be a tree of empty checkouts.
+    private func tree(
+        _ board: BoardSnapshot,
+        names: [String: String] = [:],
+        builder: BoardRowBuilder? = nil
+    ) -> ProjectTree {
+        let builder = builder ?? BoardRowBuilder(board: board, now: board.generatedAt)
+        return ProjectTree.build(
+            board: board,
+            names: names,
+            units: TaskUnitBuilder.units(
+                sessions: board.sessions,
+                board: board,
+                ledger: .empty,
+                builder: builder,
+                now: board.generatedAt
+            )
+        )
+    }
+
     // MARK: - Projects
 
     @Test("three worktrees of one repository are one project with three checkouts")
@@ -64,7 +86,7 @@ struct ProjectTreeTests {
             session(.cursor, "c", cwd: root, gitRoot: root, branch: "main", at: 10)
         ])
 
-        let tree = ProjectTree.build(board: frame)
+        let tree = tree(frame)
 
         #expect(tree.projects.count == 1)
         let project = try #require(tree.projects.first)
@@ -83,7 +105,7 @@ struct ProjectTreeTests {
     func agentWorktreeIsTitledByItsTask() throws {
         let root = "/Users/example/Code/auspex"
         let path = "\(root)/.agents/worktrees/feat-projects-ui"
-        let tree = ProjectTree.build(board: board([
+        let tree = tree(board([
             session(.codex, "a", cwd: path, gitRoot: root, worktree: path, branch: "feat/projects-ui")
         ]))
 
@@ -97,7 +119,7 @@ struct ProjectTreeTests {
     @Test("a plain checkout is titled by its branch and adds nothing beside it")
     func aPlainCheckoutIsTitledByItsBranch() throws {
         let root = "/Users/example/Code/widget"
-        let tree = ProjectTree.build(board: board([
+        let tree = tree(board([
             session(.claudeCode, "a", cwd: root, gitRoot: root, branch: "main")
         ]))
 
@@ -109,7 +131,7 @@ struct ProjectTreeTests {
 
     @Test("a directory in no repository is its own project, marked as one")
     func aDirectoryWithNoGitIsStillAProject() throws {
-        let tree = ProjectTree.build(board: board([
+        let tree = tree(board([
             session(.grokBuild, "a", cwd: "/Users/example/Code/infra-terraform")
         ]))
 
@@ -122,8 +144,8 @@ struct ProjectTreeTests {
     @Test("the store's name wins over the path component")
     func storedNamesAreUsed() {
         let root = "/Users/example/Code/auspex"
-        let tree = ProjectTree.build(
-            board: board([session(.codex, "a", cwd: root, gitRoot: root)]),
+        let tree = tree(
+            board([session(.codex, "a", cwd: root, gitRoot: root)]),
             names: [root: "Auspex"]
         )
         #expect(tree.projects.first?.name == "Auspex")
@@ -137,23 +159,26 @@ struct ProjectTreeTests {
         let parent = session(.claudeCode, "parent", cwd: root, gitRoot: root, branch: "main", at: 20)
         let child = session(.claudeCode, "child", parent: parent.key, at: 10)
 
-        let tree = ProjectTree.build(board: board([parent, child]))
+        let tree = tree(board([parent, child]))
 
         #expect(tree.ungrouped.isEmpty)
         #expect(tree.projects.count == 1)
         let project = try #require(tree.projects.first)
-        #expect(project.sessionCount == 2)
+        // One piece of work, two sessions inside it: the child is a step in
+        // the parent's job, not a peer of it.
+        #expect(project.sessionCount == 1)
         #expect(project.checkouts.count == 1)
-        #expect(project.checkouts.first?.sessions.map(\.key) == [parent.key, child.key])
+        let unit = try #require(project.checkouts.first?.units.first)
+        #expect(unit.members.map(\.key) == [parent.key, child.key])
     }
 
     @Test("a session with no directory and no placed ancestor is ungrouped, not dropped")
     func anOrphanWithNoDirectoryIsKept() {
         let orphan = session(.antigravity, "orphan")
-        let tree = ProjectTree.build(board: board([orphan]))
+        let tree = tree(board([orphan]))
 
         #expect(tree.projects.isEmpty)
-        #expect(tree.ungrouped.map(\.key) == [orphan.key])
+        #expect(tree.ungrouped.flatMap { $0.members.map(\.key) } == [orphan.key])
         #expect(!tree.isEmpty)
     }
 
@@ -169,14 +194,14 @@ struct ProjectTreeTests {
             )
         ])
 
-        let tree = ProjectTree.build(board: frame)
+        let tree = tree(frame)
         #expect(tree.projects.map(\.name) == ["zebra", "aardvark"])
     }
 
     @Test("live counts follow the board, and an ended session is not live")
     func liveCountsMatchTheBoard() throws {
         let root = "/Users/example/Code/widget"
-        let tree = ProjectTree.build(board: board([
+        let tree = tree(board([
             session(.codex, "running", cwd: root, gitRoot: root, at: 30),
             session(
                 .codex, "over", cwd: root, gitRoot: root,
@@ -195,7 +220,7 @@ struct ProjectTreeTests {
     @Test("finished sessions leave the tree, and the checkout says how many")
     func finishedSessionsLeaveTheTree() throws {
         let root = "/Users/example/Code/auspex"
-        let tree = ProjectTree.build(board: board([
+        let tree = tree(board([
             session(.claudeCode, "live", cwd: root, gitRoot: root, at: 40),
             session(
                 .codex, "over-1", cwd: root, gitRoot: root,
@@ -208,7 +233,7 @@ struct ProjectTreeTests {
         ]))
 
         let checkout = try #require(tree.projects.first?.checkouts.first)
-        #expect(checkout.sessions.map(\.key.sessionID) == ["live"])
+        #expect(checkout.units.flatMap { $0.members.map(\.key.sessionID) } == ["live"])
         #expect(checkout.hiddenCount == 2)
         // Still counted: the column has to say how much work there was here,
         // and the board's Ended section is where the rows themselves went.
@@ -219,7 +244,7 @@ struct ProjectTreeTests {
     @Test("a checkout of nothing but finished work still appears, and says so")
     func aFinishedCheckoutStillAppears() throws {
         let root = "/Users/example/Code/auspex"
-        let tree = ProjectTree.build(board: board([
+        let tree = tree(board([
             session(
                 .claudeCode, "over", cwd: root, gitRoot: root,
                 state: .ended(reason: .exited), isAlive: false, at: 20
@@ -227,19 +252,19 @@ struct ProjectTreeTests {
         ]))
 
         let checkout = try #require(tree.projects.first?.checkouts.first)
-        #expect(checkout.sessions.isEmpty)
+        #expect(checkout.units.isEmpty)
         #expect(checkout.hiddenCount == 1)
         #expect(checkout.liveCount == 0)
     }
 
     @Test("sessions under no project lose their finished ones the same way")
     func ungroupedLosesItsFinishedSessions() {
-        let tree = ProjectTree.build(board: board([
+        let tree = tree(board([
             session(.antigravity, "live", at: 40),
             session(.antigravity, "over", state: .ended(reason: .exited), isAlive: false, at: 10)
         ]))
 
-        #expect(tree.ungrouped.map(\.key.sessionID) == ["live"])
+        #expect(tree.ungrouped.flatMap { $0.members.map(\.key.sessionID) } == ["live"])
         #expect(tree.ungroupedHidden == 1)
     }
 
@@ -263,18 +288,19 @@ struct ProjectTreeTests {
             ],
             now: Fixtures.date(1_000)
         )
-        let tree = ProjectTree.build(board: board([reported]), builder: builder)
+        let tree = tree(board([reported]), builder: builder)
 
         let checkout = try #require(tree.projects.first?.checkouts.first)
-        // The one session that reported finishing is not listed — it is over —
-        // and the badge that would send somebody to it still lights up.
-        #expect(checkout.sessions.isEmpty)
+        // Work an agent said it finished is *in review*, and a review is not
+        // history: it stays in the column until somebody closes it, whatever
+        // its process did. The badge that sends them there lights up too.
+        #expect(checkout.units.map(\.status) == [.review])
         #expect(checkout.doneReportedCount == 1)
     }
 
     @Test("an empty board makes an empty tree")
     func anEmptyBoardMakesAnEmptyTree() {
-        let tree = ProjectTree.build(board: .empty)
+        let tree = tree(.empty)
         #expect(tree.isEmpty)
         #expect(tree.projects.isEmpty)
         #expect(tree.ungrouped.isEmpty)

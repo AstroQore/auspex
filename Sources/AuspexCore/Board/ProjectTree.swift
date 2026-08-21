@@ -3,7 +3,7 @@ import AgentSessionLive
 import Foundation
 
 /// The sidebar's view of the board: projects, the checkouts inside them, and
-/// the sessions inside those.
+/// the **tasks** inside those.
 ///
 /// Derived from a ``BoardSnapshot`` rather than from the database, so the tree
 /// is exactly as live as the wall it sits next to. The store is consulted only
@@ -19,13 +19,13 @@ public struct ProjectTree: Sendable, Equatable {
     /// The projects on the board, most urgent first.
     public let projects: [Project]
 
-    /// Sessions with no directory of their own and no ancestor with one.
+    /// Work with no directory of its own and no ancestor with one.
     ///
     /// Kept rather than hidden: a subagent whose parent has aged off the board
     /// is still running, and a sidebar that silently dropped it would be
     /// lying about what the machine is doing. The finished ones are dropped
     /// all the same — see ``listable(_:)`` and ``ungroupedHidden``.
-    public let ungrouped: [BoardRow]
+    public let ungrouped: [TaskUnit]
 
     /// How many sessions under no project have finished, and are in the
     /// board's Ended section rather than in this column.
@@ -48,12 +48,14 @@ public struct ProjectTree: Sendable, Equatable {
     /// It caps what is *drawn*, not what is known: the rows are all here, and
     /// every count on every row above is tallied over all of them, so a
     /// checkout whose one red session is past the cap is still drawn red.
+    /// How many *tasks* the sidebar draws under one checkout, and under "No
+    /// project", before it offers the rest behind a row.
     public static let listLimit = 8
 
     /// An empty tree, for a view's initial state.
     public static let empty = ProjectTree(projects: [], ungrouped: [])
 
-    public init(projects: [Project], ungrouped: [BoardRow], ungroupedHidden: Int = 0) {
+    public init(projects: [Project], ungrouped: [TaskUnit], ungroupedHidden: Int = 0) {
         self.projects = projects
         self.ungrouped = ungrouped
         self.ungroupedHidden = max(0, ungroupedHidden)
@@ -141,14 +143,19 @@ public struct ProjectTree: Sendable, Equatable {
         public let agentWorktreeTask: String?
         /// `true` when this is a linked worktree rather than the main checkout.
         public let isWorktree: Bool
-        /// The sessions still running in it, in board order with delegated
-        /// ones nested under whoever spawned them — see ``BoardRow/depth``.
+        /// The work still going on in it, in board order.
         ///
-        /// Not every session in the checkout: the finished ones are not in the
+        /// Tasks and not sessions, which is the whole change: a delegation of
+        /// four used to be four rows in a 180-point column, and is now one row
+        /// that opens into four. The sessions are still here — they are inside
+        /// the units — and the column lists them only for a task somebody has
+        /// opened.
+        ///
+        /// Not every task in the checkout: the finished ones are not in the
         /// tree at all. See ``ProjectTree/listable(_:)`` and ``hiddenCount``.
-        public let sessions: [BoardRow]
-        /// How many of this checkout's sessions have finished, and are
-        /// therefore in the board's Ended section rather than here.
+        public let units: [TaskUnit]
+        /// How many of this checkout's tasks have finished, and are therefore
+        /// in the board's Ended section rather than here.
         ///
         /// Carried rather than recomputed because it is the only trace they
         /// leave in this column, and a sidebar that quietly dropped rows would
@@ -161,22 +168,22 @@ public struct ProjectTree: Sendable, Equatable {
         /// How many have reported finishing.
         public let doneReportedCount: Int
 
-        /// Every session in the checkout, listed or not.
-        public var sessionCount: Int { sessions.count + hiddenCount }
+        /// Every task in the checkout, listed or not.
+        public var sessionCount: Int { units.count + hiddenCount }
 
         /// - Parameters:
-        ///   - sessions: the rows to list.
+        ///   - units: the tasks to list.
         ///   - hiddenCount: how many more the checkout holds.
         ///   - counts: the tallies, over *all* of them. A checkout whose one
-        ///     red session is past the cap still has to be drawn red, or the
-        ///     cap would hide the thing the sidebar exists to point at.
+        ///     red task is past the cap still has to be drawn red, or the cap
+        ///     would hide the thing the sidebar exists to point at.
         public init(
             id: String,
             path: String?,
             branch: String?,
             agentWorktreeTask: String?,
             isWorktree: Bool,
-            sessions: [BoardRow],
+            units: [TaskUnit],
             hiddenCount: Int = 0,
             counts: Counts? = nil
         ) {
@@ -185,9 +192,9 @@ public struct ProjectTree: Sendable, Equatable {
             self.branch = branch
             self.agentWorktreeTask = agentWorktreeTask
             self.isWorktree = isWorktree
-            self.sessions = sessions
+            self.units = units
             self.hiddenCount = max(0, hiddenCount)
-            let tallies = counts ?? Counts(rows: sessions)
+            let tallies = counts ?? Counts(units: units)
             self.liveCount = tallies.live
             self.needsYouCount = tallies.needsYou
             self.doneReportedCount = tallies.doneReported
@@ -206,11 +213,11 @@ public struct ProjectTree: Sendable, Equatable {
                 self.doneReported = doneReported
             }
 
-            public init(rows: [BoardRow]) {
+            public init(units: [TaskUnit]) {
                 self.init(
-                    live: rows.count { !$0.isEnded },
-                    needsYou: rows.count { $0.needsPerson },
-                    doneReported: rows.count { $0.isDoneReported }
+                    live: units.count { $0.counts.live > 0 },
+                    needsYou: units.count { $0.needsPerson },
+                    doneReported: units.count { $0.isInReview }
                 )
             }
         }
@@ -254,37 +261,53 @@ public struct ProjectTree: Sendable, Equatable {
     ///   - names: display names by project path, from `projects.name`. A path
     ///     the store has never seen falls back to its last component, which is
     ///     what the resolver would have called it anyway.
+    ///   - units: the wall's units. The assembler passes the ones it just
+    ///     derived, so the column and the wall cannot disagree about what a
+    ///     piece of work is; a caller with none — a test, a renderer — gets
+    ///     them derived here rather than an empty tree.
     public static func build(
         board: BoardSnapshot,
         names: [String: String] = [:],
+        units derived: [TaskUnit]? = nil,
         builder: BoardRowBuilder? = nil
     ) -> ProjectTree {
-        // One builder for the whole tree: it holds the index that turns "what
-        // is my parent called" from a scan of the board into a lookup.
-        let builder = builder ?? BoardRowBuilder(board: board)
+        let units = derived ?? TaskUnitBuilder.units(
+            sessions: board.sessions,
+            board: board,
+            ledger: .empty,
+            builder: builder ?? BoardRowBuilder(board: board),
+            now: board.generatedAt
+        )
         var order: [String] = []
-        var byProject: [String: [SessionSnapshot]] = [:]
-        var ungrouped: [SessionSnapshot] = []
+        var byProject: [String: [TaskUnit]] = [:]
+        var harnessesByProject: [String: Set<Harness>] = [:]
+        var isRepositoryByProject: [String: Bool] = [:]
+        var ungrouped: [TaskUnit] = []
 
-        for session in board.sessions {
-            guard let key = board.projectKey(for: session) else {
-                ungrouped.append(session)
+        for unit in units {
+            guard let key = unit.projectKey else {
+                ungrouped.append(unit)
                 continue
             }
             if byProject[key] == nil {
                 byProject[key] = []
                 order.append(key)
             }
-            byProject[key]?.append(session)
+            byProject[key]?.append(unit)
+            // Every harness in the family, not only the lead's: the dots on a
+            // project row answer "who is working in here", and a Claude Code
+            // session that delegated to a Codex `exec` has both of them in it.
+            for member in unit.members { harnessesByProject[key, default: []].insert(member.harness) }
+            if isRepositoryByProject[key] != true {
+                isRepositoryByProject[key] = unit.members.contains {
+                    board.session(for: $0.key)?.identity.gitRoot != nil
+                }
+            }
         }
 
         let projects = board.claims.pinnedFirst(order) { $0 }.map { key -> Project in
-            let sessions = byProject[key] ?? []
-            // In catalog order, and in one pass: asking `allCases.filter` here
-            // walked every session once per harness, on a sidebar that is
-            // rebuilt on every frame.
-            var seen: Set<Harness> = []
-            for session in sessions { seen.insert(session.key.harness) }
+            let units = byProject[key] ?? []
+            let seen = harnessesByProject[key] ?? []
             return Project(
                 key: key,
                 // The person's own name for the project first, then the
@@ -293,9 +316,9 @@ public struct ProjectTree: Sendable, Equatable {
                 // is what the resolver decided.
                 name: board.claims.name(forKey: key)
                     ?? names[key] ?? BoardGrouping.projectName(forPath: key),
-                checkouts: checkouts(in: sessions, projectKey: key, builder: builder),
+                checkouts: checkouts(in: units, projectKey: key, board: board),
                 harnesses: Harness.allCases.filter(seen.contains),
-                isRepository: sessions.contains { $0.identity.gitRoot != nil },
+                isRepository: isRepositoryByProject[key] ?? false,
                 colorHex: board.claims.colorHex(forKey: key),
                 isPinned: board.claims.isPinned(key)
             )
@@ -303,7 +326,7 @@ public struct ProjectTree: Sendable, Equatable {
         let listedUngrouped = listable(ungrouped)
         return ProjectTree(
             projects: projects,
-            ungrouped: nested(listedUngrouped, builder: builder),
+            ungrouped: listedUngrouped,
             ungroupedHidden: ungrouped.count - listedUngrouped.count
         )
     }
@@ -314,16 +337,12 @@ public struct ProjectTree: Sendable, Equatable {
     /// listed rows would go quiet exactly when a checkout got busy enough to be
     /// worth looking at. From snapshots and not from rows, because building a
     /// row per unlisted session is the work the cut exists to stop doing.
-    static func counts(
-        of sessions: [SessionSnapshot],
-        builder: BoardRowBuilder
-    ) -> Checkout.Counts {
+    static func counts(of units: [TaskUnit]) -> Checkout.Counts {
         var counts = Checkout.Counts()
-        for session in sessions {
-            if !session.state.isEnded { counts.live += 1 }
-            let attention = builder.attention(for: session)
-            if attention.wantsPerson { counts.needsYou += 1 }
-            if attention.isDoneReported { counts.doneReported += 1 }
+        for unit in units {
+            if unit.counts.live > 0 { counts.live += 1 }
+            if unit.needsPerson { counts.needsYou += 1 }
+            if unit.isInReview { counts.doneReported += 1 }
         }
         return counts
     }
@@ -341,83 +360,39 @@ public struct ProjectTree: Sendable, Equatable {
     /// than this type's — see ``listLimit``. The difference is real: a person
     /// can ask the sidebar for the rest of the live ones, and nobody needs to
     /// ask it for the finished ones, because they are somewhere better.
-    static func listable(_ sessions: [SessionSnapshot]) -> [SessionSnapshot] {
-        sessions.filter { !$0.state.isEnded }
+    static func listable(_ units: [TaskUnit]) -> [TaskUnit] {
+        units.filter { $0.bucket != .ended }
     }
 
-    /// A run of sessions as rows, with delegated ones placed under whoever
-    /// spawned them.
+    /// Divides a project's tasks by the checkout each is being done in.
     ///
-    /// The frame's order already puts the session that most needs a person at
-    /// the top, and that is the order roots keep. What this adds is that a
-    /// subagent appears *under* its parent rather than several rows above it,
-    /// which is the only thing that makes an indent mean anything.
-    ///
-    /// Done here rather than in the sidebar's body because it is O(sessions)
-    /// and a body may run many times for one change.
-    static func nested(
-        _ sessions: [SessionSnapshot],
-        builder: BoardRowBuilder
-    ) -> [BoardRow] {
-        let present = Set(sessions.map(\.key))
-        var childrenOf: [SessionKey: [SessionSnapshot]] = [:]
-        var roots: [SessionSnapshot] = []
-        for session in sessions {
-            if let parent = session.identity.parent, parent != session.key, present.contains(parent) {
-                childrenOf[parent, default: []].append(session)
-            } else {
-                roots.append(session)
-            }
-        }
-
-        var rows: [BoardRow] = []
-        rows.reserveCapacity(sessions.count)
-        var visited: Set<SessionKey> = []
-        func walk(_ session: SessionSnapshot, depth: Int) {
-            guard visited.insert(session.key).inserted else { return }
-            rows.append(builder.row(for: session, depth: depth))
-            // Capped so a ten-deep chain does not push a title off a 232 pt
-            // column; the tree's full shape is the trace pane's job to show.
-            for child in childrenOf[session.key] ?? [] { walk(child, depth: min(depth + 1, 2)) }
-        }
-        for root in roots { walk(root, depth: 0) }
-        // A cycle in the recorded parent links would strand its members;
-        // appending whatever is left keeps the tree total.
-        for session in sessions where !visited.contains(session.key) {
-            rows.append(builder.row(for: session, depth: 0))
-        }
-        return rows
-    }
-
-    /// Divides a project's sessions by the checkout each is working in.
-    ///
-    /// The key is the worktree path when there is one and the project root
-    /// otherwise, so the main checkout and every linked worktree of one
-    /// repository are siblings rather than one undifferentiated pile. A
-    /// session that inherited its project from an ancestor — a subagent with no
-    /// directory at all — has no checkout of its own to name, and joins the
-    /// checkout its nearest placed ancestor is in.
+    /// The key is the *lead's* worktree path when there is one and the project
+    /// root otherwise, so the main checkout and every linked worktree of one
+    /// repository are siblings rather than one undifferentiated pile. The lead
+    /// and not any member, for the reason the wall's harness sections use: one
+    /// piece of work belongs in one place, and a delegation whose subagents
+    /// have no directory of their own belongs where its orchestrator is.
     private static func checkouts(
-        in sessions: [SessionSnapshot],
+        in units: [TaskUnit],
         projectKey: String,
-        builder: BoardRowBuilder
+        board: BoardSnapshot
     ) -> [Checkout] {
         var order: [String] = []
-        var byCheckout: [String: [SessionSnapshot]] = [:]
+        var byCheckout: [String: [TaskUnit]] = [:]
         var attributes: [String: (path: String?, branch: String?)] = [:]
 
-        for session in sessions {
-            let path = session.identity.worktreePath ?? session.identity.gitRoot
-                ?? session.identity.cwd
+        for unit in units {
+            let identity = board.session(for: unit.lead.key)?.identity
+            let path = identity?.worktreePath ?? identity?.gitRoot ?? identity?.cwd
             let id = path ?? projectKey
             if byCheckout[id] == nil {
                 byCheckout[id] = []
                 order.append(id)
-                attributes[id] = (path, session.identity.gitBranch)
-            } else if attributes[id]?.branch == nil, let branch = session.identity.gitBranch {
+                attributes[id] = (path, identity?.gitBranch)
+            } else if attributes[id]?.branch == nil, let branch = identity?.gitBranch {
                 attributes[id]?.branch = branch
             }
-            byCheckout[id]?.append(session)
+            byCheckout[id]?.append(unit)
         }
 
         return order.map { id in
@@ -436,17 +411,13 @@ public struct ProjectTree: Sendable, Equatable {
                 // folder that has no branch.
                 isWorktree: !PseudoProject.isPseudo(projectKey)
                     && attribute.path.map { $0 != projectKey } ?? false,
-                // Already in board order: the sessions were appended in the
-                // order the frame listed them.
-                sessions: nested(listed, builder: builder),
+                units: listed,
                 hiddenCount: all.count - listed.count,
-                // Over every session in the checkout rather than over the
-                // eight that fitted: a badge that only counted the listed rows
-                // would go quiet exactly when a checkout got busy enough to be
-                // worth looking at. From the snapshots and not from rows,
-                // because a row per hidden session is the work the cap exists
-                // to stop doing.
-                counts: counts(of: all, builder: builder)
+                // Over every task in the checkout rather than over the eight
+                // that fitted: a badge that only counted the listed rows would
+                // go quiet exactly when a checkout got busy enough to be worth
+                // looking at.
+                counts: counts(of: all)
             )
         }
     }

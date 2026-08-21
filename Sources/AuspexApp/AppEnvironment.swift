@@ -206,7 +206,8 @@ public final class AppEnvironment {
                 rules: rules,
                 showsIgnored: showsIgnored,
                 sceneZones: catalog.sceneZones,
-                sessionWindow: catalog.sessionWindow
+                sessionWindow: catalog.sessionWindow,
+                showsSubagents: catalog.showsSubagents
             )
         }
         catalog.load()

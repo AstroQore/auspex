@@ -264,6 +264,21 @@ final class ProjectCatalogModel {
     /// Whether the sidebar sits on the system's sidebar material.
     var translucentSidebar: Bool { settings.translucentSidebar }
 
+    /// Whether every task card lists the sessions inside it.
+    var showsSubagents: Bool { settings.showsSubagents }
+
+    /// Opens or folds every card's member list, and remembers it.
+    ///
+    /// One switch for the whole wall, and a chevron per card on top of it: the
+    /// global answer is a *density* preference and the per-card one is a
+    /// question about one piece of work, and conflating them would mean
+    /// opening one card cost you the wall.
+    func setShowsSubagents(_ on: Bool) {
+        guard settings.showsSubagents != on else { return }
+        settings.showsSubagents = on
+        persist()
+    }
+
     func setTranslucentSidebar(_ on: Bool) {
         guard settings.translucentSidebar != on else { return }
         settings.translucentSidebar = on

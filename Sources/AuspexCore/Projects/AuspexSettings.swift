@@ -70,6 +70,21 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// ``AppearanceMode``.
     public var appearance: AppearanceMode
 
+    /// Whether every task card lists the sessions inside it.
+    ///
+    /// Off. A task card folds its subagents into a strip of dots, which is
+    /// what makes a wall of twelve pieces of work readable rather than a wall
+    /// of forty processes — and the great majority of the time the *shape* of
+    /// a delegation is all anybody needs from it. On is for the person who
+    /// reads the board at session granularity and wants the old density back;
+    /// a single card still opens on its own chevron either way.
+    ///
+    /// Here rather than in `@AppStorage` because it changes what the frame
+    /// *derives* — the sidebar's tree lists sessions only under an opened task
+    /// — and the offscreen renderers have to be able to read it without a
+    /// window.
+    public var showsSubagents: Bool
+
     /// Whether the sidebar sits on the system's sidebar material rather than
     /// on the flat canvas token.
     ///
@@ -95,9 +110,11 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         sessionWindow: SessionWindow = .standard,
         notifiesOnDone: Bool = true,
         appearance: AppearanceMode = .standard,
+        showsSubagents: Bool = false,
         translucentSidebar: Bool = true,
         updateChannel: UpdateChannel = .standard
     ) {
+        self.showsSubagents = showsSubagents
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
         self.didShowSetup = didShowSetup
@@ -113,7 +130,7 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
         case sessionWindow, notifiesOnDone, appearance, translucentSidebar
-        case updateChannel
+        case updateChannel, showsSubagents
     }
 
     public init(from decoder: any Decoder) throws {
@@ -154,6 +171,8 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
             ?? .standard
         translucentSidebar = (try? container.decode(Bool.self, forKey: .translucentSidebar))
             ?? true
+        // Absent means folded, which is what the wall is for.
+        showsSubagents = (try? container.decode(Bool.self, forKey: .showsSubagents)) ?? false
         // Absent means stable, which is also what an unrecognised value means:
         // the safe end of this setting is the one that installs less, so a
         // hand-edited typo must not silently opt somebody into preview builds.
@@ -164,7 +183,7 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
             && crewLiveliness == nil && sessionWindow == .standard && notifiesOnDone
-            && appearance == .standard && translucentSidebar
+            && appearance == .standard && translucentSidebar && !showsSubagents
             && updateChannel == .standard
     }
 }
