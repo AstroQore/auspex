@@ -73,11 +73,85 @@ public struct SceneLayout: Sendable, Equatable {
     /// is waiting for the next project to take it.
     private var floors: [FloorState?]
 
+    /// When each suite's trailing desks first became free, so a row that
+    /// empties does not close under the reader the instant it does.
+    ///
+    /// Keyed by suite index and measured against the *board's* own instant,
+    /// which is what keeps the layout a pure function of the frames it was
+    /// given: no clock is read here.
+    private var trailingFreedAt: [Int: Date] = [:]
+
+    /// When the campus's last suite became empty, for the same reason.
+    private var campusFreedAt: Date?
+
+    /// The shelf width the campus is packed at, held until it has to change.
+    ///
+    /// See ``stableShelfWidth(ideal:widest:)``. `nil` until the first frame
+    /// with anything on it, so two fresh layouts fed the same board still
+    /// agree.
+    private var shelfWidthInUse: CGFloat?
+
+    /// Where each suite stands on the campus: which shelf, and how far along
+    /// it, in units. Keyed by the suite's allocation index.
+    ///
+    /// This is the difference between a map and a re-pack. The campus used to
+    /// be shelved from scratch on every frame — greedily, left to right — so a
+    /// company gaining one desk changed its width, and every company after it
+    /// slid along and sometimes onto another shelf. A plot is *kept* instead:
+    /// a suite stays exactly where it is for as long as it still fits there,
+    /// and only the ones that genuinely cannot stay are moved.
+    private var plots: [Int: Plot] = [:]
+
+    /// One suite's place on the campus.
+    private struct Plot: Sendable, Equatable {
+        var shelf: Int
+        /// Distance from the campus's left margin, in units.
+        var x: CGFloat
+    }
+
+    /// How much vertical room each suite is *reserved* on its shelf, and when
+    /// that was last set.
+    ///
+    /// Not the same as how tall it is. A company's height moves all day — a
+    /// session goes idle and its break room gains a row, it comes back and the
+    /// row goes — and the shelf below is laid out under the tallest suite
+    /// above it, so every one of those little changes used to slide every
+    /// company on the shelves below. The reservation grows the moment it has
+    /// to and gives space back only after ``shrinkDelay``, so a company that
+    /// is breathing does not move the ones under it.
+    private var reservedHeights: [Int: Reservation] = [:]
+
+    /// How much room a suite is holding on its shelf, and since when.
+    private struct Reservation: Sendable, Equatable {
+        var height: CGFloat
+        var since: Date
+    }
+
     /// Creates an empty campus.
     public init(metrics: SceneMetrics = .standard) {
         self.metrics = metrics
         self.floors = []
     }
+
+    /// How long a desk stays held after its session leaves before the row it
+    /// is on may close.
+    ///
+    /// A minute. The map is a thing a person glances at every few minutes and
+    /// recognises; a suite that shrinks the moment a session ends re-packs the
+    /// campus under them for a desk nobody is coming back to. Long enough that
+    /// a burst of exits costs one reflow rather than twenty, short enough that
+    /// an office which has genuinely quietened down is back to its own size
+    /// before anybody looks again.
+    public static let shrinkDelay: TimeInterval = 60
+
+    /// How far the ideal shelf width may drift before the campus is re-packed.
+    ///
+    /// Four workstations, which is about a small suite. The ideal width is a
+    /// function of *every* suite's height, so without this a single company
+    /// growing one row of desks moved every other company on the map — which
+    /// is the reflow a person actually notices, because it is all of them at
+    /// once rather than the one thing that changed.
+    public static let shelfDrift: CGFloat = 4
 
     /// The title the suite with no project shows.
     public static let unplacedFloorTitle = "No project"
@@ -496,6 +570,7 @@ public struct SceneLayout: Sendable, Equatable {
     /// left, not to one that has been re-sorted around them.
     private mutating func sweep(_ plan: Plan) {
         let heads = Set(plan.tableHeads)
+        let now = plan.board.generatedAt
         for index in floors.indices {
             guard var floor = floors[index] else { continue }
 
@@ -516,7 +591,24 @@ public struct SceneLayout: Sendable, Equatable {
                 }
                 floor.bays[bayIndex] = bay
             }
-            while let last = floor.bays.last, last == nil { floor.bays.removeLast() }
+            // Trailing desks are held for ``shrinkDelay`` before the row
+            // closes. Everything else in the sweep is immediate: a desk is
+            // *released* the moment its session goes, so somebody arriving
+            // takes it straight away — what waits is only the moment the
+            // suite is allowed to become narrower, which is the move that
+            // re-packs the campus.
+            // `bays.last` is a double optional: `.some(nil)` is "there is a
+            // last bay and it is empty", which is the case this is about.
+            if let last = floor.bays.last, last == nil {
+                let since = trailingFreedAt[index] ?? now
+                trailingFreedAt[index] = since
+                if now.timeIntervalSince(since) >= Self.shrinkDelay {
+                    while let last = floor.bays.last, last == nil { floor.bays.removeLast() }
+                    trailingFreedAt[index] = nil
+                }
+            } else {
+                trailingFreedAt[index] = nil
+            }
 
             for tableIndex in floor.tables.indices {
                 guard let table = floor.tables[tableIndex] else { continue }
@@ -543,7 +635,19 @@ public struct SceneLayout: Sendable, Equatable {
 
             floors[index] = floor.isVacant ? nil : floor
         }
-        while let last = floors.last, last == nil { floors.removeLast() }
+        // And the campus itself: a company whose people have all walked out
+        // keeps its plot for a minute, so a machine that finishes six repos
+        // in a row re-packs once rather than six times.
+        if let last = floors.last, last == nil {
+            let since = campusFreedAt ?? now
+            campusFreedAt = since
+            if now.timeIntervalSince(since) >= Self.shrinkDelay {
+                while let last = floors.last, last == nil { floors.removeLast() }
+                campusFreedAt = nil
+            }
+        } else {
+            campusFreedAt = nil
+        }
     }
 
     /// Empties every place in `slots` whose occupant no longer belongs there.
@@ -1009,8 +1113,148 @@ public struct SceneLayout: Sendable, Equatable {
         return meeting + metrics.suiteGap + breakRoom
     }
 
+    /// The shelf width the campus is actually packed at.
+    ///
+    /// The *ideal* — see ``SceneMetrics/shelfUnits(totalUnits:averageFloorHeight:)``
+    /// — is a function of how much building there is and how tall the average
+    /// suite is, so it moves whenever any company gains a desk row or empties
+    /// a bench. Packing at the ideal every frame meant that one company
+    /// changing shape slid every other company on the map sideways, which is
+    /// the reflow a person notices: not the thing that changed, but everything
+    /// that did not.
+    ///
+    /// So the width is *held*. It changes only when it has to — when a suite
+    /// has grown too wide for it — or when the ideal has drifted more than
+    /// ``shelfDrift`` away, which is a campus that has genuinely changed size
+    /// rather than one that is breathing.
+    private mutating func stableShelfWidth(ideal: CGFloat, widest: CGFloat) -> CGFloat {
+        let needed = max(ideal, widest)
+        guard let inUse = shelfWidthInUse else {
+            shelfWidthInUse = needed
+            return needed
+        }
+        guard inUse + 0.0001 >= widest, abs(ideal - inUse) <= Self.shelfDrift else {
+            shelfWidthInUse = needed
+            return needed
+        }
+        return inUse
+    }
+
+    /// Gives every measured suite a plot, keeping the one it already had
+    /// wherever that still works.
+    ///
+    /// The rule is *keep unless you cannot*: a suite holds its shelf and its
+    /// offset while it still fits inside the shelf width and does not overlap
+    /// a suite that was already there. Only the ones that fail that — a
+    /// company that grew wider than the room it was standing in, or one that
+    /// has just appeared — are placed, into the first gap that takes them.
+    ///
+    /// That is what turns "a session started" from a re-pack of the whole
+    /// campus into one company changing shape while the rest hold still.
+    private mutating func assignPlots(
+        _ measured: [SuiteMeasurement], shelfWidth: CGFloat
+    ) -> [Int: Plot] {
+        var kept: [Int: Plot] = [:]
+        var occupied: [Int: [(x: CGFloat, units: CGFloat)]] = [:]
+
+        func fits(_ plot: Plot, units: CGFloat) -> Bool {
+            guard plot.x >= -0.0001, plot.x + units <= shelfWidth + 0.0001 else { return false }
+            for taken in occupied[plot.shelf] ?? [] {
+                let clear = plot.x + units <= taken.x + 0.0001
+                    || taken.x + taken.units <= plot.x + 0.0001
+                if !clear { return false }
+            }
+            return true
+        }
+
+        func take(_ plot: Plot, units: CGFloat, for index: Int) {
+            kept[index] = plot
+            occupied[plot.shelf, default: []].append((plot.x, units))
+        }
+
+        // The ones that can stay, in allocation order, so that two suites
+        // wanting the same place are resolved the same way every frame.
+        for measurement in measured {
+            guard let plot = plots[measurement.index], fits(plot, units: measurement.units)
+            else { continue }
+            take(plot, units: measurement.units, for: measurement.index)
+        }
+
+        // Then everybody else, into the first gap that takes them.
+        for measurement in measured where kept[measurement.index] == nil {
+            var shelf = 0
+            var placed: Plot?
+            while placed == nil {
+                var x: CGFloat = 0
+                let taken = (occupied[shelf] ?? []).sorted { $0.x < $1.x }
+                for slot in taken {
+                    if x + measurement.units <= slot.x + 0.0001 { break }
+                    x = max(x, slot.x + slot.units)
+                }
+                if x + measurement.units <= shelfWidth + 0.0001 {
+                    placed = Plot(shelf: shelf, x: x)
+                } else {
+                    shelf += 1
+                }
+            }
+            take(placed ?? Plot(shelf: 0, x: 0), units: measurement.units, for: measurement.index)
+        }
+
+        plots = kept
+        return kept
+    }
+
+    /// How much vertical room each suite holds this frame.
+    ///
+    /// Grows the instant a company needs it, and is given back a minute after
+    /// it stops needing it — the same bargain a freed desk gets, and for the
+    /// same reason. See ``reservedHeights``.
+    private mutating func reserveHeights(
+        _ measured: [SuiteMeasurement], now: Date
+    ) -> [Int: CGFloat] {
+        var out: [Int: CGFloat] = [:]
+        var kept: [Int: Reservation] = [:]
+        for measurement in measured {
+            let held = reservedHeights[measurement.index]
+            let reservation: Reservation
+            if let held, measurement.height < held.height,
+               now.timeIntervalSince(held.since) < Self.shrinkDelay {
+                reservation = held
+            } else {
+                reservation = Reservation(height: measurement.height, since: now)
+            }
+            kept[measurement.index] = reservation
+            out[measurement.index] = reservation.height
+        }
+        reservedHeights = kept
+        return out
+    }
+
+    /// Where each shelf's top edge is, given what is standing on it.
+    ///
+    /// A shelf is as tall as its tallest suite, so a company that grows a row
+    /// of desks pushes the shelves *below* it down — and nothing above or
+    /// beside it moves at all.
+    private func shelfTops(
+        _ measured: [SuiteMeasurement], plots: [Int: Plot], heights reserved: [Int: CGFloat]
+    ) -> [Int: CGFloat] {
+        var heights: [Int: CGFloat] = [:]
+        for measurement in measured {
+            guard let plot = plots[measurement.index] else { continue }
+            let height = max(measurement.height, reserved[measurement.index] ?? 0)
+            heights[plot.shelf] = max(heights[plot.shelf] ?? 0, height)
+        }
+        var tops: [Int: CGFloat] = [:]
+        var top = metrics.margin
+        for shelf in heights.keys.sorted() {
+            tops[shelf] = top
+            top += (heights[shelf] ?? 0) + metrics.floorGap
+        }
+        return tops
+    }
+
     /// Turns the allocation table into coordinates.
-    private func geometry(_ plan: Plan) -> SceneFrame {
+    private mutating func geometry(_ plan: Plan) -> SceneFrame {
         var outFloors: [SceneFloor] = []
         var slots: [SceneSlot] = []
         var areas: [SceneZoneArea] = []
@@ -1027,18 +1271,19 @@ public struct SceneLayout: Sendable, Equatable {
         let averageHeight = measured.isEmpty
             ? 0
             : measured.reduce(0) { $0 + $1.height } / CGFloat(measured.count)
-        let shelfWidth = metrics.shelfUnits(
-            totalUnits: totalUnits, averageFloorHeight: averageHeight
+        let shelfWidth = stableShelfWidth(
+            ideal: metrics.shelfUnits(totalUnits: totalUnits, averageFloorHeight: averageHeight),
+            widest: measured.map(\.units).max() ?? 0
         )
 
         // Suites are shelved: they run left to right and wrap when the next one
         // will not fit, so four projects with two agents each read as one wide
         // campus rather than a column six screens tall. A suite is never split
-        // across a wrap — a company is a company.
-        var shelfTop = metrics.margin
-        var shelfHeight: CGFloat = 0
-        var shelfUnits: CGFloat = 0
-        var cursorX = metrics.margin
+        // across a wrap — a company is a company — and a suite that still fits
+        // where it was last frame stays there. See ``plots``.
+        let plots = assignPlots(measured, shelfWidth: shelfWidth)
+        let reserved = reserveHeights(measured, now: plan.board.generatedAt)
+        let shelfTops = shelfTops(measured, plots: plots, heights: reserved)
         var buildingRight = metrics.margin
         var buildingBottom = metrics.margin
 
@@ -1046,15 +1291,10 @@ public struct SceneLayout: Sendable, Equatable {
             let floorIndex = measurement.index
             let floor = measurement.floor
             let width = measurement.units * metrics.cellWidth
+            let plot = plots[floorIndex] ?? Plot(shelf: 0, x: 0)
 
-            if shelfUnits > 0, shelfUnits + measurement.units > shelfWidth + 0.0001 {
-                shelfTop += shelfHeight + metrics.floorGap
-                shelfHeight = 0
-                shelfUnits = 0
-                cursorX = metrics.margin
-            }
-            let left = cursorX
-            let top = shelfTop
+            let left = metrics.margin + plot.x * metrics.cellWidth
+            let top = shelfTops[plot.shelf] ?? metrics.margin
             let deskRect = CGRect(
                 x: left, y: top, width: measurement.deskWidth, height: measurement.deskHeight
             )
@@ -1228,9 +1468,6 @@ public struct SceneLayout: Sendable, Equatable {
                 )
             }
 
-            cursorX += width + metrics.floorGap
-            shelfUnits += measurement.units
-            shelfHeight = max(shelfHeight, measurement.height)
             buildingRight = max(buildingRight, suiteRect.maxX)
             buildingBottom = max(buildingBottom, suiteRect.maxY)
         }

@@ -702,8 +702,18 @@ struct SceneZoneTests {
         #expect(after.place(of: Self.key("over")) == nil)
         #expect(after.seat(for: Self.key("over")) == nil)
         #expect(after.slot(for: Self.key("over")) == nil)
-        // The desk it held is released, so the company is one desk narrower.
-        #expect(after.slots.count < leaving.slots.count)
+        // The desk it held is released — drawn empty at first, and closed up a
+        // minute later, which is the delay that stops a suite re-packing under
+        // somebody the instant a session ends. See ``SceneLayout/shrinkDelay``.
+        #expect(after.slot(for: Self.key("over")) == nil)
+        let settled = layout.update(
+            with: BoardSnapshot(
+                generatedAt: board.generatedAt.addingTimeInterval(SceneLayout.shrinkDelay + 1),
+                sessions: board.sessions
+            ),
+            departed: [Self.key("over")]
+        )
+        #expect(settled.slots.count < leaving.slots.count)
         // And whoever is still working has not moved.
         #expect(
             after.place(of: Self.key("busy"))?.anchor == leaving.place(of: Self.key("busy"))?.anchor

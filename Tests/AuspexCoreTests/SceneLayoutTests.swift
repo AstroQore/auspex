@@ -37,8 +37,17 @@ struct SceneLayoutTests {
         )
     }
 
-    private static func board(_ sessions: [SessionSnapshot]) -> BoardSnapshot {
-        BoardSnapshot(generatedAt: Date(timeIntervalSince1970: 1_767_225_600), sessions: sessions)
+    private static let epoch = Date(timeIntervalSince1970: 1_767_225_600)
+
+    /// A frame, optionally taken `after` seconds later than the last one.
+    ///
+    /// The layout measures its one delay — how long a freed desk is held
+    /// before the row closes — against the *board's* own instant, so a test
+    /// about that rule moves the board's clock rather than the machine's.
+    private static func board(
+        _ sessions: [SessionSnapshot], after seconds: TimeInterval = 0
+    ) -> BoardSnapshot {
+        BoardSnapshot(generatedAt: epoch.addingTimeInterval(seconds), sessions: sessions)
     }
 
     private static func roots(_ count: Int, project: String = "/Users/example/Code/auspex")
@@ -145,13 +154,23 @@ struct SceneLayoutTests {
         #expect(frame.slots.filter(\.isVacant).count == 1)
     }
 
-    @Test("A gap at the end of a floor closes instead of lingering")
+    @Test("A gap at the end of a floor closes — a minute after it opens")
     func trailingGapsClose() {
         var layout = SceneLayout()
         let all = Self.roots(4)
         _ = layout.update(with: Self.board(all))
 
-        let frame = layout.update(with: Self.board(Array(all.prefix(2))))
+        // Straight away the desks are still there, empty. Closing them the
+        // instant a session ends is what re-packed the campus under a person
+        // who was reading it — see ``SceneLayout/shrinkDelay``.
+        let held = layout.update(with: Self.board(Array(all.prefix(2))))
+        #expect(held.slots.count == 4)
+        #expect(held.slots.filter(\.isVacant).count == 2)
+
+        // A minute later, nobody having come back for them, the row closes.
+        let frame = layout.update(
+            with: Self.board(Array(all.prefix(2)), after: SceneLayout.shrinkDelay + 1)
+        )
         #expect(frame.slots.count == 2)
         #expect(frame.slots.allSatisfy { !$0.isVacant })
     }
