@@ -238,6 +238,22 @@ struct LiveBoardModelTests {
         #expect(model.rowGroups == expected.rowGroups)
         #expect(model.summary == expected.summary)
         #expect(model.endedRows == expected.endedRows)
-        #expect(model.groups == expected.groups)
+    }
+
+    @Test("The crew's snapshots are kept only while the crew is on screen")
+    func snapshotGroupsAreCrewOnly() async {
+        let (model, _) = await model()
+
+        // `groups` carries whole `SessionSnapshot`s, and `@Observable` compares
+        // before it publishes — so assigning it in board mode is a deep
+        // comparison of every session on the board that nothing is drawing.
+        #expect(model.viewMode == .board)
+        #expect(model.groups.isEmpty)
+
+        // Switching to the crew hands over the frame already in hand rather
+        // than showing an empty wall until the next one lands.
+        model.viewMode = .crew
+        #expect(!model.groups.isEmpty)
+        #expect(model.groups.flatMap(\.sessions).count == model.sessionCount)
     }
 }

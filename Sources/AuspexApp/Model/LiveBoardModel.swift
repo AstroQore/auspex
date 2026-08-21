@@ -171,6 +171,11 @@ final class LiveBoardModel {
     var viewMode: BoardViewMode = .board {
         didSet {
             guard oldValue != viewMode else { return }
+            // The crew wall is the only reader of `groups`, and it is the only
+            // mode that pays for it — see `adopt(_:)`. Handing it the last
+            // frame's is what stops a switch to the crew showing an empty wall
+            // until the next frame lands.
+            if viewMode == .crew, let previousFrame { groups = previousFrame.groups }
             guard viewMode.requiresSelection else {
                 // Leaving the trajectory stops its reads. The fold is kept:
                 // coming back to the same session should not re-read a
@@ -434,6 +439,8 @@ final class LiveBoardModel {
             if let selectedKey { markSeen(selectedKey) }
             trace = []
             traceItems = []
+            traceHiddenCount = 0
+            showsWholeTrace = false
             expandedRows = []
             followsTail = true
             lastTraceEventAt = nil
@@ -523,6 +530,11 @@ final class LiveBoardModel {
     /// The stamp of the newest frame that has been assigned.
     private var appliedSequence: UInt64 = 0
 
+    /// The last frame actually adopted, for the next one to be measured
+    /// against. Not observed: nothing draws it, and it is replaced whenever
+    /// anything does change.
+    @ObservationIgnored private var previousFrame: AssembledBoardFrame?
+
     /// `true` when something changed since the last request was sent.
     private var needsAssembly = false
 
@@ -609,10 +621,35 @@ final class LiveBoardModel {
         guard frame.sequence > appliedSequence else { return }
         appliedSequence = frame.sequence
 
-        board = frame.board
+        // A frame that draws the window already on screen is not adopted at
+        // all. The assembler reconciled it against the one before it on its own
+        // executor — see `AssembledBoardFrame.sharing(_:)` — so this comparison
+        // is of the values this model is already holding and costs a handful of
+        // pointer checks, while what it skips is fourteen assignments, a
+        // selection refresh, and two callbacks into other models.
+        //
+        // It happens: a frame is published whenever *any* session changed, most
+        // of what changes never reaches the wall, and the user layer schedules
+        // an assembly of its own every time somebody clicks.
+        if let previousFrame, frame.drawsTheSameAs(previousFrame) { return }
+        previousFrame = frame
+
+        // `generatedAt` moves on every frame and nothing draws it, so a board
+        // whose sessions are the ones already on screen must not replace the
+        // value — assigning it would invalidate the scene, the crew wall, the
+        // Harnesses page and the menu bar's panel for a picture that did not
+        // change.
+        let boardMoved = !board.saysTheSameAs(frame.board)
+        if boardMoved { board = frame.board }
         ignoredKeys = frame.ignoredKeys
         sessionIndex = frame.sessionIndex
-        groups = frame.groups
+        // Only the mode that reads it. `groups` carries whole
+        // `SessionSnapshot`s — the value every other property here exists to
+        // keep out of the render loop — and `@Observable` compares before it
+        // publishes, so assigning it is a deep comparison of every session on
+        // the board, on the main actor, whether or not anything is drawing it.
+        // The crew wall gets it the moment it is switched to; see `viewMode`.
+        if viewMode == .crew { groups = frame.groups }
         rowGroups = frame.rowGroups
         endedRows = frame.endedRows
         summary = frame.summary
@@ -625,7 +662,10 @@ final class LiveBoardModel {
         olderHidden = frame.olderHidden
         refreshSelection()
         onTree?(frame.tree)
-        onFrame?(frame.board)
+        // Only when the board moved: the Tasks page rebuilds its rows from this
+        // and has no more reason than the wall does to do it for a frame that
+        // says the same thing.
+        if boardMoved { onFrame?(frame.board) }
 
         if !board.sessions.isEmpty { hasEverSeenSession = true }
 
@@ -926,7 +966,25 @@ final class LiveBoardModel {
 
     /// ``trace`` with the filter applied and turn separators interleaved —
     /// precomputed so the `List` body does no work per frame.
+    ///
+    /// The **newest** ``traceVisibleWindow`` of them, unless the reader has
+    /// asked for the whole thing. See ``traceHiddenCount``.
     private(set) var traceItems: [TraceListItem] = []
+
+    /// How many rows of the loaded trace are above the ones in ``traceItems``.
+    ///
+    /// Zero once ``showsWholeTrace`` is on, and zero for the great majority of
+    /// sessions, which have fewer rows than the window.
+    private(set) var traceHiddenCount = 0
+
+    /// Whether the reader has asked for the whole of a long transcript.
+    ///
+    /// Reset by selecting another session, deliberately: it is a decision
+    /// about *this* transcript, and carrying it to the next one would put the
+    /// next session's four thousand rows on screen without anybody asking.
+    var showsWholeTrace = false {
+        didSet { if oldValue != showsWholeTrace { rebuildTraceItems() } }
+    }
 
     /// Which categories are shown. All of them, until a chip is switched off.
     var traceFilter: Set<TraceEntry.Category> = Set(TraceEntry.Category.allCases) {
@@ -982,6 +1040,16 @@ final class LiveBoardModel {
     /// a runaway one cannot make the window unresponsive.
     private static let traceWindow = 2_000
 
+    /// How many of them the pane draws at once.
+    ///
+    /// A quarter of what is loaded. The rest stays in ``trace`` — the
+    /// permission-row lookup and anything else that reads the whole history
+    /// still sees it — and out of ``traceItems``, which is the list SwiftUI
+    /// turns into views. Four hundred is deep enough to scroll back through a
+    /// long turn without asking for more, and small enough that the pane costs
+    /// the same whether the session has four hundred rows or four thousand.
+    static let traceVisibleWindow = 400
+
     /// Starts consuming `registry`'s frames.
     ///
     /// - Parameters:
@@ -1001,20 +1069,21 @@ final class LiveBoardModel {
             // thread. Frames are coalesced to `frameInterval` — the newest one
             // wins, nothing is queued — which is invisible on a live board and
             // is what keeps ingest and rendering from fighting.
-            var lastApplied = ContinuousClock.now - Self.frameInterval
+            var lastApplied = ContinuousClock.now - Self.frameInterval(forSessions: 0)
             var pending: BoardSnapshot?
             var flush: Task<Void, Never>?
             for await frame in registry.boardSnapshots {
                 guard !Task.isCancelled else { return }
                 let now = ContinuousClock.now
-                if now - lastApplied >= Self.frameInterval {
+                let interval = self?.frameInterval ?? Self.frameInterval(forSessions: 0)
+                if now - lastApplied >= interval {
                     flush?.cancel(); flush = nil; pending = nil
                     lastApplied = now
                     self?.apply(frame)
                 } else {
                     pending = frame
                     if flush == nil {
-                        let wait = Self.frameInterval - (now - lastApplied)
+                        let wait = interval - (now - lastApplied)
                         flush = Task { @MainActor [weak self] in
                             try? await Task.sleep(for: wait)
                             guard !Task.isCancelled, let latest = pending else { return }
@@ -1028,8 +1097,31 @@ final class LiveBoardModel {
         }
     }
 
-    /// Minimum spacing between two applied frames (8 Hz).
-    private static let frameInterval: Duration = .milliseconds(120)
+    /// Minimum spacing between two applied frames, for the board in hand.
+    private var frameInterval: Duration {
+        Self.frameInterval(forSessions: sessionCount)
+    }
+
+    /// How often a board of `sessions` may be applied.
+    ///
+    /// A constant 8 Hz is right for a dozen sessions and impossible for two
+    /// hundred. Applying a frame is not free once it lands: SwiftUI re-places
+    /// every lazy stack the change touched, and a lazy stack's placement is a
+    /// walk of its whole view list — so the cost of an applied frame grows
+    /// with the board while the interval between them did not. Past about
+    /// eighty sessions the window was being asked to do more work per second
+    /// than a second contains, which is what "it froze" means.
+    ///
+    /// So the rate follows the size. Twelve sessions still get 8 Hz, which is
+    /// what makes a small board feel live; two hundred get 2 Hz, which is
+    /// inside the half second `AGENTS.md` § 4.1 allows a board to take during
+    /// a burst — and which is the difference between a board that is a beat
+    /// behind and a window that cannot be clicked.
+    ///
+    /// Static and pure so the curve can be asserted on rather than measured.
+    static func frameInterval(forSessions sessions: Int) -> Duration {
+        .milliseconds(min(500, max(120, sessions * 3)))
+    }
 
     /// Stops consuming. Called when the app is shutting down.
     func stop() {
@@ -1155,6 +1247,18 @@ final class LiveBoardModel {
                 }
             }
             items.append(.row(entry))
+        }
+        // The tail, not the whole thing. Every row here is a view SwiftUI
+        // builds and compares on every graph update, and a lazy stack's
+        // placement is a walk of its whole list — so two thousand rows cost
+        // the main thread two thousand rows' worth of work per frame, for a
+        // pane that is read from the bottom and shows about thirty at a time.
+        let hidden = max(0, items.count - Self.traceVisibleWindow)
+        if hidden > 0, !showsWholeTrace {
+            items.removeFirst(hidden)
+            traceHiddenCount = hidden
+        } else {
+            traceHiddenCount = 0
         }
         traceItems = items
     }

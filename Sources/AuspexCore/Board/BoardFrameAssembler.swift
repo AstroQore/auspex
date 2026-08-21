@@ -157,6 +157,61 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.attention = attention
         self.olderHidden = olderHidden
     }
+
+    /// The same frame, holding `previous`'s value for everything the two have
+    /// in common.
+    ///
+    /// ## Why a frame is worth reconciling against the last one
+    ///
+    /// `@Observable` compares before it publishes: assigning a property a value
+    /// equal to the one it holds notifies nobody. That is what makes the board
+    /// affordable at all — most of what a frame carries is unchanged — but the
+    /// comparison itself happens *in the setter*, on the main actor, and for
+    /// `groups` it is a deep comparison of every `SessionSnapshot` on the
+    /// board. `SessionSnapshot.__derived_struct_equals` most of the way down is
+    /// exactly the profile ``BoardRow`` exists to have got rid of, and it came
+    /// back through the assignment rather than through the render.
+    ///
+    /// So the comparison happens here, on the assembler's own executor, and
+    /// what the main actor receives is the value it *already holds* — the same
+    /// array, the same dictionary, the same instance. Every `==` it then does
+    /// hits the identity fast path and answers in a few instructions.
+    ///
+    /// It costs one deep comparison per frame off the main thread to save one
+    /// on it, which is the whole trade this type was built to make.
+    public func sharing(_ previous: AssembledBoardFrame) -> AssembledBoardFrame {
+        func kept<T: Equatable>(_ new: T, _ old: T) -> T { new == old ? old : new }
+        return AssembledBoardFrame(
+            sequence: sequence,
+            board: board.saysTheSameAs(previous.board) ? previous.board : board,
+            ignoredKeys: kept(ignoredKeys, previous.ignoredKeys),
+            sessionIndex: kept(sessionIndex, previous.sessionIndex),
+            groups: kept(groups, previous.groups),
+            rowGroups: kept(rowGroups, previous.rowGroups),
+            endedRows: kept(endedRows, previous.endedRows),
+            summary: kept(summary, previous.summary),
+            tree: kept(tree, previous.tree),
+            attention: kept(attention, previous.attention),
+            olderHidden: olderHidden
+        )
+    }
+
+    /// Whether this frame draws the same window as `previous`.
+    ///
+    /// Everything except ``sequence``. Cheap once ``sharing(_:)`` has run,
+    /// because the values being compared are then the same instances.
+    public func drawsTheSameAs(_ previous: AssembledBoardFrame) -> Bool {
+        board.saysTheSameAs(previous.board)
+            && ignoredKeys == previous.ignoredKeys
+            && groups == previous.groups
+            && rowGroups == previous.rowGroups
+            && endedRows == previous.endedRows
+            && summary == previous.summary
+            && tree == previous.tree
+            && attention == previous.attention
+            && olderHidden == previous.olderHidden
+            && sessionIndex == previous.sessionIndex
+    }
 }
 
 /// Where the board's frame is derived: off the main actor, one at a time.
@@ -224,6 +279,14 @@ public actor BoardFrameAssembler {
     /// costs far fewer than a burst of assemblies.
     public private(set) var assembledCount = 0
 
+    /// The frame this assembler last handed out.
+    ///
+    /// Kept so the next one can be reconciled against it — see
+    /// ``AssembledBoardFrame/sharing(_:)``. It is the one piece of state the
+    /// assembler has, and it is what turns "the main actor compares every
+    /// session on the board" into "the main actor compares two pointers".
+    private var previous: AssembledBoardFrame?
+
     /// Derives one frame.
     public func assemble(
         board: BoardSnapshot,
@@ -231,7 +294,10 @@ public actor BoardFrameAssembler {
         sequence: UInt64
     ) -> AssembledBoardFrame {
         assembledCount += 1
-        return Self.frame(board: board, inputs: inputs, sequence: sequence)
+        var frame = Self.frame(board: board, inputs: inputs, sequence: sequence)
+        if let previous { frame = frame.sharing(previous) }
+        previous = frame
+        return frame
     }
 
     /// The derivation itself: pure, total, and independent of any actor.

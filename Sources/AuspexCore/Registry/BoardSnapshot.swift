@@ -148,6 +148,21 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// An empty board, for a view's initial state.
     public static let empty = BoardSnapshot(generatedAt: .distantPast, sessions: [])
 
+    /// Whether two frames say the same thing about the machine.
+    ///
+    /// Everything except ``generatedAt``, which moves on every frame and which
+    /// nothing on screen draws. The distinction is what lets a consumer refuse
+    /// to republish a frame that changed nothing: `==` can never be true
+    /// between two consecutive frames, so a model that guarded on it would
+    /// invalidate every reader of the board eight times a second for a picture
+    /// that is identical.
+    ///
+    /// `counts` and `tree` are derived from `sessions` in every initialiser, so
+    /// comparing the sessions and the claims answers for all four.
+    public func saysTheSameAs(_ other: BoardSnapshot) -> Bool {
+        sessions == other.sessions && claims == other.claims
+    }
+
     /// The same frame, placed by a different set of user projects.
     public func applying(claims: ProjectClaims) -> BoardSnapshot {
         guard claims != self.claims else { return self }

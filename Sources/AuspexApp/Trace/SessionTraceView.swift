@@ -146,6 +146,7 @@ struct SessionTraceView: View {
             // every row in the waterfall — see ``ScrollSizeGate``.
             BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 1) {
+                    if model.traceHiddenCount > 0 { earlierRows }
                     ForEach(model.traceItems) { item in
                         row(for: item).id(item.id)
                     }
@@ -164,16 +165,66 @@ struct SessionTraceView: View {
         }
     }
 
+    /// The way back to the start of a long transcript.
+    ///
+    /// The pane draws the newest ``LiveBoardModel/traceVisibleWindow`` rows and
+    /// says how many it is not drawing, rather than drawing all four thousand
+    /// and hoping the reader never opens a session that has them. A trace is
+    /// read from the bottom; this is the one gesture that says otherwise, and
+    /// it is worth a row of chrome rather than a second of every frame.
+    private var earlierRows: some View {
+        Button { model.showsWholeTrace = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 9, weight: .bold))
+                Text(
+                    model.traceHiddenCount == 1
+                        ? "1 earlier row"
+                        : "\(model.traceHiddenCount) earlier rows"
+                )
+                .font(AuspexType.pill)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(AuspexPalette.text3)
+            .padding(.horizontal, 8)
+            .frame(height: Self.rowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex)
+        .help("Draw the whole of this session's trace, however long it is")
+    }
+
+    /// How tall a collapsed row is, and it is a *fixed* height on purpose.
+    ///
+    /// A lazy stack answers "where does row 300 begin" by measuring the 299
+    /// above it, and measuring a row means resolving its text. Fixing the
+    /// height turns each of those from a text layout into an addition, which
+    /// is what makes the pane's cost proportional to what is on screen rather
+    /// than to what has been loaded. Every collapsed row is one line of 11–12
+    /// point text with 6 points of padding either side; 28 fits all of them
+    /// with a point to spare.
+    ///
+    /// Only collapsed rows. An opened one carries a whole message and a JSON
+    /// payload, and there is one of those at a time.
+    static let rowHeight: CGFloat = 28
+
+    /// The turn rule: a label, a time, and the hairline, with more air above
+    /// it than below so a turn reads as starting rather than ending.
+    static let separatorHeight: CGFloat = 27
+
     @ViewBuilder
     private func row(for item: TraceListItem) -> some View {
         switch item {
         case .turnSeparator(let turn, let timestamp):
             TraceTurnSeparator(turn: turn, timestamp: timestamp)
+                .frame(height: Self.separatorHeight)
         case .row(let entry):
+            let isExpanded = model.expandedRows.contains(entry.id)
             TraceRowView(
                 entry: entry,
                 isWaiting: model.pendingPermissionRowID == entry.id,
-                isExpanded: model.expandedRows.contains(entry.id),
+                isExpanded: isExpanded,
                 onToggle: {
                     if model.expandedRows.contains(entry.id) {
                         model.expandedRows.remove(entry.id)
@@ -183,6 +234,7 @@ struct SessionTraceView: View {
                 }
             )
             .equatable()
+            .frame(height: isExpanded ? nil : Self.rowHeight, alignment: .top)
         }
     }
 
