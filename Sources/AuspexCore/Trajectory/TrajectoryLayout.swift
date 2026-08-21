@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// What the waterfall's horizontal axis measures.
@@ -332,6 +333,64 @@ public enum TrajectoryLayout {
         return zip(steps, spans).compactMap { step, span in
             span.intersects(brush) ? step : nil
         }
+    }
+
+    // MARK: Hover tooltip
+
+    /// Where the hover tooltip's top-left corner goes, in the plot's own
+    /// coordinates.
+    ///
+    /// The waterfall is 76 points tall and sits directly above a facts strip,
+    /// a step list, and the inspector's header. A bubble hung below the bar
+    /// under the pointer therefore lands on top of whichever of those happened
+    /// to be there — which is what it did, and why the inspector's header spent
+    /// a release being read through a tooltip.
+    ///
+    /// So the bubble is *clamped into the timeline*: below the hovered lane if
+    /// the band has room, flipped above it if it does not, and pinned inside
+    /// the band either way. It may sit over another lane — a tooltip is allowed
+    /// to cover the thing it is not describing — but it never leaves the
+    /// timeline, so nothing below the timeline has to defend itself against it.
+    ///
+    /// - Parameters:
+    ///   - pointer: the pointer's x, in points across the plot.
+    ///   - tooltip: how big the bubble measured.
+    ///   - plot: the plot's own size.
+    ///   - band: how far below the plot's top the timeline still reaches — the
+    ///     lanes plus the axis. The bubble is kept inside `0..<band`.
+    ///   - lane: the hovered lane's top and bottom edges, in plot points.
+    ///   - gap: the space left between the bubble and the lane it describes.
+    public static func tooltipOrigin(
+        pointer: Double,
+        tooltip: CGSize,
+        plot: CGSize,
+        band: Double,
+        lane: ClosedRange<Double>,
+        gap: Double = 4
+    ) -> CGPoint {
+        // Offset a little left of the pointer rather than centred on it, so
+        // the bubble does not sit under the cursor's own arrow.
+        let x = clamp(pointer - 40, 0, Swift.max(0, plot.width - tooltip.width))
+        let ceiling = Swift.max(0, band - tooltip.height)
+        let below = lane.upperBound + gap
+        let y = below <= ceiling ? below : clamp(lane.lowerBound - gap - tooltip.height, 0, ceiling)
+        return CGPoint(x: x, y: y)
+    }
+
+    /// The vertical band one lane occupies, given the lane geometry the view
+    /// draws with. Shared so the hit test, the bars and the tooltip cannot
+    /// disagree about where a lane is.
+    public static func laneBand(
+        index: Int,
+        laneHeight: Double,
+        laneGap: Double
+    ) -> ClosedRange<Double> {
+        let top = Double(index) * (laneHeight + laneGap)
+        return top...(top + laneHeight)
+    }
+
+    private static func clamp(_ value: Double, _ low: Double, _ high: Double) -> Double {
+        Swift.min(Swift.max(value, low), Swift.max(low, high))
     }
 
     /// Where "now" sits on the axis, for the live cursor.

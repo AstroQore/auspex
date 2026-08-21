@@ -39,6 +39,11 @@ struct TrajectoryTimelineView: View {
     /// The bar under the pointer, for the tooltip.
     @State private var hovered: TrajectoryStep?
     @State private var hoverPoint: CGPoint = .zero
+    /// How big the tooltip measured. Read back off the bubble rather than
+    /// guessed at, because its height is one or two lines of wrapped title and
+    /// clamping it into a 92 pt band with the wrong number would put it back
+    /// over the inspector for exactly the long titles that need it most.
+    @State private var tooltipSize: CGSize = .zero
 
     @Environment(\.isSnapshotRender) private var isSnapshotRender
 
@@ -58,6 +63,17 @@ struct TrajectoryTimelineView: View {
         CGFloat(TrajectoryLane.allCases.count) * laneHeight
             + CGFloat(TrajectoryLane.allCases.count - 1) * laneGap
     }
+
+    /// How far below the plot's top this view still owns pixels: the lanes and
+    /// the axis under them. The hover tooltip is clamped into it, so nothing
+    /// below the timeline — the facts strip, the step list, the inspector's
+    /// header — is ever drawn over. See ``TrajectoryLayout/tooltipOrigin``.
+    private static var tooltipBand: CGFloat { plotHeight + axisHeight }
+
+    /// The widest the tooltip is allowed to get, and the narrowest it may be
+    /// squeezed to before it stops shrinking and starts hanging over an edge.
+    private static let tooltipWidth: CGFloat = 300
+    private static let tooltipMinimumWidth: CGFloat = 140
 
     var body: some View {
         VStack(spacing: 0) {
@@ -352,8 +368,26 @@ struct TrajectoryTimelineView: View {
         return nil
     }
 
+    /// The band the hovered step's lane occupies, in plot points.
+    private func band(of step: TrajectoryStep) -> ClosedRange<Double> {
+        let index = TrajectoryLane.allCases.firstIndex(of: step.role.lane) ?? 0
+        return TrajectoryLayout.laneBand(
+            index: index,
+            laneHeight: Self.laneHeight,
+            laneGap: Self.laneGap
+        )
+    }
+
     private func tooltip(for step: TrajectoryStep, in size: CGSize) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let width = min(Self.tooltipWidth, max(Self.tooltipMinimumWidth, size.width))
+        let origin = TrajectoryLayout.tooltipOrigin(
+            pointer: hoverPoint.x,
+            tooltip: tooltipSize,
+            plot: CGSize(width: size.width, height: Self.plotHeight),
+            band: Self.tooltipBand,
+            lane: band(of: step)
+        )
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 TrajectoryRoleChip(role: step.role, isError: step.isError)
                 Text("Turn \(step.turn)")
@@ -372,11 +406,12 @@ struct TrajectoryTimelineView: View {
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
-        .frame(maxWidth: 300, alignment: .leading)
+        .frame(maxWidth: width, alignment: .leading)
         .panelChrome(cornerRadius: 8)
         .shadow(color: AuspexPalette.shade, radius: 12, y: 4)
         .fixedSize(horizontal: false, vertical: true)
-        .offset(x: min(max(0, hoverPoint.x - 40), max(0, size.width - 300)), y: Self.plotHeight + 2)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { tooltipSize = $0 }
+        .offset(x: origin.x, y: origin.y)
         .allowsHitTesting(false)
     }
 
