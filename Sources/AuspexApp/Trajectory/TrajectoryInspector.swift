@@ -63,7 +63,7 @@ struct TrajectoryInspector: View {
                     .frame(width: 20, height: 20)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .help("Close the inspector (Esc)")
         }
         .padding(.horizontal, 14)
@@ -90,7 +90,7 @@ struct TrajectoryInspector: View {
                         )
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .accessibilityAddTraits(model.tab == tab ? [.isButton, .isSelected] : .isButton)
             }
             Spacer(minLength: 0)

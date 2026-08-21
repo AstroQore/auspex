@@ -110,7 +110,7 @@ struct NoticeBanner: View {
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .help("Dismiss — the agent stops asking and the card goes quiet")
             }
         }

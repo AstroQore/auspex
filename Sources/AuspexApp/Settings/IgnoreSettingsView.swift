@@ -178,7 +178,7 @@ struct IgnoreSettingsView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(AuspexPalette.text3)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .help("Delete this rule")
         }
         .padding(.horizontal, 12)

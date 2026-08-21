@@ -227,7 +227,7 @@ struct MenuBarContent: View {
             SettingsLink {
                 MenuBarCommandLabel(title: "Settings\u{2026}", shortcut: "\u{2318},")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             MenuBarCommand(title: "Quit", key: "q", modifiers: .command) {
                 NSApplication.shared.terminate(nil)
             }
@@ -235,6 +235,9 @@ struct MenuBarContent: View {
         .padding(8)
         .frame(width: 340)
         .background(AuspexPalette.bg1)
+        // Hand-drawn rows, like the board's. The panel is not a menu, so
+        // AppKit would ring whatever was clicked in it last.
+        .auspexControlFocus()
     }
 
     private func header(count: Int, needsYou: Int, doneUnseen: Int) -> some View {
@@ -320,7 +323,7 @@ private struct MenuBarRow: View {
             .frame(height: 40)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .help("\(session.key.harness.displayName) — \(session.state.label)")
     }
 
@@ -396,7 +399,7 @@ private struct MenuBarCommand: View {
                 shortcut: Self.describe(key: key, modifiers: modifiers)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .keyboardShortcut(key, modifiers: modifiers)
     }
 

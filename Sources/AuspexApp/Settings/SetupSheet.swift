@@ -94,7 +94,7 @@ struct SetupSheet: View {
             }
             HStack(spacing: 10) {
                 Button("Select all") { model.selectEverythingActionable() }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.auspex)
                     .font(AuspexType.pill)
                     .foregroundStyle(AuspexPalette.text3)
                     .disabled(model.actionableCount == 0)
@@ -198,7 +198,7 @@ private struct SetupRowView: View {
                 Button("Remove") {
                     Task { await model.uninstall(row, detected: detected) }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.text3)
                 .disabled(model.isWorking)

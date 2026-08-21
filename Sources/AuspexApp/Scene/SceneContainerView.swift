@@ -128,7 +128,7 @@ struct SceneContainerView: View {
                 .frame(width: 22, height: 20)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .foregroundStyle(AuspexPalette.textSecondary)
         .help(title)
         .accessibilityLabel(title)

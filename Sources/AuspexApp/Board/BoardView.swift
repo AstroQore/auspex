@@ -191,7 +191,7 @@ struct BoardView: View {
                     .strokeBorder(AuspexPalette.line, lineWidth: 1)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .help("Finished sessions are collapsed so the board's cost tracks what is running")
     }
 }
@@ -324,7 +324,7 @@ struct ProjectFilterBar: View {
                     .foregroundStyle(AuspexPalette.text2)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .help("Show every project on the board again — or press Escape")
             Text("›")
                 .font(AuspexType.caption)
@@ -349,7 +349,7 @@ struct ProjectFilterBar: View {
                             .strokeBorder(AuspexPalette.line, lineWidth: 1)
                     )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .help("Escape shows every project again")
         }
         .padding(.horizontal, 20)

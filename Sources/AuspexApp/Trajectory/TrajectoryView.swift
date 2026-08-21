@@ -134,7 +134,7 @@ private struct TrajectoryBar: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .help("Back to the board (⌘T)")
     }
 
@@ -192,7 +192,7 @@ private struct TrajectoryBar: View {
             .fixedSize()
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .help(
             trajectory.followsTail
                 ? "Stop scrolling to the newest step"
@@ -210,7 +210,7 @@ private struct TrajectoryBar: View {
                 .frame(width: 26, height: 24)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .help(trajectory.showsInspector ? "Hide the inspector" : "Show the inspector")
     }
 }

@@ -68,17 +68,17 @@ struct TasksPageView: View {
                     .font(AuspexType.body)
                     .onSubmit(commitPlan)
                 Button("Register", action: commitPlan)
-                    .buttonStyle(.plain)
+                    .buttonStyle(.auspex)
                     .font(AuspexType.pill)
                     .foregroundStyle(AuspexPalette.stateThinking)
                     .disabled(draftPlan.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button("Cancel") { isAddingPlan = false; draftPlan = "" }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.auspex)
                     .font(AuspexType.pill)
                     .foregroundStyle(AuspexPalette.text3)
             } else {
                 Button("New plan") { isAddingPlan = true }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.auspex)
                     .font(AuspexType.pill)
                     .foregroundStyle(AuspexPalette.text2)
                 Spacer(minLength: 8)
@@ -96,7 +96,7 @@ struct TasksPageView: View {
                         )
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .help("Show plans that have been filed away")
             }
         }
@@ -190,7 +190,7 @@ private struct PlanLaneView: View {
                     .frame(width: 20, height: 18)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .foregroundStyle(AuspexPalette.text3)
             .help("File a task under this plan")
             if let plan = lane.plan, !lane.isArchived {
@@ -200,7 +200,7 @@ private struct PlanLaneView: View {
                         .frame(width: 20, height: 18)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .foregroundStyle(AuspexPalette.text3)
                 .help("File this plan away. Its tasks stay where they are.")
             }
@@ -214,7 +214,7 @@ private struct PlanLaneView: View {
                 .font(AuspexType.body)
                 .onSubmit(commit)
             Button("Add", action: commit)
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.stateThinking)
                 .disabled(draftTitle.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -390,7 +390,7 @@ private struct TaskCardView: View {
                             }
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.auspex)
                         .help("\(session.harness.displayName) — \(session.state.label)")
                     }
                 }
@@ -526,7 +526,7 @@ private struct UnregisteredSessionChip: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .modifier(
             TaskDragSource(isEnabled: !isSnapshotRender, payload: TaskDragPayload.session(row.key))
         )

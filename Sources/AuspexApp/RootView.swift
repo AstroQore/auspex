@@ -182,6 +182,10 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(AuspexPalette.canvas)
+        // Every control in this column is drawn by hand, so none of them wants
+        // AppKit's blue ring around it. The board's own hairline goes on
+        // instead — see `AuspexButtonStyle`.
+        .auspexControlFocus()
         .navigationSplitViewColumnWidth(min: 460, ideal: 788)
         .overlay(alignment: .top) {
             if model.searchDidRun || !model.searchHits.isEmpty {
@@ -332,6 +336,7 @@ struct SidebarView: View {
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(AuspexPalette.canvas)
+        .auspexControlFocus()
         // Draggable, and further than it used to be. 180 is where a project
         // name and its live badge still both fit — the tree truncates in the
         // middle, so a long path keeps its ends — and 480 is where somebody
@@ -366,7 +371,7 @@ struct SidebarView: View {
                     .frame(width: 20, height: 18)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .help("Manage projects: make one, import from a harness, pin or rename")
         }
         .padding(.horizontal, 10)
@@ -454,7 +459,7 @@ struct SidebarRow: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.55)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
@@ -519,6 +524,10 @@ struct SettingsSectionView: View {
         )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(BoardSurfaceBackground())
+            // The one part of the board's column made of AppKit's own controls
+            // — toggles, steppers, text fields — which draw nothing of their
+            // own to say where keyboard focus is. They keep the system ring.
+            .auspexSystemControlFocus()
     }
 }
 
@@ -601,7 +610,7 @@ struct SearchResultsView: View {
                             Button { model.openSearchHit(hit) } label: {
                                 SearchHitRow(hit: hit)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.auspex)
                             Divider().overlay(AuspexPalette.line)
                         }
                     }

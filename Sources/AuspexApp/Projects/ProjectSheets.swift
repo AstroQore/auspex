@@ -47,7 +47,7 @@ struct NewProjectSheet: View {
                         } label: {
                             Image(systemName: "minus.circle").font(.system(size: 10))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.auspex)
                         .foregroundStyle(AuspexPalette.text3)
                     }
                 }
@@ -111,7 +111,7 @@ struct NewProjectSheet: View {
                 .frame(width: 12, height: 18)
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .menuIndicator(.hidden)
         .fixedSize()
     }

@@ -179,7 +179,7 @@ private struct TreeRow<Content: View>: View {
                 )
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .disabled(!isEnabled)
     }
 }

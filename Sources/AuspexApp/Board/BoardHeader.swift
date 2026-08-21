@@ -153,7 +153,7 @@ struct BoardHeader: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex(cornerRadius: 8))
         .help(
             model.showsIgnored
                 ? "Hide the ignored sessions again. " + IgnoreCopy.stillRecorded
@@ -186,7 +186,7 @@ struct BoardHeader: View {
             .fixedSize()
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex(cornerRadius: 8))
         .menuIndicator(.hidden)
         .padding(.horizontal, 10)
         .frame(height: 28)
@@ -287,7 +287,7 @@ struct SummaryChips: View {
                     )
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex(cornerRadius: 6))
                 .help(
                     isOn
                         ? "Show every session again"

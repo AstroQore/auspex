@@ -82,7 +82,7 @@ struct MCPServerPanel: View {
                 Spacer(minLength: 8)
                 if let onOpenSetup {
                     Button("Set up agents…", action: onOpenSetup)
-                        .buttonStyle(.plain)
+                        .buttonStyle(.auspex)
                         .font(AuspexType.pill)
                         .foregroundStyle(AuspexPalette.stateThinking)
                         .help("Register Auspex with each harness, and install the task-protocol note")

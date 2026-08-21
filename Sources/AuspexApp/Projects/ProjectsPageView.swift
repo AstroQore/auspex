@@ -230,7 +230,7 @@ private struct ProjectCard: View {
                             project.isPinned ? AuspexPalette.stateTool : AuspexPalette.text3
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .help(project.isPinned ? "Stop pinning it to the top" : "Pin it to the top")
 
                 Button {
@@ -240,7 +240,7 @@ private struct ProjectCard: View {
                         .font(.system(size: 11))
                         .foregroundStyle(AuspexPalette.text3)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .help("Delete the project. Its sessions go back to where git puts them.")
             }
 
@@ -271,7 +271,7 @@ private struct ProjectCard: View {
                 .frame(width: 10, height: 16)
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .menuIndicator(.hidden)
         .fixedSize()
         .help("The project's colour on the board")
@@ -298,7 +298,7 @@ private struct ProjectCard: View {
                             .font(.system(size: 10))
                             .foregroundStyle(AuspexPalette.text3)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.auspex)
                     .help("Stop claiming this folder")
                 }
             }

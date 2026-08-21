@@ -38,7 +38,7 @@ struct AgentsSettingsView: View {
                     .foregroundStyle(AuspexPalette.text)
                 Spacer(minLength: 8)
                 Button("Open setup…", action: onOpenSetup)
-                    .buttonStyle(.plain)
+                    .buttonStyle(.auspex)
                     .font(AuspexType.pill)
                     .foregroundStyle(AuspexPalette.stateThinking)
             }
@@ -148,7 +148,7 @@ private struct AgentsSettingsGroup: View {
                 Button("Remove") {
                     Task { await model.uninstall(row, detected: detected) }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.text3)
                 .disabled(model.isWorking)
@@ -157,7 +157,7 @@ private struct AgentsSettingsGroup: View {
             Button("Replace") {
                 Task { await model.install(row, detected: detected) }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .font(AuspexType.pill)
             .foregroundStyle(AuspexPalette.stateStale)
             .disabled(model.isWorking)
@@ -165,7 +165,7 @@ private struct AgentsSettingsGroup: View {
             Button("Install") {
                 Task { await model.install(row, detected: detected) }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.auspex)
             .font(AuspexType.pill)
             .foregroundStyle(AuspexPalette.stateThinking)
             .disabled(model.isWorking)

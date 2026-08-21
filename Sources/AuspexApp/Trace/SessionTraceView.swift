@@ -27,6 +27,7 @@ struct SessionTraceView: View {
             }
         }
         .background(AuspexPalette.canvas)
+        .auspexControlFocus()
     }
 
     private func content(for session: SessionSnapshot) -> some View {
@@ -82,7 +83,7 @@ struct SessionTraceView: View {
                         )
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .help("Show \(tab.title.lowercased())")
             }
             Spacer(minLength: 6)
@@ -118,7 +119,7 @@ struct SessionTraceView: View {
             .fixedSize()
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .help(
             model.followsTail
                 ? "Stop scrolling to the newest row"
@@ -450,7 +451,7 @@ struct SessionHeaderView: View {
                 .contentShape(Rectangle())
         }
         .menuStyle(.button)
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .menuIndicator(.hidden)
         .frame(width: 24, height: 22)
         .background(
@@ -515,7 +516,7 @@ struct SessionHeaderView: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex)
                 .help(
                     session.identity.parentLink
                         .map { "Spawned by \(name(of: parent)) — \($0.evidenceDescription)" }
@@ -617,7 +618,7 @@ struct PillButton: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex)
         .disabled(!isEnabled)
         .help(help)
     }

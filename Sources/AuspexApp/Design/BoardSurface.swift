@@ -227,7 +227,7 @@ struct SegmentedPicker<Value: Hashable>: View {
                         )
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex(cornerRadius: 6))
                 .disabled(!canPress)
                 .opacity(canPress ? 1 : 0.4)
                 .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)

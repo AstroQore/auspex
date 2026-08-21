@@ -258,7 +258,7 @@ struct SessionCard: View, Equatable {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.auspex(cornerRadius: 6))
                 .fixedSize()
                 .help("Open the session that spawned this one")
             } else if row.descendantCount > 0 {
