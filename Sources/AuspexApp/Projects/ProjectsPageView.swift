@@ -24,6 +24,14 @@ struct ProjectsPageView: View {
     /// The live tree, for the automatic list and the session counts.
     let tree: ProjectTree
 
+    /// The task ledger, for the work column.
+    ///
+    /// Read out of the environment rather than taken as a parameter: this page
+    /// is built in two places that belong to the window's own file, and a page
+    /// asking for one more number should not mean editing the window. Optional
+    /// because a preview or a renderer may draw the page with no app around it.
+    @Environment(AppEnvironment.self) private var environment: AppEnvironment?
+
     @State private var isImporting = false
     @State private var isCreating = false
 
@@ -132,7 +140,8 @@ struct ProjectsPageView: View {
                             project: project,
                             catalog: catalog,
                             liveCount: liveCount(forKey: project.key),
-                            sessionCount: sessionCount(forKey: project.key)
+                            sessionCount: sessionCount(forKey: project.key),
+                            tasks: taskCounts(forKey: project.key)
                         )
                     }
                 }
@@ -142,9 +151,32 @@ struct ProjectsPageView: View {
 
     // MARK: Automatic
 
-    /// Every project on the live board that no user project claims.
+    /// Every project on the live board that no user project claims, plus the
+    /// ones that hold tasks and nothing that is running.
+    ///
+    /// The second half is what keeps this page honest now that tasks are filed
+    /// in projects: work outlives the session that filed it, and a project
+    /// whose agents have all gone home would otherwise vanish from the page
+    /// while its tasks stayed on the board.
     private var automaticProjects: [ProjectTree.Project] {
-        tree.projects.filter { catalog.claims.project(forKey: $0.key) == nil }
+        let live = tree.projects.filter { catalog.claims.project(forKey: $0.key) == nil }
+        let known = Set(tree.projects.map(\.key))
+        let dormant = (environment?.tasks.projectTaskCounts ?? [:])
+            .filter { !known.contains($0.key) && catalog.claims.project(forKey: $0.key) == nil }
+            .keys
+            .sorted()
+            .map { key in
+                ProjectTree.Project(
+                    key: key,
+                    name: key == TaskProject.scratchKey
+                        ? TaskProject.scratchName
+                        : BoardGrouping.projectName(forPath: key),
+                    checkouts: [],
+                    harnesses: [],
+                    isRepository: false
+                )
+            }
+        return live + dormant
     }
 
     @ViewBuilder
@@ -164,7 +196,11 @@ struct ProjectsPageView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(automaticProjects) { project in
-                        AutomaticProjectRow(project: project, catalog: catalog)
+                        AutomaticProjectRow(
+                            project: project,
+                            catalog: catalog,
+                            tasks: taskCounts(forKey: project.key)
+                        )
                         if project.id != automaticProjects.last?.id {
                             Divider().overlay(AuspexPalette.line)
                         }
@@ -182,6 +218,41 @@ struct ProjectsPageView: View {
     private func sessionCount(forKey key: String) -> Int {
         tree.projects.first { $0.key == key }?.sessionCount ?? 0
     }
+
+    /// How much work is filed in a project — the one number this page was
+    /// missing, now that a task belongs to a project rather than to a plan
+    /// alongside one.
+    private func taskCounts(forKey key: String) -> TaskProjectCounts {
+        environment?.tasks.taskCounts(byProjectKey: key)
+            ?? TaskProjectCounts(total: 0, open: 0)
+    }
+}
+
+// MARK: - The work column
+
+/// What a project is carrying, as one quiet pill.
+///
+/// Drawn only when there is something to say: a page of thirty repositories
+/// with "0 tasks" beside each of them is thirty zeroes and no information.
+private struct TaskCountPill: View {
+    let counts: TaskProjectCounts
+
+    var body: some View {
+        if counts.total > 0 {
+            HStack(spacing: 4) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 9))
+                Text(counts.openDescription ?? "all done")
+                    .font(AuspexType.caption)
+            }
+            .foregroundStyle(counts.open > 0 ? AuspexPalette.text2 : AuspexPalette.text3)
+            .help(
+                counts.open > 0
+                    ? "\(counts.open) of \(counts.total) tasks in this project are open"
+                    : "Every task in this project is done"
+            )
+        }
+    }
 }
 
 // MARK: - One of yours
@@ -193,6 +264,7 @@ private struct ProjectCard: View {
     let catalog: ProjectCatalogModel
     let liveCount: Int
     let sessionCount: Int
+    let tasks: TaskProjectCounts
 
     @State private var name: String = ""
 
@@ -218,6 +290,7 @@ private struct ProjectCard: View {
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 }
+                TaskCountPill(counts: tasks)
 
                 Spacer(minLength: 8)
 
@@ -330,6 +403,7 @@ private struct ProjectCard: View {
 private struct AutomaticProjectRow: View {
     let project: ProjectTree.Project
     let catalog: ProjectCatalogModel
+    let tasks: TaskProjectCounts
 
     var body: some View {
         HStack(spacing: 10) {
@@ -337,19 +411,23 @@ private struct AutomaticProjectRow: View {
                 Text(project.name)
                     .font(AuspexType.rowTitle)
                     .foregroundStyle(AuspexPalette.text)
-                Text(PseudoProject.isPseudo(project.key) ? "No working directory" : project.key)
+                Text(subtitle)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
+            TaskCountPill(counts: tasks)
             if project.liveCount > 0 {
                 Text("\(project.liveCount) live")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(AuspexPalette.stateWriting)
             }
-            if !PseudoProject.isPseudo(project.key) {
+            // Only a directory can be claimed. A harness's pseudo project and
+            // the scratch project are not paths, and offering to make a project
+            // out of one would be offering to claim nothing.
+            if TaskProject.subtitle(forKey: project.key) != nil {
                 Button("Make a project") {
                     catalog.addProject(name: project.name, roots: [project.key])
                 }
@@ -358,6 +436,14 @@ private struct AutomaticProjectRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// The line under the name: the directory, or why there is not one.
+    private var subtitle: String {
+        if project.key == TaskProject.scratchKey {
+            return "Work filed before Auspex could tell where it belonged"
+        }
+        return PseudoProject.isPseudo(project.key) ? "No working directory" : project.key
     }
 }
 
