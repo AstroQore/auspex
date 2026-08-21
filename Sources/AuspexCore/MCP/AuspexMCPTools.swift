@@ -19,9 +19,23 @@ import Foundation
 /// 2. **`auspex.report` is a nicety.** It replaces a guess with a statement.
 /// 3. **The task tools are the skeleton**, and their intended caller is
 ///    whoever *hands work out*, not each worker in turn. A supervisor
-///    registers a plan and its tasks, writes the ids into the briefs it sends,
-///    and each worker makes one `tasks.claim` call. Twelve workers each
+///    registers a milestone and its tasks, writes the ids into the briefs it
+///    sends, and each worker makes one `tasks.claim` call. Twelve workers each
 ///    inventing their own vocabulary produce twelve vocabularies.
+///
+/// ## Projects contain tasks
+///
+/// There is one hierarchy: **project ⊃ task ⊃ sessions**. Every task belongs
+/// to exactly one project, and a caller almost never has to say which —
+/// Auspex resolves it from the session on the other end of the connection, the
+/// same way the board decides which section a card is drawn in. `project` is
+/// there for an orchestrator filing work somewhere other than where it is
+/// standing.
+///
+/// The `plans.*` tools are still here and still work. A "plan" is now a
+/// **milestone**: an optional heading *inside* a project rather than a second
+/// root next to it. The names are kept because briefs already in flight name
+/// them.
 ///
 /// ## Naming
 ///
@@ -154,23 +168,27 @@ public enum AuspexMCPTools {
         ])
     )
 
-    // MARK: - Plans
+    // MARK: - Milestones (the `plans.*` names, kept)
 
     public static let plansList = MCPTool(
         name: Name.plansList,
-        title: "List plans",
+        title: "List milestones",
         description: """
-            The decompositions registered on this machine. Read this before \
-            creating one: the plan you are about to register may already be \
-            there, and a duplicate lane on somebody's board is worse than a \
-            task filed in the wrong place.
+            The milestones registered on this machine, with the project each \
+            one is inside. A milestone is a heading tasks can hang under — \
+            optional, and not a container of its own: the container is the \
+            project.
+
+            Read this before creating one: the milestone you are about to \
+            register may already be there, and a duplicate heading on \
+            somebody's board is worse than a task filed in the wrong place.
             """,
         inputSchema: .object([
             "type": "object",
             "properties": .object([
                 "include_archived": .object([
                     "type": "boolean",
-                    "description": "Include plans that have been filed away. Default false."
+                    "description": "Include milestones that have been filed away. Default false."
                 ]),
                 "limit": limitProperty(default: 50)
             ])
@@ -179,8 +197,8 @@ public enum AuspexMCPTools {
 
     public static let plansGet = MCPTool(
         name: Name.plansGet,
-        title: "Read one plan",
-        description: "One plan and every task under it.",
+        title: "Read one milestone",
+        description: "One milestone and every task under it.",
         inputSchema: .object([
             "type": "object",
             "properties": .object(["plan": planProperty]),
@@ -190,14 +208,16 @@ public enum AuspexMCPTools {
 
     public static let plansCreate = MCPTool(
         name: Name.plansCreate,
-        title: "Register a plan",
+        title: "Register a milestone",
         description: """
-            Register a decomposition you are about to hand out. Call this when \
-            you are the one splitting work up — then create a task per worker \
-            and put the task id in the brief you send each of them.
+            Register a decomposition you are about to hand out, as a milestone \
+            inside a project. Call this when you are the one splitting work up \
+            — then create a task per worker and put the task id in the brief \
+            you send each of them.
 
-            Registering the same slug twice returns the plan that is already \
-            there, so a retried brief does not produce a second lane.
+            The project is the one you are working in unless you name another. \
+            Registering the same slug twice returns the milestone that is \
+            already there, so a retried brief does not produce a second heading.
             """,
         inputSchema: .object([
             "type": "object",
@@ -213,7 +233,8 @@ public enum AuspexMCPTools {
                 "summary": .object([
                     "type": "string",
                     "description": "A paragraph of context for whoever reads the board later."
-                ])
+                ]),
+                "project": projectProperty
             ]),
             "required": .array(["title"])
         ])
@@ -221,10 +242,11 @@ public enum AuspexMCPTools {
 
     public static let plansArchive = MCPTool(
         name: Name.plansArchive,
-        title: "File a plan away",
+        title: "File a milestone away",
         description: """
-            Take a finished plan off the board. Its tasks stay exactly as they \
-            are — archiving a heading must not silently close the work under it.
+            Take a finished milestone off the board. Its tasks stay exactly as \
+            they are, in the project they are in — archiving a heading must not \
+            silently close the work under it.
             """,
         inputSchema: .object([
             "type": "object",
@@ -239,18 +261,22 @@ public enum AuspexMCPTools {
         name: Name.tasksList,
         title: "List tasks",
         description: """
-            What is on the board. Call this at the start of a session together \
-            with plans.list: if your brief named a task id, claim it; if it did \
-            not, look for the task that describes what you were asked to do \
-            before filing a new one.
+            What is on the board, grouped by the project each task is in. Call \
+            this at the start of a session: if your brief named a task id, \
+            claim it; if it did not, look for the task that describes what you \
+            were asked to do before filing a new one.
+
+            With no arguments it lists every project's tasks. Pass 'project' \
+            to see only the one you are working in.
             """,
         inputSchema: .object([
             "type": "object",
             "properties": .object([
                 "plan": .object([
                     "type": "string",
-                    "description": "Only tasks under this plan, by id or slug."
+                    "description": "Only tasks under this milestone, by id or slug."
                 ]),
+                "project": projectProperty,
                 "status": .object([
                     "type": "array",
                     "items": .object([
@@ -272,8 +298,15 @@ public enum AuspexMCPTools {
         name: Name.tasksCreate,
         title: "File a task",
         description: """
-            File one unit of work, normally under a plan you just registered. \
-            The id that comes back is what you put in the worker's brief.
+            File one unit of work. The id that comes back is what you put in \
+            the worker's brief.
+
+            It is filed in **the project you are working in** — Auspex works \
+            that out from your session, the same way it decides which section \
+            your card is drawn in on the board. Nothing lands in an "unfiled" \
+            pile. Name 'project' only when you are filing work somewhere other \
+            than where you are standing, and 'plan' only if the project has a \
+            milestone this belongs under.
             """,
         inputSchema: .object([
             "type": "object",
@@ -283,9 +316,10 @@ public enum AuspexMCPTools {
                     "type": "string",
                     "description": "The detail a worker needs. Up to 4000 characters."
                 ]),
+                "project": projectProperty,
                 "plan": .object([
                     "type": "string",
-                    "description": "The plan it belongs under, by id or slug."
+                    "description": "The milestone it belongs under, by id or slug."
                 ]),
                 "status": .object([
                     "type": "string",
@@ -335,10 +369,10 @@ public enum AuspexMCPTools {
         name: Name.tasksUpdate,
         title: "Move a task",
         description: """
-            Change a task's column, title, body, priority, or plan. Use \
-            'blocked' the moment you are stuck — and call auspex.notify as \
-            well, because a column change is something a person has to be \
-            looking at the board to see.
+            Change a task's column, title, body, priority, milestone, or the \
+            project it is in. Use 'blocked' the moment you are stuck — and call \
+            auspex.notify as well, because a column change is something a \
+            person has to be looking at the board to see.
             """,
         inputSchema: .object([
             "type": "object",
@@ -353,7 +387,14 @@ public enum AuspexMCPTools {
                 "priority": .object(["type": "integer"]),
                 "plan": .object([
                     "type": "string",
-                    "description": "Move it under this plan, by id or slug."
+                    "description": "Move it under this milestone, by id or slug."
+                ]),
+                "project": .object([
+                    "type": "string",
+                    "description": """
+                        Move it into this project — a path, or the name of a \
+                        project on the board. Filed in the task's history.
+                        """
                 ]),
                 "session_id": sessionIDProperty
             ]),
@@ -492,7 +533,24 @@ public enum AuspexMCPTools {
 
     private static let planProperty: MCPJSON = .object([
         "type": "string",
-        "description": "The plan, by numeric id or by slug."
+        "description": "The milestone, by numeric id or by slug."
+    ])
+
+    /// Which project, on the tools that file or move work.
+    ///
+    /// Optional everywhere, and described as such: a worker filing its own
+    /// task should say nothing and be filed where it is working. The three
+    /// spellings are the three a caller can actually have — a directory it
+    /// knows, a name a person uses, or the key the board answered `sessions.self`
+    /// with.
+    private static let projectProperty: MCPJSON = .object([
+        "type": "string",
+        "description": """
+            Which project, as an absolute path, the name of a project on the \
+            board, or a project key from sessions.self. Leave it out to use \
+            the project this session is working in, which is almost always \
+            what you want.
+            """
     ])
 
     private static func limitProperty(default value: Int) -> MCPJSON {

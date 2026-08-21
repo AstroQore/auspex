@@ -17,23 +17,30 @@ import Foundation
 
 // MARK: - Plans and tasks
 
+/// A milestone, as the `plans.*` tools still spell it.
 struct PlanPayload: Encodable {
     let id: Int64
     let slug: String
     let title: String
     let summary: String?
     let status: String
+    /// The project this milestone is inside, in the board's key space.
+    let project: String?
+    /// What that project is called on screen.
+    let projectName: String?
     let createdAt: Date
     let updatedAt: Date
     let taskCount: Int?
     let openTaskCount: Int?
 
-    init(_ plan: AuspexPlan, tasks: [AuspexTask]? = nil) {
+    init(_ plan: AuspexPlan, tasks: [AuspexTask]? = nil, projectName: String? = nil) {
         self.id = plan.id
         self.slug = plan.slug
         self.title = plan.title
         self.summary = plan.summary
         self.status = plan.status.rawValue
+        self.project = plan.projectKey
+        self.projectName = projectName
         self.createdAt = plan.createdAt
         self.updatedAt = plan.updatedAt
         self.taskCount = tasks?.count
@@ -43,6 +50,13 @@ struct PlanPayload: Encodable {
 
 struct TaskPayload: Encodable {
     let id: Int64
+    /// The project this task is in — always, for anything this build filed.
+    /// The same key `sessions.self` reports for the session working there, so
+    /// a caller can compare the two without translating.
+    let project: String?
+    /// What that project is called on screen.
+    let projectName: String?
+    /// The milestone it hangs under, when it has one.
     let planID: Int64?
     let title: String
     let body: String?
@@ -58,8 +72,10 @@ struct TaskPayload: Encodable {
     let updatedAt: Date
     let sessions: [String]?
 
-    init(_ task: AuspexTask, sessions: [SessionKey]? = nil) {
+    init(_ task: AuspexTask, sessions: [SessionKey]? = nil, projectName: String? = nil) {
         self.id = task.id
+        self.project = task.projectKey
+        self.projectName = projectName
         self.planID = task.planID
         self.title = task.title
         self.body = task.body
@@ -204,6 +220,10 @@ struct SessionListPayload: Encodable {
 struct SelfPayload: Encodable {
     let resolved: Bool
     let session: SessionPayload?
+    /// The project key this session's work is filed under — what to pass back
+    /// as `project` on `tasks.create`, on the rare occasion it has to be said
+    /// out loud.
+    var projectKey: String? = nil
     /// How Auspex worked it out, or why it could not.
     let evidence: String
     /// The pid the answer was derived from, so a puzzled agent can check it

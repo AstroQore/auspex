@@ -184,7 +184,9 @@ public actor AuspexMCPServer {
         it useful: call auspex.notify the moment you need the person — a \
         question, a review, a blocker, or a finished piece of work — instead of \
         going quiet, and keep the task board honest by claiming the task id your \
-        brief named (or reading plans.list/tasks.list when it named none).
+        brief named (or reading tasks.list when it named none). Tasks belong to \
+        projects: one you file is filed in the project this session is working \
+        in, so you never have to say where you are.
         """
 
     // MARK: - tools/call
@@ -320,10 +322,19 @@ public actor AuspexMCPServer {
         let plans = try ledger.plans(includingArchived: includeArchived, limit: limit)
         let tasks = try ledger.tasks(limit: 1_000)
         let byPlan = Dictionary(grouping: tasks) { $0.planID }
+        let board = await host.boardSnapshot()
         return Self.success(PlanListPayload(
-            plans: plans.map { PlanPayload($0, tasks: byPlan[$0.id] ?? []) },
+            plans: plans.map {
+                PlanPayload(
+                    $0,
+                    tasks: byPlan[$0.id] ?? [],
+                    projectName: $0.projectKey.map {
+                        TaskProject.displayName(forKey: $0, in: board)
+                    }
+                )
+            },
             note: plans.isEmpty
-                ? "No plan is registered. If you are handing work out, register one with plans.create."
+                ? "No milestone is registered. Tasks do not need one — they are filed in a project — so register one only if you are handing out work that wants a heading."
                 : nil
         ))
     }
@@ -332,14 +343,25 @@ public actor AuspexMCPServer {
         let ledger = try await requireLedger()
         let reference = try arguments.requiredString("plan")
         guard let plan = try ledger.plan(reference: reference) else {
-            throw MCPToolFailure("No plan is registered as '\(reference)'.")
+            throw MCPToolFailure("No milestone is registered as '\(reference)'.")
         }
         let tasks = try ledger.tasks(planID: plan.id)
         let links = try ledger.allLinks()
         let bySession = Dictionary(grouping: links) { $0.taskID }
+        let board = await host.boardSnapshot()
         return Self.success(PlanDetailPayload(
-            plan: PlanPayload(plan, tasks: tasks),
-            tasks: tasks.map { TaskPayload($0, sessions: (bySession[$0.id] ?? []).map(\.session)) }
+            plan: PlanPayload(
+                plan,
+                tasks: tasks,
+                projectName: plan.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+            ),
+            tasks: tasks.map {
+                TaskPayload(
+                    $0,
+                    sessions: (bySession[$0.id] ?? []).map(\.session),
+                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+                )
+            }
         ))
     }
 
@@ -354,24 +376,30 @@ public actor AuspexMCPServer {
         )
         let summary = MCPTextSanitizer.clean(try arguments.optionalString("summary"))
         let caller = try await caller(arguments)
+        let project = try await projectKey(arguments, caller: caller)
         let plan = try ledger.createPlan(
-            title: title, slug: slug, summary: summary, createdBy: caller.session, now: now()
+            title: title, slug: slug, summary: summary, projectKey: project,
+            createdBy: caller.session, now: now()
         )
         await host.didChangeLedger()
-        return Self.success(PlanPayload(plan, tasks: try ledger.tasks(planID: plan.id)))
+        return Self.success(PlanPayload(
+            plan,
+            tasks: try ledger.tasks(planID: plan.id),
+            projectName: await projectName(plan.projectKey)
+        ))
     }
 
     private func plansArchive(_ arguments: MCPArguments) async throws -> MCPJSON {
         let ledger = try await requireLedger()
         let reference = try arguments.requiredString("plan")
         guard let plan = try ledger.plan(reference: reference) else {
-            throw MCPToolFailure("No plan is registered as '\(reference)'.")
+            throw MCPToolFailure("No milestone is registered as '\(reference)'.")
         }
         guard let archived = try ledger.archivePlan(id: plan.id, now: now()) else {
-            throw MCPToolFailure("The plan could not be archived.")
+            throw MCPToolFailure("The milestone could not be archived.")
         }
         await host.didChangeLedger()
-        return Self.success(PlanPayload(archived))
+        return Self.success(PlanPayload(archived, projectName: await projectName(archived.projectKey)))
     }
 
     // MARK: - Tasks
@@ -383,7 +411,7 @@ public actor AuspexMCPServer {
         var planID: Int64?
         if let reference = try arguments.optionalString("plan") {
             guard let plan = try ledger.plan(reference: reference) else {
-                throw MCPToolFailure("No plan is registered as '\(reference)'.")
+                throw MCPToolFailure("No milestone is registered as '\(reference)'.")
             }
             planID = plan.id
         }
@@ -397,14 +425,30 @@ public actor AuspexMCPServer {
             }
             claimedBy = session
         }
+        // Only when it was asked for. A bare `tasks.list` is "what is on the
+        // whole board", and narrowing it to the caller's own project by
+        // default would hide the work next door that a supervisor called this
+        // to find.
+        var projectKey: String?
+        if try arguments.optionalString("project") != nil {
+            projectKey = try await self.projectKey(arguments, caller: try await caller(arguments))
+        }
         let tasks = try ledger.tasks(
-            planID: planID, statuses: statuses, claimedBy: claimedBy, limit: limit
+            planID: planID, projectKey: projectKey, statuses: statuses,
+            claimedBy: claimedBy, limit: limit
         )
         let links = Dictionary(grouping: try ledger.allLinks()) { $0.taskID }
+        let board = await host.boardSnapshot()
         return Self.success(TaskListPayload(
-            tasks: tasks.map { TaskPayload($0, sessions: (links[$0.id] ?? []).map(\.session)) },
+            tasks: tasks.map {
+                TaskPayload(
+                    $0,
+                    sessions: (links[$0.id] ?? []).map(\.session),
+                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+                )
+            },
             note: tasks.isEmpty
-                ? "Nothing is filed. If your brief named a task id it may be under an archived plan; otherwise file one with tasks.create."
+                ? "Nothing is filed here. If your brief named a task id it may be under an archived milestone, or in another project; otherwise file one with tasks.create."
                 : nil
         ))
     }
@@ -423,17 +467,18 @@ public actor AuspexMCPServer {
         var planID: Int64?
         if let reference = try arguments.optionalString("plan") {
             guard let plan = try ledger.plan(reference: reference) else {
-                throw MCPToolFailure("No plan is registered as '\(reference)'.")
+                throw MCPToolFailure("No milestone is registered as '\(reference)'.")
             }
             planID = plan.id
         }
         let caller = try await caller(arguments)
+        let project = try await projectKey(arguments, caller: caller)
         let task = try ledger.createTask(
             title: title, body: body, planID: planID, status: status, priority: priority,
-            createdBy: caller.session, source: "mcp", now: now()
+            projectKey: project, createdBy: caller.session, source: "mcp", now: now()
         )
         await host.didChangeLedger()
-        return Self.success(TaskPayload(task))
+        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
     }
 
     private func tasksClaim(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -452,10 +497,21 @@ public actor AuspexMCPServer {
                     + "(\(caller.evidence)). Call sessions.self, or pass 'session_id'."
             )
         }
-        let task = try ledger.claimTask(id: id, role: role, scope: scope, by: session, now: now())
+        // The claimer's own project, applied only if the task has none — a task
+        // inherits its project from whoever first takes it.
+        let board = await host.boardSnapshot()
+        let task = try ledger.claimTask(
+            id: id, role: role, scope: scope, by: session,
+            projectKey: TaskProject.resolve(explicit: nil, session: session, board: board),
+            now: now()
+        )
         await host.didChangeLedger()
         let sessions = try ledger.links(taskID: id).map(\.session)
-        return Self.success(TaskPayload(task, sessions: sessions))
+        return Self.success(TaskPayload(
+            task,
+            sessions: sessions,
+            projectName: task.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+        ))
     }
 
     private func tasksUpdate(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -468,12 +524,12 @@ public actor AuspexMCPServer {
         var planID: Int64??
         if let reference = try arguments.optionalString("plan") {
             guard let plan = try ledger.plan(reference: reference) else {
-                throw MCPToolFailure("No plan is registered as '\(reference)'.")
+                throw MCPToolFailure("No milestone is registered as '\(reference)'.")
             }
             planID = .some(plan.id)
         }
         let caller = try await caller(arguments)
-        let task = try ledger.updateTask(
+        var task = try ledger.updateTask(
             id: id,
             title: title,
             body: body.map { Optional($0) },
@@ -483,8 +539,19 @@ public actor AuspexMCPServer {
             actor: caller.session,
             now: now()
         )
+        // Re-filing is its own statement, because it writes a line into the
+        // task's history: a task that changed project silently is a task
+        // somebody will spend an afternoon looking for.
+        if try arguments.optionalString("project") != nil {
+            task = try ledger.moveTask(
+                id: id,
+                toProjectKey: try await projectKey(arguments, caller: caller),
+                actor: caller.session,
+                now: now()
+            )
+        }
         await host.didChangeLedger()
-        return Self.success(TaskPayload(task))
+        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
     }
 
     private func tasksComplete(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -510,7 +577,7 @@ public actor AuspexMCPServer {
             await host.didRecordNotice(notice)
         }
         await host.didChangeLedger()
-        return Self.success(TaskPayload(task))
+        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
     }
 
     private func tasksLog(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -559,9 +626,20 @@ public actor AuspexMCPServer {
                 project: board.projectKey(for: session).map(BoardGrouping.projectName(forPath:)),
                 notice: notices[key]
             ),
+            // The key, not the name: this is the answer an agent passes back as
+            // `project` on tasks.create, and a name is the one spelling of a
+            // project that two of them can share.
+            projectKey: board.projectKey(for: session),
             evidence: caller.evidence,
             clientPID: caller.pid,
-            tasks: tasks.map { TaskPayload($0) }
+            tasks: tasks.map {
+                TaskPayload(
+                    $0,
+                    projectName: $0.projectKey.map {
+                        TaskProject.displayName(forKey: $0, in: board)
+                    }
+                )
+            }
         ))
     }
 
@@ -651,6 +729,43 @@ public actor AuspexMCPServer {
             },
             total: board.sessions.count
         ))
+    }
+
+    // MARK: - Projects
+
+    /// The project a call is about: the one the caller named, or the one the
+    /// caller is working in.
+    ///
+    /// The second half is the whole of why there is no "unfiled" any more. A
+    /// worker filing a task says nothing about projects and its task lands
+    /// where its session is, resolved by the same
+    /// ``BoardSnapshot/projectKey(for:)`` the wall groups by — so the card and
+    /// the task are in the same place on two different pages without anybody
+    /// typing a path.
+    ///
+    /// A named project that nothing answers to is a failure rather than a
+    /// silent fallback: an orchestrator that misspelled a path would otherwise
+    /// file a dozen tasks in its own project and find out tomorrow.
+    private func projectKey(_ arguments: MCPArguments, caller: Caller) async throws -> String {
+        let board = await host.boardSnapshot()
+        if let raw = try arguments.optionalString("project") {
+            guard let cleaned = MCPTextSanitizer.clean(raw, limit: 1_000),
+                  let key = TaskProject.key(named: cleaned, in: board)
+            else {
+                throw MCPToolFailure(
+                    "No project on the board is '\(raw)'. Pass an absolute path, or a name "
+                        + "sessions.list shows — or leave 'project' out to file it where you are."
+                )
+            }
+            return key
+        }
+        return TaskProject.resolve(explicit: nil, session: caller.session, board: board)
+    }
+
+    /// What a project key is called, for a payload a person will read.
+    private func projectName(_ key: String?) async -> String? {
+        guard let key else { return nil }
+        return TaskProject.displayName(forKey: key, in: await host.boardSnapshot())
     }
 
     // MARK: - Identity

@@ -287,12 +287,108 @@ struct AuspexMCPServerTests {
         #expect(detail["plan"]?["openTaskCount"]?.intValue == 0)
     }
 
+    // MARK: - Projects contain tasks
+
+    @Test("a task filed by an agent lands in the project that agent is working in")
+    func tasksAreFiledWhereTheCallerIsWorking() async throws {
+        let (server, _, store) = try makeServer()
+        let task = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Sanitize argv before it reaches a log line"
+        ])))
+        // Nothing was said about a project, and the task is not unfiled.
+        #expect(task["project"]?.stringValue == "/Users/example/Code/widget")
+        #expect(task["projectName"]?.stringValue == "widget")
+
+        // The same key the board would group this session's own card by, which
+        // is the whole point of resolving it here rather than inventing one.
+        let mine = try RPC.structured(await server.answer(line: RPC.call("sessions.self")))
+        #expect(mine["projectKey"]?.stringValue == task["project"]?.stringValue)
+
+        let stored = try #require(try TaskRepository(store: store).tasks().first)
+        #expect(stored.projectKey == "/Users/example/Code/widget")
+    }
+
+    @Test("a milestone is filed in the caller's project too, and its tasks with it")
+    func milestonesAreInsideProjects() async throws {
+        let (server, _, _) = try makeServer()
+        let plan = try RPC.structured(await server.answer(line: RPC.call("plans.create", [
+            "title": "Ship the MCP surface"
+        ])))
+        #expect(plan["project"]?.stringValue == "/Users/example/Code/widget")
+        #expect(plan["projectName"]?.stringValue == "widget")
+
+        let task = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Write the installer", "plan": "ship-the-mcp-surface"
+        ])))
+        #expect(task["project"]?.stringValue == "/Users/example/Code/widget")
+    }
+
+    @Test("an orchestrator can file work in another project by naming it")
+    func anExplicitProjectIsHonoured() async throws {
+        let (server, _, _) = try makeServer()
+        let task = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Port the cart", "project": "/Users/example/Code/storefront-web/"
+        ])))
+        #expect(task["project"]?.stringValue == "/Users/example/Code/storefront-web")
+
+        // And filtering by that project finds it, while the caller's own does
+        // not — two lanes, not one pile.
+        let there = try RPC.structured(await server.answer(line: RPC.call("tasks.list", [
+            "project": "/Users/example/Code/storefront-web"
+        ])))
+        #expect(there["tasks"]?.arrayValue?.count == 1)
+        let here = try RPC.structured(await server.answer(line: RPC.call("tasks.list", [
+            "project": "/Users/example/Code/widget"
+        ])))
+        #expect(here["tasks"]?.arrayValue?.isEmpty == true)
+    }
+
+    @Test("a project nothing answers to is refused rather than filed under the caller's")
+    func anUnknownProjectIsRefused() async throws {
+        let (server, _, store) = try makeServer()
+        let message = try RPC.failureText(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Port the cart", "project": "storefornt-web"
+        ])))
+        #expect(message.contains("No project on the board is 'storefornt-web'"))
+        #expect(try TaskRepository(store: store).tasks().isEmpty)
+    }
+
+    @Test("claiming a task files it where the claimer is working")
+    func aClaimGivesATaskItsProject() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        // Filed by a person on the Tasks page before anybody took it.
+        let task = try ledger.createTask(title: "Somebody's job", source: "ui")
+        #expect(task.projectKey == nil)
+
+        let claimed = try RPC.structured(await server.answer(line: RPC.call("tasks.claim", [
+            "task_id": .int(task.id), "role": "implementer"
+        ])))
+        #expect(claimed["project"]?.stringValue == "/Users/example/Code/widget")
+    }
+
+    @Test("a task can be moved between projects, and the move is in its history")
+    func aTaskCanBeRefiled() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let task = try ledger.createTask(title: "Filed in a hurry", projectKey: "/Users/example/Code/widget")
+
+        let moved = try RPC.structured(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(task.id), "project": "/Users/example/Code/storefront-web"
+        ])))
+        #expect(moved["project"]?.stringValue == "/Users/example/Code/storefront-web")
+        #expect(try ledger.log(taskID: task.id).contains { $0.kind == "project" })
+    }
+
     @Test("an empty board says what to do about it instead of returning nothing")
     func emptyListsCarryANote() async throws {
         let (server, _, _) = try makeServer()
         let plans = try RPC.structured(await server.answer(line: RPC.call("plans.list")))
         #expect(plans["plans"]?.arrayValue?.isEmpty == true)
-        #expect(plans["note"]?.stringValue?.contains("plans.create") == true)
+        #expect(plans["note"]?.stringValue?.contains("milestone") == true)
+        let tasks = try RPC.structured(await server.answer(line: RPC.call("tasks.list")))
+        #expect(tasks["tasks"]?.arrayValue?.isEmpty == true)
+        #expect(tasks["note"]?.stringValue?.contains("tasks.create") == true)
     }
 
     @Test("a claim held by somebody else is refused with the holder named")
