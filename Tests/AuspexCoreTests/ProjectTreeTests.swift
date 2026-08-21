@@ -169,6 +169,7 @@ struct ProjectTreeTests {
         #expect(project.sessionCount == 1)
         #expect(project.checkouts.count == 1)
         let unit = try #require(project.checkouts.first?.units.first)
+        #expect(unit.lead == parent.key)
         #expect(unit.members.map(\.key) == [parent.key, child.key])
     }
 
@@ -178,7 +179,7 @@ struct ProjectTreeTests {
         let tree = tree(board([orphan]))
 
         #expect(tree.projects.isEmpty)
-        #expect(tree.ungrouped.flatMap { $0.members.map(\.key) } == [orphan.key])
+        #expect(tree.ungrouped.map(\.lead) == [orphan.key])
         #expect(!tree.isEmpty)
     }
 
@@ -233,7 +234,7 @@ struct ProjectTreeTests {
         ]))
 
         let checkout = try #require(tree.projects.first?.checkouts.first)
-        #expect(checkout.units.flatMap { $0.members.map(\.key.sessionID) } == ["live"])
+        #expect(checkout.units.map(\.lead.sessionID) == ["live"])
         #expect(checkout.hiddenCount == 2)
         // Still counted: the column has to say how much work there was here,
         // and the board's Ended section is where the rows themselves went.
@@ -264,7 +265,7 @@ struct ProjectTreeTests {
             session(.antigravity, "over", state: .ended(reason: .exited), isAlive: false, at: 10)
         ]))
 
-        #expect(tree.ungrouped.flatMap { $0.members.map(\.key.sessionID) } == ["live"])
+        #expect(tree.ungrouped.map(\.lead.sessionID) == ["live"])
         #expect(tree.ungroupedHidden == 1)
     }
 

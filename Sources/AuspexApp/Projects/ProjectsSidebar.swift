@@ -112,7 +112,7 @@ struct ProjectsSidebar: View {
     ///     never listed here; the row says where they went.
     @ViewBuilder
     private func unitRows(
-        _ units: [TaskUnit],
+        _ units: [SidebarUnit],
         id: String,
         depth: Int,
         finished: Int
@@ -129,9 +129,9 @@ struct ProjectsSidebar: View {
             // delegation of four used to be four rows in a 180-point column,
             // and every one of them was a view SwiftUI compared on every graph
             // update whether or not it was scrolled into sight.
-            if unit.memberCount > 1, board.isExpanded(unit) {
-                ForEach(unit.members, id: \.key) { row in
-                    sessionRow(row, depth: depth + 1)
+            if unit.canExpand, board.isExpanded(unit) {
+                ForEach(unit.members) { member in
+                    memberRow(member, depth: depth + 1)
                 }
             }
         }
@@ -147,17 +147,23 @@ struct ProjectsSidebar: View {
     }
 
     /// One piece of work.
-    private func unitRow(_ unit: TaskUnit, depth: Int) -> some View {
+    private func unitRow(_ unit: SidebarUnit, depth: Int) -> some View {
         UnitRow(
             unit: unit,
             depth: depth,
-            isSelected: selectedKey == unit.lead.key,
+            isSelected: selectedKey == unit.lead,
             isExpanded: board.isExpanded(unit),
-            onSelect: { onSelectSession(unit.lead.key) },
-            onToggle: unit.memberCount > 1 ? { board.toggleExpanded(unit) } : nil
+            onSelect: { onSelectSession(unit.lead) },
+            onToggle: unit.canExpand ? { board.toggleExpanded(unit) } : nil
         )
         .equatable()
-        .contextMenu { TaskCardMenu(unit: unit, model: board, environment: environment) }
+        .contextMenu {
+            // The whole unit, looked up rather than carried: a menu is built
+            // on a right-click and a row is compared on every graph update.
+            if let full = board.unitIndex[unit.id] {
+                TaskCardMenu(unit: full, model: board, environment: environment)
+            }
+        }
     }
 
     private var board: LiveBoardModel { environment.board }
@@ -166,13 +172,14 @@ struct ProjectsSidebar: View {
     /// rather than a checkout id, because that branch has no checkout.
     private static let ungroupedID = "auspex.sidebar.ungrouped"
 
-    private func sessionRow(_ row: BoardRow, depth: Int) -> some View {
+    /// One session inside an opened task.
+    private func memberRow(_ member: SidebarUnit.Member, depth: Int) -> some View {
         SessionRow(
-            row: row,
+            member: member,
             depth: depth,
-            isSelected: selectedKey == row.key,
-            isIgnored: ignoredKeys.contains(row.key),
-            onSelect: { onSelectSession(row.key) }
+            isSelected: selectedKey == member.key,
+            isIgnored: ignoredKeys.contains(member.key),
+            onSelect: { onSelectSession(member.key) }
         )
         // `.equatable()` and not merely the conformance: SwiftUI only calls a
         // view's own `==` when it is asked to, and a struct carrying a closure
@@ -180,7 +187,9 @@ struct ProjectsSidebar: View {
         // whenever anything under any project moves — a token count is enough —
         // so without this every row on screen redraws for a change to one.
         .equatable()
-        .contextMenu { sessionMenu(row) }
+        .contextMenu {
+            SessionMemberMenu(key: member.key, model: board, environment: environment)
+        }
     }
 
     // MARK: - Menus
@@ -208,12 +217,6 @@ struct ProjectsSidebar: View {
                 environment.composeIgnore(.pathPrefix, value: project.key)
             }
         }
-    }
-
-    /// The same offers a card makes, so a person who found the session in the
-    /// tree does not have to go and find its card to act on it.
-    private func sessionMenu(_ row: BoardRow) -> some View {
-        SessionRowMenu(row: row, model: environment.board, environment: environment)
     }
 
     @ViewBuilder
@@ -420,7 +423,7 @@ private struct CheckoutRow: View {
 /// doing*. The `↳ N` is the fold: it is a control, and clicking it lists the
 /// sessions rather than opening the card.
 private struct UnitRow: View, Equatable {
-    let unit: TaskUnit
+    let unit: SidebarUnit
     let depth: Int
     let isSelected: Bool
     let isExpanded: Bool
@@ -445,7 +448,7 @@ private struct UnitRow: View, Equatable {
             if let onToggle {
                 Button(action: onToggle) {
                     HStack(spacing: 3) {
-                        Text("↳ \(unit.subagents.count)")
+                        Text("↳ \(unit.subagentCount)")
                             .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                         Image(systemName: "chevron.right")
                             .font(.system(size: 7, weight: .bold))
@@ -459,15 +462,32 @@ private struct UnitRow: View, Equatable {
                 .help(isExpanded ? "Fold these sessions away" : "List the sessions on this task")
             }
             if let colour = AttentionStyle.colour(unit.attention) {
-                StateDot(color: colour, glows: unit.needsPerson)
-            } else if unit.counts.working > 0 {
-                StateDot(color: unit.lead.state.style.color, glows: true)
+                StateDot(color: colour, glows: unit.attention.wantsPerson)
+            } else if unit.isWorking {
+                StateDot(color: unit.leadState.style.color, glows: true)
             }
         }
         .help(
             AttentionStyle.label(unit.attention).map { "\(unit.title) — \($0)" }
                 ?? "\(unit.shortID) \(unit.title) — \(unit.status.label)"
         )
+    }
+}
+
+/// What a right-click on a session row inside an opened task offers.
+///
+/// Looked up rather than carried, for the reason ``SidebarUnit`` exists: a
+/// menu is built when somebody right-clicks, and a row is compared on every
+/// graph update.
+struct SessionMemberMenu: View {
+    let key: SessionKey
+    let model: LiveBoardModel
+    let environment: AppEnvironment
+
+    var body: some View {
+        if let row = model.row(for: key) {
+            SessionRowMenu(row: row, model: model, environment: environment)
+        }
     }
 }
 
@@ -478,7 +498,7 @@ private struct UnitRow: View, Equatable {
 /// at this width the colour alone carries the state, and the full name is one
 /// hover or one VoiceOver stop away.
 private struct SessionRow: View, Equatable {
-    let row: BoardRow
+    let member: SidebarUnit.Member
     let depth: Int
     let isSelected: Bool
     /// A rule matches this session and the board is showing it anyway.
@@ -486,15 +506,16 @@ private struct SessionRow: View, Equatable {
     let onSelect: () -> Void
 
     nonisolated static func == (lhs: SessionRow, rhs: SessionRow) -> Bool {
-        lhs.row == rhs.row && lhs.depth == rhs.depth && lhs.isSelected == rhs.isSelected
+        lhs.member == rhs.member && lhs.depth == rhs.depth && lhs.isSelected == rhs.isSelected
             && lhs.isIgnored == rhs.isIgnored
     }
 
     var body: some View {
+        let row = member
         let style = row.state.style
         TreeRow(depth: depth, isLit: isSelected, action: onSelect) {
             HarnessBadge(harness: row.harness, size: 16, isMuted: row.isEnded)
-            Text(row.depth > 0 ? "↳ \(row.title)" : row.title)
+            Text(row.title)
                 .font(AuspexType.row)
                 .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
                 .lineLimit(1)
@@ -505,7 +526,7 @@ private struct SessionRow: View, Equatable {
             // to be thinking are the same colour otherwise, and only one of
             // them is somebody's errand.
             if let colour = AttentionStyle.colour(row.attention) {
-                StateDot(color: colour, glows: row.needsPerson)
+                StateDot(color: colour, glows: row.attention.wantsPerson)
             } else {
                 StateDot(color: style.color, glows: style.motion.isAnimated)
             }

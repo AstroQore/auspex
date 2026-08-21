@@ -130,7 +130,7 @@ public actor ProjectResolver {
             return Resolution(
                 placement: ProjectPlacement(
                     projectRootPath: directory,
-                    projectName: (directory as NSString).lastPathComponent,
+                    projectName: PathText.lastComponent(directory),
                     agentWorktreeTask: Self.agentWorktreeTask(in: directory)
                 ),
                 headPath: nil
@@ -148,7 +148,7 @@ public actor ProjectResolver {
         return Resolution(
             placement: ProjectPlacement(
                 projectRootPath: found.gitRoot,
-                projectName: (found.gitRoot as NSString).lastPathComponent,
+                projectName: PathText.lastComponent(found.gitRoot),
                 gitRoot: found.gitRoot,
                 worktreePath: found.worktreePath,
                 branch: branch,
@@ -305,7 +305,7 @@ public actor ProjectResolver {
     /// `/var/folders/…` into `/private/var/folders/…` under them would make the
     /// board disagree with their terminal for no gain.
     static func standardized(_ path: String) -> String {
-        let standardized = (path as NSString).standardizingPath
+        let standardized = PathText.native((path as NSString).standardizingPath)
         guard standardized.count > 1, standardized.hasSuffix("/") else { return standardized }
         return String(standardized.dropLast())
     }

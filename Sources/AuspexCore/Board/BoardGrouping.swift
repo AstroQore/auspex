@@ -384,7 +384,9 @@ public enum BoardGrouping {
     public static func projectName(forPath path: String) -> String {
         if let name = PseudoProject.name(forKey: path) { return name }
         let trimmed = path.hasSuffix("/") && path.count > 1 ? String(path.dropLast()) : path
-        let name = (trimmed as NSString).lastPathComponent
-        return name.isEmpty ? trimmed : name
+        // Native, not `NSString.lastPathComponent`: this string lands on every
+        // row of the board and is compared on every graph update. See
+        // ``PathText``.
+        return PathText.lastComponent(trimmed)
     }
 }

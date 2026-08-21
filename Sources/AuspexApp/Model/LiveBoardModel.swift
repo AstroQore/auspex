@@ -549,6 +549,23 @@ final class LiveBoardModel {
     /// The unit whose detail page is open, if any.
     var openUnitID: String?
 
+    /// The row for one session, for a menu that was handed only a key.
+    ///
+    /// Built on demand from the frame's index rather than carried: this is a
+    /// right-click's worth of work, and the alternative is a fourth copy of
+    /// every row on the board kept alive for a menu nobody has opened.
+    func row(for key: SessionKey) -> BoardRow? {
+        guard let session = sessionIndex[key] ?? rawBoard.session(for: key) else { return nil }
+        return BoardRowBuilder(
+            board: board,
+            seenAt: seenAt,
+            briefs: derivedBriefs,
+            notices: notices,
+            reports: reports,
+            acknowledgedAt: acknowledgedAt
+        ).row(for: session)
+    }
+
     /// The unit the detail page is about.
     var openUnit: TaskUnit? { openUnitID.flatMap { unitIndex[$0] } }
 
@@ -579,18 +596,28 @@ final class LiveBoardModel {
 
     /// Whether a card's members are listed: the global switch, the tree axis,
     /// or this one card's own chevron.
-    func isExpanded(_ unit: TaskUnit) -> Bool {
-        showsSubagents || groupBy == .tree || expandedUnits.contains(unit.promotionKey)
+    ///
+    /// Keyed on ``TaskUnit/promotionKey`` so a card that gains a filed task
+    /// stays open, and taken as a string so the wall and the sidebar — which
+    /// hold different projections of the same unit — ask the same question.
+    func isExpanded(_ promotionKey: String) -> Bool {
+        showsSubagents || groupBy == .tree || expandedUnits.contains(promotionKey)
     }
 
+    func isExpanded(_ unit: TaskUnit) -> Bool { isExpanded(unit.promotionKey) }
+    func isExpanded(_ unit: SidebarUnit) -> Bool { isExpanded(unit.promotionKey) }
+
     /// Opens or folds one card.
-    func toggleExpanded(_ unit: TaskUnit) {
-        if expandedUnits.contains(unit.promotionKey) {
-            expandedUnits.remove(unit.promotionKey)
+    func toggleExpanded(_ promotionKey: String) {
+        if expandedUnits.contains(promotionKey) {
+            expandedUnits.remove(promotionKey)
         } else {
-            expandedUnits.insert(unit.promotionKey)
+            expandedUnits.insert(promotionKey)
         }
     }
+
+    func toggleExpanded(_ unit: TaskUnit) { toggleExpanded(unit.promotionKey) }
+    func toggleExpanded(_ unit: SidebarUnit) { toggleExpanded(unit.promotionKey) }
 
     /// The four numbers across the top of the board.
     private(set) var summary = BoardSummary(counts: BoardSnapshot.Counts())

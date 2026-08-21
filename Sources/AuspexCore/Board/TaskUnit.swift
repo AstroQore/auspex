@@ -322,6 +322,85 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
     }
 }
 
+/// One unit, reduced to what a 180-point column draws.
+///
+/// ## Why the sidebar does not hold ``TaskUnit``
+///
+/// The same argument ``BoardRow`` makes against ``SessionSnapshot``, one level
+/// up. A unit carries its lead row and every member row — thirty-odd fields
+/// each — and the sidebar's tree is a value SwiftUI compares and copies on
+/// every graph update, whether or not anything in this column moved. A
+/// `sample` of the window at `--demo-scale 12` had
+/// `Equatable.== in conformance ProjectTree` descending into
+/// `TaskUnit.__derived_struct_equals` and then into string comparison, and
+/// `initializeWithCopy for TaskUnit` beside it.
+///
+/// So the column holds this instead: eleven scalars and a short array of
+/// equally flat members. Everything it cannot answer — the menu, the chips,
+/// the detail page — is one dictionary lookup away in
+/// ``AssembledBoardFrame/unitIndex``, and that lookup happens on a click
+/// rather than on a frame.
+public struct SidebarUnit: Identifiable, Sendable, Equatable {
+    public let id: String
+    public let promotionKey: String
+    public let shortID: String
+    public let title: String
+    public let status: AuspexTaskStatus
+    public let attention: AttentionState
+    /// The session a click on the row selects.
+    public let lead: SessionKey
+    /// What the lead is doing, for the dot's colour.
+    public let leadState: SessionState
+    /// How many sessions are folded in besides the lead.
+    public let subagentCount: Int
+    /// Whether anything in it is running right now.
+    public let isWorking: Bool
+    /// The sessions, for a row somebody has opened.
+    public let members: [Member]
+
+    /// One session under an opened task row.
+    public struct Member: Identifiable, Sendable, Equatable {
+        public let key: SessionKey
+        public let harness: Harness
+        public let title: String
+        public let state: SessionState
+        public let attention: AttentionState
+        public let isEnded: Bool
+
+        public var id: SessionKey { key }
+
+        public init(_ row: BoardRow) {
+            self.key = row.key
+            self.harness = row.harness
+            self.title = row.title
+            self.state = row.state
+            self.attention = row.attention
+            self.isEnded = row.isEnded
+        }
+    }
+
+    public init(_ unit: TaskUnit) {
+        self.id = unit.id
+        self.promotionKey = unit.promotionKey
+        self.shortID = unit.shortID
+        self.title = unit.title
+        self.status = unit.status
+        self.attention = unit.attention
+        self.lead = unit.lead.key
+        self.leadState = unit.lead.state
+        self.subagentCount = unit.subagents.count
+        self.isWorking = unit.counts.working > 0
+        // Only when there is more than one: a task with a single session has
+        // nothing to open, so copying its one member into a second array would
+        // be paying the whole cost this type exists to avoid for the case it
+        // was built for.
+        self.members = unit.memberCount > 1 ? unit.members.map(Member.init) : []
+    }
+
+    /// Whether the row has a fold on it.
+    public var canExpand: Bool { subagentCount > 0 }
+}
+
 /// One section of the task wall: a project (or a harness, or everything), and
 /// the units in it grouped under their milestones.
 public struct TaskUnitGroup: Identifiable, Sendable, Equatable {

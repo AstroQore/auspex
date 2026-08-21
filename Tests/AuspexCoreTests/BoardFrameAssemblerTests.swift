@@ -108,9 +108,13 @@ struct BoardFrameAssemblerTests {
         // The tree lists what is still running. The finished session is in the
         // board's Ended section instead of in both places, and the checkout it
         // was in still says it is there.
-        let inTheTree = (frame.tree.projects.flatMap(\.checkouts).flatMap(\.units)
-            + frame.tree.ungrouped).flatMap { $0.members.map(\.key.sessionID) }
-        #expect(inTheTree.count == 4)
+        let listed = frame.tree.projects.flatMap(\.checkouts).flatMap(\.units)
+            + frame.tree.ungrouped
+        // Four units lead four sessions; the delegated one is inside its
+        // parent's rather than beside it, and the finished one has gone.
+        let inTheTree = listed.map(\.lead.sessionID)
+            + listed.flatMap { $0.members.map(\.key.sessionID) }
+        #expect(Set(inTheTree).count == 4)
         #expect(!inTheTree.contains("d"))
         let finished = frame.tree.projects.flatMap(\.checkouts)
             .reduce(0) { $0 + $1.hiddenCount } + frame.tree.ungroupedHidden

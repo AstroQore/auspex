@@ -202,7 +202,10 @@ public enum ProjectPath {
         if trimmed == "~" || trimmed.hasPrefix("~/") {
             expanded = AuspexPaths.realHomeDirectory().path + trimmed.dropFirst(1)
         }
-        let standardized = (expanded as NSString).standardizingPath
+        // Through `PathText.native`: `standardizingPath` hands back a bridged
+        // `NSString`, this is a *project key*, and a project key is compared
+        // on every frame by everything that groups by one. See ``PathText``.
+        let standardized = PathText.native((expanded as NSString).standardizingPath)
         guard standardized.count > 1, standardized.hasSuffix("/") else { return standardized }
         return String(standardized.dropLast())
     }

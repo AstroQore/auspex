@@ -25,7 +25,7 @@ public struct ProjectTree: Sendable, Equatable {
     /// is still running, and a sidebar that silently dropped it would be
     /// lying about what the machine is doing. The finished ones are dropped
     /// all the same — see ``listable(_:)`` and ``ungroupedHidden``.
-    public let ungrouped: [TaskUnit]
+    public let ungrouped: [SidebarUnit]
 
     /// How many sessions under no project have finished, and are in the
     /// board's Ended section rather than in this column.
@@ -55,7 +55,7 @@ public struct ProjectTree: Sendable, Equatable {
     /// An empty tree, for a view's initial state.
     public static let empty = ProjectTree(projects: [], ungrouped: [])
 
-    public init(projects: [Project], ungrouped: [TaskUnit], ungroupedHidden: Int = 0) {
+    public init(projects: [Project], ungrouped: [SidebarUnit], ungroupedHidden: Int = 0) {
         self.projects = projects
         self.ungrouped = ungrouped
         self.ungroupedHidden = max(0, ungroupedHidden)
@@ -153,7 +153,7 @@ public struct ProjectTree: Sendable, Equatable {
         ///
         /// Not every task in the checkout: the finished ones are not in the
         /// tree at all. See ``ProjectTree/listable(_:)`` and ``hiddenCount``.
-        public let units: [TaskUnit]
+        public let units: [SidebarUnit]
         /// How many of this checkout's tasks have finished, and are therefore
         /// in the board's Ended section rather than here.
         ///
@@ -183,7 +183,7 @@ public struct ProjectTree: Sendable, Equatable {
             branch: String?,
             agentWorktreeTask: String?,
             isWorktree: Bool,
-            units: [TaskUnit],
+            units: [SidebarUnit],
             hiddenCount: Int = 0,
             counts: Counts? = nil
         ) {
@@ -194,7 +194,7 @@ public struct ProjectTree: Sendable, Equatable {
             self.isWorktree = isWorktree
             self.units = units
             self.hiddenCount = max(0, hiddenCount)
-            let tallies = counts ?? Counts(units: units)
+            let tallies = counts ?? Counts(sidebar: units)
             self.liveCount = tallies.live
             self.needsYouCount = tallies.needsYou
             self.doneReportedCount = tallies.doneReported
@@ -218,6 +218,14 @@ public struct ProjectTree: Sendable, Equatable {
                     live: units.count { $0.counts.live > 0 },
                     needsYou: units.count { $0.needsPerson },
                     doneReported: units.count { $0.isInReview }
+                )
+            }
+
+            public init(sidebar units: [SidebarUnit]) {
+                self.init(
+                    live: units.count { $0.isWorking },
+                    needsYou: units.count { $0.attention.wantsPerson },
+                    doneReported: units.count { $0.status == .review }
                 )
             }
         }
@@ -326,7 +334,7 @@ public struct ProjectTree: Sendable, Equatable {
         let listedUngrouped = listable(ungrouped)
         return ProjectTree(
             projects: projects,
-            ungrouped: listedUngrouped,
+            ungrouped: listedUngrouped.map(SidebarUnit.init),
             ungroupedHidden: ungrouped.count - listedUngrouped.count
         )
     }
@@ -411,7 +419,7 @@ public struct ProjectTree: Sendable, Equatable {
                 // folder that has no branch.
                 isWorktree: !PseudoProject.isPseudo(projectKey)
                     && attribute.path.map { $0 != projectKey } ?? false,
-                units: listed,
+                units: listed.map(SidebarUnit.init),
                 hiddenCount: all.count - listed.count,
                 // Over every task in the checkout rather than over the eight
                 // that fitted: a badge that only counted the listed rows would
