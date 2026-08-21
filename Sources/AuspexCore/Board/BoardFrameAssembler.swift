@@ -49,6 +49,20 @@ public struct BoardFrameInputs: Sendable, Equatable {
     public var notices: [SessionKey: AgentNotice]
     /// What agents said they are doing, by session.
     public var reports: [SessionKey: AgentReport]
+    /// What has been filed: the tasks, the links, the milestones.
+    ///
+    /// Read whole when the ledger changes and passed in unchanged on every
+    /// frame after that. It is what turns a wall of sessions into a wall of
+    /// tasks — see ``TaskUnitBuilder`` — and it is the one input here whose
+    /// absence costs nothing: with an empty ledger every unit is implicit and
+    /// the wall still folds every delegation family into one card.
+    public var ledger: TaskLedgerFrame
+    /// Whether the reader has asked to see the sessions inside each task.
+    ///
+    /// Here rather than in the view because it changes what the *sidebar's*
+    /// tree contains, which is derived with the frame. See
+    /// ``TaskUnitGrouping/expandsMembers(_:)``.
+    public var showsSubagents: Bool
 
     public init(
         claims: ProjectClaims = .empty,
@@ -64,8 +78,12 @@ public struct BoardFrameInputs: Sendable, Equatable {
         derivedBriefs: [SessionKey: SessionBrief] = [:],
         projectNames: [String: String] = [:],
         notices: [SessionKey: AgentNotice] = [:],
-        reports: [SessionKey: AgentReport] = [:]
+        reports: [SessionKey: AgentReport] = [:],
+        ledger: TaskLedgerFrame = .empty,
+        showsSubagents: Bool = false
     ) {
+        self.ledger = ledger
+        self.showsSubagents = showsSubagents
         self.claims = claims
         self.rules = rules
         self.window = window
@@ -101,8 +119,18 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     public let sessionIndex: [SessionKey: SessionSnapshot]
     /// The sections as snapshots, for the crew wall.
     public let groups: [BoardGroup]
-    /// The sections as rows, for the board.
+    /// The sections as rows, for the sidebar and anything session-shaped.
     public let rowGroups: [BoardRowGroup]
+    /// The wall: one card per piece of work, subagents folded into it.
+    public let unitGroups: [TaskUnitGroup]
+    /// The units whose sessions have all stopped with nothing outstanding.
+    public let endedUnits: [TaskUnit]
+    /// Every unit on the frame by id, for the surfaces that look one up —
+    /// the task detail page, the command palette, a drop target.
+    public let unitIndex: [String: TaskUnit]
+    /// Which unit each session is folded into, so selecting a card and
+    /// selecting a session are the same gesture seen from two ends.
+    public let unitBySession: [SessionKey: String]
     /// The finished sessions, most urgent first.
     public let endedRows: [BoardRow]
     /// The numbers across the top.
@@ -159,6 +187,10 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         sessionIndex: [SessionKey: SessionSnapshot],
         groups: [BoardGroup],
         rowGroups: [BoardRowGroup],
+        unitGroups: [TaskUnitGroup] = [],
+        endedUnits: [TaskUnit] = [],
+        unitIndex: [String: TaskUnit] = [:],
+        unitBySession: [SessionKey: String] = [:],
         endedRows: [BoardRow],
         summary: BoardSummary,
         tree: ProjectTree,
@@ -167,6 +199,10 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         boardRevision: UInt64 = 1,
         isRepeat: Bool = false
     ) {
+        self.unitGroups = unitGroups
+        self.endedUnits = endedUnits
+        self.unitIndex = unitIndex
+        self.unitBySession = unitBySession
         self.sequence = sequence
         self.board = board
         self.ignoredKeys = ignoredKeys
@@ -226,6 +262,10 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             sessionIndex: kept(sessionIndex, previous.sessionIndex),
             groups: kept(groups, previous.groups),
             rowGroups: kept(rowGroups, previous.rowGroups),
+            unitGroups: kept(unitGroups, previous.unitGroups),
+            endedUnits: kept(endedUnits, previous.endedUnits),
+            unitIndex: kept(unitIndex, previous.unitIndex),
+            unitBySession: kept(unitBySession, previous.unitBySession),
             endedRows: kept(endedRows, previous.endedRows),
             summary: kept(summary, previous.summary),
             tree: kept(tree, previous.tree),
@@ -413,6 +453,36 @@ public actor BoardFrameAssembler {
             projectFilter: inputs.focusedProjectKey,
             in: board
         )
+
+        // The wall, as units. Derived over the same sessions the sections were
+        // built from — filters applied first, so a focused project's wall and
+        // its header count the same work — and in one pass: every session is
+        // assigned to a unit by dictionary lookup, and no view ever walks the
+        // delegation forest again.
+        let allUnits = TaskUnitBuilder.units(
+            sessions: kept,
+            board: board,
+            ledger: inputs.ledger,
+            builder: builder,
+            now: raw.generatedAt
+        )
+        let unitSplit = TaskUnitGrouping.split(allUnits)
+        let liveUnits = inputs.bucketFilter.map { bucket in
+            unitSplit.live.filter { $0.bucket == bucket }
+        } ?? unitSplit.live
+        let unitGroups = TaskUnitGrouping.groups(
+            for: liveUnits,
+            board: board,
+            groupBy: inputs.groupBy
+        )
+        var unitIndex: [String: TaskUnit] = [:]
+        unitIndex.reserveCapacity(allUnits.count)
+        var unitBySession: [SessionKey: String] = [:]
+        unitBySession.reserveCapacity(kept.count)
+        for unit in allUnits {
+            unitIndex[unit.id] = unit
+            for member in unit.members { unitBySession[member.key] = unit.id }
+        }
         // `EndedSessions.split` and not `mostRecentFirst`: the ledger's order
         // is total and supersedes it, and sorting four hundred finished rows
         // twice per frame is exactly the kind of redundant work the board's
@@ -440,10 +510,18 @@ public actor BoardFrameAssembler {
             sessionIndex: index,
             groups: groups,
             rowGroups: rowGroups,
+            unitGroups: unitGroups,
+            endedUnits: inputs.bucketFilter == nil
+                ? unitSplit.ended
+                : unitSplit.ended.filter { $0.bucket == inputs.bucketFilter },
+            unitIndex: unitIndex,
+            unitBySession: unitBySession,
             endedRows: inputs.bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows,
-            // Counted before the bucket filter, on purpose: a chip that zeroed
-            // the others when clicked would leave no way back to them.
-            summary: BoardSummary(sessions: kept, attention: attention),
+            // Over units, and counted before the bucket filter, on purpose: the
+            // wall's cards and the header's numbers have to be about the same
+            // thing, and a chip that zeroed the others when clicked would leave
+            // no way back to them.
+            summary: BoardSummary(units: allUnits),
             tree: ProjectTree.build(
                 board: board,
                 names: inputs.projectNames,

@@ -119,7 +119,11 @@ public enum TaskLedger {
         public var label: String {
             switch self {
             case .needsYou: "needs you"
-            case .doneReported: "done"
+            // Named for what it is waiting for rather than for what happened.
+            // An agent that finished asked to be checked — see
+            // ``AuspexTaskStatus/review`` — and a chip that said "done" would
+            // be the one number on the board an agent could close by itself.
+            case .doneReported: "in review"
             case .working: "working"
             case .idle: "idle"
             case .ended: "ended"

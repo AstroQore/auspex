@@ -456,7 +456,7 @@ struct BoardSummaryLedgerTests {
     func chipOrder() {
         #expect(BoardSummary.Kind.allCases.map(\.rawValue)
             == ["needsYou", "doneReported", "working", "idle", "ended"])
-        #expect(BoardSummary.Kind.doneReported.label == "done")
+        #expect(BoardSummary.Kind.doneReported.label == "in review")
         #expect(BoardSummary.Kind.needsYou.isAttention)
         #expect(BoardSummary.Kind.idle.isAttention == false)
     }
