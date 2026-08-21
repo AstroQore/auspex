@@ -24,7 +24,7 @@ struct WindowCostTests {
         let fold = SidebarFold.make(rows: 3, finished: 0, isOpen: false)
         #expect(fold.shown == 3)
         #expect(fold.capped == 0)
-        #expect(!fold.offersMore)
+        #expect(!fold.needsRow)
     }
 
     @Test("a long branch is cut at the limit and offers the rest")
@@ -32,7 +32,7 @@ struct WindowCostTests {
         let fold = SidebarFold.make(rows: 19, finished: 0, isOpen: false)
         #expect(fold.shown == ProjectTree.listLimit)
         #expect(fold.capped == 19 - ProjectTree.listLimit)
-        #expect(fold.offersMore)
+        #expect(fold.needsRow)
         #expect(MoreRow.title(fold) == "+\(19 - ProjectTree.listLimit) more")
     }
 
@@ -42,10 +42,9 @@ struct WindowCostTests {
         #expect(fold.shown == 19)
         #expect(fold.capped == 0)
         #expect(fold.isOpen)
-        #expect(fold.offersMore == false)
-        // The row is still drawn — `offersMore` is about what is missing, and
-        // an opened branch is missing nothing. What brings the fold back is
-        // the open state, which the view checks separately.
+        // The row is still drawn, and that is the point: nothing is missing
+        // from an opened branch, but the way back has to be somewhere.
+        #expect(fold.needsRow)
         #expect(MoreRow.title(fold) == "Show fewer")
     }
 
@@ -54,7 +53,7 @@ struct WindowCostTests {
         let fold = SidebarFold.make(rows: 2, finished: 40, isOpen: false)
         #expect(fold.shown == 2)
         #expect(fold.capped == 0)
-        #expect(fold.offersMore)
+        #expect(fold.needsRow)
         #expect(MoreRow.title(fold) == "40 finished")
         #expect(MoreRow.help(fold).contains("Ended section"))
 

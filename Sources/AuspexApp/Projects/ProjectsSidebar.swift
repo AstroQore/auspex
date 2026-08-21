@@ -115,7 +115,7 @@ struct ProjectsSidebar: View {
         ForEach(rows.prefix(fold.shown)) { row in
             sessionRow(row, depth: depth + row.depth)
         }
-        if fold.offersMore {
+        if fold.needsRow {
             MoreRow(depth: depth, fold: fold) {
                 if fold.isOpen {
                     openedInFull.remove(id)
@@ -471,8 +471,12 @@ struct SidebarFold: Equatable {
     /// Whether the reader has asked for the whole of this branch.
     var isOpen: Bool
 
-    /// Whether the branch needs the row that says what is missing.
-    var offersMore: Bool { capped > 0 || finished > 0 }
+    /// Whether the branch draws the row at the end of it.
+    ///
+    /// Because something is missing, *or* because the branch is open and the
+    /// way back has to be somewhere — a fold that could only be opened would
+    /// be a one-way door on the one control that keeps this column short.
+    var needsRow: Bool { capped > 0 || finished > 0 || isOpen }
 
     static func make(
         rows: Int,
