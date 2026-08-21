@@ -99,6 +99,25 @@ struct ContextCompositionEstimatorTests {
         )
     }
 
+    @Test("a window the gauge refused is a window the bar cannot be drawn against")
+    func overflowedWindowHasNoComposition() {
+        // 850,100 out of a reported 200,000: the denominator is wrong, so
+        // every band would be wrong with it.
+        let overflowed = ContextGauge(
+            usage: ContextUsage(
+                used: 850_100, window: 200_000, cached: nil,
+                at: Fixtures.date(0), source: .derived
+            ),
+            compactions: 0
+        )!
+        #expect(overflowed.overflowedWindow)
+        #expect(
+            ContextCompositionEstimator.estimate(
+                volume: volume(user: 8_000), gauge: overflowed
+            ) == nil
+        )
+    }
+
     @Test("nothing indexed is no bar, rather than a bar that is all remainder")
     func nothingIndexed() {
         #expect(

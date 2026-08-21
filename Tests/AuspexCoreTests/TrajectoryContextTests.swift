@@ -182,6 +182,32 @@ struct TrajectoryContextTests {
         #expect(line.isEmpty)
     }
 
+    @Test("a reading whose fill overran its window is dropped, not pinned to the top")
+    func overflowIsDropped() throws {
+        let events = [
+            Fixtures.event(.turnStarted, key: key, at: 0),
+            Fixtures.event(.userPrompt(preview: "Start"), key: key, at: 0),
+            // The shape of a real report: a model whose window is bigger than
+            // the lookup table knows. Drawing it at the top of the lane would
+            // say this session is permanently full, which is the opposite of
+            // true — the same refusal `ContextGauge.overflowedWindow` makes.
+            Fixtures.event(
+                .contextUsage(used: 850_100, window: 200_000, cached: nil, source: .derived),
+                key: key, at: 1
+            )
+        ]
+        let builder = TrajectoryBuilder.build(from: try stored(events))
+        #expect(builder.contextReadings.count == 1)
+        #expect(builder.contextReadings.first?.fraction == nil)
+        let spans = TrajectoryLayout.spans(for: builder.steps, scale: .duration, now: nil)
+        let line = TrajectoryLayout.contextLine(
+            readings: builder.contextReadings,
+            compactionSteps: builder.compactionSteps,
+            spans: spans
+        )
+        #expect(line.isEmpty)
+    }
+
     @Test("a harness that records nothing draws no lane")
     func noReadingsNoLane() throws {
         let builder = TrajectoryBuilder.build(from: try stored([

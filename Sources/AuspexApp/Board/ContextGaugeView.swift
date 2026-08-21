@@ -18,9 +18,12 @@ import SwiftUI
 /// the window was looked up rather than recorded. Dimming the whole gauge
 /// would have said the opposite: that the measurement is soft.
 ///
-/// A reading with no window at all draws no bar. There is nothing to be a
-/// fraction of, and a bar filled to an invented denominator is the one thing
-/// this view must never do; the label says `421k` and stops.
+/// A reading with no window draws no bar. There is nothing to be a fraction
+/// of, and a bar filled to an invented denominator is the one thing this view
+/// must never do; the label says `421k` and stops. The same is true of a
+/// window ``ContextGauge`` refused because the fill overran it — the label
+/// there says `850.1k · window ?`, in the calm band, because a fill past its
+/// own window is a wrong denominator rather than an emergency.
 ///
 /// ## Why it is `Equatable` and reads no clock
 ///

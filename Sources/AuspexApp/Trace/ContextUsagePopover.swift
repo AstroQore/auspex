@@ -59,6 +59,7 @@ struct ContextHeaderGauge: View {
     /// than after a middle dot, because this line sits among other `key value`
     /// pairs and a third separator would make it read as four fields.
     private var headline: String {
+        guard !gauge.overflowedWindow else { return gauge.label }
         guard let window = gauge.window else { return ContextFormat.tokens(gauge.used) }
         var text = "\(ContextFormat.tokens(gauge.used)) / \(ContextFormat.tokens(window))"
         if let fraction = gauge.fraction { text += " (\(ContextFormat.percent(fraction)))" }
@@ -114,7 +115,14 @@ struct ContextUsagePopover: View {
     /// Which half of the gauge was measured. The one sentence this panel
     /// exists for.
     private var provenance: String {
-        gauge.isDerived
+        if gauge.overflowedWindow {
+            // The fill came out larger than the window beside it, which is not
+            // a session at 425 % — it is the wrong denominator. Saying so is
+            // the whole of this line; there is no percentage to defend.
+            return gauge.unknownWindowReason
+                + " The fill below is what the transcript recorded."
+        }
+        return gauge.isDerived
             ? "Fill read from the transcript. Window size looked up from the model — "
                 + "the harness does not record it."
             : "Fill and window size both recorded by the harness."
@@ -178,7 +186,7 @@ struct ContextUsagePopover: View {
     private var ledger: some View {
         VStack(alignment: .leading, spacing: 5) {
             LedgerRow(key: "used", value: exact(gauge.used))
-            LedgerRow(key: "window", value: gauge.window.map(exact) ?? "not recorded")
+            LedgerRow(key: "window", value: windowValue)
             LedgerRow(key: "cached", value: gauge.cached.map(exact) ?? "not reported")
             // Cumulative, and labelled so. The snapshot counts every token a
             // session ever generated; nothing on disk separates the newest
@@ -186,6 +194,14 @@ struct ContextUsagePopover: View {
             LedgerRow(key: "output, all turns", value: exact(tokensOut))
             LedgerRow(key: "compactions", value: "\(gauge.compactions)")
         }
+    }
+
+    /// What was recorded, even where the gauge refused to divide by it: this
+    /// block exists for the reader working out *why* the number above is
+    /// hedged, and hiding the figure would take the evidence away.
+    private var windowValue: String {
+        guard let reported = gauge.reportedWindow else { return "not recorded" }
+        return gauge.overflowedWindow ? "\(exact(reported)) · not believable" : exact(reported)
     }
 
     /// Every digit, grouped. This block is the one somebody opened *because*

@@ -923,6 +923,13 @@ extension DemoScript.Blueprint {
                 .tool("shell", .shell, "python backoff.py --rps 200", 6.0),
                 .say("Full jitter settles in four retries; the capped variant takes seven."),
                 .usage(11_400, 1_640, 3_800),
+                // A fill larger than the window reported beside it: the store
+                // contradicting itself, which is one of the two ways Auspex
+                // ends up holding a wrong denominator. The card must print
+                // `850.1k · window ?` in the quietest ink rather than 425 %
+                // in red, and one demo session has to be in that state for
+                // anybody to see it.
+                .context(used: 850_100, window: 200_000, cached: 690_000, derived: false),
                 .endTurn,
                 .idle(14.0)
             ],

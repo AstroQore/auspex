@@ -97,6 +97,16 @@ describes how one is cut when there is.
   heard of still reports a fill, with no bar: `421k` is worth showing, and a
   guessed denominator is not.
 
+  And the gauge never prints more than 100 %. A fill past the window is not a
+  session at 425 % — no harness overruns its own window by four times — it is
+  Auspex holding the wrong denominator, which is what a model bigger than the
+  lookup table knows about looks like. So the gauge stops dividing: `850.1k ·
+  window ?`, in the quietest ink, with a tooltip saying the model's window is
+  not on record. Not red, because the one wrong answer there is a card sending
+  somebody to wrap up a session that has plenty of room. The trajectory lane
+  and the composition bar refuse the same reading for the same reason, and the
+  popover's ledger still prints what was recorded so the figure can be checked.
+
 - **The trace header opens what is actually in the window.** `context 96.4k /
   200k (48 %)` beside the token totals it is most often confused with, and a
   popover behind it with the exact counts, the cached share, the compaction

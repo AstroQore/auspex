@@ -38,6 +38,12 @@ public enum ContextFormat {
         return text
     }
 
+    /// `850.1k · window ?` — the fill, and an admission about the
+    /// denominator. See ``ContextGauge/overflowedWindow``.
+    public static func unknownWindow(used: Int) -> String {
+        "\(tokens(used)) · window ?"
+    }
+
     private static func decimal(_ value: Double, unit: String) -> String {
         let text = String(format: "%.1f", value)
         return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + unit
@@ -80,8 +86,26 @@ public struct ContextGauge: Hashable, Sendable {
 
     /// Tokens in the window when the model was last called.
     public let used: Int
-    /// The window, when the store or the model table could say.
+    /// The window this gauge is willing to divide by.
+    ///
+    /// `nil` when nothing said how big it is — and also `nil` when what was
+    /// said cannot be true. See ``overflowedWindow``.
     public let window: Int?
+    /// The window as the store or the model table actually reported it, even
+    /// where ``window`` refused it. The popover's ledger prints what was
+    /// recorded, which is the number somebody debugging this needs.
+    public let reportedWindow: Int?
+    /// `true` when a window was reported and the fill was larger than it.
+    ///
+    /// This is not a session at 425 % — no harness overruns its own window by
+    /// four times. It is Auspex holding the wrong denominator: a model whose
+    /// real window is bigger than ``ModelContextWindows`` knows about, or a
+    /// store contradicting itself. The first token past the window is already
+    /// proof of that, so the gauge stops dividing rather than printing a
+    /// percentage that cannot happen — and it stops colouring, because the one
+    /// wrong answer here is a red card sending somebody to wrap up a session
+    /// that has plenty of room.
+    public let overflowedWindow: Bool
     /// How much of ``used`` was served from a prompt cache, when the store
     /// separated it out.
     public let cached: Int?
@@ -106,12 +130,15 @@ public struct ContextGauge: Hashable, Sendable {
         at: Date
     ) {
         self.used = used
-        self.window = window
+        self.reportedWindow = window
         self.cached = cached
         self.isDerived = isDerived
         self.compactions = compactions
         self.at = at
-        self.fraction = window.flatMap { $0 > 0 ? Double(used) / Double($0) : nil }
+        self.overflowedWindow = window.map { $0 > 0 && used > $0 } ?? false
+        let usable = window.flatMap { $0 > 0 && used <= $0 ? $0 : nil }
+        self.window = usable
+        self.fraction = usable.map { Double(used) / Double($0) }
     }
 
     /// The gauge for a snapshot's reading, or `nil` when it has none.
@@ -139,9 +166,11 @@ public struct ContextGauge: Hashable, Sendable {
         return .calm
     }
 
-    /// `898.8k / 1M · 90 %`, or `898.8k` with no window.
+    /// `898.8k / 1M · 90 %`; `850.1k · window ?` when the denominator was not
+    /// believable; `421k` when there was none at all.
     public var label: String {
-        ContextFormat.gauge(used: used, window: window, fraction: fraction)
+        guard !overflowedWindow else { return ContextFormat.unknownWindow(used: used) }
+        return ContextFormat.gauge(used: used, window: window, fraction: fraction)
     }
 
     /// The compaction badge — `⟲ 2` — or `nil` when this session has not
@@ -150,9 +179,27 @@ public struct ContextGauge: Hashable, Sendable {
         compactions > 0 ? "⟲ \(compactions)" : nil
     }
 
+    /// Why the denominator was refused, in one sentence.
+    ///
+    /// Two readings, because there are two ways to hold a wrong window: a
+    /// model whose real size this app has not heard of, and a store that
+    /// reported a fill bigger than the window it reported beside it.
+    public var unknownWindowReason: String {
+        isDerived
+            ? "The model's window is not on record; the fill is derived."
+            : "The harness reported a fill larger than the window it also reported."
+    }
+
     /// What a screen reader says, spelled out rather than abbreviated.
     public var accessibilityLabel: String {
         var parts = ["Context window"]
+        if overflowedWindow {
+            parts.append("\(used) tokens used, window size not known")
+            if compactions > 0 {
+                parts.append(compactions == 1 ? "compacted once" : "compacted \(compactions) times")
+            }
+            return parts.joined(separator: ", ")
+        }
         if let fraction {
             parts.append("\(ContextFormat.percent(fraction)) full")
             parts.append("\(used) of \(window ?? 0) tokens")
@@ -173,11 +220,15 @@ public struct ContextGauge: Hashable, Sendable {
         if let cached, cached > 0 {
             lines.append("\(ContextFormat.tokens(cached)) of it served from cache")
         }
-        lines.append(
-            isDerived
-                ? "Fill read from the transcript; window size looked up from the model."
-                : "Fill and window both recorded by the harness."
-        )
+        if overflowedWindow {
+            lines.append(unknownWindowReason)
+        } else {
+            lines.append(
+                isDerived
+                    ? "Fill read from the transcript; window size looked up from the model."
+                    : "Fill and window both recorded by the harness."
+            )
+        }
         if compactions > 0 {
             lines.append(
                 compactions == 1

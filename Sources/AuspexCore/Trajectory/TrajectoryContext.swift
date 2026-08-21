@@ -29,11 +29,17 @@ public struct TrajectoryContextReading: Hashable, Sendable {
         self.isDerived = isDerived
     }
 
-    /// The fill, or `nil` when nothing said how big the window is. A reading
-    /// with no denominator cannot be drawn on a lane whose height *is* the
-    /// denominator.
+    /// The fill, or `nil` when nothing said how big the window is — or when
+    /// what it said cannot be true.
+    ///
+    /// A reading with no denominator cannot be drawn on a lane whose height
+    /// *is* the denominator. Neither can one whose fill overran the window it
+    /// was measured against: no harness overruns its own window, so that is
+    /// Auspex holding the wrong number, and drawing it pinned to the top of
+    /// the lane would report a session as permanently full. Same refusal
+    /// ``ContextGauge/overflowedWindow`` makes on the card.
     public var fraction: Double? {
-        guard let window, window > 0 else { return nil }
+        guard let window, window > 0, used <= window else { return nil }
         return Double(used) / Double(window)
     }
 }

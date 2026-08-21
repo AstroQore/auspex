@@ -64,7 +64,7 @@ Three, all pinned in `Package.swift`:
 | Package | Pin | Why |
 | --- | --- | --- |
 | `GRDB.swift` | `from: 7.0.0` | The local store. |
-| `agent-session-kit` | `exact: "0.6.0"` | The harness adapters and the live pipeline. |
+| `agent-session-kit` | `exact: "0.6.1"` | The harness adapters and the live pipeline. |
 | `Sparkle` | `exact: "2.9.4"` | In-app updates (§ 9). |
 
 `Package.resolved` is gitignored, so a release built from a clean checkout of

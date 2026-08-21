@@ -73,8 +73,9 @@ struct ContextGaugeTests {
             (140_000, ContextGauge.Level.warm),
             (179_999, ContextGauge.Level.warm),
             (180_000, ContextGauge.Level.critical),
-            (200_000, ContextGauge.Level.critical),
-            (240_000, ContextGauge.Level.critical)
+            (200_000, ContextGauge.Level.critical)
+            // Past the window there is no band, because there is no window:
+            // see `overflowIsRefused`.
         ]
     )
     func ramp(_ used: Int, _ expected: ContextGauge.Level) {
@@ -89,11 +90,53 @@ struct ContextGaugeTests {
         #expect(gauge.label == "900k")
     }
 
-    @Test("an overfull window is over 100 %, not capped at it")
-    func overfull() {
-        let gauge = gauge(used: 240_000)
-        #expect((gauge.fraction ?? 0) > 1)
-        #expect(gauge.label.hasSuffix("120 %"))
+    // MARK: - A denominator that cannot be true
+
+    @Test("a fill past its window is a wrong window, not a session at 425 %")
+    func overflowIsRefused() {
+        // The shape of a real report: Claude Code on a model whose window is
+        // bigger than the lookup table knows about. 850.1k out of a 200k
+        // window is not a session four times over — it is Auspex holding the
+        // wrong number.
+        let gauge = gauge(used: 850_100, source: .derived)
+        #expect(gauge.overflowedWindow)
+        #expect(gauge.window == nil)
+        #expect(gauge.fraction == nil)
+        #expect(gauge.label == "850.1k · window ?")
+        // No red, and no amber: the one wrong answer here is a card sending
+        // somebody to wrap up a session that has plenty of room.
+        #expect(gauge.level == .calm)
+        // But what was reported survives, for the reader working out why.
+        #expect(gauge.reportedWindow == 200_000)
+    }
+
+    @Test("exactly full is full, not unbelievable")
+    func exactlyFullIsFine() {
+        let gauge = gauge(used: 200_000)
+        #expect(!gauge.overflowedWindow)
+        #expect(gauge.fraction == 1)
+        #expect(gauge.level == .critical)
+        #expect(gauge.label == "200k / 200k · 100 %")
+    }
+
+    @Test("the tooltip names which of the two wrong windows this is")
+    func overflowReason() {
+        #expect(
+            gauge(used: 850_100, source: .derived).helpText
+                .contains("The model's window is not on record; the fill is derived.")
+        )
+        #expect(
+            gauge(used: 850_100, source: .measured).helpText
+                .contains("reported a fill larger than the window it also reported")
+        )
+    }
+
+    @Test("a refused window is spoken as unknown, not as a percentage")
+    func overflowAccessibility() {
+        let spoken = gauge(used: 850_100, source: .derived, compactions: 1).accessibilityLabel
+        #expect(spoken.contains("window size not known"))
+        #expect(!spoken.contains("%"))
+        #expect(spoken.contains("compacted once"))
     }
 
     @Test("a zero window does not divide by it")
@@ -101,6 +144,10 @@ struct ContextGaugeTests {
         let gauge = gauge(used: 100, window: 0)
         #expect(gauge.fraction == nil)
         #expect(gauge.level == .calm)
+        // Zero is not a window somebody reported too small; it is no window
+        // at all, so the label says nothing about a denominator.
+        #expect(!gauge.overflowedWindow)
+        #expect(gauge.label == "100")
     }
 
     // MARK: - Provenance
