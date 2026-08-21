@@ -43,7 +43,8 @@ struct AuspexMCPSocketTests {
         )
         let server = AuspexMCPServer(host: host, now: { Fixtures.date(100) })
 
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+        // `/tmp`: `sun_path` is 104 bytes; a runner's temp dir eats half of it.
+        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("ax-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

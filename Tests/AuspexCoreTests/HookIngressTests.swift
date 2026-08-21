@@ -302,7 +302,9 @@ struct HookIngressTests {
         )
         let server = AuspexMCPServer(host: host)
 
-        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+        // `/tmp`, short: `sun_path` is 104 bytes and a CI runner's temporary
+        // directory can already spend half of that.
+        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
             .appendingPathComponent("ax-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -320,6 +322,10 @@ struct HookIngressTests {
                 "session_id":"\(session.sessionID)","tool_name":"Bash",\
                 "tool_input":{"command":"rm -rf build"}}
                 """),
+            // The production deadline is 200 ms, which a loaded CI runner can
+            // blow on the connect alone; the test is about the path, not the
+            // budget (the budget has its own test).
+            limit: 5,
             installsWatchdog: false
         ) == 0)
 
@@ -327,7 +333,7 @@ struct HookIngressTests {
         // a moment after the hook process has already gone home — which is the
         // whole point of the arrangement.
         var observed: [AgentEvent] = []
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(10)
         while Date() < deadline, observed.isEmpty {
             observed = await host.observed
             if observed.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
