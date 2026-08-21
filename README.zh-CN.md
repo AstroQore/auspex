@@ -169,10 +169,13 @@ args = ["--mcp-stdio"]
   agent 自己的话写在上面。`needs_input` 会在真人下次对那个会话说话时自动清除。
 - **`auspex.report(focus, progress)`** —— 用会话自己的一句话替换 Auspex 对它在做
   什么的推断。
-- **`plans.*` / `tasks.*`** —— 共享任务看板。派活的人用 `plans.create` 登记拆解，
-  为每个 worker `tasks.create` 一条并把 id 写进 brief；每个 worker 调用
-  `tasks.claim(task_id, role, scope)`，卡住时 `tasks.update`，做完时
-  `tasks.complete`。
+- **`tasks.*`** —— 共享任务看板。**每条任务都属于某个项目**，项目由调用方所在的
+  会话解析出来：agent 调 `tasks.create` 时不用说自己在哪里工作，任务会落在看板
+  给这个 agent 的卡片分组用的同一个项目下。派活的人为每个 worker 建一条任务并把
+  id 写进 brief；每个 worker 调用 `tasks.claim(task_id, role, scope)`，卡住时
+  `tasks.update`，做完时 `tasks.complete`。
+- **`plans.*`** —— 里程碑：项目**内部**可选的一层标题，用来给值得命名的拆解分组。
+  沿用旧名字，这样已经发出去的 brief 仍然有效。
 - **`sessions.self` / `sessions.list` / `sessions.tree` / `peers.status`** ——
   只读。agent 永远不需要知道自己的 session id：Auspex 从 socket 另一端的进程推出来。
 
@@ -183,7 +186,7 @@ args = ["--mcp-stdio"]
 在 200 ms 内以 0 退出 —— 因为 hook 是正在干活的 agent 的同步子进程，绝不能卡住它，
 更不能否决它。
 
-![Tasks 页：计划、它们的任务，以及每条任务被谁认领](docs/screenshots/tasks.png)
+![Tasks 页：每个项目一条泳道，里程碑在项目内部，以及每条任务被谁认领](docs/screenshots/tasks.png)
 
 ## 项目、委派树，以及你不想看到的会话
 

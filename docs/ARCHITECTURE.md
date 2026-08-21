@@ -402,6 +402,17 @@ shipped one. `v1_initial` creates:
 | `source_cursors` | where each tailer stopped reading |
 | `meta` | key/value, including the retention policy |
 
+`v5_projects_own_tasks` adds `tasks.project_key` and `plans.project_key`: the
+project a task is in, and the project a milestone is inside. A text key rather
+than a foreign key into `projects`, because the board's project key is a
+string — a git root, a working directory, a folder a person claimed in
+`settings.json`, or a `PseudoProject` key for a harness with no directory at
+all — and two of those four never reach the `projects` table. A task keyed on a
+row id could be filed under a project the wall does not group by. The migration
+backfills every existing task from the session that claimed it, then the one
+that filed it, then its milestone, and puts what is left in a named `Scratch`
+project rather than leaving a `NULL` behind.
+
 A session row carries `snapshot_json` — the reducer's `SessionSnapshot`,
 verbatim — plus the columns the board sorts and filters on (`harness`, `state`,
 `state_detail`, `is_alive`, `last_event_at`, token and turn counters, …)
@@ -464,11 +475,25 @@ question at all: Claude Code and Cursor write no permission state to disk, and
 The second is `auspex.report(focus, progress)`, which replaces Auspex's
 inference about what a session is doing with the session's own sentence.
 
-The third is the task board — `plans.*` and `tasks.*` — whose intended caller
-is whoever *hands work out*: a supervisor registers a plan, files a task per
-worker, and puts the id in each brief, so each worker makes one
+The third is the task board — `tasks.*`, with `plans.*` as its milestones —
+whose intended caller is whoever *hands work out*: a supervisor files a task
+per worker and puts the id in each brief, so each worker makes one
 `tasks.claim(task_id, role, scope)` call. `sessions.list`, `sessions.tree`,
 `sessions.self` and `peers.status` are read-only.
+
+**Projects contain tasks, and the project is resolved rather than asked for.**
+`tasks.create` with no `project` argument files the task under the project of
+the session on the other end of the socket — the same string
+`BoardSnapshot.projectKey(for:)` gives the wall, so the task and that agent's
+card are in the same place on two different pages. A task inherits its project
+from the milestone it is filed under or from the session that first claims it,
+and `TaskProject.scratchKey` is the named last resort for a call Auspex could
+not attribute at all. There is no "unfiled": that heading meant "nobody asked
+the question", and the question has an answer.
+
+A milestone (`plans.*`) is an optional heading *inside* a project. The tools
+keep their old names because briefs already in flight carry them, and they are
+described as milestones in every schema string an agent reads.
 
 - **Transport: a Unix domain socket at `~/.auspex/mcp.sock`.** Local user
   only, never a TCP port. The running app owns the listener.

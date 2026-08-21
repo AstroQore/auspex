@@ -228,10 +228,16 @@ args = ["--mcp-stdio"]
   say it twice.
 - **`auspex.report(focus, progress)`** — replaces Auspex's inference about what
   a session is doing with the session's own sentence.
-- **`plans.*` / `tasks.*`** — the shared task board. A supervisor registers the
-  decomposition with `plans.create`, files a `tasks.create` per worker and puts
-  the id in each brief; each worker calls `tasks.claim(task_id, role, scope)`,
-  `tasks.update` when it is blocked, and `tasks.complete` when it is done.
+- **`tasks.*`** — the shared task board. **Every task belongs to a project**,
+  and the project is resolved from the calling session, so an agent that files
+  one never has to say where it is working: `tasks.create` lands in the same
+  project the board already draws that agent's card under. A supervisor files
+  one task per worker and puts the id in each brief; each worker calls
+  `tasks.claim(task_id, role, scope)`, `tasks.update` when it is blocked, and
+  `tasks.complete` when it is done.
+- **`plans.*`** — milestones: an optional heading *inside* a project, for a
+  decomposition worth naming. Kept under the older name so briefs already in
+  flight keep working.
 - **`sessions.self` / `sessions.list` / `sessions.tree` / `peers.status`** —
   read-only. An agent never has to know its own session id: Auspex resolves it
   from the process on the other end of the socket.
@@ -244,7 +250,7 @@ dependency. The same registration installs **hooks** where a harness has them:
 exits 0 within 200 ms whatever happens, because a hook is a synchronous child
 of a working agent and must never be able to block or veto it.
 
-![The Tasks page: plans, their tasks, and who claimed each one](docs/screenshots/tasks.png)
+![The Tasks page: one lane per project, milestones inside them, and who claimed each task](docs/screenshots/tasks.png)
 
 ## Projects, trees, and the sessions you do not want to see
 

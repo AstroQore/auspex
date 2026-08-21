@@ -12,6 +12,29 @@ describes how one is cut when there is.
 
 ### Changed
 
+- **Projects contain tasks.** Plans and projects used to be two roots side by
+  side, so a task an agent filed over MCP without a plan landed in a lane called
+  "Unfiled" — which meant "nobody asked where this belongs", next to the project
+  it obviously belonged to. There is one hierarchy now: **project ⊃ task ⊃
+  sessions**. `tasks.create` resolves the caller's project from the session on
+  the other end of the socket, using the same `BoardSnapshot.projectKey(for:)`
+  the wall groups cards by, and a task inherits its project from the milestone
+  it is filed under or from the session that first claims it.
+
+  A plan is demoted to a **milestone**: an optional heading inside a project.
+  The `plans.*` tools keep their names — briefs already in flight carry them —
+  and describe themselves as milestones. The Tasks page draws one lane per
+  project with milestone sub-headers inside, hides projects with nothing in them
+  unless the window is bound to one, and says "Nothing to do" once instead of
+  drawing a dash in each of four columns. The Projects page gains a column for
+  the work each project is carrying, including projects whose sessions have all
+  gone home.
+
+  Schema v5 adds `tasks.project_key` and `plans.project_key` and backfills every
+  task that was already there from its claimer, then its filer, then its
+  milestone; what is left lands in a **Scratch** project a person can empty
+  rather than a `NULL` nobody can find.
+
 - **Attention is something said, not something inferred.** A card is counted as
   wanting a person, or as having finished, only when something explicit said so
   — an agent calling `auspex.notify`, a `PermissionRequest` hook, a harness's
