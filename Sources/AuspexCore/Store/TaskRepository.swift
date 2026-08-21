@@ -3,8 +3,14 @@ import AgentSessionLive
 import Foundation
 import GRDB
 
-/// Reads and writes the task ledger: plans, tasks, claims, the log behind
+/// Reads and writes the task ledger: milestones, tasks, claims, the log behind
 /// them, and what agents said when they called for a person.
+///
+/// Every task carries a `project_key` in the board's own key space — see
+/// ``TaskProject``. The repository never *resolves* one: it is handed the key
+/// its caller worked out from the frame, because the frame is where a
+/// session's project lives and a store that guessed would be a second answer
+/// to a question that already has one.
 ///
 /// A value over a `DatabaseWriter`, like ``SessionRepository``, so the MCP
 /// server, the board model and a test can each make one without sharing
@@ -21,36 +27,46 @@ public struct TaskRepository: Sendable {
         self.dbWriter = store.dbWriter
     }
 
-    // MARK: - Plans
+    // MARK: - Milestones
 
-    /// Registers a plan, or returns the one already registered under the same
-    /// slug.
+    /// Registers a milestone, or returns the one already registered under the
+    /// same slug.
     ///
     /// Idempotent by slug, because that is what makes a brief safe to re-run:
     /// a supervisor whose first attempt died halfway through re-registers the
-    /// same plan and gets the same id back rather than a second lane on the
-    /// board.
+    /// same milestone and gets the same id back rather than a second heading on
+    /// the board. A re-registration that *knows* the project when the first one
+    /// did not fills it in — learning where the work is happening is not a
+    /// conflict.
     @discardableResult
     public func createPlan(
         title: String,
         slug: String? = nil,
         summary: String? = nil,
         projectID: Int64? = nil,
+        projectKey: String? = nil,
         createdBy: SessionKey? = nil,
         now: Date = Date()
     ) throws -> AuspexPlan {
         let handle = TaskSlug.make(slug ?? title)
         return try dbWriter.write { db in
-            if let existing = try Self.plan(slug: handle, in: db) { return existing }
+            if let existing = try Self.plan(slug: handle, in: db) {
+                guard existing.projectKey == nil, let projectKey else { return existing }
+                try db.execute(
+                    sql: "UPDATE plans SET project_key = ?, updated_at = ? WHERE id = ?",
+                    arguments: [projectKey, now.timeIntervalSince1970, existing.id]
+                )
+                return try Self.plan(id: existing.id, in: db) ?? existing
+            }
             try db.execute(
                 sql: """
                     INSERT INTO plans
-                        (slug, title, summary, status, project_id, created_by_key,
-                         created_at, updated_at, archived_at)
-                    VALUES (?, ?, ?, 'active', ?, ?, ?, ?, NULL)
+                        (slug, title, summary, status, project_id, project_key,
+                         created_by_key, created_at, updated_at, archived_at)
+                    VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL)
                     """,
                 arguments: [
-                    handle, title, summary, projectID, createdBy?.description,
+                    handle, title, summary, projectID, projectKey, createdBy?.description,
                     now.timeIntervalSince1970, now.timeIntervalSince1970
                 ]
             )
@@ -62,7 +78,8 @@ public struct TaskRepository: Sendable {
         }
     }
 
-    /// The plans, newest first. Archived ones are left out unless asked for.
+    /// The milestones, newest first. Archived ones are left out unless asked
+    /// for.
     public func plans(includingArchived: Bool = false, limit: Int = 200) throws -> [AuspexPlan] {
         try dbWriter.read { db in
             var sql = "SELECT * FROM plans"
@@ -108,7 +125,13 @@ public struct TaskRepository: Sendable {
 
     // MARK: - Tasks
 
-    /// Files a task.
+    /// Files a task in a project.
+    ///
+    /// `projectKey` is the project the task is in, resolved by the caller from
+    /// the frame — see ``TaskProject/resolve(explicit:session:board:)``. When
+    /// it is `nil` and the task is being filed under a milestone, the
+    /// milestone's project is used: a task inside a heading is inside whatever
+    /// contains the heading.
     @discardableResult
     public func createTask(
         title: String,
@@ -117,20 +140,23 @@ public struct TaskRepository: Sendable {
         status: AuspexTaskStatus = .todo,
         priority: Int = 0,
         projectID: Int64? = nil,
+        projectKey: String? = nil,
         createdBy: SessionKey? = nil,
         source: String? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
+            let key = try projectKey
+                ?? planID.flatMap { try Self.plan(id: $0, in: db)?.projectKey }
             try db.execute(
                 sql: """
                     INSERT INTO tasks
-                        (title, body, status, priority, project_id, created_by_key,
-                         source, created_at, updated_at, plan_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (title, body, status, priority, project_id, project_key,
+                         created_by_key, source, created_at, updated_at, plan_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
-                    title, body, status.rawValue, priority, projectID,
+                    title, body, status.rawValue, priority, projectID, key,
                     createdBy?.description, source,
                     now.timeIntervalSince1970, now.timeIntervalSince1970, planID
                 ]
@@ -139,6 +165,7 @@ public struct TaskRepository: Sendable {
             try Self.appendLog(
                 taskID: id, actor: createdBy, kind: "created", message: title, at: now, in: db
             )
+            try Self.adoptProject(key, forPlan: planID, in: db)
             try Self.touchPlan(planID, at: now, in: db)
             guard let task = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
@@ -151,6 +178,7 @@ public struct TaskRepository: Sendable {
     /// priority, then most recently touched.
     public func tasks(
         planID: Int64? = nil,
+        projectKey: String? = nil,
         statuses: [AuspexTaskStatus] = [],
         claimedBy: SessionKey? = nil,
         limit: Int = 500
@@ -162,6 +190,10 @@ public struct TaskRepository: Sendable {
             if let planID {
                 clauses.append("plan_id = ?")
                 arguments += [planID]
+            }
+            if let projectKey {
+                clauses.append("project_key = ?")
+                arguments += [projectKey]
             }
             if !statuses.isEmpty {
                 let placeholders = Array(repeating: "?", count: statuses.count).joined(separator: ", ")
@@ -190,6 +222,70 @@ public struct TaskRepository: Sendable {
         try dbWriter.read { db in try Self.task(id: id, in: db) }
     }
 
+    /// How many tasks each project holds, and how many of them are still open.
+    ///
+    /// One `GROUP BY` on an indexed column rather than a fetch of every task,
+    /// because the readers are a sidebar row and a Projects-page column: both
+    /// are on screen while nothing is happening, and both want a number rather
+    /// than a list. See `AGENTS.md` § 4.1.
+    public func taskCounts() throws -> [String: TaskProjectCounts] {
+        try dbWriter.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT project_key AS project_key,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN status = 'done' THEN 0 ELSE 1 END) AS open_count
+                  FROM tasks
+                 WHERE project_key IS NOT NULL
+                 GROUP BY project_key
+                """)
+            var counts: [String: TaskProjectCounts] = [:]
+            counts.reserveCapacity(rows.count)
+            for row in rows {
+                guard let key = row["project_key"] as String? else { continue }
+                counts[key] = TaskProjectCounts(
+                    total: row["total"] as Int? ?? 0,
+                    open: row["open_count"] as Int? ?? 0
+                )
+            }
+            return counts
+        }
+    }
+
+    /// Moves a task into a project, and every session already on it with it.
+    ///
+    /// Separate from ``updateTask(id:title:body:status:priority:planID:actor:now:)``
+    /// because it is the one edit that changes which lane a row is *in* rather
+    /// than what it says, and because it writes a line into the task's history:
+    /// a task that moved between projects without leaving a trace is a task
+    /// somebody will spend an afternoon looking for.
+    @discardableResult
+    public func moveTask(
+        id: Int64,
+        toProjectKey key: String,
+        actor: SessionKey? = nil,
+        now: Date = Date()
+    ) throws -> AuspexTask {
+        try dbWriter.write { db in
+            guard let existing = try Self.task(id: id, in: db) else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            guard existing.projectKey != key else { return existing }
+            try db.execute(
+                sql: "UPDATE tasks SET project_key = ?, updated_at = ? WHERE id = ?",
+                arguments: [key, now.timeIntervalSince1970, id]
+            )
+            try Self.appendLog(
+                taskID: id, actor: actor, kind: "project",
+                message: [existing.projectKey, key].compactMap { $0 }.joined(separator: " → "),
+                at: now, in: db
+            )
+            guard let task = try Self.task(id: id, in: db) else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            return task
+        }
+    }
+
     /// Takes a task, recording who took it and for what.
     ///
     /// One statement, guarded in SQL rather than read-then-write: two workers
@@ -197,6 +293,11 @@ public struct TaskRepository: Sendable {
     /// than quietly overwriting the winner's scope. A re-claim by the *same*
     /// session is allowed and updates the scope — a worker refining what it
     /// took is not a conflict.
+    ///
+    /// `projectKey` is the claiming session's project. It is applied only to a
+    /// task that has none yet: a task inherits its project from whoever first
+    /// takes it, and a task that already knows where it lives is not moved by
+    /// somebody picking it up from a worktree next door.
     ///
     /// - Throws: ``TaskLedgerError/alreadyClaimed(_:)`` when somebody else
     ///   holds it.
@@ -206,6 +307,7 @@ public struct TaskRepository: Sendable {
         role: String,
         scope: String?,
         by session: SessionKey?,
+        projectKey: String? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
@@ -220,14 +322,18 @@ public struct TaskRepository: Sendable {
                     UPDATE tasks
                        SET claim_role = ?, claim_scope = ?, claimed_by_key = ?,
                            claimed_at = ?, updated_at = ?,
+                           project_key = COALESCE(project_key, ?),
                            status = CASE WHEN status = 'todo' THEN 'doing' ELSE status END
                      WHERE id = ?
                     """,
                 arguments: [
                     role, scope, session?.description,
-                    now.timeIntervalSince1970, now.timeIntervalSince1970, id
+                    now.timeIntervalSince1970, now.timeIntervalSince1970, projectKey, id
                 ]
             )
+            if existing.projectKey == nil, let projectKey {
+                try Self.adoptProject(projectKey, forPlan: existing.planID, in: db)
+            }
             if let session {
                 try Self.link(taskID: id, session: session, kind: .claim, at: now, in: db)
             }
@@ -315,6 +421,14 @@ public struct TaskRepository: Sendable {
             if let planID {
                 assignments.append("plan_id = ?")
                 arguments += [planID]
+                // Moving a task under a milestone moves it into the project
+                // that milestone is in — the containment runs one way, and a
+                // task filed under a heading in another project would break it.
+                let milestone = try planID.flatMap { try Self.plan(id: $0, in: db) }
+                if let key = milestone?.projectKey, key != existing.projectKey {
+                    assignments.append("project_key = ?")
+                    arguments += [key]
+                }
             }
             arguments += [id]
             try db.execute(
@@ -603,8 +717,22 @@ public struct TaskRepository: Sendable {
             .flatMap(AuspexTask.init(row:))
     }
 
-    /// A plan's `updated_at` follows its tasks, so "the plan somebody is
-    /// working in" sorts to the top of the board without anybody maintaining
+    /// Gives a milestone the project of the first task filed under it.
+    ///
+    /// A milestone is registered before anybody knows where the work will
+    /// happen — `plans.create` is the first call a supervisor makes — so its
+    /// project is usually learned from the task that follows. Never
+    /// overwritten: the first answer is the one the board has already drawn.
+    private static func adoptProject(_ key: String?, forPlan planID: Int64?, in db: Database) throws {
+        guard let key, let planID else { return }
+        try db.execute(
+            sql: "UPDATE plans SET project_key = ? WHERE id = ? AND project_key IS NULL",
+            arguments: [key, planID]
+        )
+    }
+
+    /// A milestone's `updated_at` follows its tasks, so "the milestone somebody
+    /// is working in" sorts to the top of the board without anybody maintaining
     /// it by hand.
     private static func touchPlan(_ planID: Int64?, at date: Date, in db: Database) throws {
         guard let planID else { return }
@@ -652,6 +780,32 @@ public struct TaskRepository: Sendable {
                 (message?.isEmpty ?? true) ? nil : message
             ]
         )
+    }
+}
+
+// MARK: - Counts
+
+/// How much work one project is carrying.
+///
+/// Two numbers rather than a list, because every reader of this is a badge: a
+/// sidebar row, a Projects-page column, a lane header. "3 tasks open" is the
+/// whole of what a person wants from a project they are not looking at.
+public struct TaskProjectCounts: Hashable, Sendable {
+    /// Every task in the project, finished ones included.
+    public let total: Int
+    /// The ones that are not in `done`.
+    public let open: Int
+
+    public init(total: Int, open: Int) {
+        self.total = total
+        self.open = open
+    }
+
+    /// What a badge says, or `nil` when the project carries nothing and the
+    /// badge should not be drawn at all.
+    public var openDescription: String? {
+        guard open > 0 else { return nil }
+        return open == 1 ? "1 task open" : "\(open) tasks open"
     }
 }
 
@@ -722,6 +876,7 @@ extension AuspexPlan {
             summary: row["summary"],
             status: status,
             projectID: row["project_id"],
+            projectKey: row["project_key"],
             createdBy: (row["created_by_key"] as String?).flatMap(SessionKey.init(string:)),
             createdAt: Date(timeIntervalSince1970: createdAt),
             updatedAt: Date(timeIntervalSince1970: updatedAt),
@@ -748,6 +903,7 @@ extension AuspexTask {
             status: AuspexTaskStatus(rawValue: statusRaw) ?? .todo,
             priority: row["priority"] as Int? ?? 0,
             projectID: row["project_id"],
+            projectKey: row["project_key"],
             createdBy: (row["created_by_key"] as String?).flatMap(SessionKey.init(string:)),
             claimRole: row["claim_role"],
             claimScope: row["claim_scope"],

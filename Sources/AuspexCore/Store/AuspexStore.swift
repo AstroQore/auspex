@@ -105,6 +105,11 @@ public final class AuspexStore: Sendable {
             try addAcknowledgementColumns(db)
         }
 
+        migrator.registerMigration("v5_projects_own_tasks") { db in
+            try addTaskProjectColumns(db)
+            try TaskProjectBackfill.run(db)
+        }
+
         return migrator
     }
 
@@ -604,6 +609,33 @@ public final class AuspexStore: Sendable {
             table.column("progress", .text)
             table.column("created_at", .double).notNull()
         }
+    }
+
+    // MARK: - v5 schema: projects contain tasks
+
+    /// The project a task is in, and the project a milestone is inside.
+    ///
+    /// A text key rather than a foreign key into `projects`, and that is the
+    /// decision this migration is about. The board's project key —
+    /// ``BoardSnapshot/projectKey(for:)`` — is a *string*: a git root, a
+    /// working directory, a folder a person claimed in
+    /// `~/.auspex/settings.json`, or a ``PseudoProject`` key for a harness
+    /// with no directory at all. Two of those four never reach the `projects`
+    /// table, and one of them lives in a file rather than in this database. A
+    /// task keyed on `projects.id` could therefore be filed under a project
+    /// the wall does not group by, which is exactly the split — two vocabularies
+    /// for one idea — that this schema change exists to remove.
+    ///
+    /// `tasks.project_id` stays where v1 put it. Nothing writes it, and
+    /// dropping a column is a table rebuild for no gain.
+    private static func addTaskProjectColumns(_ db: Database) throws {
+        try db.alter(table: "tasks") { table in
+            table.add(column: "project_key", .text)
+        }
+        try db.alter(table: "plans") { table in
+            table.add(column: "project_key", .text)
+        }
+        try db.create(index: "tasks_on_project_key", on: "tasks", columns: ["project_key"])
     }
 
     // MARK: - Meta accessors

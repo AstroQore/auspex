@@ -47,6 +47,81 @@ struct TaskRepositoryTests {
         #expect(try repository.task(id: task.id)?.status == .todo)
     }
 
+    // MARK: - Projects
+
+    @Test("a task is filed in a project, and the counts are one query")
+    func tasksAreCountedByProject() throws {
+        let repository = try makeRepository()
+        let auspex = "/Users/example/Code/auspex"
+        let storefront = "/Users/example/Code/storefront-web"
+        let done = try repository.createTask(title: "Adapter", projectKey: auspex)
+        try repository.completeTask(id: done.id, result: "shipped")
+        _ = try repository.createTask(title: "Tailer", projectKey: auspex)
+        _ = try repository.createTask(title: "Cart", projectKey: storefront)
+
+        #expect(try repository.tasks(projectKey: auspex).count == 2)
+        #expect(try repository.tasks(projectKey: storefront).map(\.title) == ["Cart"])
+
+        let counts = try repository.taskCounts()
+        #expect(counts[auspex] == TaskProjectCounts(total: 2, open: 1))
+        #expect(counts[storefront]?.openDescription == "1 task open")
+        #expect(counts["/Users/example/Code/nothing"] == nil)
+    }
+
+    @Test("a task filed under a milestone is filed in that milestone's project")
+    func taskInheritsTheMilestonesProject() throws {
+        let repository = try makeRepository()
+        let plan = try repository.createPlan(
+            title: "Ship the live board", projectKey: "/Users/example/Code/auspex"
+        )
+        let task = try repository.createTask(title: "Retention", planID: plan.id)
+        #expect(task.projectKey == "/Users/example/Code/auspex")
+    }
+
+    @Test("a milestone registered before its first task takes that task's project")
+    func milestoneLearnsItsProjectFromItsFirstTask() throws {
+        let repository = try makeRepository()
+        let plan = try repository.createPlan(title: "Atlas pass")
+        #expect(plan.projectKey == nil)
+        _ = try repository.createTask(
+            title: "First", planID: plan.id, projectKey: "/Users/example/Code/auspex"
+        )
+        #expect(try repository.plan(id: plan.id)?.projectKey == "/Users/example/Code/auspex")
+
+        // And never re-learns it: the board has already drawn the first answer.
+        _ = try repository.createTask(
+            title: "Second", planID: plan.id, projectKey: "/Users/example/Code/elsewhere"
+        )
+        #expect(try repository.plan(id: plan.id)?.projectKey == "/Users/example/Code/auspex")
+    }
+
+    @Test("re-registering a milestone fills in a project the first attempt did not know")
+    func milestoneRegistrationLearnsAProject() throws {
+        let repository = try makeRepository()
+        let first = try repository.createPlan(title: "Atlas pass")
+        let second = try repository.createPlan(
+            title: "Atlas pass", projectKey: "/Users/example/Code/auspex"
+        )
+        #expect(first.id == second.id)
+        #expect(second.projectKey == "/Users/example/Code/auspex")
+    }
+
+    @Test("moving a task between projects leaves a line in its history")
+    func movingATaskIsRecorded() throws {
+        let repository = try makeRepository()
+        let task = try repository.createTask(
+            title: "Filed in the wrong place", projectKey: TaskProject.scratchKey
+        )
+        let moved = try repository.moveTask(
+            id: task.id, toProjectKey: "/Users/example/Code/auspex"
+        )
+        #expect(moved.projectKey == "/Users/example/Code/auspex")
+        let log = try repository.log(taskID: task.id)
+        #expect(log.contains {
+            $0.kind == "project" && $0.message?.contains("/Users/example/Code/auspex") == true
+        })
+    }
+
     // MARK: - Claims
 
     @Test("a claim records the role and the scope and starts the task moving")
@@ -69,6 +144,34 @@ struct TaskRepositoryTests {
         let links = try repository.links(taskID: task.id)
         #expect(links.map(\.session) == [worker])
         #expect(links.first?.kind == .claim)
+    }
+
+    @Test("a task with no project takes the project of the session that claims it")
+    func claimGivesAnUnfiledTaskItsProject() throws {
+        let repository = try makeRepository()
+        let worker = Fixtures.key(.codex, "worker-1")
+        let task = try repository.createTask(title: "Filed by a person, in a hurry")
+        #expect(task.projectKey == nil)
+
+        let claimed = try repository.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: worker,
+            projectKey: "/Users/example/Code/auspex"
+        )
+        #expect(claimed.projectKey == "/Users/example/Code/auspex")
+    }
+
+    @Test("a claim does not move a task that already knows which project it is in")
+    func claimDoesNotRefileAKnownTask() throws {
+        let repository = try makeRepository()
+        let worker = Fixtures.key(.codex, "worker-1")
+        let task = try repository.createTask(
+            title: "Already filed", projectKey: "/Users/example/Code/auspex"
+        )
+        let claimed = try repository.claimTask(
+            id: task.id, role: "reviewer", scope: nil, by: worker,
+            projectKey: "/Users/example/Code/somewhere-else"
+        )
+        #expect(claimed.projectKey == "/Users/example/Code/auspex")
     }
 
     @Test("a second session cannot take a claimed task, and the holder can refine it")

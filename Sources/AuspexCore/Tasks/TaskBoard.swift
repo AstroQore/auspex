@@ -2,22 +2,42 @@ import AgentSessionKit
 import AgentSessionLive
 import Foundation
 
-/// The task ledger's vocabulary: what a plan is, what a task is, and what an
-/// agent said when it asked for a person.
+/// The task ledger's vocabulary: what a milestone is, what a task is, and what
+/// an agent said when it asked for a person.
 ///
 /// These are the values the MCP surface hands out and the Tasks board draws.
 /// They are deliberately flat and `Codable`: one tool result and one SwiftUI
 /// row read the same struct, so a field the board shows is a field an agent
 /// can ask for.
+///
+/// ## One containment hierarchy
+///
+/// **Project ⊃ Task ⊃ Sessions.** A project is the one top-level container —
+/// resolved from where the work is happening (git root, working directory, a
+/// folder a person claimed) by the same
+/// ``BoardSnapshot/projectKey(for:)`` every other surface asks. Every task
+/// belongs to exactly one project, always: a task filed by an agent that named
+/// no project is filed under the project *that agent is working in*, which is
+/// the whole of what "Unfiled" used to mean and was never true.
+///
+/// A milestone is a *label inside* a project rather than a second root. It is
+/// optional, it groups tasks under a sub-heading, and archiving one leaves its
+/// tasks exactly where they are. It is still called ``AuspexPlan`` in code and
+/// still reached through the `plans.*` tools, because agents already installed
+/// on this machine hold that vocabulary in their briefs.
 
-// MARK: - Plans
+// MARK: - Milestones
 
-/// A decomposition somebody registered: the parent of a set of tasks.
+/// A named stage inside a project: the optional parent of a set of tasks.
 ///
 /// Registered by whoever *hands work out* — a supervisor splitting a job,
 /// or a person building a board by hand — rather than by each worker in turn.
 /// N workers each classifying themselves produce N vocabularies; one
-/// orchestrator writing the plan down produces one.
+/// orchestrator writing the decomposition down produces one.
+///
+/// Not a container in its own right: the container is the project. A milestone
+/// that outlives its tasks is a heading with nothing under it, and a task whose
+/// milestone is archived is still somebody's job in some project.
 public struct AuspexPlan: Identifiable, Hashable, Sendable, Codable {
     public let id: Int64
     /// A short stable handle an agent can pass in a brief instead of a number.
@@ -30,13 +50,22 @@ public struct AuspexPlan: Identifiable, Hashable, Sendable, Codable {
     public let status: Status
     /// The project the plan belongs to, when one was resolved.
     public let projectID: Int64?
+    /// The project this milestone is inside, in the board's own key space —
+    /// see ``BoardSnapshot/projectKey(for:)``.
+    ///
+    /// The same string the wall's sections, the sidebar's rows and a task's
+    /// ``AuspexTask/projectKey`` use, because a milestone that named its
+    /// project differently from the tasks under it would be a second key space
+    /// and a second set of bugs. `nil` only for a milestone registered before
+    /// its first task, which takes the project of that task.
+    public let projectKey: String?
     /// The session that registered it, when an agent did.
     public let createdBy: SessionKey?
     public let createdAt: Date
     public let updatedAt: Date
     public let archivedAt: Date?
 
-    /// Whether the plan is still being worked on.
+    /// Whether the milestone is still being worked on.
     public enum Status: String, Codable, Sendable, CaseIterable, Hashable {
         case active
         case archived
@@ -49,6 +78,7 @@ public struct AuspexPlan: Identifiable, Hashable, Sendable, Codable {
         summary: String?,
         status: Status,
         projectID: Int64?,
+        projectKey: String? = nil,
         createdBy: SessionKey?,
         createdAt: Date,
         updatedAt: Date,
@@ -60,6 +90,7 @@ public struct AuspexPlan: Identifiable, Hashable, Sendable, Codable {
         self.summary = summary
         self.status = status
         self.projectID = projectID
+        self.projectKey = projectKey
         self.createdBy = createdBy
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -110,8 +141,9 @@ public enum AuspexTaskStatus: String, Codable, Sendable, CaseIterable, Hashable 
 /// of twelve sessions needs from a row.
 public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     public let id: Int64
-    /// The plan it hangs under, when it has one. A task without a plan is
-    /// legitimate — somebody filed one thing — and shows in an "unfiled" lane.
+    /// The milestone it hangs under, when it has one. A task without a
+    /// milestone is the ordinary case — somebody filed one thing — and shows
+    /// under its project with no sub-heading rather than in a lane of orphans.
     public let planID: Int64?
     public let title: String
     public let body: String?
@@ -119,6 +151,16 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     /// Higher sorts first within a column. Zero unless somebody set it.
     public let priority: Int
     public let projectID: Int64?
+    /// The project this task is in, in the board's own key space — a git root,
+    /// a working directory, a folder a person claimed, or a
+    /// ``PseudoProject`` key for a harness that has no directory at all.
+    ///
+    /// Never `nil` for a task filed by this build: `tasks.create` resolves the
+    /// caller's project before it writes the row, so there is no such thing as
+    /// an unfiled task. It stays optional for the rows written before there
+    /// was a project column and for a store whose migration could find no
+    /// session to resolve one from.
+    public let projectKey: String?
     /// The session that filed the task.
     public let createdBy: SessionKey?
     /// What the claimer said it is: `implementer`, `reviewer`, `researcher`…
@@ -147,6 +189,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         status: AuspexTaskStatus,
         priority: Int,
         projectID: Int64?,
+        projectKey: String? = nil,
         createdBy: SessionKey?,
         claimRole: String?,
         claimScope: String?,
@@ -165,6 +208,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         self.status = status
         self.priority = priority
         self.projectID = projectID
+        self.projectKey = projectKey
         self.createdBy = createdBy
         self.claimRole = claimRole
         self.claimScope = claimScope
