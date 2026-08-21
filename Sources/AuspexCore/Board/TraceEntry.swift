@@ -95,6 +95,8 @@ public struct TraceEntry: Identifiable, Hashable, Sendable {
         case subagent
         case permission
         case usage
+        case context
+        case quota
         case compaction
         case liveness
         case note
@@ -172,6 +174,21 @@ extension TraceEntry {
                 continue
             }
 
+            // A context level restates the counters of the usage row above
+            // it, read as a fill rather than as a delta — Claude and Codex
+            // both emit the pair together. Two rows per model call saying the
+            // same accounting twice is what the tool-call fold exists to
+            // prevent, so the level joins the row that billed it. A level that
+            // arrived alone still gets a row: Grok reads its fill out of
+            // `signals.json`, where there is no usage record to join.
+            if case .contextUsage = kind,
+               let index = rows.indices.last,
+               rows[index].glyph == .usage,
+               let fill = Summary(kind: kind).detail {
+                rows[index] = rows[index].alsoSaying(fill)
+                continue
+            }
+
             let row = TraceEntry(
                 event: event,
                 kind: kind,
@@ -240,6 +257,27 @@ extension TraceEntry {
             detail: detail,
             body: body,
             duration: max(0, end.timeIntervalSince(timestamp)),
+            isError: isError,
+            toolCallID: toolCallID,
+            detailJSON: detailJSON
+        )
+    }
+
+    /// This row with a second clause on its detail line.
+    ///
+    /// Used by the context fold: the usage row keeps its own summary and gains
+    /// the fill that the same counters imply.
+    private func alsoSaying(_ clause: String) -> TraceEntry {
+        TraceEntry(
+            id: id,
+            timestamp: timestamp,
+            turnIndex: turnIndex,
+            category: category,
+            glyph: glyph,
+            title: title,
+            detail: detail.map { "\($0) · \(clause)" } ?? clause,
+            body: body,
+            duration: duration,
             isError: isError,
             toolCallID: toolCallID,
             detailJSON: detailJSON
@@ -402,11 +440,27 @@ extension TraceEntry {
                     model: model, input: input, output: output, cached: cached
                 )
 
+            case .contextUsage(let used, let window, let cached, let source):
+                category = .usage
+                glyph = .context
+                title = "Context"
+                detail = Summary.describeContext(
+                    used: used, window: window, cached: cached, source: source
+                )
+
             case .compaction:
                 category = .lifecycle
                 glyph = .compaction
                 title = "Context compacted"
                 detail = nil
+
+            case .quota(let usedPercent, let resetsAt, let plan):
+                category = .usage
+                glyph = .quota
+                title = "Plan limit"
+                detail = Summary.describeQuota(
+                    usedPercent: usedPercent, resetsAt: resetsAt, plan: plan
+                )
 
             case .sessionEnded(let reason):
                 category = .lifecycle
@@ -482,6 +536,29 @@ extension TraceEntry {
             if let entrypoint = patch.entrypoint { parts.append("from \(entrypoint)") }
             if let variant = patch.variant { parts.append("variant \(variant)") }
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
+
+        /// The fill, and where the denominator came from.
+        ///
+        /// The provenance is named on the row and not only in the header's
+        /// popover, because this row is what somebody reads when they want to
+        /// know whether the gauge above them can be trusted.
+        static func describeContext(
+            used: Int, window: Int?, cached: Int?, source: ContextUsage.Source
+        ) -> String {
+            let fraction = window.flatMap { $0 > 0 ? Double(used) / Double($0) : nil }
+            var parts = [ContextFormat.gauge(used: used, window: window, fraction: fraction)]
+            if let cached, cached > 0 { parts.append("\(ContextFormat.tokens(cached)) cached") }
+            if source == .derived { parts.append("window estimated") }
+            return parts.joined(separator: " · ")
+        }
+
+        /// What the harness said about the plan window it billed against.
+        static func describeQuota(usedPercent: Double, resetsAt: Date?, plan: String?) -> String {
+            var parts = ["\(Int(usedPercent.rounded())) % used"]
+            if let resetsAt { parts.append("resets \(QuotaFormat.reset(at: resetsAt))") }
+            if let plan { parts.append(plan) }
+            return parts.joined(separator: " · ")
         }
 
         static func describeUsage(

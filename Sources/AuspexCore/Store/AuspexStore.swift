@@ -110,6 +110,10 @@ public final class AuspexStore: Sendable {
             try TaskProjectBackfill.run(db)
         }
 
+        migrator.registerMigration("v6_context_usage") { db in
+            try migrateSnapshotsToSchema3(db)
+        }
+
         return migrator
     }
 
@@ -502,6 +506,47 @@ public final class AuspexStore: Sendable {
                 brief?.lastTurnEndedAt?.timeIntervalSince1970,
                 key
             ])
+            try update.execute()
+        }
+        try recordEventSchemaVersion(db)
+    }
+
+    // MARK: - v6 schema: how full the context window is
+
+    /// Brings every stored snapshot up to event schema 3.
+    ///
+    /// Kit 0.6.0 put `contextUsage`, `compactions` and `quota` on
+    /// `SessionSnapshot`. Two are optional and cost a schema-2 blob nothing;
+    /// `compactions` is a non-optional `Int`, and that one key is enough to
+    /// make every blob written before it throw on decode. Adding
+    /// `"compactions": 0` is the whole migration — see
+    /// ``SnapshotContextMigration`` for why zero rather than a re-seed.
+    ///
+    /// Unlike the schema-2 pass, nothing is decoded here. That one had to:
+    /// it was populating the brief columns beside the blob, which meant
+    /// reading the brief back out of the JSON it had just written. Schema 3
+    /// projects no new column, so this is a string rewrite per row and no
+    /// `JSONDecoder` at all.
+    ///
+    /// Rows that are not JSON objects are left exactly as they are.
+    /// `SessionRepository.fetchAll` skips what it cannot decode rather than
+    /// failing the launch.
+    private static func migrateSnapshotsToSchema3(_ db: Database) throws {
+        let rows = try Row.fetchAll(db, sql: "SELECT key, snapshot_json FROM sessions")
+        guard !rows.isEmpty else {
+            try recordEventSchemaVersion(db)
+            return
+        }
+        let update = try db.makeStatement(
+            sql: "UPDATE sessions SET snapshot_json = ? WHERE key = ?"
+        )
+        for row in rows {
+            let key: String = row["key"]
+            let stored: String = row["snapshot_json"]
+            guard let json = SnapshotContextMigration.addingCompactions(to: stored) else {
+                continue
+            }
+            update.setUncheckedArguments([json, key])
             try update.execute()
         }
         try recordEventSchemaVersion(db)

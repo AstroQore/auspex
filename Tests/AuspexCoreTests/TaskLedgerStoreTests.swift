@@ -37,7 +37,12 @@ struct SnapshotBriefMigrationTests {
 
     @Test("adding an empty brief makes it decodable again, unchanged otherwise")
     func addingBriefRescuesIt() throws {
-        let patched = try #require(SnapshotBriefMigration.addingBrief(to: schemaOneSnapshotJSON))
+        // Both passes, in the order the migrator runs them. A blob this old
+        // has missed two schema bumps, and the v2 migration alone no longer
+        // makes it decodable — which is the point of running the chain rather
+        // than asserting against whichever pass happens to be newest.
+        let withBrief = try #require(SnapshotBriefMigration.addingBrief(to: schemaOneSnapshotJSON))
+        let patched = try #require(SnapshotContextMigration.addingCompactions(to: withBrief))
         let snapshot = try StoreJSON.decode(
             SessionSnapshot.self, from: patched, using: StoreJSON.makeDecoder()
         )
@@ -61,6 +66,68 @@ struct SnapshotBriefMigrationTests {
         #expect(SnapshotBriefMigration.addingBrief(to: "") == nil)
         #expect(SnapshotBriefMigration.addingBrief(to: "not json") == nil)
         #expect(SnapshotBriefMigration.addingBrief(to: "[1,2,3]") == nil)
+    }
+}
+
+@Suite("SnapshotContextMigration")
+struct SnapshotContextMigrationTests {
+    /// A schema-2 blob: it has a brief, and nothing about a context window.
+    /// The shape every store written before kit 0.6.0 is full of.
+    private let schemaTwoSnapshotJSON = """
+        {"identity":{"key":{"harness":"claudeCode","sessionID":"s-1"},\
+        "sourcePath":"/Users/example/.claude/projects/demo/s-1.jsonl",\
+        "title":"Fix the widget resizer"},\
+        "state":{"idle":{}},"isAlive":true,"isStale":false,\
+        "pending":{"openToolCalls":{},"openChildren":[]},\
+        "lastEventAt":1767225660,"startedAt":1767225600,\
+        "turnCount":2,"toolCallCount":5,"tokensIn":100,"tokensOut":20,"tokensCached":0,\
+        "children":[],"brief":{}}
+        """
+
+    @Test("a schema-2 blob cannot be decoded by this build")
+    func schemaTwoIsUndecodable() {
+        // The premise. `compactions` is the one non-optional field kit 0.6.0
+        // added, and one missing key is all it takes.
+        let decoded = try? StoreJSON.decode(
+            SessionSnapshot.self, from: schemaTwoSnapshotJSON, using: StoreJSON.makeDecoder()
+        )
+        #expect(decoded == nil)
+    }
+
+    @Test("adding a zero compaction count rescues it, and invents nothing else")
+    func addingCompactionsRescuesIt() throws {
+        let patched = try #require(
+            SnapshotContextMigration.addingCompactions(to: schemaTwoSnapshotJSON)
+        )
+        let snapshot = try StoreJSON.decode(
+            SessionSnapshot.self, from: patched, using: StoreJSON.makeDecoder()
+        )
+
+        #expect(snapshot.compactions == 0)
+        // The two optional fields stay absent. A migrated row says "nobody
+        // measured this", not "the window is empty".
+        #expect(snapshot.contextUsage == nil)
+        #expect(snapshot.quota == nil)
+        // And everything the row already knew survives.
+        #expect(snapshot.identity.title == "Fix the widget resizer")
+        #expect(snapshot.turnCount == 2)
+        #expect(snapshot.tokensIn == 100)
+        #expect(snapshot.brief.isEmpty)
+    }
+
+    @Test("a blob that already carries a count is left alone")
+    func idempotent() throws {
+        let patched = try #require(
+            SnapshotContextMigration.addingCompactions(to: schemaTwoSnapshotJSON)
+        )
+        #expect(SnapshotContextMigration.addingCompactions(to: patched) == nil)
+    }
+
+    @Test("something that is not a snapshot object is refused rather than mangled")
+    func refusesGarbage() {
+        #expect(SnapshotContextMigration.addingCompactions(to: "") == nil)
+        #expect(SnapshotContextMigration.addingCompactions(to: "not json") == nil)
+        #expect(SnapshotContextMigration.addingCompactions(to: "[1,2,3]") == nil)
     }
 }
 

@@ -63,6 +63,11 @@ public struct TrajectoryBuilder: Sendable {
     private var lastToolStep: Int?
     /// Request index → the assistant step its usage should land on.
     private var requestLastAssistant: [Int: Int] = [:]
+    /// Every context reading, in the order they were observed. See
+    /// ``TrajectoryContextReading``.
+    public private(set) var contextReadings: [TrajectoryContextReading] = []
+    /// The step index of each compaction, for the markers on the context line.
+    public private(set) var compactionSteps: [Int] = []
 
     public init() {}
 
@@ -211,8 +216,32 @@ public struct TrajectoryBuilder: Sendable {
         case .usage(_, let input, let output, let cached):
             apply(TrajectoryTokens(input: input, output: output, cached: cached))
 
+        case .contextUsage(let used, let window, _, let source):
+            // Not a step. Nothing happened when the harness wrote down how
+            // full its window was — the same reasoning that keeps `usage` off
+            // the timeline. It is a *reading* taken at a point in the
+            // sequence, so it is anchored to the last step that did happen and
+            // drawn as a line over the lanes rather than as a bar inside one.
+            contextReadings.append(
+                TrajectoryContextReading(
+                    stepIndex: max(0, steps.count - 1),
+                    used: used,
+                    window: window,
+                    at: at,
+                    isDerived: source == .derived
+                )
+            )
+
         case .compaction:
-            emit(event, role: .system, title: "Context compacted")
+            // The step *and* the marker. The step is what a reader clicks; the
+            // marker is what makes the sawtooth in the context line legible as
+            // a compaction rather than as a gap in the data.
+            compactionSteps.append(emit(event, role: .system, title: "Context compacted"))
+
+        case .quota:
+            // What plan the session is billing against is a fact about an
+            // account, not a step in a trajectory. The Harnesses page draws it.
+            break
 
         case .sessionEnded(let reason):
             closeRequest(at: at)

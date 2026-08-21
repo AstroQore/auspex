@@ -193,7 +193,10 @@ struct TraceRowView: View, Equatable {
         case .tool, .shell, .fileRead, .search, .web, .mcp: return AuspexPalette.stateTool
         case .sessionStart: return AuspexPalette.stateWriting
         case .sessionEnd: return AuspexPalette.stateEnded
-        case .usage, .turn, .compaction, .liveness, .note: return AuspexPalette.text3
+        case .usage, .quota, .turn, .compaction, .liveness, .note: return AuspexPalette.text3
+        // The one mark on the trace that carries the board's context ramp, so
+        // a row saying 92 % looks the same colour as the gauge that says it.
+        case .context: return AuspexPalette.text3
         }
     }
 
@@ -220,6 +223,8 @@ struct TraceRowView: View, Equatable {
         case .subagent: "↳"
         case .permission: "!"
         case .usage: "Σ"
+        case .context: "▮"
+        case .quota: "%"
         case .compaction: "⇥"
         case .liveness: "~"
         case .note: "·"

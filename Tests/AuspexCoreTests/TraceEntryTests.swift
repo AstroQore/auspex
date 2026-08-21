@@ -149,6 +149,72 @@ struct TraceEntryTests {
         #expect(rows[1].category == .tools)
     }
 
+    // MARK: - The context gauge
+
+    @Test("a context level joins the usage row it restates")
+    func contextFoldsIntoUsage() throws {
+        let key = Fixtures.key()
+        let rows = try entries([
+            Fixtures.event(
+                .usage(model: "a-test-model", inputTokens: 4_000, outputTokens: 600, cachedTokens: 894_800),
+                key: key, at: 10
+            ),
+            Fixtures.event(
+                .contextUsage(used: 898_800, window: 1_000_000, cached: 894_800, source: .derived),
+                key: key, at: 10
+            )
+        ], key: key)
+
+        // One row, not two: the same counters, billed and then read as a fill.
+        #expect(rows.count == 1)
+        #expect(rows[0].glyph == .usage)
+        #expect(rows[0].title == "Usage")
+        let detail = try #require(rows[0].detail)
+        #expect(detail.contains("4.0k in"))
+        #expect(detail.contains("898.8k / 1M · 90 %"))
+        // A derived window says so on the row, not only in the header popover.
+        #expect(detail.contains("window estimated"))
+    }
+
+    @Test("a level that arrived on its own keeps a row of its own")
+    func orphanContextKeepsARow() throws {
+        let key = Fixtures.key()
+        // Grok reads its fill out of `signals.json`; there is no usage record
+        // beside it to join.
+        let rows = try entries([
+            Fixtures.event(.userPrompt(preview: "go"), key: key, at: 0),
+            Fixtures.event(
+                .contextUsage(used: 12_900, window: 500_000, cached: nil, source: .measured),
+                key: key, at: 5
+            )
+        ], key: key)
+
+        #expect(rows.count == 2)
+        #expect(rows[1].glyph == .context)
+        #expect(rows[1].title == "Context")
+        #expect(rows[1].category == .usage)
+        #expect(rows[1].detail == "12.9k / 500k · 3 %")
+    }
+
+    @Test("a plan limit is a row of its own, in the usage bucket")
+    func quotaRow() throws {
+        let key = Fixtures.key()
+        let rows = try entries([
+            Fixtures.event(
+                .quota(usedPercent: 43.2, resetsAt: Fixtures.date(7_800), plan: "pro"),
+                key: key, at: 0
+            )
+        ], key: key)
+
+        #expect(rows.count == 1)
+        #expect(rows[0].glyph == .quota)
+        #expect(rows[0].title == "Plan limit")
+        #expect(rows[0].category == .usage)
+        let detail = try #require(rows[0].detail)
+        #expect(detail.hasPrefix("43 % used · resets "))
+        #expect(detail.hasSuffix(" · pro"))
+    }
+
     // MARK: - Turns
 
     @Test("turnStarted opens a turn and every row after it carries the number")
