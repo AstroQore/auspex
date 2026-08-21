@@ -131,6 +131,20 @@ public final class AppEnvironment {
     /// every time a screenshot was taken.
     private let offersSignalTarget: Bool
 
+    /// An appearance the command line asked for, which is not written down.
+    ///
+    /// It exists for the same reason ``AppLaunchOptions/viewMode`` does: the
+    /// performance budget is a gate, and neither column of the palette can be
+    /// measured — or looked at on somebody else's machine — if the only way to
+    /// reach it is to change the appearance of the whole Mac. Deliberately not
+    /// persisted: a flag passed to one launch must not silently become the
+    /// person's setting.
+    var appearanceOverride: AppearanceMode?
+
+    /// The appearance every root draws in: what the command line asked for, or
+    /// what the person chose.
+    var appearance: AppearanceMode { appearanceOverride ?? catalog.appearance }
+
     public init(
         paths: AuspexPaths = .default,
         mode: Mode = .live,
@@ -603,6 +617,14 @@ public struct AppLaunchOptions: Sendable {
     /// something honest to look at.
     public var viewMode: BoardViewMode?
 
+    /// Which column of the palette to draw in, when the command line said.
+    ///
+    /// For the same reason, and for one more: looking at the light window on a
+    /// Mac that is set to dark should not mean changing the appearance of the
+    /// Mac. It is not written to `settings.json` — see
+    /// `AppEnvironment.appearanceOverride`.
+    public var appearance: AppearanceMode?
+
     /// Reads the flag from the command line, with an environment variable as
     /// the alternative for the case where the launcher owns the argv —
     /// `open -a Auspex` cannot pass arguments through.
@@ -611,13 +633,17 @@ public struct AppLaunchOptions: Sendable {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppLaunchOptions {
         let rest = arguments.dropFirst()
-        let named = rest.firstIndex(of: "--view").flatMap { index -> String? in
+        func value(after flag: String) -> String? {
+            guard let index = rest.firstIndex(of: flag) else { return nil }
             let next = rest.index(after: index)
             return next < rest.endIndex ? rest[next] : nil
         }
+        let named = value(after: "--view")
+        let appearance = value(after: "--appearance") ?? environment["AUSPEX_APPEARANCE"]
         return AppLaunchOptions(
             isDemo: rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1",
-            viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(rawValue:))
+            viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(rawValue:)),
+            appearance: appearance.flatMap(AppearanceMode.init(rawValue:))
         )
     }
 
@@ -632,6 +658,7 @@ extension AppEnvironment {
     public static func launched(_ options: AppLaunchOptions = .current()) -> AppEnvironment {
         let environment = AppEnvironment(mode: options.mode)
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
+        environment.appearanceOverride = options.appearance
         return environment
     }
 }

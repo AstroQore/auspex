@@ -357,6 +357,12 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         board. `AUSPEX_VIEW` does the same. What the
                         performance budget for the scene and the crew is
                         measured with.
+          --appearance <system|light|dark>
+                        Draw this launch in that appearance, without changing
+                        the saved setting or the appearance of the Mac.
+                        `AUSPEX_APPEARANCE` does the same. Auspex follows the
+                        system by default; the persistent choice lives in
+                        Settings → Appearance.
           --render-scene <path> [seconds] [project] [appearance=…]
                         Render the scene view's office to a PNG, offscreen,
                         from the demo board at `seconds` into its loop

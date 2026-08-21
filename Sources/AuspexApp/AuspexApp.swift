@@ -84,12 +84,12 @@ struct AuspexApp: App {
             // The Settings window is its own scene and inherits nothing from
             // the main one, so a person who set Auspex to dark on a light Mac
             // would otherwise open a light Settings window to change it in.
-            .auspexAppearance(environment.catalog.appearance)
+            .auspexAppearance(environment.appearance)
         }
 
         MenuBarExtra {
             MenuBarContent(environment: environment)
-                .auspexAppearance(environment.catalog.appearance)
+                .auspexAppearance(environment.appearance)
         } label: {
             MenuBarLabel(board: environment.board)
         }

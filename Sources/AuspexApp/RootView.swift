@@ -63,7 +63,7 @@ struct RootView: View {
             SessionTraceView(model: model)
                 .navigationSplitViewColumnWidth(min: 360, ideal: 420)
         }
-        .auspexAppearance(environment.catalog.appearance)
+        .auspexAppearance(environment.appearance)
         .environment(clock)
         .sheet(item: $environment.ignoreDraft) { draft in
             IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
