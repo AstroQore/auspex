@@ -236,6 +236,7 @@ struct TaskDetailView: View {
     /// made.
     private var dependencies: some View {
         section("Waits on") {
+            TaskGraphStub()
             if unit.waitingOn.isEmpty {
                 Text("Everything it waits on is closed. Ready to start.")
                     .font(AuspexType.body)
@@ -455,6 +456,30 @@ struct TaskDetailView: View {
                 .foregroundStyle(AuspexPalette.text3)
             content()
         }
+    }
+}
+
+/// Where the dependency graph will be, and why it is not here.
+///
+/// The strip above it answers the question a person asks *at* a task: what is
+/// stopping this one. The graph answers a different one — where does the work
+/// pile up, and which three tasks would unblock nine — and it is a page, with
+/// a layout pass, a worker for it, and a way to page through the tasks nothing
+/// links to. That is a piece of work of its own.
+///
+/// A stub rather than nothing, because "there is no graph" and "the graph is
+/// somewhere I have not found" are different things to a person holding a
+/// board of forty tasks, and only one of them is true.
+struct TaskGraphStub: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "point.3.filled.connected.trianglepath.dotted")
+                .font(.system(size: 10, weight: .semibold))
+            Text("The whole dependency graph is a page of its own, and is not built yet.")
+                .font(AuspexType.caption)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(AuspexPalette.text3)
     }
 }
 
