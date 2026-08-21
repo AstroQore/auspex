@@ -139,6 +139,21 @@ public struct BriefBackfill: Sendable {
     /// Marks every session that went quiet longer ago than ``unreadWindow`` as
     /// read, at the moment it last did anything.
     ///
+    /// ## What this is still for, now that a bucket is something said
+    ///
+    /// It used to be load-bearing. `done unseen` was inferred from a closed
+    /// turn nobody had opened, so a store full of last week's sessions arrived
+    /// with several hundred of them in the board's second-loudest bucket, and
+    /// this pass was what stopped that being the first thing a new install
+    /// showed. The bucket is gone — see ``AttentionState`` — and with it the
+    /// reason this had to exist.
+    ///
+    /// What is left is the faint reply dot on a card, and the pass is kept
+    /// because it is still right about that: a session that went quiet three
+    /// days ago is not a reply anybody is waiting to read. Nothing depends on
+    /// it any more, and a store where it never ran now differs by a handful of
+    /// dots rather than by a wrong number in the header.
+    ///
     /// Three properties, and each is one clause of the statement:
     ///
     /// - **The stamp is the session's own clock**, `lastTurnEndedAt` falling
