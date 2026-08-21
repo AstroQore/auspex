@@ -60,6 +60,15 @@ public actor SessionRegistry {
     private var pendingMessages: [IndexedMessage] = []
     private var pendingToolCalls: [ToolCallWrite] = []
     private var pendingPlacements: [SessionKey: ProjectPlacement] = [:]
+    /// Sessions the resolver placed in a harness's own per-thread scratch,
+    /// and what that thread's folder is called. Handed to every frame, because
+    /// working the answer out again needs a home directory and the resolver is
+    /// the one holding it. See ``HarnessSandbox``.
+    ///
+    /// Not persisted, and it does not need to be: nothing survives a restart
+    /// that would make the answer expensive, and the first grouping pass after
+    /// one re-resolves every directory on the board anyway.
+    private var sandboxThreads: [SessionKey: String] = [:]
 
     private var lastPublishedAt: Date?
     private var publishTask: Task<Void, Never>?
@@ -190,7 +199,11 @@ public actor SessionRegistry {
 
     /// The current board, for a pull rather than a subscription.
     public func snapshot() -> BoardSnapshot {
-        BoardSnapshot(generatedAt: Date(), sessions: Array(snapshots.values))
+        BoardSnapshot(
+            generatedAt: Date(),
+            sessions: Array(snapshots.values),
+            sandboxThreads: sandboxThreads
+        )
     }
 
     /// The live snapshot for one session, if it is known.
@@ -336,7 +349,16 @@ public actor SessionRegistry {
         for (key, placement) in placements.sorted(by: { $0.key.description < $1.key.description }) {
             guard let current = snapshots[key] else { continue }
             applied += 1
-            pendingPlacements[key] = placement
+            // A directory that is not a project gets no project row. The
+            // `projects` table is the store's index of the real ones, and a
+            // row per desktop conversation would fill it with names nothing
+            // will ever look up.
+            pendingPlacements[key] = placement.isProjectless ? nil : placement
+            // A directory that stopped being scratch — a session that moved,
+            // or a rule that changed under a rebuilt board — has to stop
+            // being remembered as scratch, so this is an assignment rather
+            // than an insertion.
+            sandboxThreads[key] = placement.isProjectless ? placement.projectName : nil
 
             let patch = SessionIdentityPatch(
                 gitBranch: placement.branch ?? current.identity.gitBranch,

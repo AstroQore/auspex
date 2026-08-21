@@ -26,6 +26,12 @@ struct GroupingIntegrationTests {
         return Fixtures.event(.sessionStarted(identity: identity), key: key, at: offset)
     }
 
+    private func projectRowCount(_ store: AuspexStore) throws -> Int {
+        try store.dbWriter.read { db in
+            try Row.fetchAll(db, sql: "SELECT id FROM projects").count
+        }
+    }
+
     private func row(_ store: AuspexStore, _ key: SessionKey) throws -> Row? {
         try store.dbWriter.read { db in
             try Row.fetchOne(
@@ -49,6 +55,65 @@ struct GroupingIntegrationTests {
     )
 
     // MARK: - Placements
+
+    @Test("a scratch placement reaches the frame, and takes the folder off the wall")
+    func sandboxPlacementReachesTheFrame() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store)
+        let key = SessionKey(harness: .codex, sessionID: "desk-1")
+        let thread = HarnessSandbox.Thread(
+            directory: "/Users/example/Documents/Codex/2026-08-21/zhe",
+            name: "zhe",
+            note: HarnessSandbox.sandboxNote
+        )
+
+        await registry.ingest(
+            started(key, cwd: "/Users/example/Documents/Codex/2026-08-21/zhe"))
+        #expect(await registry.applyPlacements([key: .sandbox(thread: thread)]) == 1)
+
+        let frame = await registry.snapshot()
+        let session = try #require(frame.session(for: key))
+        #expect(frame.isSandbox(session))
+        #expect(frame.sandboxThreadName(for: session) == "zhe")
+        #expect(frame.projectKey(for: session) == PseudoProject.scratchKey(for: .codex))
+        // The directory is still on the identity; it is only refused as a
+        // grouping key.
+        #expect(session.identity.cwd == "/Users/example/Documents/Codex/2026-08-21/zhe")
+        #expect(session.identity.gitRoot == nil)
+        #expect(BoardGrouping.groups(for: frame, groupBy: .project).map(\.title)
+            == ["Codex · scratch"])
+        await registry.stop()
+
+        // And no project row for the folder: the `projects` table indexes the
+        // real ones, and a row per desktop conversation would fill it with
+        // names nothing looks up.
+        let stored = try #require(try row(store, key))
+        #expect(stored["project_id"] as Int64? == nil)
+        #expect(try projectRowCount(store) == 0)
+    }
+
+    @Test("a session that leaves the scratch stops being remembered as scratch")
+    func aLaterPlacementClearsTheScratch() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store)
+        let key = SessionKey(harness: .codex, sessionID: "desk-1")
+        let thread = HarnessSandbox.Thread(
+            directory: "/Users/example/Documents/Codex/2026-08-21/zhe",
+            name: "zhe",
+            note: HarnessSandbox.sandboxNote
+        )
+
+        await registry.ingest(
+            started(key, cwd: "/Users/example/Documents/Codex/2026-08-21/zhe"))
+        _ = await registry.applyPlacements([key: .sandbox(thread: thread)])
+        _ = await registry.applyPlacements([key: placement])
+
+        let frame = await registry.snapshot()
+        let session = try #require(frame.session(for: key))
+        #expect(!frame.isSandbox(session))
+        #expect(frame.projectKey(for: session) == "/Users/example/Code/widget")
+        await registry.stop()
+    }
 
     @Test("a placement reaches the identity, the board, and the foreign keys")
     func placementIsAppliedAndPersisted() async throws {

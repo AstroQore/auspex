@@ -47,31 +47,63 @@ public extension Harness {
 /// and it never reaches the `projects` table — placements are only ever
 /// written for a session that reported a `cwd`, which these never do.
 ///
-/// ## The key
+/// ## Scratch is the same argument again
 ///
-/// `harness:<raw value>`. A real project key is `gitRoot ?? cwd`, both
-/// absolute paths, so a key that does not begin with `/` cannot collide with
-/// one. Callers should treat it as opaque and ask ``name(forKey:)`` rather
-/// than take its last path component.
+/// A Codex desktop thread runs in `~/Documents/Codex/<date>/<name>` — a
+/// directory the app made for that one conversation and will never reuse. Its
+/// directory is not missing either, and it is not a project; it is the
+/// harness's own scratch space. So those get a section too, and a separate one
+/// from the harness's plain pseudo project, because "this harness records no
+/// directory" and "this session was run somewhere disposable" are different
+/// facts and a reader acts on them differently. See ``HarnessSandbox``.
+///
+/// ## The keys
+///
+/// `harness:<raw value>` and `scratch:<raw value>`. A real project key is
+/// `gitRoot ?? cwd`, both absolute paths, so a key that does not begin with
+/// `/` cannot collide with one. Callers should treat both as opaque and ask
+/// ``name(forKey:)`` rather than take a last path component.
 public enum PseudoProject {
-    /// What every pseudo key begins with.
+    /// What a harness-with-no-directory key begins with.
     public static let prefix = "harness:"
+    /// What a per-thread-scratch key begins with.
+    public static let scratchPrefix = "scratch:"
 
-    /// The pseudo project key for a harness.
+    /// The suffix a scratch section's name carries, so a reader can tell
+    /// "Codex" the harness from "Codex · scratch" the throwaway directories.
+    public static let scratchSuffix = " · scratch"
+
+    /// The pseudo project key for a harness with no working directory.
     public static func key(for harness: Harness) -> String {
         prefix + harness.rawValue
     }
 
-    /// The harness a pseudo key names, or `nil` when `key` is a real path.
+    /// The pseudo project key for a harness's per-thread scratch directories.
+    public static func scratchKey(for harness: Harness) -> String {
+        scratchPrefix + harness.rawValue
+    }
+
+    /// The harness a pseudo key of either kind names, or `nil` when `key` is a
+    /// real path.
     public static func harness(forKey key: String) -> Harness? {
-        guard key.hasPrefix(prefix) else { return nil }
-        return Harness(rawValue: String(key.dropFirst(prefix.count)))
+        for prefix in [prefix, scratchPrefix] where key.hasPrefix(prefix) {
+            return Harness(rawValue: String(key.dropFirst(prefix.count)))
+        }
+        return nil
+    }
+
+    /// `true` when `key` names a harness's scratch rather than the harness
+    /// itself.
+    public static func isScratch(_ key: String) -> Bool {
+        key.hasPrefix(scratchPrefix) && harness(forKey: key) != nil
     }
 
     /// What to call the section a pseudo key heads — the harness's own full
-    /// name. `nil` for a real path, which has a name of its own.
+    /// name, and for a scratch key that name plus what kind of section it is.
+    /// `nil` for a real path, which has a name of its own.
     public static func name(forKey key: String) -> String? {
-        harness(forKey: key)?.displayName
+        guard let harness = harness(forKey: key) else { return nil }
+        return isScratch(key) ? harness.displayName + scratchSuffix : harness.displayName
     }
 
     /// `true` when `key` stands in for a harness rather than naming a

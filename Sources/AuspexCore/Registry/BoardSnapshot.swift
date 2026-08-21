@@ -41,6 +41,19 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// behaviour before anybody has made a project.
     public let claims: ProjectClaims
 
+    /// The sessions whose working directory is a harness's own per-thread
+    /// scratch, and what that thread's folder is called.
+    ///
+    /// Carried on the frame for the reason ``claims`` is: the answer needs a
+    /// home directory to work out and every surface that groups would
+    /// otherwise have to fetch one, which is five places to get it right and
+    /// four to forget. ``ProjectResolver`` decides once, against the home it
+    /// was built with, and the frame remembers.
+    ///
+    /// Empty on a frame nothing has been placed on yet, which reads exactly
+    /// like the behaviour before there was such a thing as scratch.
+    public let sandboxThreads: [SessionKey: String]
+
     /// The tallies a board shows at a glance.
     public struct Counts: Sendable, Equatable, Hashable {
         /// Believed to be running: alive and not ended. A stale session still
@@ -98,13 +111,15 @@ public struct BoardSnapshot: Sendable, Equatable {
     public init(
         generatedAt: Date,
         sessions: [SessionSnapshot],
-        claims: ProjectClaims = .empty
+        claims: ProjectClaims = .empty,
+        sandboxThreads: [SessionKey: String] = [:]
     ) {
         self.generatedAt = generatedAt
         self.sessions = Self.sorted(sessions)
         self.counts = Counts(sessions: self.sessions)
         self.tree = SessionTreeBuilder.build(self.sessions)
         self.claims = claims
+        self.sandboxThreads = sandboxThreads
     }
 
     /// Creates a frame from sessions that are already in board order.
@@ -119,13 +134,15 @@ public struct BoardSnapshot: Sendable, Equatable {
         generatedAt: Date,
         counts: Counts,
         tree: SessionTree,
-        claims: ProjectClaims
+        claims: ProjectClaims,
+        sandboxThreads: [SessionKey: String]
     ) {
         self.generatedAt = generatedAt
         self.sessions = sessions
         self.counts = counts
         self.tree = tree
         self.claims = claims
+        self.sandboxThreads = sandboxThreads
     }
 
     /// An empty board, for a view's initial state.
@@ -139,7 +156,8 @@ public struct BoardSnapshot: Sendable, Equatable {
             generatedAt: generatedAt,
             counts: counts,
             tree: tree,
-            claims: claims
+            claims: claims,
+            sandboxThreads: sandboxThreads
         )
     }
 
@@ -158,7 +176,8 @@ public struct BoardSnapshot: Sendable, Equatable {
             generatedAt: generatedAt,
             counts: Counts(sessions: kept),
             tree: SessionTreeBuilder.build(kept),
-            claims: claims
+            claims: claims,
+            sandboxThreads: sandboxThreads
         )
     }
 
@@ -238,19 +257,48 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// subagents they spawn, and a child that inherited its parent's automatic
     /// key while its parent moved into a project would be the one row on the
     /// board in the wrong place.
+    /// A third kind was hiding inside the first. A Codex desktop thread has a
+    /// directory, and it is `~/Documents/Codex/<date>/<name>` — a folder the
+    /// app made for that one conversation. Grouping by it gives a project per
+    /// conversation, so it is refused as a key and the session goes to a
+    /// scratch ``PseudoProject`` instead. A person who *claimed* that
+    /// directory still gets their claim: the rule below the user is the only
+    /// one this overrides.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let claimed = claims.key(for: session) { return claimed }
-        if let own = Self.projectKey(for: session) { return own }
+        if !isSandbox(session), let own = Self.projectKey(for: session) { return own }
         var seen: Set<SessionKey> = [session.key]
         var current = session.identity.parent
         while let key = current, seen.insert(key).inserted {
             guard let ancestor = self.session(for: key) else { break }
             if let claimed = claims.key(for: ancestor) { return claimed }
+            if isSandbox(ancestor) {
+                // A child of a scratch thread is in that thread. Inheriting
+                // the *directory* would put it back under a folder name, and
+                // falling past it would strand it in the residue while its
+                // parent sits in a section.
+                return PseudoProject.scratchKey(for: ancestor.key.harness)
+            }
             if let inherited = Self.projectKey(for: ancestor) { return inherited }
             current = ancestor.identity.parent
         }
+        if isSandbox(session) { return PseudoProject.scratchKey(for: session.key.harness) }
         guard !session.key.harness.recordsWorkingDirectory else { return nil }
         return PseudoProject.key(for: session.key.harness)
+    }
+
+    /// Whether this session's own directory is a harness's per-thread scratch.
+    public func isSandbox(_ session: SessionSnapshot) -> Bool {
+        sandboxThreads[session.key] != nil
+    }
+
+    /// The folder a scratch session is running in, when it is running in one.
+    ///
+    /// What a card shows in place of a project name: `zhe` says which of the
+    /// day's threads this is, where "Codex · scratch" — already the section
+    /// heading above it — would say nothing twice.
+    public func sandboxThreadName(for session: SessionSnapshot) -> String? {
+        sandboxThreads[session.key]
     }
 
     /// What to call a project key: the name a person gave it, then the

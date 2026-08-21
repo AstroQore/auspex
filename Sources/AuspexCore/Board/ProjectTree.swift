@@ -313,7 +313,13 @@ public struct ProjectTree: Sendable, Equatable {
                 path: attribute.path,
                 branch: attribute.branch,
                 agentWorktreeTask: attribute.path.flatMap(ProjectResolver.agentWorktreeTask(in:)),
-                isWorktree: attribute.path.map { $0 != projectKey } ?? false,
+                // A pseudo project is not a repository, so nothing under it
+                // is a checkout *of* one. A scratch thread has a path and it
+                // differs from the key — the test every real project uses —
+                // and calling it a worktree would put a branch glyph beside a
+                // folder that has no branch.
+                isWorktree: !PseudoProject.isPseudo(projectKey)
+                    && attribute.path.map { $0 != projectKey } ?? false,
                 // Already in board order: the sessions were appended in the
                 // order the frame listed them.
                 sessions: nested(byCheckout[id] ?? [], builder: builder)

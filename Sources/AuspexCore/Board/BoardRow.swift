@@ -315,7 +315,12 @@ public struct BoardRowBuilder: Sendable {
 
     /// The row for one session.
     public func row(for session: SessionSnapshot, depth: Int = 0) -> BoardRow {
-        let project = board.projectKey(for: session).map(BoardGrouping.projectName(forPath:))
+        // The chip under the title says *where*. For a session in a harness's
+        // own per-thread scratch that is the folder — `zhe` — and not the
+        // section it sits in, which already says "Codex · scratch" one line
+        // above and would be the same sentence twice.
+        let project = board.sandboxThreadName(for: session)
+            ?? board.projectKey(for: session).map(BoardGrouping.projectName(forPath:))
         let brief = brief(for: session)
         let title = Self.title(for: session, project: project, brief: brief)
         let notice = notices[session.key]
