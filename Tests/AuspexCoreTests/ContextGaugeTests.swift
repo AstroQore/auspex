@@ -204,3 +204,48 @@ struct QuotaLineTests {
         #expect(help.contains("1m 30s ago"))
     }
 }
+
+/// What a card is handed, once a frame, for the harnesses that answer.
+@Suite("BoardRow · the context gauge")
+struct BoardRowContextTests {
+    private func row(
+        contextUsage: ContextUsage?,
+        compactions: Int = 0
+    ) -> BoardRow {
+        var snapshot = SessionStateReducer.initialSnapshot(identity: Fixtures.identity())
+        snapshot.state = .idle
+        snapshot.lastEventAt = Fixtures.date(60)
+        snapshot.contextUsage = contextUsage
+        snapshot.compactions = compactions
+        let builder = BoardRowBuilder(
+            board: BoardSnapshot(generatedAt: Fixtures.date(60), sessions: [snapshot])
+        )
+        return builder.row(for: snapshot)
+    }
+
+    @Test("a session that reported a fill carries it onto its row")
+    func rowCarriesTheGauge() throws {
+        let row = row(
+            contextUsage: ContextUsage(
+                used: 184_600, window: 200_000, cached: 120_000,
+                at: Fixtures.date(59), source: .derived
+            ),
+            compactions: 1
+        )
+        let gauge = try #require(row.context)
+        #expect(gauge.used == 184_600)
+        #expect(gauge.window == 200_000)
+        #expect(gauge.level == .critical)
+        #expect(gauge.isDerived)
+        #expect(gauge.compactionBadge == "⟲ 1")
+        #expect(gauge.label == "184.6k / 200k · 92 %")
+    }
+
+    @Test("a session whose harness records nothing carries no gauge")
+    func rowWithoutAReading() {
+        // The common case: Cursor, AntiGravity, Grok Bot, Cowork, Gemini CLI.
+        // A gauge at zero would say something none of them said.
+        #expect(row(contextUsage: nil).context == nil)
+        #expect(row(contextUsage: nil, compactions: 4).context == nil)
+    }
+}

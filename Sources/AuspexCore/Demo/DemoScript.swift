@@ -266,6 +266,20 @@ extension DemoScript {
         case permission(String?, TimeInterval, Bool)
         /// Tokens are billed.
         case usage(Int, Int, Int)
+        /// The harness records how full its context window is: tokens used,
+        /// the window, and whether it wrote the window down itself.
+        ///
+        /// Separate from ``usage(_:_:_:)`` because they are different kinds of
+        /// number and the board draws them differently — one is a running
+        /// total and one is a level. Codex and Grok write the window into
+        /// their logs; Claude Code does not, so a Claude beat is `derived` and
+        /// the card draws its gauge as an estimate.
+        case context(used: Int, window: Int?, derived: Bool)
+        /// The harness compacts its own context.
+        case compact
+        /// The harness records the plan window it is billing against, and how
+        /// long until it rolls over. Codex is the only one that does.
+        case quota(percent: Double, resetsIn: TimeInterval?, plan: String?)
         /// The turn closes.
         case endTurn
         /// Nothing happens.
@@ -445,6 +459,10 @@ extension DemoScript.Blueprint {
                 .toolFails("Bash", .shell, "swift build 2>&1 | tail -20", 0.9),
                 .say("The registry's frame stream is single-consumer, so the board has to be its one reader."),
                 .usage(48_210, 3_140, 31_800),
+                // Claude Code writes the counters and not the window, so this
+                // gauge is the `derived` one: the card draws its remainder
+                // dotted and the popover says which half was looked up.
+                .context(used: 96_400, window: 200_000, derived: true),
                 .endTurn
             ],
             live: [
@@ -467,6 +485,12 @@ extension DemoScript.Blueprint {
                 .permission("Bash", 26.0, true),
                 .tool("Bash", .shell, "swift build 2>&1 | tail -20", 9.0),
                 .usage(62_900, 5_480, 44_100),
+                // Past ninety per cent: the top of the ramp, and the one board
+                // state that means "finish the thought before it forgets".
+                // A long session that has compacted once and is filling up
+                // again is what the gauge exists to make visible.
+                .compact,
+                .context(used: 184_600, window: 200_000, derived: true),
                 .endTurn,
                 .idle(8.0)
             ],
@@ -490,6 +514,11 @@ extension DemoScript.Blueprint {
                 .think(0.9),
                 .tool("shell", .shell, "ls ~/.codex/sessions", 0.4),
                 .usage(21_400, 1_890, 12_000),
+                // Codex writes `model_context_window` into every token_count,
+                // so this gauge is measured: a solid bed, no dotted remainder,
+                // and a popover with nothing to hedge.
+                .context(used: 33_400, window: 272_000, derived: false),
+                .quota(percent: 31.0, resetsIn: 12_600, plan: "pro"),
                 .endTurn
             ],
             live: [
@@ -502,6 +531,10 @@ extension DemoScript.Blueprint {
                 .write("Tests/CodexAdapterTests/RolloutFixtures.swift", 4.0),
                 .tool("shell", .shell, "swift test --filter CodexAdapter", 13.0),
                 .usage(33_050, 4_120, 18_600),
+                // Three quarters of the way in: the middle band of the ramp,
+                // which is the one that says "not now, but soon".
+                .context(used: 201_500, window: 272_000, derived: false),
+                .quota(percent: 43.2, resetsIn: 7_800, plan: "pro"),
                 .endTurn,
                 .idle(6.0)
             ],
@@ -558,6 +591,10 @@ extension DemoScript.Blueprint {
                 .think(1.1),
                 .tool("read_file", .fileRead, "migrations/007_observed_at.sql", 0.4),
                 .usage(9_600, 1_120, 2_400),
+                // Grok computes its own gauge and writes both halves into
+                // `signals.json`. Barely into a half-million-token window:
+                // the bottom band of the ramp, where most sessions live.
+                .context(used: 61_300, window: 500_000, derived: false),
                 .endTurn
             ],
             live: [
@@ -1031,6 +1068,36 @@ extension DemoScript {
                     inputTokens: input + jitter(upTo: 400),
                     outputTokens: output + jitter(upTo: 120),
                     cachedTokens: cached
+                ))
+
+            case .context(let used, let window, let derived):
+                // No jitter, unlike `.usage`. A fill is a *level*, and the
+                // demo's percentages are chosen to land one session in each
+                // band of the ramp — a random nudge would move a screenshot
+                // across a threshold. It would also draw from the script's
+                // shared generator, which every other beat's jitter and delay
+                // is downstream of.
+                emit(.contextUsage(
+                    used: used,
+                    window: window,
+                    cached: nil,
+                    source: derived ? .derived : .measured
+                ))
+
+            case .compact:
+                // No `advance`, deliberately. A compaction is one line the
+                // harness writes between two others, and the beats around it
+                // already carry the time — while `advance` draws from the
+                // script's shared generator, which every later session's
+                // timing is downstream of. A new beat must not move somebody
+                // else's clock.
+                emit(.compaction)
+
+            case .quota(let percent, let resetsIn, let plan):
+                emit(.quota(
+                    usedPercent: percent,
+                    resetsAt: resetsIn.map { startedAt.addingTimeInterval(offset + $0) },
+                    plan: plan
                 ))
 
             case .endTurn:

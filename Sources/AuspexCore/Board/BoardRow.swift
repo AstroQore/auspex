@@ -65,6 +65,13 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     public let toolCallCount: Int
     public let tokensIn: Int
     public let tokensOut: Int
+    /// How full the context window is, for the harnesses whose stores record
+    /// it. `nil` for the five that record nothing — see ``ContextGauge``.
+    ///
+    /// A *level*, unlike the two counters above it, which is the reason it is
+    /// a value of its own rather than two more `Int`s: the card draws a fill
+    /// against a window, and a total has no window to be a fraction of.
+    public let context: ContextGauge?
     /// When the interval the card's stopwatch measures began.
     public let elapsedSince: Date?
     /// When the session ended, which is what freezes that stopwatch.
@@ -197,7 +204,8 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         isQuietReply: Bool = false,
         attention: AttentionState = .none,
         notice: RowNotice? = nil,
-        reportedFocus: String? = nil
+        reportedFocus: String? = nil,
+        context: ContextGauge? = nil
     ) {
         self.variantLabel = variantLabel
         self.key = key
@@ -230,6 +238,7 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         self.attention = attention
         self.notice = notice
         self.reportedFocus = reportedFocus
+        self.context = context
     }
 }
 
@@ -368,7 +377,10 @@ public struct BoardRowBuilder: Sendable {
             ),
             attention: attention(for: session, brief: brief, notice: notice),
             notice: notice.map(BoardRow.RowNotice.init),
-            reportedFocus: report?.line
+            reportedFocus: report?.line,
+            context: ContextGauge(
+                usage: session.contextUsage, compactions: session.compactions
+            )
         )
     }
 

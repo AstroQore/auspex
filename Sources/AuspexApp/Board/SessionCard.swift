@@ -295,6 +295,20 @@ struct SessionCard: View, Equatable {
     /// while it is running; once it has stopped, when it stopped is the number
     /// that decides whether to go and look.
     private var footer: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            counters
+            // Its own line rather than a sixth thing on the counters row: a
+            // card is 300 points wide at its narrowest and a gauge squeezed
+            // in beside four numbers is a bar too short to read a fill off.
+            // Absent entirely for the harnesses that record nothing, which is
+            // most of them.
+            if let context = row.context {
+                ContextGaugeView(gauge: context).equatable()
+            }
+        }
+    }
+
+    private var counters: some View {
         HStack(spacing: 14) {
             if row.isQuietReply, let endedAt = row.lastTurnEndedAt {
                 QuietReplyLabel(at: endedAt)
