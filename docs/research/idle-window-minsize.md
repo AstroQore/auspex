@@ -158,3 +158,52 @@ main thread and all of the process's CPU in the pipeline — SQLite readers,
 `GroupingCoordinator`, `LivenessResolver`. That is the right answer for a
 window nobody is looking at, and it is also the reminder that a scene
 measurement is worthless without checking that the window was on screen.
+
+## What happened next (`perf/layout-saturation`)
+
+The three questions above were answered, two of them differently from the way
+this note expected.
+
+**(1) Which `NSHostingView` is it, and can its `sizingOptions` be reached?**
+It cannot, and this is settled rather than untried. `NSHostingView.sizingOptions`
+is a Swift property on a *generic* class, so a view found by walking
+`NSWindow.contentView` cannot be cast to a type that has it, and there is no
+Objective-C entry point to reach it through instead: every hosting view in a
+`NavigationSplitView` answers `false` to
+`responds(to: NSSelectorFromString("setSizingOptions:"))` on macOS 26.5. What the
+walk did find is worth keeping — a split view's columns are separate
+`NSHostingView`s, each wrapping SwiftUI's own `HostingScrollView` — and
+`WindowSizingProbe` prints it on demand (`AUSPEX_WINDOW_PROBE=1`) so the next
+person starts from the tree rather than from a guess.
+
+**(2) Stop the sizing pass descending into the lazy lists.** This was the fix,
+and the reason the earlier `FixedMinimumLayout` attempt failed is the one this
+note guessed: it was not in front of the thing being asked. A `Layout` that
+answers `sizeThatFits` from the proposal and never touches `subviews`, placed
+immediately *outside* the scroll view — inside `BoardScroll`, which every
+scrolling surface in the app goes through — cuts the chain at
+`ScrollViewUtilities.sizeThatFits`. See `ScrollSizeGate`.
+
+**Two things this note did not suspect, and they were larger.**
+
+- `@Observable` compares before it publishes, and the comparison happens *in the
+  setter, on the main actor*. `LiveBoardModel.groups` carries whole
+  `SessionSnapshot`s, so every applied frame was a deep comparison of every
+  session on the board — `SessionSnapshot.__derived_struct_equals` again, coming
+  in through the assignment rather than through the render. The assembler now
+  reconciles each frame against the last on its own executor and hands back the
+  values the model already holds, so the setters' `==` hits the identity fast
+  path; a frame that draws the same window is not adopted at all.
+- The interval between applied frames was a constant while the cost of applying
+  one grows with the board. Past about eighty sessions the window was asked to
+  do more work per second than a second contains. It now follows the size.
+
+**How it was measured.** Process CPU cannot tell a frozen window from a busy
+machine, and on this machine it moves by tens of per cent between identical
+runs — which is what made the numbers above unusable. `MainThreadMeter`
+(`AUSPEX_STALL_LOG=1`) times each turn of the main run loop instead: two
+`CFRunLoopObserver`s and a subtraction, reported every five seconds. "The
+longest the main thread went without reaching `mach_msg`" is what a person
+means by *it froze*, and it survives a noisy machine. The scale to measure at
+comes from `--demo-scale N`, which multiplies the demo's cast rather than
+opening anybody's real store.
