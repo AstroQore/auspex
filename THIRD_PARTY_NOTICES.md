@@ -1,11 +1,18 @@
 # Third-party notices
 
+The README's [Acknowledgements](README.md#acknowledgements) section says what
+was taken and from whom in prose. This file is the same list with the licences
+and the copyright lines attached, and the two are kept in step.
+
 ## Direct dependencies
 
 - [agent-session-kit](https://github.com/AstroQore/agent-session-kit) — session
   discovery, live tailing, and the MCP transport. License: AGPL-3.0-only.
 - [GRDB.swift](https://github.com/groue/GRDB.swift) — SQLite toolkit. License:
   [MIT](https://github.com/groue/GRDB.swift/blob/master/LICENSE).
+- [Sparkle](https://github.com/sparkle-project/Sparkle) — in-app updates, and
+  the EdDSA signature check that runs before an archive is unpacked. License:
+  [MIT](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE).
 
 ## Ported source
 
@@ -77,15 +84,43 @@ integrated spring, and Auspex needs a seeded pure function of time so that sixty
 avatars can be sampled off one clock, a card whose clock stopped can resume on
 the frame it left, and a screenshot can be reproduced.
 
+## Design and prior art
+
+No code was copied for any of these. They are named because the ideas are
+theirs and a reader deserves to know where to look next.
+
+- [Carbon](https://github.com/chunkburst/Carbon) — MIT. An integrated task
+  manager for agent projects. Auspex's task board takes its task-row anatomy,
+  its insistence on a review step before a task can close, its dependencies
+  between tasks, and its provenance notes.
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — MIT.
+  The Trajectory view — a waterfall of turns laid out by source with an
+  inspector on the selected step — follows how dsh draws a run.
+- [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) — MIT. The
+  pixel office: agents as people in a room, position as information, a speech
+  bubble as how a program asks for help. Auspex's Scene is a native macOS take
+  on it across eight harnesses. It is also the style benchmark written into
+  `docs/ART-HANDOFF.md`, which is why the characters look the way they do.
+- **Anthropic's Agent View** — the attention vocabulary *needs input · working
+  · done · idle*, used rather than replaced.
+
+## Generated art
+
+The pixel art and the icon set under `Resources/` were generated with **OpenAI
+Codex** from the brief in `docs/ART-HANDOFF.md`, which is committed so the
+prompts are as reviewable as the output. The bird in the app icon, the
+characters, the furniture and the effect atlases all came out of that pass.
+
 ## Brand marks
 
 `Sources/AuspexApp/Resources/ProviderIcons/` carries the vendor marks Auspex uses to identify
 which harness a session belongs to — Anthropic (Claude Code, Claude Cowork),
-OpenAI (Codex, ChatGPT Work), Cursor, xAI (Grok Build), Google (AntiGravity,
-Gemini CLI). They are reproduced from the vendors' public brand assets, as
-single-colour SVGs, solely to label that vendor's own product in the UI, and
-were first collected for [Vibe Bar](https://github.com/AstroQore/vibe-bar).
-They are not covered by this project's license.
+OpenAI (Codex, ChatGPT Work), Cursor (Anysphere), xAI (Grok Build, Grok Bot),
+Google (AntiGravity, Gemini CLI). They are reproduced from the vendors' public
+brand assets, as single-colour SVGs, solely to label that vendor's own product
+in the UI, and were first collected for
+[Vibe Bar](https://github.com/AstroQore/vibe-bar). They are not covered by this
+project's license.
 
 All project names and trademarks belong to their respective owners. Listing a
 project or showing its mark here does not imply affiliation, sponsorship, or
