@@ -34,6 +34,7 @@ public actor ProjectResolver {
 
     private let fileManager: FileManager
     private let clock: @Sendable () -> Date
+    private let homeDirectory: String
     private var cache: [String: Entry] = [:]
 
     /// The directory names an agent worktree lives under, paired with the
@@ -55,14 +56,19 @@ public actor ProjectResolver {
     ///   - timeToLive: how long a placement with no `HEAD` to watch is reused.
     ///   - fileManager: injected so a test can point at a temporary tree.
     ///   - clock: injected so a test can drive expiry without sleeping.
+    ///   - homeDirectory: which home ``HarnessSandbox``'s scratch roots hang
+    ///     off. Injected for the same reason as the others — a test's tree is
+    ///     not under the person's home.
     public init(
         timeToLive: TimeInterval = 30,
         fileManager: FileManager = .default,
-        clock: @escaping @Sendable () -> Date = Date.init
+        clock: @escaping @Sendable () -> Date = Date.init,
+        homeDirectory: String = AuspexPaths.realHomeDirectory().path
     ) {
         self.timeToLive = timeToLive
         self.fileManager = fileManager
         self.clock = clock
+        self.homeDirectory = homeDirectory
     }
 
     // MARK: - Resolving
@@ -111,6 +117,15 @@ public actor ProjectResolver {
     }
 
     private func compute(directory: String) -> Resolution {
+        // Asked before the walk up, and it overrules whatever that walk would
+        // have found. A conversation that ran `git init` inside its own
+        // throwaway directory has a repository that lives and dies with the
+        // thread, and putting it on the board as a project is the noise this
+        // rule exists to remove — one row, one project, gone tomorrow.
+        if let thread = HarnessSandbox.thread(forPath: directory, home: homeDirectory) {
+            return Resolution(placement: .sandbox(thread: thread), headPath: nil)
+        }
+
         guard let found = findGitDirectory(from: directory) else {
             return Resolution(
                 placement: ProjectPlacement(

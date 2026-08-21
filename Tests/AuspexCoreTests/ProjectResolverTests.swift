@@ -20,6 +20,59 @@ struct ProjectResolverTests {
         #expect(!placement.isWorktree)
     }
 
+    @Test("a directory the harness made for one conversation is no project at all")
+    func sandboxThread() async throws {
+        let home = try GitFixtures.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let thread = try GitFixtures.makeDirectory(
+            home.appendingPathComponent("Documents/Codex/2026-08-21/zhe"))
+
+        let placement = await ProjectResolver(homeDirectory: home.path)
+            .resolve(cwd: thread.path)
+        #expect(placement.isProjectless)
+        #expect(placement.placementNote == HarnessSandbox.sandboxNote)
+        // It still says where the session is — a placement that refused to
+        // answer that would be hiding the one fact it has.
+        #expect(placement.projectRootPath == ProjectResolver.standardized(thread.path))
+        #expect(placement.projectName == "zhe")
+        #expect(placement.gitRoot == nil)
+        #expect(placement.branch == nil)
+    }
+
+    @Test("a repository inside a scratch thread does not rescue it")
+    func sandboxBeatsAGitInit() async throws {
+        let home = try GitFixtures.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let thread = try GitFixtures.makeDirectory(
+            home.appendingPathComponent("Documents/Codex/2026-08-21/zhe"))
+        try GitFixtures.makeRepository(at: thread, branch: "main")
+
+        // A `git init` inside a folder the app throws away leaves a
+        // repository that is thrown away with it. Putting it on the wall as a
+        // project is the noise the rule exists to remove.
+        let placement = await ProjectResolver(homeDirectory: home.path)
+            .resolve(cwd: thread.path)
+        #expect(placement.isProjectless)
+        #expect(placement.gitRoot == nil)
+        #expect(placement.branch == nil)
+    }
+
+    @Test("a repository the person keeps beside the scratch is still a project")
+    func neighbouringRepositoryIsUntouched() async throws {
+        let home = try GitFixtures.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let repository = try GitFixtures.makeDirectory(
+            home.appendingPathComponent("Documents/Codex/notes"))
+        try GitFixtures.makeRepository(at: repository, branch: "main")
+
+        let placement = await ProjectResolver(homeDirectory: home.path)
+            .resolve(cwd: repository.path)
+        #expect(!placement.isProjectless)
+        #expect(placement.placementNote == nil)
+        #expect(placement.projectName == "notes")
+        #expect(placement.branch == "main")
+    }
+
     @Test("a subdirectory resolves to the repository above it, with its branch")
     func mainCheckout() async throws {
         let root = try GitFixtures.makeTemporaryDirectory()

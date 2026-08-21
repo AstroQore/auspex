@@ -35,6 +35,19 @@ public struct ProjectPlacement: Hashable, Sendable, Codable {
     /// is usually the most informative label a row has before a title arrives.
     public let agentWorktreeTask: String?
 
+    /// Why this directory names no project, when it names none.
+    ///
+    /// `nil` for an ordinary placement, which is nearly all of them. Set for a
+    /// directory a harness creates per conversation rather than per project —
+    /// see ``HarnessSandbox`` — where the truthful answer is that the session
+    /// has no project at all, not that it has one nobody has heard of.
+    ///
+    /// A word rather than a flag so a reader can be told which rule fired.
+    public let placementNote: String?
+
+    /// `true` when this directory is not a project a board should group by.
+    public var isProjectless: Bool { placementNote != nil }
+
     /// Creates a placement.
     public init(
         projectRootPath: String,
@@ -42,7 +55,8 @@ public struct ProjectPlacement: Hashable, Sendable, Codable {
         gitRoot: String? = nil,
         worktreePath: String? = nil,
         branch: String? = nil,
-        agentWorktreeTask: String? = nil
+        agentWorktreeTask: String? = nil,
+        placementNote: String? = nil
     ) {
         self.projectRootPath = projectRootPath
         self.projectName = projectName
@@ -50,6 +64,7 @@ public struct ProjectPlacement: Hashable, Sendable, Codable {
         self.worktreePath = worktreePath
         self.branch = branch
         self.agentWorktreeTask = agentWorktreeTask
+        self.placementNote = placementNote
     }
 
     /// The placement of a directory that is in no repository at all: it is its
@@ -58,6 +73,20 @@ public struct ProjectPlacement: Hashable, Sendable, Codable {
         ProjectPlacement(
             projectRootPath: directory,
             projectName: (directory as NSString).lastPathComponent
+        )
+    }
+
+    /// The placement of a directory a harness made for one conversation.
+    ///
+    /// ``projectRootPath`` is still the thread directory, because a placement
+    /// has to say *where* the session is and that is where it is. What makes
+    /// it projectless is ``placementNote``, and every reader that groups goes
+    /// through ``BoardSnapshot/projectKey(for:)``, which asks.
+    public static func sandbox(thread: HarnessSandbox.Thread) -> ProjectPlacement {
+        ProjectPlacement(
+            projectRootPath: thread.directory,
+            projectName: thread.name,
+            placementNote: thread.note
         )
     }
 }
