@@ -50,6 +50,9 @@ struct PlanPayload: Encodable {
 
 struct TaskPayload: Encodable {
     let id: Int64
+    /// The handle a person reads and says out loud. Sent so an agent writing a
+    /// brief can quote the same string the board shows.
+    let shortID: String
     /// The project this task is in — always, for anything this build filed.
     /// The same key `sessions.self` reports for the session working there, so
     /// a caller can compare the two without translating.
@@ -62,6 +65,13 @@ struct TaskPayload: Encodable {
     let body: String?
     let status: String
     let priority: Int
+    /// The same number in words — see ``TaskImportance``.
+    let importance: String
+    /// What sort of work this is, when somebody said.
+    let kind: String?
+    let labels: [String]?
+    /// Task ids that have to be closed before this one can start.
+    let dependsOn: [Int64]?
     let claimRole: String?
     let claimScope: String?
     let claimedBy: String?
@@ -74,6 +84,11 @@ struct TaskPayload: Encodable {
 
     init(_ task: AuspexTask, sessions: [SessionKey]? = nil, projectName: String? = nil) {
         self.id = task.id
+        self.shortID = task.shortID
+        self.importance = task.importance.rawValue
+        self.kind = task.kind?.rawValue
+        self.labels = task.labels.isEmpty ? nil : task.labels
+        self.dependsOn = task.dependsOn.isEmpty ? nil : task.dependsOn
         self.project = task.projectKey
         self.projectName = projectName
         self.planID = task.planID
@@ -119,12 +134,15 @@ struct TaskLogPayload: Encodable {
         let kind: String
         let actor: String?
         let message: String?
+        /// Where to go and check, for the entries that carry one.
+        let ref: String?
 
         init(_ entry: AuspexTaskLogEntry) {
             self.at = entry.timestamp
             self.kind = entry.kind
             self.actor = entry.actor?.description
             self.message = entry.message
+            self.ref = entry.ref
         }
     }
 }
@@ -139,6 +157,8 @@ struct NotifyPayload: Encodable {
     let at: Date
     /// Where the session landed on the board, in the board's own vocabulary.
     let bucket: String
+    /// The tasks this notice moved into review, when it was a `done`.
+    var reviewing: [Int64]? = nil
     /// Whether Auspex could tell which session this was, and how. An agent
     /// that reads `resolved: false` knows to pass `session_id` next time.
     let resolved: Bool

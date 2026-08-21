@@ -598,7 +598,13 @@ extension HarnessInstaller {
            read `plans.list` and `tasks.list` first and claim the task that
            matches; file one with `tasks.create` only if none does. Call
            `tasks.update` when you get blocked and `tasks.complete` with one line
-           of what you finished.
+           of what you finished — which asks for a review rather than closing
+           anything, because only a person closes a task.
+        3. **Write down what a later reader would have to rediscover.**
+           `tasks.log` takes a `kind`: `decision` for a choice nobody should
+           silently undo, `evidence` (with a `ref` — a commit, a URL, a path)
+           for something they can go and check, `risk` for what is still
+           unhandled. One line each, and never command output.
 
         If you are the one handing work out, register the decomposition with
         `plans.create` and a task per worker, and put each task id in the brief

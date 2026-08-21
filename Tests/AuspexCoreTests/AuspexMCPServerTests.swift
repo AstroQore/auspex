@@ -185,7 +185,9 @@ struct AuspexMCPServerTests {
             "session_id": .string(Self.sessionKey.sessionID)
         ])))
         #expect(structured["session"]?.stringValue == Self.sessionKey.description)
-        #expect(structured["bucket"]?.stringValue == "done")
+        // Finished work waits on a person, so the bucket it lands in is the
+        // one a person empties.
+        #expect(structured["bucket"]?.stringValue == "review")
 
         let refusal = try RPC.failureText(await server.answer(line: RPC.call("auspex.notify", [
             "kind": "done", "message": "x", "session_id": "claudeCode:nobody"
@@ -288,6 +290,79 @@ struct AuspexMCPServerTests {
         // Still open: a task nobody has read is a task nobody has finished
         // with, whatever the agent that did the work believes.
         #expect(detail["plan"]?["openTaskCount"]?.intValue == 1)
+    }
+
+    // MARK: - The shape of a task
+
+    @Test("a task is filed with a kind, labels, an importance and what it waits on")
+    func tasksCarryTheirShape() async throws {
+        let (server, _, _) = try makeServer()
+        let first = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Land the schema", "kind": "chore", "importance": "urgent"
+        ])))
+        let firstID = try #require(first["id"]?.intValue)
+        #expect(first["kind"]?.stringValue == "chore")
+        #expect(first["importance"]?.stringValue == "urgent")
+        #expect(first["shortID"]?.stringValue?.hasPrefix("AUX-") == true)
+
+        let second = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Read the schema",
+            "labels": .array(["Adapter", "codex", "adapter"]),
+            "depends_on": .array([.int(Int64(firstID))])
+        ])))
+        #expect(second["labels"]?.arrayValue?.compactMap(\.stringValue) == ["adapter", "codex"])
+        #expect(second["dependsOn"]?.arrayValue?.compactMap(\.intValue) == [firstID])
+
+        // Ready is about dependencies: the one that waits is left out.
+        let ready = try RPC.structured(await server.answer(line: RPC.call("tasks.list", [
+            "ready_only": true
+        ])))
+        #expect(ready["tasks"]?.arrayValue?.compactMap { $0["id"]?.intValue } == [firstID])
+
+        let byLabel = try RPC.structured(await server.answer(line: RPC.call("tasks.list", [
+            "label": "codex"
+        ])))
+        #expect(byLabel["tasks"]?.arrayValue?.count == 1)
+    }
+
+    @Test("a note says what kind it is and where to check")
+    func notesCarryKindAndRef() async throws {
+        let (server, _, _) = try makeServer()
+        let task = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Decide the wire format"
+        ])))
+        let id = try #require(task["id"]?.intValue)
+        let log = try RPC.structured(await server.answer(line: RPC.call("tasks.log", [
+            "task_id": .int(Int64(id)),
+            "message": "Protobuf, not JSON: the store is already binary.",
+            "kind": "decision",
+            "ref": "a1b2c3d"
+        ])))
+        let last = try #require(log["entries"]?.arrayValue?.last)
+        #expect(last["kind"]?.stringValue == "decision")
+        #expect(last["ref"]?.stringValue == "a1b2c3d")
+    }
+
+    @Test("saying done finishes the task this session was holding")
+    func notifyDoneAsksForAReview() async throws {
+        let (server, _, store) = try makeServer()
+        let task = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Write the installer"
+        ])))
+        let id = try #require(task["id"]?.intValue)
+        _ = await server.answer(line: RPC.call("tasks.claim", [
+            "task_id": .int(Int64(id)), "role": "implementer"
+        ]))
+
+        let notice = try RPC.structured(await server.answer(line: RPC.call("auspex.notify", [
+            "kind": "done", "message": "fenced writer plus 9 tests"
+        ])))
+        #expect(notice["bucket"]?.stringValue == "review")
+        #expect(notice["reviewing"]?.arrayValue?.compactMap(\.intValue) == [id])
+
+        let stored = try #require(try TaskRepository(store: store).task(id: Int64(id)))
+        #expect(stored.status == .review)
+        #expect(stored.result == "fenced writer plus 9 tests")
     }
 
     // MARK: - Projects contain tasks

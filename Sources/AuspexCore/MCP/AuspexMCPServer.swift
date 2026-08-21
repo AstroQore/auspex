@@ -268,13 +268,31 @@ public actor AuspexMCPServer {
         )
         await host.didRecordNotice(notice)
 
+        // Saying "done" and finishing your task are the same gesture, and an
+        // agent that has to make it twice makes it once. So a `done` notice
+        // moves whatever this session was holding into review, carrying the
+        // sentence it just wrote — which is exactly what `tasks.complete`
+        // does, reached from the other side.
+        var reviewed: [Int64] = []
+        if kind == .done {
+            for task in (try? ledger.tasks(linkedTo: session)) ?? []
+            where task.claimedBy == session && task.status != .done && task.status != .review {
+                guard let moved = try? ledger.completeTask(
+                    id: task.id, result: message, by: session, now: now()
+                ) else { continue }
+                reviewed.append(moved.id)
+            }
+            if !reviewed.isEmpty { await host.didChangeLedger() }
+        }
+
         return Self.success(NotifyPayload(
             session: session.description,
             kind: kind.rawValue,
             message: message,
             urgency: urgency.rawValue,
             at: notice.createdAt,
-            bucket: kind.wantsPerson ? "needs you" : "done",
+            bucket: kind.wantsPerson ? "needs you" : "review",
+            reviewing: reviewed.isEmpty ? nil : reviewed,
             resolved: true,
             evidence: caller.evidence,
             clearsWhen: "the person opens or dismisses the card, talks to this session "
@@ -433,10 +451,15 @@ public actor AuspexMCPServer {
         if try arguments.optionalString("project") != nil {
             projectKey = try await self.projectKey(arguments, caller: try await caller(arguments))
         }
-        let tasks = try ledger.tasks(
+        let readyOnly = try arguments.optionalBool("ready_only") ?? false
+        let label = MCPTextSanitizer.clean(
+            try arguments.optionalString("label"), limit: TaskLabels.lengthLimit
+        )?.lowercased()
+        var tasks = try ledger.tasks(
             planID: planID, projectKey: projectKey, statuses: statuses,
-            claimedBy: claimedBy, limit: limit
+            claimedBy: claimedBy, readyOnly: readyOnly, limit: limit
         )
+        if let label { tasks = tasks.filter { $0.labels.contains(label) } }
         let links = Dictionary(grouping: try ledger.allLinks()) { $0.taskID }
         let board = await host.boardSnapshot()
         return Self.success(TaskListPayload(
@@ -448,7 +471,9 @@ public actor AuspexMCPServer {
                 )
             },
             note: tasks.isEmpty
-                ? "Nothing is filed here. If your brief named a task id it may be under an archived milestone, or in another project; otherwise file one with tasks.create."
+                ? (readyOnly
+                    ? "Nothing here is ready: every task is either finished or waiting on one that is not. Call again without ready_only to see what is blocked."
+                    : "Nothing is filed here. If your brief named a task id it may be under an archived milestone, or in another project; otherwise file one with tasks.create.")
                 : nil
         ))
     }
@@ -463,7 +488,10 @@ public actor AuspexMCPServer {
         // so it gets a larger cap than a message — and still a cap.
         let body = MCPTextSanitizer.clean(try arguments.optionalString("body"), limit: 4_000)
         let status = try arguments.optionalEnum("status", AuspexTaskStatus.self) ?? .todo
-        let priority = try arguments.optionalInt("priority", minimum: -100, maximum: 100) ?? 0
+        let priority = try Self.priority(arguments) ?? 0
+        let kind = try Self.kind(arguments) ?? nil
+        let labels = try Self.labels(arguments) ?? []
+        let dependsOn = try Self.dependsOn(arguments) ?? []
         var planID: Int64?
         if let reference = try arguments.optionalString("plan") {
             guard let plan = try ledger.plan(reference: reference) else {
@@ -475,7 +503,8 @@ public actor AuspexMCPServer {
         let project = try await projectKey(arguments, caller: caller)
         let task = try ledger.createTask(
             title: title, body: body, planID: planID, status: status, priority: priority,
-            projectKey: project, createdBy: caller.session, source: "mcp", now: now()
+            projectKey: project, createdBy: caller.session, source: "mcp",
+            kind: kind, labels: labels, dependsOn: dependsOn, now: now()
         )
         await host.didChangeLedger()
         return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
@@ -520,7 +549,10 @@ public actor AuspexMCPServer {
         let status = try arguments.optionalEnum("status", AuspexTaskStatus.self)
         let title = MCPTextSanitizer.clean(try arguments.optionalString("title"), limit: 200)
         let body = MCPTextSanitizer.clean(try arguments.optionalString("body"), limit: 4_000)
-        let priority = try arguments.optionalInt("priority", minimum: -100, maximum: 100)
+        let priority = try Self.priority(arguments)
+        let kind = try Self.kind(arguments)
+        let labels = try Self.labels(arguments)
+        let dependsOn = try Self.dependsOn(arguments)
         var planID: Int64??
         if let reference = try arguments.optionalString("plan") {
             guard let plan = try ledger.plan(reference: reference) else {
@@ -536,6 +568,9 @@ public actor AuspexMCPServer {
             status: status,
             priority: priority,
             planID: planID,
+            kind: kind,
+            labels: labels,
+            dependsOn: dependsOn,
             actor: caller.session,
             now: now()
         )
@@ -587,18 +622,64 @@ public actor AuspexMCPServer {
             try arguments.requiredString("message"),
             field: "message", tool: AuspexMCPTools.Name.tasksLog
         )
+        let kind = try arguments.optionalEnum("kind", TaskNoteKind.self) ?? .note
+        let ref = MCPTextSanitizer.clean(try arguments.optionalString("ref"), limit: 300)
         let caller = try await caller(arguments)
         guard try ledger.task(id: id) != nil else {
             throw TaskLedgerError.notFound("task \(id)")
         }
         try ledger.appendLog(
-            taskID: id, actor: caller.session, kind: "note", message: message, now: now()
+            taskID: id, actor: caller.session, kind: kind.rawValue, message: message,
+            ref: ref, now: now()
         )
         await host.didChangeLedger()
         return Self.success(TaskLogPayload(
             taskID: id,
             entries: try ledger.log(taskID: id, limit: 20).map(TaskLogPayload.Entry.init)
         ))
+    }
+
+    // MARK: - Reading the task-shaped arguments
+
+    /// `priority` if given, else the number `importance` stands for.
+    ///
+    /// Both, and `priority` wins, because agents already installed on this
+    /// machine pass it and an argument that quietly stopped working would be
+    /// the worst kind of break — the caller carries on and the board is wrong.
+    private static func priority(_ arguments: MCPArguments) throws -> Int? {
+        if let priority = try arguments.optionalInt("priority", minimum: -100, maximum: 100) {
+            return priority
+        }
+        return try arguments.optionalEnum("importance", TaskImportance.self)?.priority
+    }
+
+    /// A double optional: absent means "leave it alone", present-and-empty
+    /// means "clear it". `tasks.update` needs to be able to say both.
+    private static func kind(_ arguments: MCPArguments) throws -> TaskKind?? {
+        guard let raw = try arguments.optionalString("kind") else { return nil }
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .some(nil)
+        }
+        guard let kind = TaskKind(loose: raw) else {
+            let known = TaskKind.allCases.map(\.rawValue).joined(separator: ", ")
+            throw MCPToolFailure("'\(raw)' is not a task kind. One of: \(known).")
+        }
+        return .some(kind)
+    }
+
+    private static func labels(_ arguments: MCPArguments) throws -> [String]? {
+        guard let raw = try arguments.optionalStringList("labels") else { return nil }
+        return TaskLabels.normalize(raw.compactMap {
+            MCPTextSanitizer.clean($0, limit: TaskLabels.lengthLimit)
+        })
+    }
+
+    private static func dependsOn(_ arguments: MCPArguments) throws -> [Int64]? {
+        guard let value = arguments.present("depends_on") else { return nil }
+        guard let items = value.arrayValue else {
+            throw MCPToolFailure("'depends_on' takes an array of task ids.")
+        }
+        return items.compactMap { $0.intValue.map(Int64.init) }
     }
 
     // MARK: - Sessions

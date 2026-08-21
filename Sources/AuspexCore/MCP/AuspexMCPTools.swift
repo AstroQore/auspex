@@ -289,6 +289,18 @@ public enum AuspexMCPTools {
                     "type": "boolean",
                     "description": "Only the tasks this session holds a claim on."
                 ]),
+                "ready_only": .object([
+                    "type": "boolean",
+                    "description": """
+                        Only tasks whose dependencies are all closed. What to \
+                        pass when you are looking for something to pick up: a \
+                        task that waits on unfinished work is not work.
+                        """
+                ]),
+                "label": .object([
+                    "type": "string",
+                    "description": "Only tasks carrying this label."
+                ]),
                 "limit": limitProperty(default: 100)
             ])
         ])
@@ -329,7 +341,11 @@ public enum AuspexMCPTools {
                 "priority": .object([
                     "type": "integer",
                     "description": "Higher sorts first within its column. Default 0."
-                ])
+                ]),
+                "importance": importanceProperty,
+                "kind": kindProperty,
+                "labels": labelsProperty,
+                "depends_on": dependsOnProperty
             ]),
             "required": .array(["title"])
         ])
@@ -369,10 +385,14 @@ public enum AuspexMCPTools {
         name: Name.tasksUpdate,
         title: "Move a task",
         description: """
-            Change a task's column, title, body, priority, milestone, or the \
-            project it is in. Use 'blocked' the moment you are stuck — and call \
-            auspex.notify as well, because a column change is something a \
-            person has to be looking at the board to see.
+            Change a task's column, title, body, importance, kind, labels, \
+            dependencies, milestone, or the project it is in. Use 'blocked' the \
+            moment you are stuck — and call auspex.notify as well, because a \
+            column change is something a person has to be looking at the board \
+            to see.
+
+            'done' is a person's word. Finish with tasks.complete, which puts \
+            the task in 'review' for somebody to close.
             """,
         inputSchema: .object([
             "type": "object",
@@ -385,6 +405,10 @@ public enum AuspexMCPTools {
                 "title": .object(["type": "string"]),
                 "body": .object(["type": "string"]),
                 "priority": .object(["type": "integer"]),
+                "importance": importanceProperty,
+                "kind": kindProperty,
+                "labels": labelsProperty,
+                "depends_on": dependsOnProperty,
                 "plan": .object([
                     "type": "string",
                     "description": "Move it under this milestone, by id or slug."
@@ -406,9 +430,13 @@ public enum AuspexMCPTools {
         name: Name.tasksComplete,
         title: "Finish a task",
         description: """
-            Close a task and record, in one line, what you actually finished. \
-            That line is what the person reads instead of opening your \
-            transcript, so write it for them.
+            Say that you have finished a task, and record in one line what you \
+            actually did. That line is what the person reads instead of \
+            opening your transcript, so write it for them.
+
+            **This asks for a review; it does not close anything.** The task \
+            moves to 'review', stays counted as open, and waits for a person. \
+            That is on purpose: nobody marks their own homework.
             """,
         inputSchema: .object([
             "type": "object",
@@ -430,12 +458,33 @@ public enum AuspexMCPTools {
         description: """
             Append one line to a task's history — a decision, a dead end, a \
             handover note for whoever picks it up next.
+
+            Say which kind it is. 'decision' is a choice a later reader must \
+            not silently undo; 'evidence' is something they can go and check, \
+            and takes a 'ref' — a commit, a URL, a path; 'risk' is something \
+            nobody has dealt with yet. Everything else is 'note'.
+
+            Write the sentence, not the output. A note is what somebody reads \
+            instead of your transcript, so no command output, no secrets, no \
+            pasted files.
             """,
         inputSchema: .object([
             "type": "object",
             "properties": .object([
                 "task_id": .object(["type": "integer"]),
                 "message": .object(["type": "string", "description": "The line. Up to 500 characters."]),
+                "kind": .object([
+                    "type": "string",
+                    "enum": .array(TaskNoteKind.allCases.map { .string($0.rawValue) }),
+                    "description": "What kind of line this is. Default 'note'."
+                ]),
+                "ref": .object([
+                    "type": "string",
+                    "description": """
+                        Where to go and check: a commit hash, a URL, a path. \
+                        Belongs on 'evidence' most of all.
+                        """
+                ]),
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id", "message"])
@@ -550,6 +599,40 @@ public enum AuspexMCPTools {
             board, or a project key from sessions.self. Leave it out to use \
             the project this session is working in, which is almost always \
             what you want.
+            """
+    ])
+
+    /// How much a task matters, in words rather than in a number a caller has
+    /// to guess the scale of. `priority` still works and still wins when both
+    /// are given, because agents already installed on this machine pass it.
+    private static let importanceProperty: MCPJSON = .object([
+        "type": "string",
+        "enum": .array(TaskImportance.allCases.map { .string($0.rawValue) }),
+        "description": "How much this matters. Default 'normal'."
+    ])
+
+    private static let kindProperty: MCPJSON = .object([
+        "type": "string",
+        "enum": .array(TaskKind.allCases.map { .string($0.rawValue) }),
+        "description": "What sort of work this is."
+    ])
+
+    private static let labelsProperty: MCPJSON = .object([
+        "type": "array",
+        "items": .object(["type": "string"]),
+        "description": """
+            Your own vocabulary, for filtering the board. Lowercased and \
+            deduplicated; up to 12.
+            """
+    ])
+
+    private static let dependsOnProperty: MCPJSON = .object([
+        "type": "array",
+        "items": .object(["type": "integer"]),
+        "description": """
+            Task ids that have to be closed before this one can start. A task \
+            waiting on unfinished work is not 'ready', and tasks.list with \
+            ready_only leaves it out.
             """
     ])
 

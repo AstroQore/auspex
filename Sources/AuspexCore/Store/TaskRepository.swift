@@ -176,7 +176,7 @@ public struct TaskRepository: Sendable {
             guard let task = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
-            return task
+            return try Self.attachDependencies(to: [task], in: db)[0]
         }
     }
 
