@@ -19,15 +19,27 @@ public enum AuspexVersion {
     /// What the plist says, for a build that has one.
     static let bundle = Bundle.main
 
+    /// What `CFBundleShortVersionString` says, for a build with no bundle.
+    ///
+    /// Rewritten by `Scripts/release_app.sh`, which matches this exact line —
+    /// keep the shape.
+    static let fallbackMarketingVersion = "0.0.1"
+
+    /// What `CFBundleVersion` says, for a build with no bundle. Same deal.
+    static let fallbackBuildNumber = "1"
+
     /// Semantic version shown in the UI and reported over MCP.
     public static let marketingVersion = string(
         forKey: "CFBundleShortVersionString",
-        fallback: "0.0.1"
+        fallback: fallbackMarketingVersion
     )
 
     /// Monotonic build number. Sparkle orders releases by this, not by
     /// ``marketingVersion``, so it must never go backwards.
-    public static let buildNumber = string(forKey: "CFBundleVersion", fallback: "1")
+    public static let buildNumber = string(
+        forKey: "CFBundleVersion",
+        fallback: fallbackBuildNumber
+    )
 
     /// Reverse-DNS bundle identifier of the packaged app.
     public static let bundleIdentifier = "com.astroqore.auspex"
