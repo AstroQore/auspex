@@ -54,14 +54,19 @@ struct TrajectoryView: View {
             )
             TrajectoryFactsBar(model: model.trajectory)
             HStack(spacing: 0) {
+                // The rows keep a floor of 200 points, and the inspector gives
+                // way from 340 down to 260 rather than pushing them off the
+                // end: the board's column can be dragged to 460, and 460 minus
+                // a fixed 340 is a column of step rows nobody can read.
                 TrajectoryStepList(model: model.trajectory)
+                    .frame(minWidth: 200, maxWidth: .infinity)
                 if model.trajectory.showsInspector {
                     Rectangle().fill(AuspexPalette.line).frame(width: 1)
                     TrajectoryInspector(
                         model: model.trajectory,
                         brief: session.brief
                     )
-                    .frame(width: 340)
+                    .frame(minWidth: 260, idealWidth: 340, maxWidth: 340)
                 }
             }
             .frame(maxHeight: .infinity)
@@ -89,27 +94,25 @@ private struct TrajectoryBar: View {
 
     @Environment(\.isSnapshotRender) private var isSnapshotRender
 
+    /// The bar, in as much of itself as the column has room for.
+    ///
+    /// Laid out at full width the row wants about 720 points, and the board's
+    /// column is 626 at a 1280 pt window and can be dragged to 460 — so the
+    /// controls used to run off the end of it, taking the back button and the
+    /// session's name with them. The ladder spends the width in reverse order
+    /// of what a person came here to do: the filter field narrows and then
+    /// goes, the Follow toggle keeps its light but loses its word, and the
+    /// back button loses "Board" before anything a person operates disappears.
+    /// The scale picker and the inspector toggle never go: one says what the
+    /// waterfall's width means, and the other is the only way to get the
+    /// inspector back.
     var body: some View {
-        HStack(spacing: 10) {
-            backButton
-            HarnessBadge(harness: session.key.harness, size: 20, isMuted: session.state.isEnded)
-            Text(title)
-                .font(AuspexType.cardTitle)
-                .foregroundStyle(AuspexPalette.text)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            StatePill(state: session.state, isStale: session.isStale, showsChildCount: false)
-                .fixedSize()
-            Spacer(minLength: 8)
-            SegmentedPicker(
-                selection: $trajectory.scale,
-                options: TrajectoryScale.allCases.map { ($0, $0.title) }
-            )
-            .fixedSize()
-            .help("What the timeline's width measures")
-            searchField
-            followToggle
-            inspectorToggle
+        ViewThatFits(in: .horizontal) {
+            bar(searchWidth: 140, showsFollowLabel: true, showsBackLabel: true)
+            bar(searchWidth: 110, showsFollowLabel: true, showsBackLabel: true)
+            bar(searchWidth: 110, showsFollowLabel: false, showsBackLabel: true)
+            bar(searchWidth: nil, showsFollowLabel: false, showsBackLabel: true)
+            bar(searchWidth: nil, showsFollowLabel: false, showsBackLabel: false)
         }
         .padding(.horizontal, 16)
         .frame(height: 44)
@@ -119,20 +122,58 @@ private struct TrajectoryBar: View {
         }
     }
 
+    private func bar(
+        searchWidth: CGFloat?,
+        showsFollowLabel: Bool,
+        showsBackLabel: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            backButton(showsLabel: showsBackLabel)
+            HarnessBadge(harness: session.key.harness, size: 20, isMuted: session.state.isEnded)
+            Text(title)
+                .font(AuspexType.cardTitle)
+                .foregroundStyle(AuspexPalette.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                // An ideal of 60, rather than "as wide as this session's title
+                // happens to be". The rung is meant to be chosen by how much
+                // room the controls need, not by the length of somebody's
+                // prompt — and the title truncates either way.
+                .frame(idealWidth: 60, maxWidth: .infinity, alignment: .leading)
+            StatePill(state: session.state, isStale: session.isStale, showsChildCount: false)
+                .fixedSize()
+            Spacer(minLength: 8)
+            SegmentedPicker(
+                selection: $trajectory.scale,
+                options: TrajectoryScale.allCases.map { ($0, $0.title) }
+            )
+            .fixedSize()
+            .help("What the timeline's width measures")
+            if let searchWidth {
+                searchField(width: searchWidth)
+            }
+            followToggle(showsLabel: showsFollowLabel)
+            inspectorToggle
+        }
+    }
+
     private var title: String {
         if let title = session.identity.title, !title.isEmpty { return title }
         return session.key.sessionID
     }
 
-    private var backButton: some View {
+    private func backButton(showsLabel: Bool) -> some View {
         Button { board.closeTrajectory() } label: {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 9, weight: .bold))
-                Text("Board")
-                    .font(AuspexType.pill)
+                if showsLabel {
+                    Text("Board")
+                        .font(AuspexType.pill)
+                }
             }
             .foregroundStyle(AuspexPalette.text2)
+            .fixedSize()
             .padding(.horizontal, 8)
             .frame(height: 24)
             .background(
@@ -145,7 +186,7 @@ private struct TrajectoryBar: View {
         .help("Back to the board (⌘T)")
     }
 
-    private var searchField: some View {
+    private func searchField(width: CGFloat) -> some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 10, weight: .medium))
@@ -169,7 +210,7 @@ private struct TrajectoryBar: View {
             }
         }
         .padding(.horizontal, 9)
-        .frame(width: 140, height: 26)
+        .frame(width: width, height: 26)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(AuspexPalette.bg1)
@@ -181,7 +222,7 @@ private struct TrajectoryBar: View {
         .help("Show only the steps whose text matches")
     }
 
-    private var followToggle: some View {
+    private func followToggle(showsLabel: Bool) -> some View {
         Button { trajectory.followsTail.toggle() } label: {
             HStack(spacing: 5) {
                 StateDot(
@@ -190,15 +231,21 @@ private struct TrajectoryBar: View {
                         : AuspexPalette.text3,
                     glows: trajectory.followsTail
                 )
-                Text("Follow")
-                    .font(AuspexType.pill)
-                    .foregroundStyle(
-                        trajectory.followsTail ? AuspexPalette.stateWriting : AuspexPalette.text3
-                    )
+                if showsLabel {
+                    Text("Follow")
+                        .font(AuspexType.pill)
+                        .foregroundStyle(
+                            trajectory.followsTail
+                                ? AuspexPalette.stateWriting
+                                : AuspexPalette.text3
+                        )
+                }
             }
             .fixedSize()
+            .frame(minWidth: showsLabel ? nil : 22)
             .contentShape(Rectangle())
         }
+        .accessibilityLabel("Follow the newest step")
         .buttonStyle(.auspex)
         .help(
             trajectory.followsTail

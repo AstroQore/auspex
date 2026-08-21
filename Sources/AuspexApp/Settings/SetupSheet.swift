@@ -37,7 +37,13 @@ struct SetupSheet: View {
             Divider().overlay(AuspexPalette.line)
             footer
         }
-        .frame(width: 640, height: 560)
+        // A range rather than a number. The board's window may be as short as
+        // 560 points, and a sheet with a hard 560 pt height on a 560 pt window
+        // covers the thing it is a sheet *over* — including the title bar it
+        // is supposed to hang from. The middle of the sheet is a scroll view,
+        // so it has somewhere to give.
+        .frame(width: 640)
+        .frame(minHeight: 340, idealHeight: 540, maxHeight: 620)
         .background(AuspexPalette.bg0)
     }
 
