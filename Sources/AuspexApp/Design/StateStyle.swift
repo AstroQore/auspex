@@ -282,11 +282,18 @@ struct StateDot: View {
     var glows = false
     var size: CGFloat = 6
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Circle()
             .fill(color)
             .frame(width: size, height: size)
-            .shadow(color: glows ? color.opacity(0.65) : .clear, radius: glows ? 4 : 0)
+            .shadow(
+                color: glows
+                    ? color.opacity(AuspexPalette.glow(0.65, colorScheme))
+                    : .clear,
+                radius: glows ? 4 : 0
+            )
             .accessibilityHidden(true)
     }
 }

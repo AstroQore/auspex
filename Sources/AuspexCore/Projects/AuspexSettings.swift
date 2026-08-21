@@ -62,6 +62,24 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// those on the board in their own time rather than one banner at a time.
     public var notifiesOnDone: Bool
 
+    /// Which appearance the window is drawn in.
+    ///
+    /// Here rather than in `@AppStorage` for the same reason the window is:
+    /// it decides what every surface in the app *is*, and the offscreen
+    /// renderers have to be able to read it without a window. See
+    /// ``AppearanceMode``.
+    public var appearance: AppearanceMode
+
+    /// Whether the sidebar sits on the system's sidebar material rather than
+    /// on the flat canvas token.
+    ///
+    /// On by default, because it is the most native thing a Mac sidebar can
+    /// be: the column picks up what is behind the window and moves with it,
+    /// which is what tells a person at a glance which window is in front.
+    /// Off is for the second display running a wall of these, where a sidebar
+    /// showing somebody's desktop through it is noise.
+    public var translucentSidebar: Bool
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
@@ -69,7 +87,9 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         sceneZones: SceneZoneOptions = .all,
         crewLiveliness: CrewLiveliness? = nil,
         sessionWindow: SessionWindow = .standard,
-        notifiesOnDone: Bool = true
+        notifiesOnDone: Bool = true,
+        appearance: AppearanceMode = .standard,
+        translucentSidebar: Bool = true
     ) {
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
@@ -78,11 +98,13 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         self.crewLiveliness = crewLiveliness
         self.sessionWindow = sessionWindow
         self.notifiesOnDone = notifiesOnDone
+        self.appearance = appearance
+        self.translucentSidebar = translucentSidebar
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
-        case sessionWindow, notifiesOnDone
+        case sessionWindow, notifiesOnDone, appearance, translucentSidebar
     }
 
     public init(from decoder: any Decoder) throws {
@@ -110,11 +132,25 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         notifiesOnDone = try container.decodeIfPresent(
             Bool.self, forKey: .notifiesOnDone
         ) ?? true
+        // An absent key is "follow the system" rather than "dark", so a
+        // settings file written while the window was forced dark opens on
+        // whatever the Mac is set to — which is the behaviour the setting
+        // exists to give people, not one they should have to go and ask for.
+        //
+        // `try?` rather than `try`, like `crewLiveliness`: this is a file
+        // people are invited to edit by hand, and a typo in one word must cost
+        // that one word rather than the whole file — a thrown error here would
+        // take the ignore rules and the projects binding down with it.
+        appearance = (try? container.decode(AppearanceMode.self, forKey: .appearance))
+            ?? .standard
+        translucentSidebar = (try? container.decode(Bool.self, forKey: .translucentSidebar))
+            ?? true
     }
 
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
             && crewLiveliness == nil && sessionWindow == .standard && notifiesOnDone
+            && appearance == .standard && translucentSidebar
     }
 }
 

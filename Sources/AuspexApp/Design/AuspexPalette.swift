@@ -79,8 +79,14 @@ enum AuspexPalette {
         case bg1
         /// An inset well: a chip, a code block, an expanded payload.
         case bg2
-        /// A surface that is lifted — a card under the pointer, a popover over
-        /// a popover.
+        /// A surface that is lifted — the mark's tile, a popover over a
+        /// popover.
+        ///
+        /// In light it is the same white as ``bg1``, deliberately: on a white
+        /// ground there is nowhere lighter to go, so "this control is *on*" is
+        /// not a surface step in either appearance any more. It is
+        /// ``selection`` — the accent — which is one answer rather than two
+        /// and is what the reference theme does.
         case bg3
         /// The board's measured grid, one step off the ground.
         case grid

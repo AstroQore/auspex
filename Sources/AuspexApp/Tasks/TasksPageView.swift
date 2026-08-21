@@ -92,7 +92,7 @@ struct TasksPageView: View {
                         .frame(height: 20)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(model.showsArchived ? AuspexPalette.bg3 : .clear)
+                                .fill(model.showsArchived ? AuspexPalette.selection : .clear)
                         )
                         .contentShape(Rectangle())
                 }
@@ -280,7 +280,7 @@ private struct TaskColumnView: View {
         .padding(6)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isTargeted ? AuspexPalette.bg3 : AuspexPalette.bg1.opacity(0.6))
+                .fill(isTargeted ? AuspexPalette.selection : AuspexPalette.bg1.opacity(0.6))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)

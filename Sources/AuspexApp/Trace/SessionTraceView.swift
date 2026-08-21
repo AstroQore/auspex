@@ -80,7 +80,7 @@ struct SessionTraceView: View {
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .fill(
                                     tab.isSelected(model.traceFilter)
-                                        ? AuspexPalette.bg3
+                                        ? AuspexPalette.selection
                                         : .clear
                                 )
                         )

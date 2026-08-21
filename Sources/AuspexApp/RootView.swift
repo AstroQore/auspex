@@ -12,10 +12,10 @@ import UserNotifications
 /// persists its own column widths between launches, so a person who drags the
 /// trace wider gets it back tomorrow.
 ///
-/// The window is dark, always. `.preferredColorScheme(.dark)` is set at the
-/// root rather than per view so that popovers, menus, and the search field's
-/// own chrome — none of which inherit a background colour — inherit the
-/// appearance instead.
+/// The window follows the Mac unless a person said otherwise, and the choice
+/// is applied at the root rather than per view so that popovers, menus, and
+/// the search field's own chrome — none of which inherit a background colour —
+/// inherit the appearance instead. See `AppearanceMode`.
 struct RootView: View {
     @Environment(AppEnvironment.self) private var environment
     @State private var section: BoardSection? = .live
@@ -54,7 +54,8 @@ struct RootView: View {
                 model: model,
                 projects: environment.projects,
                 tasks: environment.tasks,
-                mode: environment.mode
+                mode: environment.mode,
+                isTranslucent: environment.catalog.translucentSidebar
             )
         } content: {
             boardColumn(model: model)
@@ -62,7 +63,7 @@ struct RootView: View {
             SessionTraceView(model: model)
                 .navigationSplitViewColumnWidth(min: 360, ideal: 420)
         }
-        .preferredColorScheme(.dark)
+        .auspexAppearance(environment.catalog.appearance)
         .environment(clock)
         .sheet(item: $environment.ignoreDraft) { draft in
             IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
@@ -244,15 +245,29 @@ extension SidebarColumns {
 /// that mean four different things when clicked — a destination *navigates*, a
 /// project *filters the wall*, a checkout only opens, a session *selects a
 /// card*. Drawing the rows makes those behaviours explicit, and it lets the
-/// column carry the board's own chrome — flat ground, 28 pt rows, a 7 pt
-/// selection — instead of the system's translucent sidebar material, which
-/// would be the one surface in the window that is not Signal Room.
+/// column carry the board's own chrome — 28 pt rows, a 7 pt selection in the
+/// app's accent — whatever it is standing on.
+///
+/// ## What it is standing on
+///
+/// The rows are the app's; the ground under them is the system's, by default.
+/// `NSVisualEffectView`'s sidebar material is the most native thing a Mac
+/// sidebar can be — it picks up what is behind the window and drains when the
+/// window loses key, which is how a person tells at a glance which of two
+/// boards is in front — and everything drawn over it is opaque, so nothing
+/// that has to be read is being read through a blur. Somebody running a wall
+/// of these on a second display switches it off in Settings → Appearance and
+/// gets the board's own flat canvas instead.
 struct SidebarView: View {
     @Binding var section: BoardSection?
     @Bindable var model: LiveBoardModel
     let projects: ProjectsModel
     let tasks: TasksModel
     let mode: AppEnvironment.Mode
+    /// Whether the column sits on the system's sidebar material. `false` in
+    /// the offscreen renderers, which have no window behind which a material
+    /// could sample anything and would draw it as a flat grey rectangle.
+    var isTranslucent = false
 
     var body: some View {
         // Read, never built: the tree is rebuilt once per applied frame by the
@@ -335,7 +350,7 @@ struct SidebarView: View {
         .padding(.top, 12)
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(AuspexPalette.canvas)
+        .background(SidebarBackground(isTranslucent: isTranslucent))
         .auspexControlFocus()
         // Draggable, and further than it used to be. 180 is where a project
         // name and its live badge still both fit — the tree truncates in the
@@ -455,7 +470,7 @@ struct SidebarRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isSelected ? AuspexPalette.bg3 : .clear)
+                    .fill(isSelected ? AuspexPalette.selection : .clear)
             )
             .contentShape(Rectangle())
         }
@@ -620,7 +635,7 @@ struct SearchResultsView: View {
         }
         .frame(maxWidth: 560)
         .panelChrome()
-        .shadow(color: .black.opacity(0.5), radius: 24, y: 10)
+        .shadow(color: AuspexPalette.shade, radius: 24, y: 10)
     }
 
     private var header: some View {

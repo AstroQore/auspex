@@ -374,7 +374,7 @@ struct TrajectoryTimelineView: View {
         .padding(.vertical, 7)
         .frame(maxWidth: 300, alignment: .leading)
         .panelChrome(cornerRadius: 8)
-        .shadow(color: .black.opacity(0.45), radius: 12, y: 4)
+        .shadow(color: AuspexPalette.shade, radius: 12, y: 4)
         .fixedSize(horizontal: false, vertical: true)
         .offset(x: min(max(0, hoverPoint.x - 40), max(0, size.width - 300)), y: Self.plotHeight + 2)
         .allowsHitTesting(false)

@@ -15,10 +15,13 @@ import SwiftUI
 ///
 /// So the ring is replaced rather than merely removed. The three columns of
 /// the window switch the system effect off wholesale — see
-/// ``SwiftUI/View/auspexControlFocus()`` — and this style puts a 1 pt `line2`
-/// hairline back on whichever control keyboard focus is actually on. Focus
-/// still moves, tab order still works, and what a keyboard user sees is the
-/// board's own hairline instead of AppKit's ring.
+/// ``SwiftUI/View/auspexControlFocus()`` — and this style puts a 1 pt ring in
+/// the app's own accent back on whichever control keyboard focus is actually
+/// on. Focus still moves, tab order still works, and what a keyboard user sees
+/// is the one colour in this window that means "this is the thing you picked"
+/// rather than AppKit's system-accent ring, which is whatever hue somebody set
+/// in System Settings and therefore the one colour here that is not part of
+/// the design.
 ///
 /// ## Why the radius is a parameter
 ///
@@ -51,7 +54,7 @@ struct AuspexButtonStyle: ButtonStyle {
             label.overlay {
                 if isFocused {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .strokeBorder(AuspexPalette.line2, lineWidth: 1)
+                        .strokeBorder(AuspexPalette.accent, lineWidth: 1)
                 }
             }
         }

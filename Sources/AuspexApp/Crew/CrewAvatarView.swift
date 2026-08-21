@@ -39,19 +39,22 @@ struct CrewAvatarView: View {
     /// cosine per card and no animation transaction at all.
     var glowStrength: Double = 1
 
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         Canvas(opaque: false, rendersAsynchronously: false) { context, size in
             draw(in: &context, size: size)
         }
-        .shadow(
-            color: glow?.opacity(0.30 + 0.35 * glowStrength) ?? .clear,
-            radius: 10 + 7 * glowStrength
-        )
-        .shadow(
-            color: glow?.opacity(0.45 + 0.30 * glowStrength) ?? .clear,
-            radius: 2 + 2.5 * glowStrength
-        )
+        .shadow(color: halo(0.30 + 0.35 * glowStrength), radius: 10 + 7 * glowStrength)
+        .shadow(color: halo(0.45 + 0.30 * glowStrength), radius: 2 + 2.5 * glowStrength)
         .accessibilityHidden(true)
+    }
+
+    /// The halo at one strength, in the appearance it is drawn in. A wall of
+    /// haloes tuned for charcoal reads as smudges on white — see
+    /// ``AuspexPalette/glow(_:_:)``.
+    private func halo(_ alpha: Double) -> Color {
+        glow?.opacity(AuspexPalette.glow(alpha, colorScheme)) ?? .clear
     }
 
     private func draw(in context: inout GraphicsContext, size: CGSize) {

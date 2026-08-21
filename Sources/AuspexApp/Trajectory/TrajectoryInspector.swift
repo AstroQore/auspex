@@ -86,7 +86,7 @@ struct TrajectoryInspector: View {
                         .frame(height: 22)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(model.tab == tab ? AuspexPalette.bg3 : .clear)
+                                .fill(model.tab == tab ? AuspexPalette.selection : .clear)
                         )
                         .contentShape(Rectangle())
                 }

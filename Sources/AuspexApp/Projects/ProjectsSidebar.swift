@@ -175,7 +175,7 @@ private struct TreeRow<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(isLit ? AuspexPalette.bg3 : .clear)
+                        .fill(isLit ? AuspexPalette.selection : .clear)
                 )
                 .contentShape(Rectangle())
         }

@@ -85,7 +85,7 @@ struct PanelChrome: ViewModifier {
 
     private var borderColor: Color {
         if isHighlighted { return highlightColor.opacity(0.45) }
-        if isSelected { return AuspexPalette.text.opacity(0.35) }
+        if isSelected { return AuspexPalette.accent }
         return AuspexPalette.line
     }
 }
@@ -103,6 +103,13 @@ struct PanelChrome: ViewModifier {
 ///
 /// So the breath is in the *colour*, which is a paint change and nothing else,
 /// and only the cards that are actually shouting pay for it.
+///
+/// ## And it is weaker in light
+///
+/// A glow is light spilling from a lit thing, and there is far less to spill
+/// onto when the ground is already white — see ``AuspexPalette/glow(_:_:)``.
+/// The breath's two ends both scale, so an asking card still pulses; it
+/// pulses between two quieter alphas.
 private struct ConditionalGlow: ViewModifier {
     let isOn: Bool
     var breathes = false
@@ -110,17 +117,27 @@ private struct ConditionalGlow: ViewModifier {
     @State private var isDim = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @Environment(\.colorScheme) private var colorScheme
+
     func body(content: Content) -> some View {
         if isOn, breathes, !reduceMotion {
             content
-                .shadow(color: color.opacity(isDim ? 0.10 : 0.34), radius: 14)
+                .shadow(
+                    color: color.opacity(
+                        AuspexPalette.glow(isDim ? 0.10 : 0.34, colorScheme)
+                    ),
+                    radius: 14
+                )
                 .animation(
                     .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
                     value: isDim
                 )
                 .onAppear { isDim = true }
         } else if isOn {
-            content.shadow(color: color.opacity(0.22), radius: 14)
+            content.shadow(
+                color: color.opacity(AuspexPalette.glow(0.22, colorScheme)),
+                radius: 14
+            )
         } else {
             content
         }
@@ -257,7 +274,7 @@ struct SegmentedPicker<Value: Hashable>: View {
                         .frame(height: 24)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(isOn ? AuspexPalette.bg3 : .clear)
+                                .fill(isOn ? AuspexPalette.selection : .clear)
                         )
                         .contentShape(Rectangle())
                 }

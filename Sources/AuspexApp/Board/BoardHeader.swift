@@ -203,7 +203,7 @@ struct BoardHeader: View {
             .frame(height: 28)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(model.showsIgnored ? AuspexPalette.bg3 : AuspexPalette.bg1)
+                    .fill(model.showsIgnored ? AuspexPalette.selection : AuspexPalette.bg1)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .strokeBorder(AuspexPalette.line, lineWidth: 1)
@@ -366,7 +366,7 @@ struct SummaryChips: View {
                     .frame(height: 22)
                     .background(
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(isOn ? AuspexPalette.bg3 : .clear)
+                            .fill(isOn ? AuspexPalette.selection : .clear)
                     )
                     .contentShape(Rectangle())
                 }

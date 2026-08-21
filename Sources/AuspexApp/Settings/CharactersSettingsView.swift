@@ -31,6 +31,8 @@ struct AuspexSettingsView: View {
                 )
                 .tabItem { Label("Agents", systemImage: "point.3.connected.trianglepath.dotted") }
             }
+            AppearanceSettingsView(catalog: catalog)
+                .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
             CharactersSettingsView(library: library)
                 .tabItem { Label("Characters", systemImage: "person.and.background.dotted") }
             SceneSettingsView(catalog: catalog)

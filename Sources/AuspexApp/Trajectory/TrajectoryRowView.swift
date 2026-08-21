@@ -99,7 +99,7 @@ struct TrajectoryRowView: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? AuspexPalette.bg3 : .clear)
+                .fill(isSelected ? AuspexPalette.selection : .clear)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)

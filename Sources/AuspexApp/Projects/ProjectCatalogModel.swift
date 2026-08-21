@@ -243,6 +243,33 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - The appearance
+
+    /// Which appearance the window is drawn in.
+    var appearance: AppearanceMode { settings.appearance }
+
+    /// Sets it, and remembers it.
+    ///
+    /// Nothing is rebuilt: every colour in the app is a dynamic `NSColor`, so
+    /// the change is a repaint that SwiftUI, Core Animation and SpriteKit each
+    /// do for themselves the moment the window's appearance changes. The two
+    /// places that cannot — a baked grid tile and a `CALayer`'s background —
+    /// watch their view's `effectiveAppearance` and rebuild there.
+    func setAppearance(_ mode: AppearanceMode) {
+        guard settings.appearance != mode else { return }
+        settings.appearance = mode
+        persist()
+    }
+
+    /// Whether the sidebar sits on the system's sidebar material.
+    var translucentSidebar: Bool { settings.translucentSidebar }
+
+    func setTranslucentSidebar(_ on: Bool) {
+        guard settings.translucentSidebar != on else { return }
+        settings.translucentSidebar = on
+        persist()
+    }
+
     // MARK: - Importing
 
     /// Reads every harness registry, off the main actor.

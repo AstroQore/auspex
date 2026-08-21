@@ -39,7 +39,6 @@ struct SetupSheet: View {
         }
         .frame(width: 640, height: 560)
         .background(AuspexPalette.bg0)
-        .preferredColorScheme(.dark)
     }
 
     private var header: some View {

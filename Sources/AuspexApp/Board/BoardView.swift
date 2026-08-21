@@ -278,7 +278,7 @@ struct EndedSessionRow: View, Equatable {
         }
         .padding(.horizontal, 12)
         .frame(height: 28)
-        .background(isSelected ? AuspexPalette.bg3 : .clear)
+        .background(isSelected ? AuspexPalette.selection : .clear)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
