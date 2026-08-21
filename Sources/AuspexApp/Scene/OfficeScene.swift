@@ -291,6 +291,12 @@ final class OfficeScene: SKScene {
     /// The desk the pointer is on. For the tests that stand in for a hand.
     var hoveredSlotID: String? { hovered?.slotID }
 
+    /// How many delegation arcs are drawn. Likewise.
+    var drawnArcCount: Int { director.arcCount }
+
+    /// Whether a session has walked out of its company's door. Likewise.
+    func hasDeparted(_ key: SessionKey) -> Bool { director.hasDeparted(key) }
+
     // MARK: - The clock
 
     /// Everything that has to happen because the camera moved.

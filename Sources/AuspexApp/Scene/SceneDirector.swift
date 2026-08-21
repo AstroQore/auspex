@@ -502,6 +502,13 @@ final class SceneDirector {
     /// The most arcs one picture is allowed.
     static let arcLimit = 6
 
+    /// How many delegation arcs are on the map right now. For the tests that
+    /// stand in for a pair of eyes.
+    var arcCount: Int { tethers.count }
+
+    /// Whether `key` has walked out of its company's door. Likewise.
+    func hasDeparted(_ key: SessionKey) -> Bool { departed.contains(key) }
+
     // MARK: Content
 
     private func syncContent(sessions: [SessionKey: SessionSnapshot]) {

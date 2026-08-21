@@ -281,4 +281,66 @@ struct SceneZoneViewTests {
             #expect(frame.place(of: seat.session!)?.id == seat.id)
         }
     }
+
+    // MARK: Leaving, and the arcs
+
+    @Test("An ended session is gone from the map the scene draws")
+    func endedCharactersLeave() throws {
+        let (_, scene) = Self.scene()
+        let board = SceneSnapshotRenderer.demoBoard(elapsed: Self.elapsed)
+        // Not the ones holding a receipt: a session that reported finishing is
+        // waiting to be *read*, and the process exiting does not un-write the
+        // line somebody still has to look at. Those sit on the bench.
+        let attention = SceneSnapshotRenderer.demoAttention(board)
+        let over = board.sessions.filter {
+            $0.state.isEnded && !(attention[$0.key]?.isSignalling ?? false)
+        }
+        #expect(!over.isEmpty, "the demo has to have some for this to mean anything")
+
+        // Nobody is standing at a door: a character that reached one has left,
+        // and in a still — Reduce Motion, no walking — it reached one at once.
+        for session in over {
+            #expect(scene.hasDeparted(session.key))
+            #expect(scene.map.place(of: session.key) == nil)
+        }
+        #expect(scene.map.seats.allSatisfy { $0.kind != .gate || $0.session == nil })
+        // And the desks they were holding went with them.
+        for session in over { #expect(scene.map.slot(for: session.key) == nil) }
+    }
+
+    @Test("The scene draws no arcs until somebody is looking at a family")
+    func arcsAreDrawnForOneFamily() throws {
+        let (_, scene) = Self.scene()
+        // At rest the room has no lines across it at all.
+        #expect(scene.drawnArcCount == 0)
+
+        let board = SceneSnapshotRenderer.demoBoard(elapsed: Self.elapsed)
+        let head = try #require(scene.map.tables.first { $0.head != nil }?.head)
+        let family = scene.map.arcs(focus: head)
+        #expect(!family.isEmpty)
+
+        scene.update(
+            board: board,
+            selected: head,
+            focusedProject: nil,
+            reduceMotion: true,
+            theme: SceneTheme.resolved(for: NSAppearance(named: .darkAqua) ?? NSAppearance()),
+            zones: .all,
+            attention: SceneSnapshotRenderer.demoAttention(board)
+        )
+        #expect(scene.drawnArcCount == family.count)
+        #expect(scene.drawnArcCount <= SceneDirector.arcLimit)
+
+        // Letting go of it puts the room back the way it was.
+        scene.update(
+            board: board,
+            selected: nil,
+            focusedProject: nil,
+            reduceMotion: true,
+            theme: SceneTheme.resolved(for: NSAppearance(named: .darkAqua) ?? NSAppearance()),
+            zones: .all,
+            attention: SceneSnapshotRenderer.demoAttention(board)
+        )
+        #expect(scene.drawnArcCount == 0)
+    }
 }
