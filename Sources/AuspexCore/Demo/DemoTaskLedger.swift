@@ -132,7 +132,7 @@ public enum DemoTaskLedger {
         // whole of what used to land in "Unfiled".
         _ = try ledger.createTask(
             title: "Sanitize argv before it reaches a log line",
-            body: "cursor-agent passes --api-key in argv; strip it at the boundary.",
+            body: "A harness that takes a credential flag in argv; strip it at the boundary.",
             projectKey: auspex, createdBy: key(11), source: "mcp",
             now: now.addingTimeInterval(-900)
         )
