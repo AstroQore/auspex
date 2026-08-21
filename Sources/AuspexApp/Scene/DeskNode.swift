@@ -91,6 +91,8 @@ final class DeskNode: SKNode {
         var isAway: Bool
         var scale: CGFloat
         var reduceMotion: Bool
+        /// How many sessions this one delegated to.
+        var childCount: Int
     }
 
     /// What a place is made of.
@@ -161,6 +163,14 @@ final class DeskNode: SKNode {
     private let glowHolder = SKNode()
     private let paper = SKSpriteNode()
     private let bubble = SKSpriteNode()
+    /// `↳ N`: how many sessions this one handed work to.
+    ///
+    /// The arcs stopped being drawn all at once (see
+    /// ``SceneFrame/arcs(focus:limit:)``) and this is half of what replaced
+    /// them — the count a reader was going to make by following lines, written
+    /// down. The other half is that the children are sitting round this
+    /// session's table.
+    private let delegation = SKLabelNode()
     /// The bench or the blanket a garden seat is, and the laptop a table seat
     /// has. `nil` for a place that needs neither.
     private var seatProp: SKSpriteNode?
@@ -241,6 +251,15 @@ final class DeskNode: SKNode {
         bubble.zPosition = 9
         bubble.isHidden = true
 
+        // The delegation badge sits on the far corner of the desk, away from
+        // the bubble over the agent's head, because the two say different
+        // things and a session that is delegating *and* blocked shows both.
+        delegation.horizontalAlignmentMode = .right
+        delegation.verticalAlignmentMode = .center
+        delegation.position = CGPoint(x: 46, y: 58)
+        delegation.zPosition = 9
+        delegation.isHidden = true
+
         ring.strokeColor = theme.textSecondary
         ring.lineWidth = 1.5
         ring.fillColor = .clear
@@ -257,6 +276,7 @@ final class DeskNode: SKNode {
         addChild(monitor)
         addChild(mark)
         addChild(bubble)
+        addChild(delegation)
         addChild(ring)
         addChild(nameplate)
 
@@ -370,6 +390,7 @@ final class DeskNode: SKNode {
         session: SessionSnapshot?,
         seat: SceneSeatKind = .desk,
         isAway: Bool = false,
+        childCount: Int = 0,
         scale: CGFloat,
         theme: SceneTheme,
         reduceMotion: Bool
@@ -384,7 +405,8 @@ final class DeskNode: SKNode {
             isVacant: session == nil,
             isAway: isAway,
             scale: scale,
-            reduceMotion: reduceMotion
+            reduceMotion: reduceMotion,
+            childCount: childCount
         )
         sessionKey = session?.key
         guard look != next || self.theme.id != theme.id else { return }
@@ -398,6 +420,25 @@ final class DeskNode: SKNode {
         applyDesk(look: next)
         applyScreen(session: session, look: next)
         applyBubble(look: next)
+        applyDelegationBadge(look: next)
+    }
+
+    /// Writes `↳ N` on the desk of a session that delegated, or takes it off.
+    ///
+    /// Only where the person actually is: a badge on a desk somebody has
+    /// walked away from would be counting a family that is sitting in the next
+    /// room, which the table already shows.
+    private func applyDelegationBadge(look: Look) {
+        guard look.childCount > 0, !look.isVacant, !look.isAway, !look.isEnded else {
+            delegation.isHidden = true
+            return
+        }
+        delegation.isHidden = false
+        delegation.attributedText = SceneText.mono(
+            "↳\(look.childCount)",
+            size: 10,
+            color: theme.color(for: .delegating(children: look.childCount))
+        )
     }
 
     private func applyAgent(session: SessionSnapshot?, look: Look) {

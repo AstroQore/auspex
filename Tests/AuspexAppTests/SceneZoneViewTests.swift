@@ -49,15 +49,15 @@ struct SceneZoneViewTests {
         return (view, scene)
     }
 
-    /// The same map the scene laid out, so a test can point at a bench.
+    /// The map the scene is actually drawing.
+    ///
+    /// Read off the scene rather than derived from a fresh ``SceneLayout``,
+    /// because the two are no longer the same picture: the scene knows who has
+    /// already walked out of a door and a fresh layout does not, so a test that
+    /// pointed at a bench derived without that would be pointing at a bench the
+    /// scene does not have.
     private static func map(zones: SceneZoneOptions = .all) -> SceneFrame {
-        var layout = SceneLayout()
-        let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
-        return layout.update(
-            with: board,
-            zones: zones,
-            attention: SceneSnapshotRenderer.demoAttention(board)
-        )
+        scene(zones: zones).1.map
     }
 
     // MARK: The demo really covers it
@@ -66,23 +66,32 @@ struct SceneZoneViewTests {
     func demoCoversTheWholeVocabulary() throws {
         let frame = Self.map()
 
-        // A delegating family of three at one table.
-        let table = try #require(frame.tables.first)
-        #expect(frame.tables.count == 1)
+        // A delegating family of three at one table. There are other tables:
+        // a company of three has a meeting room whether or not it is using it.
+        let table = try #require(frame.tables.first { $0.head != nil })
+        #expect(frame.tables.count(where: { $0.head != nil }) == 1)
+        #expect(frame.tables.contains { $0.head == nil })
         #expect(table.seatCount >= 2)
         let atTheTable = frame.seats.filter { $0.tableID == table.id && $0.session != nil }
         #expect(atTheTable.count == 3)
         #expect(atTheTable.filter { $0.kind == .tableHead }.count == 1)
 
-        // The garden's five ways of not being at a desk: the front row's two,
-        // and the back lawn's three.
+        // The break rooms' four ways of not being at a desk: the front row's
+        // two, and the back of the room's two. The fifth — walking out — is
+        // not in a still: a session that reached the door has left, which is
+        // the whole point of the door.
         let kinds = Set(frame.seats.filter { $0.session != nil }.map(\.kind))
         #expect(kinds.contains(.call))
         #expect(kinds.contains(.note))
         #expect(kinds.contains(.bench))
         #expect(kinds.contains(.doze))
-        #expect(kinds.contains(.gate))
-        #expect(frame.gate != nil)
+        #expect(!kinds.contains(.gate))
+        #expect(!frame.doors.isEmpty)
+
+        // And every company gets one of the three kinds of break room, more
+        // than one kind between them.
+        let rooms = Set(frame.zones.compactMap(\.breakKind))
+        #expect(rooms.count >= 2)
     }
 
     @Test("Everybody in an annex still holds the desk they walked away from")
@@ -116,12 +125,18 @@ struct SceneZoneViewTests {
             #expect(frame.slot(for: session.key)?.isAway == true)
         }
 
-        // The front row runs below the back lawn, along the walkway: it is the
-        // last thing between the reader and the path.
-        let waiting = frame.seats.filter { $0.kind.isWaitingBench }
-        let lawn = frame.seats.filter { $0.kind.isGardenRest }
-        if let lowestLawn = lawn.map(\.anchor.y).max(), let front = waiting.map(\.anchor.y).min() {
-            #expect(front > lowestLawn)
+        // The front row runs below the back of the room, along the corridor: it
+        // is the last thing between the reader and the door. Per suite, because
+        // there is a break room per company and comparing one company's bench
+        // with another's is comparing two different rooms.
+        for floor in frame.floors {
+            let here = frame.seats.filter { $0.floorIndex == floor.index }
+            let waiting = here.filter { $0.kind.isWaitingBench }
+            let rest = here.filter { $0.kind.isBreakRest }
+            guard let deepest = rest.map(\.anchor.y).max(),
+                  let front = waiting.map(\.anchor.y).min()
+            else { continue }
+            #expect(front > deepest)
         }
     }
 
@@ -170,8 +185,8 @@ struct SceneZoneViewTests {
 
     // MARK: Switching them off
 
-    @Test("With the annexes off the map is the office and nothing else")
-    func annexesOffIsTheOffice() {
+    @Test("With the other rooms off a suite is its desks and nothing else")
+    func roomsOffIsTheOffice() throws {
         let full = Self.map()
         let office = Self.map(zones: .officeOnly)
 
@@ -179,11 +194,34 @@ struct SceneZoneViewTests {
         #expect(office.seats.isEmpty)
         #expect(office.tables.isEmpty)
         for slot in office.slots { #expect(!slot.isAway) }
-        // The desks did not move to make room for the annexes, and did not
-        // move back when they went away.
-        #expect(full.slots.map(\.anchor) == office.slots.map(\.anchor))
-        #expect(full.floors.map(\.frame) == office.floors.map(\.frame))
-        // The map is taller with them and no taller without.
+        // A suite with no other rooms *is* its desks.
+        for floor in office.floors { #expect(floor.suite == floor.frame) }
+
+        // The desks did not move inside their own company to make room for the
+        // rooms below them. Where the companies themselves land on the campus
+        // does change — a suite with a meeting room in it is a taller building,
+        // and taller buildings shelve differently — which is a fact about the
+        // campus rather than about any project's room.
+        // Matched by project rather than by allocation index: with the rooms
+        // on, the sessions that walked out of a door released their suites,
+        // and a released suite is reused by whoever comes next.
+        var compared = 0
+        for room in office.floors {
+            let candidates = full.floors.filter { $0.projectKey == room.projectKey }
+            guard candidates.count == 1,
+                  office.floors.count(where: { $0.projectKey == room.projectKey }) == 1,
+                  let same = candidates.first
+            else { continue }
+            compared += 1
+            #expect(same.frame.size == room.frame.size)
+            let before = office.slots.filter { $0.floorIndex == room.index }
+                .map { CGPoint(x: $0.anchor.x - room.frame.minX, y: $0.anchor.y - room.frame.minY) }
+            let after = full.slots.filter { $0.floorIndex == same.index }
+                .map { CGPoint(x: $0.anchor.x - same.frame.minX, y: $0.anchor.y - same.frame.minY) }
+            #expect(before == after)
+        }
+        #expect(compared >= 3, "the demo has to have that many projects for this to mean anything")
+        // The map is taller with the rooms and no taller without.
         #expect(full.contentRect.height > office.contentRect.height)
     }
 
@@ -210,8 +248,8 @@ struct SceneZoneViewTests {
             from: desk.anchor,
             to: seat.anchor,
             lanes: (
-                departure: frame.walkways.lane(.office),
-                arrival: frame.walkways.lane(.garden)
+                departure: frame.walkways.lane(floor: desk.floorIndex),
+                arrival: frame.walkways.lane(floor: seat.floorIndex)
             ),
             trunk: frame.walkways.trunk
         )

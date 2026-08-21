@@ -63,6 +63,28 @@ final class SceneDirector {
 
     private var theme: SceneTheme
     private var selected: SessionKey?
+    /// The session the pointer is over. Together with the selection it is what
+    /// decides which family's delegation arcs are drawn — see
+    /// ``SceneFrame/arcs(focus:limit:)``.
+    private var hovered: SessionKey?
+
+    /// Who the arcs are for: what the pointer is over, or failing that what is
+    /// selected. Hover wins because it is the more recent statement of intent
+    /// and it is the one that costs nothing to change your mind about.
+    private var arcFocus: SessionKey? { hovered ?? selected }
+
+    /// Sessions that have finished walking out of their company's door.
+    ///
+    /// Held here rather than in the layout because *when* somebody has left is
+    /// a fact about an animation finishing, not about a board: the layout is
+    /// pure and has no idea how long a walk takes. Passing the set back into it
+    /// is what makes a departure real — the desk is released, the queue place
+    /// is released, and the suite shrinks back.
+    private var departed: Set<SessionKey> = []
+    /// The last board, so a departure can re-lay the map out without waiting
+    /// for the pipeline to send another frame.
+    private var lastBoard: BoardSnapshot?
+    private var lastAttention: [SessionKey: AttentionState] = [:]
 
     /// The rect the last cull was computed for, so a camera that has not moved
     /// costs nothing.
@@ -118,11 +140,13 @@ final class SceneDirector {
         for node in floors.values { node.removeFromParent() }
         for node in zones.values { node.removeFromParent() }
         for node in tables.values { node.removeFromParent() }
+        for node in tethers.values { node.removeFromParent() }
         for node in walkers.values { node.removeFromParent() }
         desks.removeAll()
         floors.removeAll()
         zones.removeAll()
         tables.removeAll()
+        tethers.removeAll()
         walkers.removeAll()
         lastPlace.removeAll()
         deskBySession.removeAll()
@@ -145,11 +169,43 @@ final class SceneDirector {
 
     /// Brings the scene up to date with one board frame.
     ///
+    /// Twice at most: once to lay the board out, and — when that pass finds
+    /// somebody standing at a door with nobody carrying them — once more
+    /// without them. A session that has walked out is gone from the map on the
+    /// same frame it arrives, rather than a pipeline tick later, which is the
+    /// difference between a door and a waiting room.
+    ///
     /// - Returns: `true` when the layout changed, so the camera knows whether
     ///   its bounds are still valid.
     @discardableResult
     func apply(_ board: BoardSnapshot, attention: [SessionKey: AttentionState] = [:]) -> Bool {
-        let next = layout.update(with: board, zones: options, attention: attention)
+        lastBoard = board
+        lastAttention = attention
+        // Somebody who has left the board is not "departed", they are simply
+        // not here; keeping them would leak a key per finished session.
+        let present = Set(board.sessions.map(\.key))
+        departed.formIntersection(present)
+
+        var moved = applyOnce(board, attention: attention)
+        if collectDepartures() {
+            moved = applyOnce(board, attention: attention) || moved
+        }
+        return moved
+    }
+
+    /// Re-lays the last board out, for a walk that finished between frames.
+    private func refresh() {
+        guard let board = lastBoard else { return }
+        _ = applyOnce(board, attention: lastAttention)
+    }
+
+    @discardableResult
+    private func applyOnce(
+        _ board: BoardSnapshot, attention: [SessionKey: AttentionState]
+    ) -> Bool {
+        let next = layout.update(
+            with: board, zones: options, attention: attention, departed: departed
+        )
         let moved = next != frame
         frame = next
 
@@ -160,7 +216,7 @@ final class SceneDirector {
 
         if moved {
             syncDesks()
-            syncTethers()
+            syncArcs()
             hitIndex = SceneHitIndex(
                 frame: frame,
                 deskSize: DeskNode.hitSize,
@@ -186,21 +242,49 @@ final class SceneDirector {
         return moved
     }
 
-    // MARK: The annexes
+    // MARK: Leaving
+
+    /// Notices everybody who has arrived at their company's door, and takes
+    /// them off the map.
+    ///
+    /// ## Why "at a door with no walker" is the whole rule
+    ///
+    /// The bug this replaces was a session that ended, walked to the gate, and
+    /// then stayed there for the rest of the day — a queue of people
+    /// perpetually about to leave. The fix is not a timer: it is noticing that
+    /// a character at a door is either *being carried there by a walk* or has
+    /// already arrived, and there is no third case. So one test covers all
+    /// four ways of getting there: the walk finished, the walk was never worth
+    /// animating because the door is off screen, Reduce Motion is on and there
+    /// is no walking at all, or the session was already over the first time
+    /// the map saw it.
+    ///
+    /// - Returns: whether anybody left, and so whether the map has to be laid
+    ///   out again without them.
+    private func collectDepartures() -> Bool {
+        var left = false
+        for seat in frame.seats where seat.kind == .gate {
+            guard let key = seat.session, walkers[key] == nil else { continue }
+            if departed.insert(key).inserted { left = true }
+        }
+        return left
+    }
+
+    // MARK: The other rooms
 
     private func syncZones() {
         var live: Set<String> = []
         for area in frame.zones {
             live.insert(area.id)
             let node = zones[area.id] ?? {
-                let created = ZoneNode(zone: area.zone, theme: theme)
+                let created = ZoneNode(zone: area.zone, breakKind: area.breakKind, theme: theme)
                 zones[area.id] = created
                 floorLayer.addChild(created)
                 return created
             }()
             node.update(
                 area: area,
-                gate: frame.gate,
+                door: area.door,
                 metrics: frame.metrics,
                 theme: theme
             )
@@ -222,7 +306,7 @@ final class SceneDirector {
             }()
             node.update(
                 table: table,
-                state: sessions[table.head]?.state,
+                state: table.head.flatMap { sessions[$0]?.state },
                 metrics: frame.metrics,
                 theme: theme,
                 reduceMotion: reduceMotion
@@ -381,12 +465,28 @@ final class SceneDirector {
 
     // MARK: Tethers
 
-    private func syncTethers() {
+    /// Draws the delegation arcs of the one family the reader is looking at.
+    ///
+    /// ## Why the room is not full of lines any more
+    ///
+    /// Every delegation on the board is still in ``SceneFrame/tethers``, and
+    /// on a busy afternoon that is forty of them. Drawn all at once they stop
+    /// being relationships and become a mesh — no arc can be followed from one
+    /// end to the other, and the picture says "there is a lot going on", which
+    /// the colours said already.
+    ///
+    /// What replaces them is not less information, it is the same information
+    /// as furniture: a delegating session's children sit *around its table*,
+    /// and its desk carries a `↳ N` badge. The arcs come back for the family
+    /// under the pointer, at most six of them, which is about as many lines as
+    /// can cross a room and still be read.
+    private func syncArcs() {
         var live: Set<String> = []
-        for tether in frame.tethers {
+        for tether in frame.arcs(focus: arcFocus, limit: Self.arcLimit) {
             live.insert(tether.id)
             let node = tethers[tether.id] ?? {
                 let created = TetherNode(theme: theme)
+                created.setCameraScale(lastCameraScale)
                 tethers[tether.id] = created
                 tetherLayer.addChild(created)
                 return created
@@ -399,6 +499,9 @@ final class SceneDirector {
         }
     }
 
+    /// The most arcs one picture is allowed.
+    static let arcLimit = 6
+
     // MARK: Content
 
     private func syncContent(sessions: [SessionKey: SessionSnapshot]) {
@@ -409,6 +512,7 @@ final class SceneDirector {
                 session: slot.session.flatMap { sessions[$0] },
                 seat: .desk,
                 isAway: slot.isAway || inTransit,
+                childCount: slot.childCount,
                 scale: slot.scale,
                 theme: theme,
                 reduceMotion: reduceMotion
@@ -422,6 +526,7 @@ final class SceneDirector {
                 session: seat.session.flatMap { sessions[$0] },
                 seat: seat.kind,
                 isAway: inTransit,
+                childCount: seat.childCount,
                 scale: seat.scale,
                 theme: theme,
                 reduceMotion: reduceMotion
@@ -473,7 +578,8 @@ final class SceneDirector {
                 walk: key,
                 harness: session.key.harness,
                 from: start,
-                fromZone: walkers[key] == nil ? was.zone : zone(containing: start),
+                fromSuite: walkers[key] == nil ? was.floorIndex : suite(containing: start)
+                    ?? was.floorIndex,
                 to: place
             )
         }
@@ -486,36 +592,48 @@ final class SceneDirector {
         for slot in frame.slots where slot.session != nil && !slot.isAway {
             guard let key = slot.session else { continue }
             result[key] = SceneFrame.Place(
-                anchor: slot.anchor, scale: slot.scale, kind: .desk, id: slot.id
+                anchor: slot.anchor,
+                scale: slot.scale,
+                kind: .desk,
+                id: slot.id,
+                floorIndex: slot.floorIndex
             )
         }
         for seat in frame.seats {
             guard let key = seat.session else { continue }
             result[key] = SceneFrame.Place(
-                anchor: seat.anchor, scale: seat.scale, kind: seat.kind, id: seat.id
+                anchor: seat.anchor,
+                scale: seat.scale,
+                kind: seat.kind,
+                id: seat.id,
+                floorIndex: seat.floorIndex
             )
         }
         return result
     }
 
-    /// Which strip a layout point is in, for a walk that starts mid-journey.
-    private func zone(containing point: CGPoint) -> SceneZone {
-        frame.zones.last { $0.frame.contains(point) }?.zone ?? .office
+    /// Which suite a layout point is in, for a walk that starts mid-journey.
+    private func suite(containing point: CGPoint) -> Int? {
+        frame.suite(at: point)?.index
     }
 
     private func begin(
         walk key: SessionKey,
         harness: Harness,
         from: CGPoint,
-        fromZone: SceneZone,
+        fromSuite: Int,
         to place: SceneFrame.Place
     ) {
+        // One corridor per company. A walk inside a suite — a desk to a table,
+        // a table to the break room — is out to it, along it, and in; a walk
+        // between two suites, which only happens when a session's working
+        // directory moves under it, adds a trip down the campus gutter.
         let waypoints = SceneRoute.waypoints(
             from: from,
             to: place.anchor,
             lanes: (
-                departure: frame.walkways.lane(fromZone),
-                arrival: frame.walkways.lane(place.zone)
+                departure: frame.walkways.lane(floor: fromSuite),
+                arrival: frame.walkways.lane(floor: place.floorIndex)
             ),
             trunk: frame.walkways.trunk
         )
@@ -528,7 +646,9 @@ final class SceneDirector {
         // A walk nobody can see is not worth animating. The office already
         // pays only for what is on screen; a walker that crossed a culled
         // corner of the map at thirty frames a second would be the one thing
-        // in the scene whose cost did not depend on the camera.
+        // in the scene whose cost did not depend on the camera. Somebody
+        // heading for a door this way simply leaves — see
+        // ``collectDepartures()``.
         let travelled = SceneGeometry.scene(from: SceneRoute.bounds(of: waypoints))
         if let culledTo, !culledTo.intersects(travelled.insetBy(dx: -40, dy: -40)) {
             walkers.removeValue(forKey: key)?.removeFromParent()
@@ -556,6 +676,16 @@ final class SceneDirector {
             guard let self, let walker, walkers[key] === walker else { return }
             walker.removeFromParent()
             walkers.removeValue(forKey: key)
+            guard place.kind != .gate else {
+                // Somebody who reached the door has left the company. Laying
+                // the map out again here rather than on the next pipeline tick
+                // is what makes leaving look like leaving: the character is
+                // gone the moment it steps through, and the desk it held goes
+                // with it.
+                departed.insert(key)
+                refresh()
+                return
+            }
             // The person has arrived; the seat can draw them now.
             syncContent(sessions: sessions)
         }
@@ -722,8 +852,22 @@ final class SceneDirector {
     /// Rings one desk and unrings the rest.
     func select(_ key: SessionKey?) {
         guard selected != key else { return }
+        let wasFocus = arcFocus
         selected = key
         for (session, node) in deskBySession { node.setSelected(session == key) }
+        if arcFocus != wasFocus { syncArcs() }
+    }
+
+    /// Points the delegation arcs at whoever is under the pointer.
+    ///
+    /// Hovering a desk is the cheapest question a person can ask of this map —
+    /// no click, no state to undo — so it is the one that answers "who did
+    /// this session hand work to".
+    func hover(_ key: SessionKey?) {
+        guard hovered != key else { return }
+        let wasFocus = arcFocus
+        hovered = key
+        if arcFocus != wasFocus { syncArcs() }
     }
 
     /// Passes the camera's zoom to everything that writes words, so that a
@@ -743,6 +887,11 @@ final class SceneDirector {
         for area in frame.zones {
             zones[area.id]?.setCameraScale(scale, width: area.frame.width)
         }
+        // Arcs fade out as the camera pulls back. At the zoom that shows the
+        // whole campus, a line between two desks is a scratch across the
+        // picture: it cannot be followed and it is drawn over the one thing
+        // that still reads at that distance, which is which rooms are lit.
+        for node in tethers.values { node.setCameraScale(scale) }
     }
 
     /// The room or annex `key` is in, when the map has put it in one.
@@ -924,6 +1073,10 @@ private final class FloorNode: SKNode {
 private final class TetherNode: SKShapeNode {
     private var lastFrom: CGPoint = .zero
     private var lastTo: CGPoint = .zero
+    /// How much of the arc the camera's distance leaves. Multiplied into the
+    /// alpha the pulse is running at, so a zoomed-out arc dims rather than
+    /// stopping.
+    private var zoomFade: CGFloat = 1
 
     init(theme: SceneTheme) {
         super.init()
@@ -935,6 +1088,45 @@ private final class TetherNode: SKShapeNode {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("TetherNode is not archived") }
+
+    /// Fades the arc out as the camera pulls back.
+    ///
+    /// A tether is a line between two specific desks, and past about twice the
+    /// natural zoom neither end is a desk any more — it is a scratch drawn
+    /// over the part of the picture that still reads. So it goes, smoothly
+    /// rather than at a threshold, because a line that blinks out at one
+    /// scroll notch is a line somebody thinks they imagined.
+    func setCameraScale(_ scale: CGFloat) {
+        let fade = max(0, min(1, (2.2 - scale) / 0.9))
+        guard abs(fade - zoomFade) > 0.01 else { return }
+        zoomFade = fade
+        isHidden = fade <= 0.01
+        breathe()
+    }
+
+    /// Runs the pulse at whatever the camera's distance has left it.
+    ///
+    /// One place rather than two, because the pulse's targets and the zoom's
+    /// fade multiply, and two call sites each doing half of that is how an arc
+    /// ends up brightening as the reader zooms out.
+    private func breathe() {
+        removeAllActions()
+        guard !isStill else {
+            alpha = 0.8 * zoomFade
+            return
+        }
+        alpha = 0.45 * zoomFade
+        run(
+            .repeatForever(
+                .sequence([
+                    .fadeAlpha(to: 0.95 * zoomFade, duration: 0.55),
+                    .fadeAlpha(to: 0.4 * zoomFade, duration: 0.55)
+                ])
+            )
+        )
+    }
+
+    private var isStill = false
 
     func update(_ tether: SceneTether, reduceMotion: Bool) {
         let from = CGPoint(x: tether.from.x + 26, y: -tether.from.y + 30)
@@ -955,19 +1147,7 @@ private final class TetherNode: SKShapeNode {
         )
         path = line.copy(dashingWithPhase: 0, lengths: [3, 4])
 
-        removeAllActions()
-        guard !reduceMotion else {
-            alpha = 0.8
-            return
-        }
-        alpha = 0.45
-        run(
-            .repeatForever(
-                .sequence([
-                    .fadeAlpha(to: 0.95, duration: 0.55),
-                    .fadeAlpha(to: 0.4, duration: 0.55)
-                ])
-            )
-        )
+        isStill = reduceMotion
+        breathe()
     }
 }

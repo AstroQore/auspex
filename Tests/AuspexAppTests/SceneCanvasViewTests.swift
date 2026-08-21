@@ -52,12 +52,6 @@ struct SceneCanvasViewTests {
         return (view, scene)
     }
 
-    /// The same office the scene laid out, so a test can point at a desk.
-    private static func floorPlan(elapsed: TimeInterval = 16) -> SceneFrame {
-        var layout = SceneLayout()
-        return layout.update(with: SceneSnapshotRenderer.demoBoard(elapsed: elapsed))
-    }
-
     // MARK: - What the platform is allowed to do
 
     @Test("The office hangs on a scroll view that pans and magnifies itself")
@@ -298,7 +292,7 @@ struct SceneCanvasViewTests {
     @Test("Hovering is answered once per drawn frame, however often the pointer moves")
     func hoverIsCoalesced() throws {
         let (_, scene) = Self.canvas()
-        let slot = try #require(Self.floorPlan().slots.first { $0.isOccupied })
+        let slot = try #require(scene.map.slots.first { $0.isOccupied })
         let onTheDesk = CGPoint(x: slot.anchor.x, y: slot.anchor.y - 30 * slot.scale)
 
         // Fifty mouse-moved events between two frames is an ordinary trackpad.
@@ -324,7 +318,7 @@ struct SceneCanvasViewTests {
         scene.onSelect = { selected = .some($0) }
         scene.onFocusProject = { _ in }
 
-        let slot = try #require(Self.floorPlan().slots.first { $0.isOccupied })
+        let slot = try #require(scene.map.slots.first { $0.isOccupied })
         scene.click(
             atLayoutPoint: CGPoint(x: slot.anchor.x, y: slot.anchor.y - 30 * slot.scale),
             clickCount: 1
@@ -344,7 +338,7 @@ struct SceneCanvasViewTests {
         scene.update(CACurrentMediaTime())
         let fitted = scene.viewport.zoom
 
-        let room = try #require(Self.floorPlan().floors.first)
+        let room = try #require(scene.map.floors.first)
         let inside = CGPoint(x: room.frame.midX, y: room.frame.midY)
         scene.smartZoom(atLayoutPoint: inside)
         scene.update(CACurrentMediaTime() + SceneFlight.travelDuration)

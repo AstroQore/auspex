@@ -280,6 +280,14 @@ final class OfficeScene: SKScene {
     /// crops to.
     var contentBounds: CGRect { director.contentRect }
 
+    /// The floor plan this scene is actually drawing.
+    ///
+    /// Not the same thing as running the board through a fresh ``SceneLayout``:
+    /// the scene's copy knows who has already walked out of a door, and a test
+    /// that pointed at a bench derived without that would be pointing at a
+    /// bench this scene does not have.
+    var map: SceneFrame { director.frame }
+
     /// The desk the pointer is on. For the tests that stand in for a hand.
     var hoveredSlotID: String? { hovered?.slotID }
 
@@ -499,12 +507,17 @@ final class OfficeScene: SKScene {
         guard let point = pending else {
             hovered?.setHovered(false)
             hovered = nil
+            director.hover(nil)
             return
         }
         let desk = desk(atLayoutPoint: point)
         guard desk !== hovered else { return }
         hovered?.setHovered(false)
         hovered = desk
+        // Hovering is also what points the delegation arcs at a family — the
+        // cheapest question a person can ask of this map, and the one it
+        // answers with lines.
+        director.hover(desk?.sessionKey)
 
         guard let desk, let key = desk.sessionKey, let session = sessions[key] else { return }
         desk.setCameraScale(cameraController.node.xScale)

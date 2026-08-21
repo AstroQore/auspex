@@ -4,23 +4,29 @@ import AppKit
 import AuspexCore
 import SpriteKit
 
-/// One annex, as a strip of ground with a name on it.
+/// One room of one company's suite, as a strip of ground with a name on it.
 ///
-/// ## Why an annex is not a floor
+/// ## Why a room is not a floor
 ///
-/// ``SceneFloor``'s node draws a project: a panel, a nameplate, and a line
-/// under each row of desks, all of it in the office's own greys. An annex is
-/// somewhere *else* — the point of walking to it is that a glance can tell
-/// where somebody is without reading anything — so it is drawn in its own
-/// ground tone with its own scenery, and the scenery is the tell. Trees mean
-/// nobody down there is working.
+/// ``SceneFloor``'s node draws a project's desks: a panel, a nameplate, and a
+/// line under each row, all of it in the office's own greys. The other rooms
+/// are somewhere *else* — the point of walking to one is that a glance can
+/// tell where somebody is without reading anything — so each is drawn in its
+/// own ground tone with its own furniture, and the furniture is the tell.
+/// Sofas mean nobody in that corner is working.
 ///
-/// The scenery is placed from the strip's own rectangle rather than at random,
-/// which is what makes two renders of one board the same picture. It is also
-/// why there is no `SKTileMapNode` here: a hundred grass tiles is a hundred
-/// nodes for the scene to walk past every frame, and what they would buy over
-/// a filled panel is texture nobody is looking at from the zoom this view is
-/// read at.
+/// Which furniture is a property of the *project*: a company's break room is a
+/// garden, a tea room or a lounge, decided once from the project's own path
+/// and never again (``SceneBreakKind``). That is what makes a suite
+/// recognisable at the zoom where its nameplate is a smudge — the repository
+/// with the sofas is always the same repository.
+///
+/// The furniture is placed from the room's own rectangle rather than at
+/// random, which is what makes two renders of one board the same picture. It
+/// is also why there is no `SKTileMapNode` here: a hundred floor tiles is a
+/// hundred nodes for the scene to walk past every frame, and what they would
+/// buy over a filled panel is texture nobody is looking at from the zoom this
+/// view is read at.
 @MainActor
 final class ZoneNode: SKNode {
     private let ground = SKShapeNode()
@@ -32,15 +38,19 @@ final class ZoneNode: SKNode {
     private let gateSprite = SKSpriteNode()
 
     let zone: SceneZone
+    /// What kind of break room this is, or `nil` for a meeting room.
+    let breakKind: SceneBreakKind?
     private var lastFrame: CGRect = .null
     private var lastGate: CGPoint?
     private var lastSummary: String?
 
-    init(zone: SceneZone, theme: SceneTheme) {
+    init(zone: SceneZone, breakKind: SceneBreakKind?, theme: SceneTheme) {
         self.zone = zone
+        self.breakKind = breakKind
         super.init()
 
-        ground.fillColor = Self.groundColor(zone, theme: theme).withAlphaComponent(0.5)
+        ground.fillColor = Self.groundColor(zone, kind: breakKind, theme: theme)
+            .withAlphaComponent(0.5)
         ground.strokeColor = theme.hairline
         ground.lineWidth = 1
         ground.zPosition = 0
@@ -82,16 +92,16 @@ final class ZoneNode: SKNode {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("ZoneNode is not archived") }
 
-    /// Redraws the strip, and only when its shape actually changed.
+    /// Redraws the room, and only when its shape actually changed.
     func update(
         area: SceneZoneArea,
-        gate: CGPoint?,
+        door: CGPoint?,
         metrics: SceneMetrics,
         theme: SceneTheme
     ) {
-        if area.frame != lastFrame || gate != lastGate {
+        if area.frame != lastFrame || door != lastGate {
             lastFrame = area.frame
-            lastGate = gate
+            lastGate = door
             // Layout space is y-down; the scene is y-up. One flip, here.
             let rect = SceneGeometry.scene(from: area.frame)
             ground.path = CGPath(
@@ -104,10 +114,18 @@ final class ZoneNode: SKNode {
             rule.addLine(to: CGPoint(x: rect.maxX, y: headerY))
             headerRule.path = rule
 
-            let lane = CGMutablePath()
-            lane.move(to: CGPoint(x: rect.minX + 10, y: -area.laneY))
-            lane.addLine(to: CGPoint(x: rect.maxX - 10, y: -area.laneY))
-            path.path = lane
+            // Only the room the corridor actually runs through draws it. One
+            // suite has one corridor along its bottom edge, and a second copy
+            // of it drawn through the meeting room would be a line to nowhere.
+            if area.drawsLane {
+                let lane = CGMutablePath()
+                lane.move(to: CGPoint(x: rect.minX + 10, y: -area.laneY))
+                lane.addLine(to: CGPoint(x: rect.maxX - 10, y: -area.laneY))
+                path.path = lane
+                path.isHidden = false
+            } else {
+                path.isHidden = true
+            }
 
             title.position = CGPoint(
                 x: rect.minX + 12, y: rect.maxY - metrics.floorHeaderHeight / 2
@@ -118,9 +136,9 @@ final class ZoneNode: SKNode {
 
             rebuildScenery(rect: rect, headerY: headerY, theme: theme)
 
-            if let gate, zone == .garden {
-                gateSprite.texture = PlaceholderArt.shared.gate()
-                gateSprite.position = SceneGeometry.scene(from: gate)
+            if let door, zone == .breakArea {
+                gateSprite.texture = PlaceholderArt.shared.doorInner()
+                gateSprite.position = SceneGeometry.scene(from: door)
                 gateSprite.isHidden = false
             } else {
                 gateSprite.isHidden = true
@@ -146,37 +164,126 @@ final class ZoneNode: SKNode {
         }
     }
 
-    /// Trees and hedges, placed from the strip's own rectangle.
+    /// The room's furniture, placed from its own rectangle.
     ///
-    /// Along the top edge only, above the header rule's line of seats, so
-    /// nothing is ever drawn over somebody. Rebuilt only when the strip
-    /// changes shape, which is a handful of times a session.
+    /// Along the top edge only, above the first row of seats, so nothing is
+    /// ever drawn over somebody. Rebuilt only when the room changes shape,
+    /// which is a handful of times a session.
+    ///
+    /// Three rooms rather than one because a company's break room is one of
+    /// three kinds, and the kind is the thing a reader recognises a suite by
+    /// long before they can read its nameplate.
     private func rebuildScenery(rect: CGRect, headerY: CGFloat, theme: SceneTheme) {
         scenery.removeAllChildren()
-        guard zone == .garden, rect.width > 120 else { return }
+        guard zone == .breakArea, rect.width > 120 else { return }
+        switch breakKind ?? .garden {
+        case .garden: buildGarden(rect: rect, headerY: headerY)
+        case .teaRoom: buildTeaRoom(rect: rect, headerY: headerY)
+        case .lounge: buildLounge(rect: rect, headerY: headerY)
+        }
+    }
+
+    /// How far below the header rule the room's back wall stands. Everything
+    /// against that wall shares this floor line, tall or short, which is what
+    /// makes a room read as a room rather than as a row of objects hung from
+    /// the ceiling.
+    private static let wallLine: CGFloat = 52
+
+    /// Adds one sprite standing on a floor line.
+    ///
+    /// `y` is where its *feet* go, not its top: a bookshelf and a coffee table
+    /// standing on the same floor have the same base and different heights,
+    /// and the version of this that aligned tops put the furniture on a shelf.
+    private func prop(
+        _ texture: SKTexture, at x: CGFloat, base: CGFloat, size: CGSize, z: CGFloat = 0
+    ) {
+        let node = SKSpriteNode(texture: texture)
+        node.anchorPoint = CGPoint(x: 0.5, y: 0)
+        node.size = size
+        node.position = CGPoint(x: x, y: base)
+        node.zPosition = z
+        scenery.addChild(node)
+    }
+
+    private func buildGarden(rect: CGRect, headerY: CGFloat) {
         let art = PlaceholderArt.shared
-        let spacing: CGFloat = 132
-        var x = rect.minX + 30
+        let base = headerY - Self.wallLine
+        let spacing: CGFloat = 116
+        var x = rect.minX + 28
         var index = 0
         while x < rect.maxX - 40 {
             let tall = index.isMultiple(of: 3)
-            let tree = SKSpriteNode(texture: art.tree(tall: tall))
-            tree.anchorPoint = CGPoint(x: 0.5, y: 0)
-            tree.size = tall
-                ? CGSize(width: 32, height: 52)
-                : CGSize(width: 32, height: 38)
-            tree.position = CGPoint(x: x, y: headerY - tree.size.height - 2)
-            scenery.addChild(tree)
-
+            prop(
+                art.tree(tall: tall),
+                at: x,
+                base: base,
+                size: tall ? CGSize(width: 32, height: 52) : CGSize(width: 32, height: 38)
+            )
             if index.isMultiple(of: 2) {
-                let hedge = SKSpriteNode(texture: art.bush())
-                hedge.anchorPoint = CGPoint(x: 0.5, y: 0)
-                hedge.size = CGSize(width: 24, height: 14)
-                hedge.position = CGPoint(x: x + 54, y: headerY - 18)
-                scenery.addChild(hedge)
+                prop(
+                    art.bush(),
+                    at: x + 48,
+                    base: base + 4,
+                    size: CGSize(width: 24, height: 14)
+                )
             }
             x += spacing
             index += 1
+        }
+    }
+
+    /// A counter with the kettle on it, a fridge, and a water cooler.
+    private func buildTeaRoom(rect: CGRect, headerY: CGFloat) {
+        let art = PlaceholderArt.shared
+        let base = headerY - Self.wallLine
+        prop(art.fridge(), at: rect.minX + 30, base: base, size: CGSize(width: 24, height: 48))
+        let counterX = rect.minX + 112
+        let counterHeight: CGFloat = 42
+        prop(
+            art.counter(), at: counterX, base: base, size: CGSize(width: 96, height: counterHeight)
+        )
+        // On the worktop, which is the top sixth of the counter.
+        let worktop = base + counterHeight - 9
+        prop(art.kettle(), at: counterX - 26, base: worktop, size: CGSize(width: 14, height: 18))
+        prop(art.cups(), at: counterX + 22, base: worktop, size: CGSize(width: 22, height: 11))
+
+        var x = counterX + 92
+        while x < rect.maxX - 60 {
+            prop(art.waterCooler(), at: x, base: base, size: CGSize(width: 18, height: 40))
+            x += 132
+        }
+    }
+
+    /// A sofa and an armchair round a coffee table, a bookshelf, and a lamp.
+    private func buildLounge(rect: CGRect, headerY: CGFloat) {
+        let art = PlaceholderArt.shared
+        let base = headerY - Self.wallLine
+        prop(art.bookshelf(), at: rect.minX + 32, base: base, size: CGSize(width: 32, height: 48))
+
+        let sofaX = rect.minX + 112
+        // The rug lies on the floor in front of the sofa, and everything in the
+        // seating group stands on it.
+        prop(
+            art.rugRound(),
+            at: sofaX + 24,
+            base: base - 22,
+            size: CGSize(width: 128, height: 26),
+            z: -0.1
+        )
+        prop(art.sofa(), at: sofaX, base: base, size: CGSize(width: 72, height: 42))
+        prop(art.armchair(), at: sofaX + 74, base: base, size: CGSize(width: 36, height: 39))
+        // In front of both, which is where a coffee table is.
+        prop(
+            art.coffeeTable(),
+            at: sofaX + 24,
+            base: base - 16,
+            size: CGSize(width: 48, height: 30),
+            z: 0.2
+        )
+        var x = sofaX + 128
+        while x < rect.maxX - 60 {
+            prop(art.lamp(), at: x, base: base, size: CGSize(width: 16, height: 40))
+            x += 132
         }
     }
 
@@ -207,25 +314,42 @@ final class ZoneNode: SKNode {
     private var lastTitle: String?
     private var labelsNeedFitting = true
 
-    private static func groundColor(_ zone: SceneZone, theme: SceneTheme) -> NSColor {
+    /// The ground each room stands on.
+    ///
+    /// A garden is grass; the two indoor break rooms are floor, one a shade
+    /// warmer than the meeting room's carpet so that three rooms in one column
+    /// do not read as one long panel.
+    private static func groundColor(
+        _ zone: SceneZone, kind: SceneBreakKind?, theme: SceneTheme
+    ) -> NSColor {
         switch zone {
-        case .garden: theme.grass
-        case .meeting: theme.carpet
-        case .office: theme.panel
+        case .meeting: return theme.carpet
+        case .office: return theme.panel
+        case .breakArea:
+            switch kind ?? .garden {
+            case .garden: return theme.grass
+            case .teaRoom: return theme.stone.blended(withFraction: 0.5, of: theme.panel)
+                ?? theme.stone
+            case .lounge: return theme.carpet.blended(withFraction: 0.35, of: theme.bark)
+                ?? theme.carpet
+            }
         }
     }
 
-    /// What the strip's header says. A count and the word for what they are
-    /// doing there, which is the same shape a room's header uses.
+    /// What the room's header says. A count and the word for what they are
+    /// doing there, which is the same shape a project's own header uses.
     ///
-    /// The garden seats a bounded number per project and counts the rest, so
+    /// A break room seats a bounded number per project and counts the rest, so
     /// its nameplate carries the remainder: `12 resting · +28 more`. A map
     /// that silently dropped them would be a map that lies about how much is
     /// out there, which is the one thing a picture of a machine must not do.
     private static func summary(zone: SceneZone, occupancy: Int, overflow: Int) -> String {
         switch zone {
-        case .meeting: "\(occupancy) meeting"
-        case .garden:
+        // "0 meeting" is a sentence about nothing. A company's meeting room
+        // stands there whether or not it is in use, and the word for that is
+        // free.
+        case .meeting: occupancy == 0 ? "free" : "\(occupancy) meeting"
+        case .breakArea:
             overflow > 0
                 ? "\(occupancy) resting · +\(overflow) more"
                 : "\(occupancy) resting"

@@ -111,7 +111,7 @@ struct SceneCanvasTests {
 
     // MARK: - Focus
 
-    @Test("A project's focus rect is the room it is in")
+    @Test("A project's focus rect is the suite it is in")
     func focusRectIsTheRoom() throws {
         var layout = SceneLayout()
         let frame = layout.update(
@@ -127,8 +127,9 @@ struct SceneCanvasTests {
         let room = try #require(
             frame.floors.first { $0.projectKey == "/Users/example/Code/storefront-web" }
         )
-        #expect(rect == room.frame)
-        // The other project's room is somewhere else entirely.
+        #expect(rect == room.suite)
+        #expect(rect.contains(room.frame))
+        // The other project's suite is somewhere else entirely.
         let other = try #require(frame.focusRect(forProject: "/Users/example/Code/auspex"))
         #expect(other != rect)
     }

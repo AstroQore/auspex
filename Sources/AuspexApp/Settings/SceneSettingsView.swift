@@ -1,21 +1,26 @@
 import AuspexCore
 import SwiftUI
 
-/// Settings → Scene: how much map there is.
+/// Settings → Scene: how much of a company each project is.
 ///
 /// ## Why this is two checkboxes and not a picker
 ///
-/// The office is not optional and the annexes are not alternatives to it: the
-/// map is one continuous place, and both annexes can be open at once, either
-/// on its own, or neither. A segmented control would say "pick a theme", which
-/// is the one thing the scene deliberately is not.
+/// The desks are not optional and the other rooms are not alternatives to
+/// them: a suite is one continuous place, and both rooms can be open at once,
+/// either on its own, or neither. A segmented control would say "pick a
+/// theme", which is the one thing the scene deliberately is not.
 ///
 /// Switching one off does not hide anything either. The sessions that would
-/// have walked out there stay at their desks — an idle session slumped at its
+/// have walked next door stay at their desks — an idle session slumped at its
 /// monitor, a delegating one with its subagents in the bay beside it — which
-/// is exactly the office that shipped before the annexes existed. So the
+/// is exactly the office that shipped before the other rooms existed. So the
 /// wording is about where people *are*, not about what is shown, and there is
 /// no warning to give and nothing to undo beyond ticking the box again.
+///
+/// The third control is a different kind of thing and reads as one: the break
+/// room's *style*. It changes what the room is furnished with and nothing
+/// about who goes there, which is why it is a menu under the switches rather
+/// than a third switch beside them.
 struct SceneSettingsView: View {
     let catalog: ProjectCatalogModel
 
@@ -33,10 +38,10 @@ struct SceneSettingsView: View {
     /// ``AuspexSettingsView``. This is the paragraph underneath them.
     private var header: some View {
         Text(
-            "Sessions that are working sit at desks in the office. Everything "
-                + "else walks somewhere you can see it: a family that is delegating "
-                + "meets round a table, and anything resting, asleep, finished, or "
-                + "waiting to be read goes out to the garden."
+            "A project's sessions share a suite: desks for the ones that are "
+                + "working, a meeting room for each family that is delegating, and "
+                + "one break room where anything resting, asleep, finished, or "
+                + "waiting to be read goes — and where the door out is."
         )
         .font(AuspexType.body)
         .foregroundStyle(AuspexPalette.textSecondary)
@@ -46,27 +51,31 @@ struct SceneSettingsView: View {
     private var switches: some View {
         VStack(alignment: .leading, spacing: 12) {
             toggle(
-                title: "Meeting room",
-                detail: "A session that is delegating walks to a long table and sits at "
-                    + "the head of it, with the subagents it spawned down the sides.",
-                isOn: catalog.sceneZones.meetingRoom
+                title: "Meeting rooms",
+                detail: "A session that is delegating walks to a long table in its own "
+                    + "project's suite and sits at the head of it, with the subagents it "
+                    + "spawned down the sides. A project with three or more sessions has "
+                    + "a meeting room whether or not anybody is in it.",
+                isOn: catalog.sceneZones.meetingRooms
             ) { on in
                 var zones = catalog.sceneZones
-                zones.meetingRoom = on
+                zones.meetingRooms = on
                 catalog.setSceneZones(zones)
             }
 
             toggle(
-                title: "Garden",
-                detail: "Idle sessions rest on a bench, stale ones doze, anything that "
-                    + "finished while you were elsewhere waits holding a note, and "
-                    + "anything that is over walks out through the gate.",
-                isOn: catalog.sceneZones.garden
+                title: "Break areas",
+                detail: "Idle sessions rest, stale ones doze, anything that finished "
+                    + "while you were elsewhere waits by the door holding a note, and "
+                    + "anything that is over walks out through it.",
+                isOn: catalog.sceneZones.breakAreas
             ) { on in
                 var zones = catalog.sceneZones
-                zones.garden = on
+                zones.breakAreas = on
                 catalog.setSceneZones(zones)
             }
+
+            breakStyle
         }
         .padding(14)
         .background(
@@ -77,6 +86,48 @@ struct SceneSettingsView: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
         )
+    }
+
+    /// What a company's break room is furnished with.
+    ///
+    /// "Per project" is the default and the one worth defending: the kind is
+    /// decided from the project's own path and never changes, so eight
+    /// repositories look like eight companies rather than eight copies of one
+    /// — and the suite with the sofas is always the same repository, which is
+    /// a thing a reader can learn. The other three are for somebody who would
+    /// rather every suite matched.
+    private var breakStyle: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker(
+                "Break area style",
+                selection: Binding(
+                    get: { catalog.sceneZones.breakStyle },
+                    set: { style in
+                        var zones = catalog.sceneZones
+                        zones.breakStyle = style
+                        catalog.setSceneZones(zones)
+                    }
+                )
+            ) {
+                Text("Per project (random)").tag(SceneBreakStyle.perProject)
+                Text("Garden").tag(SceneBreakStyle.garden)
+                Text("Tea room").tag(SceneBreakStyle.teaRoom)
+                Text("Lounge").tag(SceneBreakStyle.lounge)
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 260, alignment: .leading)
+            .disabled(!catalog.sceneZones.breakAreas)
+
+            Text(
+                "Per project picks one of the three from the project's own path and "
+                    + "keeps it, so a suite is recognisable before its nameplate is."
+            )
+            .font(AuspexType.caption)
+            .foregroundStyle(AuspexPalette.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// How far back the board and the map reach.

@@ -117,9 +117,9 @@ struct SceneBoundsTests {
             return copy
         }))
 
-        let benches = frame.seats.filter { $0.kind.isGardenRest && $0.session != nil }
+        let benches = frame.seats.filter { $0.kind.isBreakRest && $0.session != nil }
         #expect(benches.count == limit)
-        let garden = frame.zones.first { $0.zone == .garden }
+        let garden = frame.zones.first { $0.zone == .breakArea }
         #expect(garden?.overflow == 28)
         #expect(garden?.occupancy == limit)
     }
@@ -153,7 +153,7 @@ struct SceneBoundsTests {
         }))
 
         let seated = Set(
-            frame.seats.compactMap { $0.kind.isGardenRest ? $0.session?.sessionID : nil }
+            frame.seats.compactMap { $0.kind.isBreakRest ? $0.session?.sessionID : nil }
         )
         #expect(seated.contains("quiet-0"))
         #expect(seated.count == limit + 1)
@@ -224,7 +224,7 @@ struct SceneBoundsTests {
         #expect(frame.slots.filter { !$0.isVacant }.count < 40)
     }
 
-    @Test("a project whose sessions have all gone gets no room")
+    @Test("a project whose sessions have all walked out gets no suite")
     func emptyRoomsAreNotDrawn() {
         var layout = SceneLayout()
         let live = Self.session("live-0", project: "/Users/example/Code/auspex")
@@ -246,9 +246,31 @@ struct SceneBoundsTests {
                 endedAt: Self.epoch.addingTimeInterval(-TimeInterval(index))
             )
         }
-        let frame = layout.update(with: Self.board([live] + gone))
+        let board = Self.board([live] + gone)
+        let frame = layout.update(with: board)
 
-        #expect(frame.floors.map(\.projectKey) == ["/Users/example/Code/auspex"])
+        // While they are leaving, the retired project still has premises: a
+        // bounded queue at its own door, and the desks those few are holding.
+        let queue = frame.seats.filter { $0.kind == .gate && $0.session != nil }
+        #expect(queue.count <= SceneMetrics.standard.gateQueueLimit * 2)
+        #expect(frame.floors.contains { $0.projectKey == "/Users/example/Code/retired" })
+
+        // Once they have all walked out, it does not. This is the whole
+        // difference between a door and a car park: whoever is at the door
+        // leaves, the next few take their place, and the company that has
+        // nobody left in it stops being drawn. It terminates, which is the
+        // property worth asserting — an unbounded queue never drains.
+        var departed: Set<SessionKey> = []
+        var frames = 0
+        var after = frame
+        while after.seats.contains(where: { $0.kind == .gate && $0.session != nil }), frames < 100 {
+            departed.formUnion(after.seats.compactMap { $0.kind == .gate ? $0.session : nil })
+            after = layout.update(with: board, departed: departed)
+            frames += 1
+        }
+        #expect(frames < 100)
+        #expect(departed.count == 60)
+        #expect(after.floors.map(\.projectKey) == ["/Users/example/Code/auspex"])
     }
 
     @Test("the day a person actually had: 1,200 sessions, windowed, then drawn")

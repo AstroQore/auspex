@@ -183,8 +183,8 @@ struct SceneZoneTests {
         #expect(places[reported.key]?.kind == .note)
         // The lawn and the front row are different tables, and the layout
         // relies on being able to tell them apart.
-        #expect(places[idle.key]?.kind.isGardenRest == true)
-        #expect(places[reported.key]?.kind.isGardenRest == false)
+        #expect(places[idle.key]?.kind.isBreakRest == true)
+        #expect(places[reported.key]?.kind.isBreakRest == false)
         #expect(places[reported.key]?.kind.isWaitingBench == true)
     }
 
@@ -209,8 +209,8 @@ struct SceneZoneTests {
         )
         #expect(places[asking.key]?.kind == .call)
         #expect(places[reported.key]?.kind == .note)
-        #expect(places[asking.key]?.zone == .garden)
-        #expect(places[reported.key]?.zone == .garden)
+        #expect(places[asking.key]?.zone == .breakArea)
+        #expect(places[reported.key]?.zone == .breakArea)
     }
 
     @Test("A stale session that was only idle is idle, not asleep")
@@ -226,12 +226,12 @@ struct SceneZoneTests {
         let idle = Self.session("idle", state: .idle)
         let sessions = [root, child, idle]
 
-        let noMeeting = Self.placements(sessions, options: SceneZoneOptions(meetingRoom: false))
+        let noMeeting = Self.placements(sessions, options: SceneZoneOptions(meetingRooms: false))
         #expect(noMeeting[root.key]?.zone == .office)
         #expect(noMeeting[child.key]?.zone == .office)
-        #expect(noMeeting[idle.key]?.zone == .garden)
+        #expect(noMeeting[idle.key]?.zone == .breakArea)
 
-        let noGarden = Self.placements(sessions, options: SceneZoneOptions(garden: false))
+        let noGarden = Self.placements(sessions, options: SceneZoneOptions(breakAreas: false))
         #expect(noGarden[root.key]?.zone == .meeting)
         #expect(noGarden[idle.key]?.zone == .office)
 
@@ -271,7 +271,9 @@ struct SceneZoneTests {
         #expect(frame.zones.isEmpty)
         #expect(frame.seats.isEmpty)
         #expect(frame.tables.isEmpty)
-        #expect(frame.gate == nil)
+        #expect(frame.doors.isEmpty)
+        // A suite with no other rooms is exactly its desks.
+        for floor in frame.floors { #expect(floor.suite == floor.frame) }
         // Nobody has gone anywhere, so nothing is drawn as an empty desk.
         for slot in frame.slots { #expect(!slot.isAway) }
         // And the map is the building with a margin round it and nothing else
@@ -428,7 +430,8 @@ struct SceneZoneTests {
         var layout = SceneLayout()
         let frame = layout.update(with: Self.board(leaving + resting))
 
-        let gate = try #require(frame.gate)
+        let suite = try #require(frame.floors.first)
+        let gate = try #require(frame.door(ofSuite: suite.index))
         let queue = leaving.compactMap { frame.seat(for: $0.key) }
         #expect(queue.count == 3)
         for seat in queue {
@@ -441,28 +444,26 @@ struct SceneZoneTests {
         for x in benches { for seat in queue { #expect(seat.anchor.x > x) } }
     }
 
-    @Test("Focusing a project whose room has emptied frames the table instead")
-    func focusFollowsTheFamily() throws {
+    @Test("Focusing a project frames its whole suite, wherever its people are")
+    func focusFramesTheSuite() throws {
+        // The old map had to choose: the project's desks were at the top of
+        // the campus and its meeting was in a strip at the bottom, so framing
+        // both was framing everything. A suite is one rectangle, so there is
+        // nothing to choose between — which is the point of the suite.
         let root = Self.session("root", state: .delegating(children: 1))
         let child = Self.session("child", parent: root.key)
         var layout = SceneLayout()
         let frame = layout.update(with: Self.board([root, child]))
 
-        // Nobody is at a desk of this project's: they are all at the table.
-        let table = try #require(frame.tables.first)
-        #expect(frame.focusRect(forProject: Self.project) == table.frame)
-
-        // One of them goes back to work, and the room is what to look at
-        // again — framing both would be framing most of the map.
-        var back = SceneLayout()
-        let working = back.update(
-            with: Self.board([root, Self.session("child", parent: root.key, state: .thinking),
-                              Self.session("solo", state: .toolCalling(name: "Bash"))])
-        )
-        let rooms = working.floors(forProject: Self.project)
-        let focus = try #require(working.focusRect(forProject: Self.project))
-        for room in rooms { #expect(focus.contains(room.frame)) }
-        for area in working.zones { #expect(!focus.intersects(area.frame)) }
+        let suite = try #require(frame.focusRect(forProject: Self.project))
+        let table = try #require(frame.tables.first { $0.head != nil })
+        #expect(suite.contains(table.frame))
+        for room in frame.floors(forProject: Self.project) {
+            #expect(suite.contains(room.frame))
+        }
+        for area in frame.zones where area.projectKey == Self.project {
+            #expect(suite.contains(area.frame))
+        }
     }
 
     @Test("An empty board draws no annexes")
@@ -471,7 +472,7 @@ struct SceneZoneTests {
         let frame = layout.update(with: Self.board([]))
         #expect(frame.zones.isEmpty)
         #expect(frame.seats.isEmpty)
-        #expect(frame.gate == nil)
+        #expect(frame.doors.isEmpty)
         #expect(frame.contentRect == .zero)
     }
 
@@ -500,10 +501,16 @@ struct SceneZoneTests {
         var layout = SceneLayout()
         let frame = layout.update(with: Self.board(sessions))
 
+        // One corridor per suite, along the bottom of it, and every room in
+        // the company reports the same one.
         for area in frame.zones {
-            #expect(area.laneY > area.frame.minY)
-            #expect(area.laneY < area.frame.maxY)
-            #expect(frame.walkways.lane(area.zone) == area.laneY)
+            #expect(frame.walkways.lane(floor: area.floorIndex) == area.laneY)
+        }
+        // Exactly one room per suite draws it: the last one.
+        for floor in frame.floors {
+            let rooms = frame.zones.filter { $0.floorIndex == floor.index }
+            #expect(rooms.count(where: { $0.drawsLane }) == 1)
+            #expect(floor.suite.contains(CGPoint(x: floor.suite.midX, y: rooms[0].laneY)))
         }
         // The gutter runs down the left of everything.
         for floor in frame.floors { #expect(frame.walkways.trunk < floor.frame.minX) }

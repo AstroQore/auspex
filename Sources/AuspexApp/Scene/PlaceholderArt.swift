@@ -714,6 +714,231 @@ final class PlaceholderArt {
         }
     }
 
+    // MARK: - The break rooms
+
+    /// The door out of a suite. A session that is over walks to it and off the
+    /// map.
+    ///
+    /// An interior door in a frame rather than the garden's iron gate, because
+    /// the break room is a room now: it is at the end of a company's own
+    /// corridor, and a wrought-iron gate in the middle of a floor plan reads
+    /// as scenery somebody forgot to delete.
+    func doorInner() -> SKTexture {
+        cached("doorInner") { theme in
+            let frame = theme.stone
+            let leaf = theme.bark
+            let lit = leaf.blended(withFraction: 0.28, of: .white) ?? leaf
+            var canvas = PixelCanvas(width: 16, height: 22)
+            canvas.fill(0, 0, 16, 22, frame)
+            canvas.fill(2, 2, 12, 20, leaf)
+            // Standing open: the leaf swung back, a slice of the corridor
+            // beyond it. "Somebody just walked out", with no animation.
+            canvas.fill(2, 2, 5, 20, theme.ink)
+            canvas.fill(7, 2, 7, 20, lit)
+            canvas.fill(7, 2, 1, 20, frame)
+            canvas.fill(11, 11, 2, 2, frame)          // handle
+            return canvas
+        }
+    }
+
+    /// A tea room's counter: a worktop with a cupboard under it.
+    func counter() -> SKTexture {
+        cached("counter") { theme in
+            let top = theme.stone
+            let unit = theme.deskFront
+            var canvas = PixelCanvas(width: 24, height: 14)
+            canvas.fill(0, 0, 24, 1, top.blended(withFraction: 0.3, of: .white) ?? top)
+            canvas.fill(0, 1, 24, 2, top)
+            canvas.fill(0, 3, 24, 1, top.blended(withFraction: 0.4, of: theme.ink) ?? top)
+            canvas.fill(0, 4, 24, 9, unit)            // the cupboards, full width
+            canvas.fill(0, 13, 24, 1, theme.ink)
+            canvas.fill(11, 4, 1, 9, theme.ink)       // the join between doors
+            canvas.fill(8, 7, 1, 3, top)              // two handles
+            canvas.fill(14, 7, 1, 3, top)
+            return canvas
+        }
+    }
+
+    /// A kettle on the counter, with a spout and a handle.
+    func kettle() -> SKTexture {
+        cached("kettle") { theme in
+            let body = theme.stone.blended(withFraction: 0.25, of: .white) ?? theme.stone
+            var canvas = PixelCanvas(width: 8, height: 10)
+            canvas.fill(1, 2, 6, 7, body)
+            canvas.fill(2, 1, 4, 1, body)
+            canvas.fill(0, 3, 1, 3, body)             // spout
+            canvas.fill(7, 3, 1, 4, theme.ink)        // handle
+            canvas.fill(1, 9, 6, 1, theme.ink)
+            return canvas
+        }
+    }
+
+    /// Two upturned cups beside it.
+    func cups() -> SKTexture {
+        cached("cups") { theme in
+            let china = theme.face
+            var canvas = PixelCanvas(width: 12, height: 6)
+            for x in [0, 7] {
+                canvas.fill(x, 1, 4, 4, china)
+                canvas.fill(x, 0, 4, 1, china.blended(withFraction: 0.35, of: .white) ?? china)
+                canvas.fill(x + 4, 2, 1, 2, china)    // the handle
+                canvas.fill(x, 5, 4, 1, theme.ink)
+            }
+            return canvas
+        }
+    }
+
+    /// The fridge in the corner.
+    func fridge() -> SKTexture {
+        cached("fridge") { theme in
+            let shell = theme.stone.blended(withFraction: 0.18, of: .white) ?? theme.stone
+            var canvas = PixelCanvas(width: 12, height: 24)
+            canvas.fill(0, 0, 12, 24, shell)
+            canvas.fill(0, 0, 12, 1, shell.blended(withFraction: 0.3, of: .white) ?? shell)
+            canvas.fill(0, 8, 12, 1, theme.ink)       // the freezer's door line
+            canvas.fill(9, 3, 1, 4, theme.ink)        // two handles
+            canvas.fill(9, 11, 1, 6, theme.ink)
+            canvas.fill(0, 23, 12, 1, theme.ink)
+            return canvas
+        }
+    }
+
+    /// A water cooler, bottle and all.
+    func waterCooler() -> SKTexture {
+        cached("waterCooler") { theme in
+            let shell = theme.stone
+            let water = theme.leaf.blended(withFraction: 0.55, of: .white) ?? theme.leaf
+            var canvas = PixelCanvas(width: 10, height: 22)
+            canvas.fill(2, 0, 6, 8, water)            // the bottle
+            canvas.fill(3, 8, 4, 1, shell)
+            canvas.fill(1, 9, 8, 11, shell)
+            canvas.fill(4, 13, 2, 2, theme.ink)       // the tap
+            canvas.fill(1, 20, 8, 2, theme.ink)
+            return canvas
+        }
+    }
+
+    /// A lounge sofa, three cushions wide.
+    func sofa() -> SKTexture {
+        cached("sofa") { theme in
+            let cloth = theme.chair.blended(withFraction: 0.3, of: theme.bark) ?? theme.chair
+            let lit = cloth.blended(withFraction: 0.25, of: .white) ?? cloth
+            var canvas = PixelCanvas(width: 24, height: 14)
+            canvas.fill(0, 0, 24, 5, cloth)           // back
+            canvas.fill(1, 1, 22, 1, lit)
+            canvas.fill(0, 5, 3, 7, cloth)            // arms
+            canvas.fill(21, 5, 3, 7, cloth)
+            canvas.fill(3, 5, 18, 5, lit)             // cushions
+            canvas.fill(9, 5, 1, 5, cloth)
+            canvas.fill(15, 5, 1, 5, cloth)
+            canvas.fill(0, 12, 24, 1, theme.ink)
+            canvas.fill(2, 13, 2, 1, theme.ink)
+            canvas.fill(20, 13, 2, 1, theme.ink)
+            return canvas
+        }
+    }
+
+    /// An armchair: the sofa's punctuation.
+    func armchair() -> SKTexture {
+        cached("armchair") { theme in
+            let cloth = theme.chair.blended(withFraction: 0.3, of: theme.bark) ?? theme.chair
+            let lit = cloth.blended(withFraction: 0.25, of: .white) ?? cloth
+            var canvas = PixelCanvas(width: 12, height: 13)
+            canvas.fill(0, 0, 12, 5, cloth)
+            canvas.fill(1, 1, 10, 1, lit)
+            canvas.fill(0, 5, 3, 6, cloth)
+            canvas.fill(9, 5, 3, 6, cloth)
+            canvas.fill(3, 5, 6, 5, lit)
+            canvas.fill(0, 11, 12, 1, theme.ink)
+            canvas.fill(2, 12, 2, 1, theme.ink)
+            canvas.fill(8, 12, 2, 1, theme.ink)
+            return canvas
+        }
+    }
+
+    /// A coffee table with a mug on it.
+    func coffeeTable() -> SKTexture {
+        cached("coffeeTable") { theme in
+            let top = theme.deskTop
+            var canvas = PixelCanvas(width: 16, height: 10)
+            canvas.fill(0, 1, 16, 1, top.blended(withFraction: 0.3, of: .white) ?? top)
+            canvas.fill(0, 2, 16, 3, top)
+            canvas.fill(0, 5, 16, 1, theme.deskFront)
+            canvas.fill(2, 6, 2, 4, theme.deskLeg)
+            canvas.fill(12, 6, 2, 4, theme.deskLeg)
+            canvas.fill(7, 0, 3, 2, theme.face)       // the mug
+            return canvas
+        }
+    }
+
+    /// A bookshelf against the wall.
+    func bookshelf() -> SKTexture {
+        cached("bookshelf") { theme in
+            let wood = theme.bark
+            var canvas = PixelCanvas(width: 16, height: 24)
+            canvas.fill(0, 0, 16, 24, wood)
+            canvas.fill(1, 1, 14, 22, theme.ink)
+            let spines = [theme.leaf, theme.stone, theme.face, theme.deskTop]
+            for shelf in 0..<3 {
+                let y = 2 + shelf * 7
+                canvas.fill(1, y + 6, 14, 1, wood)
+                var x = 2
+                var index = shelf
+                while x < 14 {
+                    let width = 1 + (index % 2)
+                    canvas.fill(x, y, width, 6, spines[index % spines.count])
+                    x += width + 1
+                    index += 1
+                }
+            }
+            return canvas
+        }
+    }
+
+    /// A standard lamp, lit.
+    func lamp() -> SKTexture {
+        cached("lamp") { theme in
+            let shade = theme.face.blended(withFraction: 0.25, of: .white) ?? theme.face
+            var canvas = PixelCanvas(width: 8, height: 20)
+            canvas.fill(1, 0, 6, 5, shade)
+            canvas.fill(0, 4, 8, 1, shade.blended(withFraction: 0.3, of: .white) ?? shade)
+            canvas.fill(3, 5, 2, 12, theme.stone)
+            canvas.fill(1, 17, 6, 2, theme.ink)
+            canvas.fill(0, 19, 8, 1, theme.ink)
+            return canvas
+        }
+    }
+
+    /// A round rug for the lounge to stand on.
+    ///
+    /// An ellipse rather than a circle, because the room is seen from three
+    /// quarters on and a circle drawn flat would read as a hole in the floor.
+    /// Nearly the ground's own tone, too: a rug is what the furniture stands
+    /// on, and one loud enough to be looked at would be the brightest thing in
+    /// a room whose whole job is being the quiet end of the suite.
+    func rugRound() -> SKTexture {
+        cached("rugRound") { theme in
+            let ground = theme.carpet
+            let cloth = ground.blended(withFraction: 0.22, of: theme.bark) ?? ground
+            let border = cloth.blended(withFraction: 0.16, of: .white) ?? cloth
+            let width = 32
+            let height = 14
+            var canvas = PixelCanvas(width: width, height: height)
+            let cx = CGFloat(width) / 2
+            let cy = CGFloat(height) / 2
+            for y in 0..<height {
+                for x in 0..<width {
+                    let dx = (CGFloat(x) + 0.5 - cx) / cx
+                    let dy = (CGFloat(y) + 0.5 - cy) / cy
+                    let radius = dx * dx + dy * dy
+                    guard radius <= 1 else { continue }
+                    canvas.set(x, y, radius > 0.72 ? border : cloth, alpha: 0.75)
+                }
+            }
+            return canvas
+        }
+    }
+
     // MARK: - Bubbles
 
     /// A speech bubble. Baked in its own colour rather than tinted, because

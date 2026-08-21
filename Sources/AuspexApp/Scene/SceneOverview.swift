@@ -132,11 +132,11 @@ struct SceneOverview: Equatable {
         return AuspexPalette.stateEnded
     }
 
-    /// An annex's colour: the state of the thing that happens there.
+    /// A suite room's colour: the state of the thing that happens there.
     private static func tint(for zone: SceneZone) -> Color {
         switch zone {
         case .meeting: AuspexPalette.stateDelegating
-        case .garden: AuspexPalette.stateIdle
+        case .breakArea: AuspexPalette.stateIdle
         case .office: AuspexPalette.stateEnded
         }
     }

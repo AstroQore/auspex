@@ -100,7 +100,12 @@ public struct SceneHitIndex: Sendable, Equatable {
         var byZone: [String: [Desk]] = [:]
         let areas = frame.zones
         for seat in frame.seats where seat.session != nil {
-            guard let area = areas.last(where: { $0.zone == seat.zone }) else { continue }
+            // The seat's own suite, not merely a room of the same kind: every
+            // company has a break room, and answering a click with the wrong
+            // one is how a hit test starts disagreeing with the picture.
+            guard let area = areas.last(where: {
+                $0.zone == seat.zone && $0.floorIndex == seat.floorIndex
+            }) else { continue }
             // Chairs at a table are two thirds of a desk apart, so a desk-wide
             // click target would cover its neighbours. The seat's own spacing
             // is the honest width, and it is what the layout drew with.
