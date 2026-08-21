@@ -129,6 +129,12 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     public let unitGroups: [TaskUnitGroup]
     /// The units whose sessions have all stopped with nothing outstanding.
     public let endedUnits: [TaskUnit]
+    /// Every unit on the frame, in board order, before the filter bar.
+    ///
+    /// What ``unitGroups`` is made of, kept flat as well because the Tasks
+    /// page files the same units under its own headings and the palette
+    /// searches them.
+    public let units: [TaskUnit]
     /// Every unit on the frame by id, for the surfaces that look one up —
     /// the task detail page, the command palette, a drop target.
     public let unitIndex: [String: TaskUnit]
@@ -195,6 +201,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         rowGroups: [BoardRowGroup],
         unitGroups: [TaskUnitGroup] = [],
         endedUnits: [TaskUnit] = [],
+        units: [TaskUnit] = [],
         unitIndex: [String: TaskUnit] = [:],
         filterOptions: TaskFilters.Options = .none,
         unitBySession: [SessionKey: String] = [:],
@@ -208,6 +215,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     ) {
         self.unitGroups = unitGroups
         self.endedUnits = endedUnits
+        self.units = units
         self.unitIndex = unitIndex
         self.filterOptions = filterOptions
         self.unitBySession = unitBySession
@@ -272,6 +280,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             rowGroups: kept(rowGroups, previous.rowGroups),
             unitGroups: kept(unitGroups, previous.unitGroups),
             endedUnits: kept(endedUnits, previous.endedUnits),
+            units: kept(units, previous.units),
             unitIndex: kept(unitIndex, previous.unitIndex),
             filterOptions: kept(filterOptions, previous.filterOptions),
             unitBySession: kept(unitBySession, previous.unitBySession),
@@ -523,6 +532,7 @@ public actor BoardFrameAssembler {
             endedUnits: inputs.bucketFilter == nil
                 ? unitSplit.ended
                 : unitSplit.ended.filter { $0.bucket == inputs.bucketFilter },
+            units: allUnits,
             unitIndex: unitIndex,
             // Over every unit rather than over the filtered ones: a menu that
             // dropped the option a person is *about* to swap to would make the

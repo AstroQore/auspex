@@ -526,6 +526,9 @@ final class LiveBoardModel {
     /// The units whose sessions have all stopped with nothing outstanding.
     private(set) var endedUnits: [TaskUnit] = []
 
+    /// Every unit on the frame, in board order, before the filter bar.
+    private(set) var units: [TaskUnit] = []
+
     /// Every unit on the frame by id, for the detail page and the palette.
     private(set) var unitIndex: [String: TaskUnit] = [:]
 
@@ -626,9 +629,10 @@ final class LiveBoardModel {
     /// that was built with the rest of the frame rather than building its own.
     var onTree: ((ProjectTree) -> Void)?
 
-    /// Called once per adopted frame with the raw board, for readers that are
-    /// not views — the Tasks page keeps its rows in step with the wall here.
-    var onFrame: ((BoardSnapshot) -> Void)?
+    /// Called once per adopted frame with the raw board and the units the wall
+    /// just drew, for readers that are not views — the Tasks page keeps its
+    /// rows in step with the wall here.
+    var onFrame: ((BoardSnapshot, [TaskUnit]) -> Void)?
 
     /// The finished rows actually drawn, and how many are left out.
     var visibleEndedRows: [BoardRow] {
@@ -790,6 +794,8 @@ final class LiveBoardModel {
         rowGroups = frame.rowGroups
         unitGroups = frame.unitGroups
         endedUnits = frame.endedUnits
+        let unitsMoved = units != frame.units
+        units = frame.units
         unitIndex = frame.unitIndex
         filterOptions = frame.filterOptions
         unitBySession = frame.unitBySession
@@ -804,10 +810,12 @@ final class LiveBoardModel {
         olderHidden = frame.olderHidden
         refreshSelection()
         onTree?(frame.tree)
-        // Only when the board moved: the Tasks page rebuilds its rows from this
-        // and has no more reason than the wall does to do it for a frame that
-        // says the same thing.
-        if boardMoved { onFrame?(frame.board) }
+        // Only when something the Tasks page draws actually moved: it rebuilds
+        // its rows from this and has no more reason than the wall does to do it
+        // for a frame that says the same thing. The units and not only the
+        // board, because a task claimed over MCP changes the page without
+        // changing a single session.
+        if boardMoved || unitsMoved { onFrame?(frame.board, frame.units) }
 
         if !board.sessions.isEmpty { hasEverSeenSession = true }
 

@@ -34,10 +34,11 @@ struct TasksPageView: View {
     let model: TasksModel
     let board: LiveBoardModel
 
-    /// The width of one column. Four of them plus the gaps fit the content
+    /// The width of one column. Five of them plus the gaps fit the content
     /// column at its default width, which is what keeps a whole project
-    /// readable without a horizontal scroll.
-    static let columnWidth: CGFloat = 176
+    /// readable without a horizontal scroll — and there are five since
+    /// finishing stopped meaning closing. See ``AuspexTaskStatus/review``.
+    static let columnWidth: CGFloat = 148
 
     var body: some View {
         BoardScroll {
@@ -486,12 +487,49 @@ private struct TaskCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(row.task.title)
-                .font(AuspexType.rowTitle)
-                .foregroundStyle(AuspexPalette.text)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .top, spacing: 6) {
+                TaskStatusIcon(status: row.displayStatus, size: 12).padding(.top, 1)
+                Text(row.task.title)
+                    .font(AuspexType.rowTitle)
+                    .foregroundStyle(row.isImplicit ? AuspexPalette.text2 : AuspexPalette.text)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if row.task.importance.isMarked, !row.isImplicit {
+                    TaskImportanceIcon(importance: row.task.importance, size: 11)
+                        .padding(.top, 1)
+                }
+            }
+
+            HStack(spacing: 5) {
+                Text(row.unit?.shortID ?? row.task.shortID)
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .fixedSize()
+                // The mark that says nobody filed this. Quiet, and one word: an
+                // implicit row is the ordinary case on a machine where the task
+                // protocol has not been adopted, but somebody about to act on
+                // it should know there is no row in the ledger to act on.
+                if row.isImplicit {
+                    Text("auto")
+                        .font(AuspexType.labelSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .padding(.horizontal, 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                        )
+                        .fixedSize()
+                        .help("Auspex worked this out from a delegation. Nobody filed a task.")
+                }
+                Spacer(minLength: 0)
+                if let unit = row.unit, unit.memberCount > 1 {
+                    Text("↳ \(unit.subagents.count)")
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.stateDelegating)
+                        .fixedSize()
+                }
+            }
 
             if let claim = row.task.claimDescription {
                 // The whole reason `claim` takes two strings. On a board of a
@@ -515,7 +553,14 @@ private struct TaskCardView: View {
                 }
             }
 
-            if let result = row.task.result, row.task.status == .done {
+            if let unit = row.unit, unit.isClaimOrphaned {
+                Text("claim orphaned")
+                    .font(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.stateStale)
+                    .help("The session holding this claim ended without finishing.")
+            }
+
+            if let result = row.task.result, !row.task.status.isOpen || row.task.status == .review {
                 Text(result)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.stateWriting.opacity(0.85))
@@ -556,23 +601,56 @@ private struct TaskCardView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(borderColor, lineWidth: 1)
         )
-        .modifier(TaskDragSource(isEnabled: !isSnapshotRender, payload: TaskDragPayload.task(row.task.id)))
+        .opacity(row.isImplicit ? 0.72 : 1)
+        // A derived row cannot be dragged between columns: there is no row in
+        // the ledger to move, and a card that slid across and sprang back
+        // would be worse than one that does not move.
+        .modifier(
+            TaskDragSource(
+                isEnabled: !isSnapshotRender && !row.isImplicit,
+                payload: TaskDragPayload.task(row.task.id)
+            )
+        )
         // A session card dropped here is linked to this task. The same
         // relationship `tasks.claim` records, made by hand.
-        .modifier(TaskDropTarget(isEnabled: !isSnapshotRender, isTargeted: $isTargeted) { items in
-            guard let key = items.compactMap(TaskDragPayload.sessionKey(in:)).first
-            else { return false }
-            model.link(session: key, to: row.task.id)
-            return true
-        })
+        .modifier(
+            TaskDropTarget(
+                isEnabled: !isSnapshotRender && !row.isImplicit,
+                isTargeted: $isTargeted
+            ) { items in
+                guard let key = items.compactMap(TaskDragPayload.sessionKey(in:)).first
+                else { return false }
+                model.link(session: key, to: row.task.id)
+                return true
+            }
+        )
         .contextMenu {
-            ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
-                Button("Move to \(status.label)") { model.move(taskID: row.task.id, to: status) }
-                    .disabled(status == row.task.status)
+            if row.isImplicit {
+                // Everything below writes to a row that does not exist yet.
+                // This is the one action that makes one.
+                if let unit = row.unit {
+                    Button("Promote to task…") { model.promote(unit: unit) }
+                }
+            } else {
+                if row.task.status == .review {
+                    Button("Close") { model.close(taskID: row.task.id) }
+                } else if row.task.status == .done {
+                    Button("Reopen") { model.reopen(taskID: row.task.id) }
+                }
+                if row.unit?.isClaimOrphaned == true {
+                    Button("Release claim") { model.releaseClaim(taskID: row.task.id) }
+                }
+                Divider()
+                ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
+                    Button("Move to \(status.label)") { model.move(taskID: row.task.id, to: status) }
+                        .disabled(status == row.task.status)
+                }
             }
             // Re-filing by hand, which is what makes the scratch project a
             // place work passes through rather than a place it goes to die.
-            let elsewhere = model.lanes.filter { $0.key != row.task.projectKey }
+            let elsewhere = row.isImplicit
+                ? []
+                : model.lanes.filter { $0.key != row.task.projectKey }
             if !elsewhere.isEmpty {
                 Divider()
                 Menu("File under…") {
@@ -583,7 +661,7 @@ private struct TaskCardView: View {
                     }
                 }
             }
-            if !row.sessions.isEmpty {
+            if !row.sessions.isEmpty, !row.isImplicit {
                 Divider()
                 ForEach(row.sessions, id: \.key) { session in
                     Button("Unlink \(session.title)") {

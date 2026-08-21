@@ -71,7 +71,12 @@ final class TasksModel {
     var selectedTaskID: Int64?
 
     private var repository: TaskRepository?
-    private var live: [SessionKey: LiveSessionState] = [:]
+    /// The wall's units, by id. The live half of every row on this page, and
+    /// the whole of the rows the ledger has never heard of.
+    private var units: [String: TaskUnit] = [:]
+    /// The units nobody filed a task for, in board order — see
+    /// ``TaskUnit/Origin/implicit(_:)``.
+    private var implicitUnits: [TaskUnit] = []
     /// The user's projects, as the frame carries them.
     ///
     /// Kept so a lane can be titled and a task can be folded into the project a
@@ -79,18 +84,12 @@ final class TasksModel {
     /// change when somebody edits the Projects page, which is not eight times a
     /// second.
     private var claims: ProjectClaims = .empty
-    /// The sessions any task is attached to.
-    ///
-    /// The whole reason ``apply(board:notices:attention:)`` is affordable. It is
-    /// called from the frame hook, which runs eight times a second whether or
-    /// not this page is on screen, and deriving a title and a project for every
-    /// session on a six-hundred-session board at that rate is exactly the kind
-    /// of always-on cost `AGENTS.md` § 4.1 exists to prevent. A task board with
-    /// nothing linked to it does no work at all.
-    private var linkedKeys: Set<SessionKey> = []
     private var reloadTask: Task<Void, Never>?
 
     /// What a task row knows about a session attached to it.
+    ///
+    /// Read off the same ``BoardRow`` the wall drew, so a task row and the
+    /// card behind it cannot disagree about whether a worker is stuck.
     struct LiveSessionState: Sendable, Equatable {
         let key: SessionKey
         let harness: Harness
@@ -98,10 +97,22 @@ final class TasksModel {
         let state: SessionState
         let isAlive: Bool
         let notice: AgentNotice?
-        /// What the board says this session is signalling. Passed in rather
-        /// than re-derived, so a task row and the card behind it cannot
-        /// disagree about whether its worker is stuck.
         let attention: AttentionState
+
+        init(_ row: BoardRow) {
+            self.key = row.key
+            self.harness = row.harness
+            self.title = row.title
+            self.state = row.state
+            self.isAlive = !row.isEnded
+            self.notice = row.notice.map {
+                AgentNotice(
+                    session: row.key, kind: $0.kind, message: $0.message,
+                    urgency: $0.urgency, createdAt: $0.at
+                )
+            }
+            self.attention = row.attention
+        }
     }
 
     /// One project and all the work in it.
@@ -150,19 +161,29 @@ final class TasksModel {
         var openCount: Int { tasks.count { $0.task.status != .done } }
     }
 
-    /// One task, with the sessions on it.
+    /// One task, and the piece of work the board derived for it.
+    ///
+    /// Both, because they answer different questions. The ``task`` is what the
+    /// ledger holds — the title somebody filed, the column somebody dragged it
+    /// to, the milestone it hangs under. The ``unit`` is what is *happening*:
+    /// which sessions are on it, what they are doing, and whether any of them
+    /// is stuck. A row with no unit is a task the board has no session for,
+    /// which is the ordinary state of a backlog.
     struct TaskRow: Identifiable, Equatable {
         var id: Int64 { task.id }
         let task: AuspexTask
-        let sessions: [LiveSessionState]
+        let unit: TaskUnit?
 
-        /// The loudest thing any attached session is saying, which is what the
-        /// row's dot shows: a task whose worker is blocked is a blocked task,
-        /// whatever column somebody last dragged it into.
-        var liveState: SessionState? {
-            sessions.first { if case .waitingPermission = $0.state { true } else { false } }?.state
-                ?? sessions.first { $0.isAlive && !$0.state.isEnded }?.state
-                ?? sessions.first?.state
+        /// Whether the board worked this row out rather than being told.
+        ///
+        /// An implicit row is a delegation nobody filed a task for. It is
+        /// drawn quieter and offers "Promote to task…" instead of the actions
+        /// that need a row in the ledger to act on.
+        var isImplicit: Bool { unit?.origin.isImplicit ?? false }
+
+        /// The sessions on it, as the page draws them.
+        var sessions: [LiveSessionState] {
+            unit?.members.map(LiveSessionState.init) ?? []
         }
 
         /// A session on this task that is calling for a person.
@@ -171,23 +192,16 @@ final class TasksModel {
         }
 
         /// Whether a worker on this task is asking for a person.
-        var wantsPerson: Bool { sessions.contains { $0.attention.wantsPerson } }
+        var wantsPerson: Bool { unit?.needsPerson ?? false }
 
         /// Which column this row is drawn in.
         ///
-        /// A task whose worker is stuck is a blocked task, whatever column it
-        /// was last dragged into. The column and the card have to agree,
-        /// because the board is read to find out where the work is — and a
-        /// task sitting in `Doing` with a red card on it is the board telling
-        /// two different stories about one thing.
-        ///
-        /// A finished task stays in `Done` rather than leaving the board:
-        /// something a person still has to read is exactly what this app
-        /// exists to surface, and `done` is a column rather than a closure.
-        var displayStatus: AuspexTaskStatus {
-            guard task.status != .done, wantsPerson else { return task.status }
-            return .blocked
-        }
+        /// The unit's own status when there is one, which is where the
+        /// correction lives: a task sitting in `Doing` while its worker is
+        /// blocked on a permission prompt is the board telling two stories
+        /// about one thing, and a person acts on the louder one. See
+        /// ``TaskUnitBuilder/status(task:attention:counts:rows:)``.
+        var displayStatus: AuspexTaskStatus { unit?.status ?? task.status }
     }
 
     /// Starts reading from `repository`, and does the first read.
@@ -216,42 +230,29 @@ final class TasksModel {
         }
     }
 
-    /// Hands the page the frame the board is drawing, so a task row's dot is
-    /// the same fact as its card's pill — and so a lane is named the way the
-    /// wall names the same project.
-    func apply(
-        board: BoardSnapshot,
-        notices: [SessionKey: AgentNotice],
-        attention: [SessionKey: AttentionState] = [:]
-    ) {
+    /// Hands the page the units the wall just drew.
+    ///
+    /// The whole live half of this page, and it costs nothing to keep in step
+    /// because the derivation already happened: the board built these units on
+    /// its own executor, once, and this is the same values by reference. What
+    /// used to be here — a title and a project derived per session per frame —
+    /// was exactly the always-on cost `AGENTS.md` § 4.1 exists to prevent.
+    func apply(units: [TaskUnit], board: BoardSnapshot) {
         var changed = false
         if board.claims != claims {
             claims = board.claims
             changed = true
         }
-        guard !linkedKeys.isEmpty else {
-            if !live.isEmpty { live = [:]; changed = true }
-            if changed { rebuild() }
-            return
+        var next: [String: TaskUnit] = [:]
+        next.reserveCapacity(units.count)
+        var implicit: [TaskUnit] = []
+        for unit in units {
+            next[unit.id] = unit
+            if unit.origin.isImplicit { implicit.append(unit) }
         }
-        var next: [SessionKey: LiveSessionState] = [:]
-        next.reserveCapacity(linkedKeys.count)
-        for session in board.sessions where linkedKeys.contains(session.key) {
-            next[session.key] = LiveSessionState(
-                key: session.key,
-                harness: session.key.harness,
-                title: BoardRowBuilder.title(
-                    for: session,
-                    project: board.projectKey(for: session).map(BoardGrouping.projectName(forPath:))
-                ),
-                state: session.state,
-                isAlive: session.isAlive,
-                notice: notices[session.key],
-                attention: attention[session.key] ?? .none
-            )
-        }
-        guard next != live || changed else { return }
-        live = next
+        guard next != self.units || implicit != implicitUnits || changed else { return }
+        self.units = next
+        implicitUnits = implicit
         rebuild()
     }
 
@@ -279,19 +280,32 @@ final class TasksModel {
     /// claim existed.
     private func rebuild() {
         guard let latest else { return }
-        isEmpty = latest.plans.isEmpty && latest.tasks.isEmpty
-        openCount = latest.tasks.count { $0.status != .done }
+        updateIsEmpty(latest)
+        // Every open piece of work, filed or not. The sidebar's number and the
+        // page's own summary have to be the same number, and the page counts
+        // what it draws — which since the board became a task board includes
+        // the delegations nobody filed a task for.
+        openCount = latest.tasks.count { $0.status.isOpen }
+            + implicitUnits.count { $0.status.isOpen }
 
-        let linksByTask = Dictionary(grouping: latest.links) { $0.taskID }
-        linkedKeys = Set(latest.links.map(\.session))
         func row(_ task: AuspexTask) -> TaskRow {
-            TaskRow(task: task, sessions: (linksByTask[task.id] ?? []).compactMap { live[$0.session] })
+            TaskRow(task: task, unit: units["task:\(task.id)"])
         }
 
         let plansByID = Dictionary(latest.plans.map { ($0.id, $0) }) { first, _ in first }
         var order: [String] = []
         var tasksByProject: [String: [AuspexTask]] = [:]
         var counts: [String: TaskProjectCounts] = [:]
+        // The work the board can see and nobody filed. Its rows carry a
+        // *synthesized* task — see ``implicitTask(for:)`` — so one column, one
+        // card and one drag path serve both kinds, and the only thing that
+        // tells them apart is what the row is allowed to do.
+        var implicitByProject: [String: [TaskUnit]] = [:]
+        for unit in implicitUnits {
+            let key = unit.projectKey.flatMap { claims.key(forPath: $0) ?? $0 }
+                ?? TaskProject.scratchKey
+            implicitByProject[key, default: []].append(unit)
+        }
         for task in latest.tasks {
             // A milestone the reader has hidden hides its tasks with it: the
             // switch says "show archived", and a task that stayed behind would
@@ -306,8 +320,13 @@ final class TasksModel {
             let existing = counts[key] ?? TaskProjectCounts(total: 0, open: 0)
             counts[key] = TaskProjectCounts(
                 total: existing.total + 1,
-                open: existing.open + (task.status == .done ? 0 : 1)
+                open: existing.open + (task.status.isOpen ? 1 : 0)
             )
+        }
+        for (key, units) in implicitByProject where tasksByProject[key] == nil {
+            tasksByProject[key] = []
+            order.append(key)
+            _ = units
         }
         projectTaskCounts = counts
 
@@ -325,7 +344,13 @@ final class TasksModel {
             return lhs < rhs
         }
         lanes = claims.pinnedFirst(ranked) { $0 }.map { key in
-            lane(key: key, tasks: tasksByProject[key] ?? [], plans: plansByID, row: row)
+            lane(
+                key: key,
+                tasks: tasksByProject[key] ?? [],
+                implicit: implicitByProject[key] ?? [],
+                plans: plansByID,
+                row: row
+            )
         }
     }
 
@@ -348,9 +373,41 @@ final class TasksModel {
     /// Milestones in the order the ledger touched them, and the loose tasks
     /// last — they are the ordinary case, and a reader scanning for a heading
     /// should find the headings together.
+    /// The row a unit nobody filed a task for is drawn as.
+    ///
+    /// A task with a **negative id**, which the ledger can never mint: it is
+    /// what lets one card, one column and one drag path serve both kinds, and
+    /// it is what every action on the page checks before it tries to write.
+    /// ``TaskRow/isImplicit`` is the question, and it is asked of the unit
+    /// rather than of the sign, because the sign is an implementation detail
+    /// and the origin is the fact.
+    private func implicitTask(for unit: TaskUnit) -> AuspexTask {
+        AuspexTask(
+            id: -abs(Int64(unit.promotionKey.hashValue % 1_000_000_007) + 1),
+            planID: nil,
+            title: unit.title,
+            body: nil,
+            status: unit.status,
+            priority: 0,
+            projectID: nil,
+            projectKey: unit.projectKey,
+            createdBy: unit.lead.key,
+            claimRole: nil,
+            claimScope: nil,
+            claimedBy: nil,
+            claimedAt: nil,
+            completedAt: nil,
+            result: nil,
+            source: "board",
+            createdAt: unit.lastEventAt ?? Date(),
+            updatedAt: unit.lastEventAt ?? Date()
+        )
+    }
+
     private func lane(
         key: String,
         tasks: [AuspexTask],
+        implicit: [TaskUnit],
         plans: [Int64: AuspexPlan],
         row: (AuspexTask) -> TaskRow
     ) -> ProjectLane {
@@ -376,9 +433,12 @@ final class TasksModel {
                 )
             )
         }
-        if !loose.isEmpty || groups.isEmpty {
+        // The derived work goes under no milestone, because there is nothing
+        // to hang it under: nobody filed it, so nobody put it in a stage.
+        let derived = implicit.map { TaskRow(task: implicitTask(for: $0), unit: $0) }
+        if !loose.isEmpty || !derived.isEmpty || groups.isEmpty {
             groups.append(
-                MilestoneGroup(id: "\(key)-loose", plan: nil, tasks: loose.map(row))
+                MilestoneGroup(id: "\(key)-loose", plan: nil, tasks: loose.map(row) + derived)
             )
         }
         return ProjectLane(
@@ -401,6 +461,13 @@ final class TasksModel {
     private func name(forKey key: String) -> String {
         if TaskProject.isScratch(key) { return TaskProject.scratchName }
         return claims.name(forKey: key) ?? BoardGrouping.projectName(forPath: key)
+    }
+
+    /// Whether the page has anything to draw at all — including work the
+    /// board derived, which is what makes this page useful on a machine where
+    /// nobody has filed a thing.
+    private func updateIsEmpty(_ latest: LedgerSnapshot) {
+        isEmpty = latest.plans.isEmpty && latest.tasks.isEmpty && implicitUnits.isEmpty
     }
 
     /// An empty lane for a project a person is looking *at* — the Tasks page
@@ -436,7 +503,12 @@ final class TasksModel {
     /// finished is a claim about its own work, and a board that let it close
     /// its own task would have one number on it that an agent could move.
     func close(unit: TaskUnit) {
-        guard let repository, let id = unit.origin.taskID else { return }
+        guard let id = unit.origin.taskID else { return }
+        close(taskID: id)
+    }
+
+    func close(taskID id: Int64) {
+        guard let repository, id > 0 else { return }
         Task.detached(priority: .userInitiated) { _ = try? repository.closeTask(id: id) }
         optimistically { $0.id == id ? $0.moved(to: .done) : $0 }
         reload()
@@ -444,7 +516,12 @@ final class TasksModel {
 
     /// Puts a closed task back in flight.
     func reopen(unit: TaskUnit) {
-        guard let repository, let id = unit.origin.taskID else { return }
+        guard let id = unit.origin.taskID else { return }
+        reopen(taskID: id)
+    }
+
+    func reopen(taskID id: Int64) {
+        guard let repository, id > 0 else { return }
         Task.detached(priority: .userInitiated) {
             _ = try? repository.updateTask(id: id, status: .doing)
         }
