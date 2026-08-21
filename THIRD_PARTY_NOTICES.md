@@ -30,6 +30,34 @@ the same reason the catalogue's few straight lines — the orbit's spin-up, the
 opacity ramps — are eased here. `Sources/AuspexCore/Crew/BloubTransition.swift`
 holds the whole deviation and the reasoning for it in one place.
 
+`Sources/AuspexCore/Crew/AvatarLabPresets.swift` is a generated port of the
+expression and animation vocabulary of
+[bible-strong-avatar-lab](https://github.com/smontlouis/bible-strong-avatar-lab)
+— AGPL-3.0-only, © Stéphane Montlouis-Calixte. Auspex is AGPL-3.0-only, so the
+data and the derivation travel under the same license. What is ported is the 25
+calibrated expression presets plus that project's neutral default, its
+per-state expression pools and blink profiles, and the 23 built-in animations
+its `createInitialSequences()` derives from them — in two families, a life
+cycle (sleeping, waking, idle, listening, thinking, searching, working) and
+sixteen reactions. `Scripts/port_avatar_lab.py` reads
+`src/features/avatar/presets.ts` and `src/features/animation/sequences.ts` from
+a checkout and re-runs that derivation, so a re-calibration upstream is a
+re-run rather than a re-typing.
+
+**What the two ports each own.** avatar-lab supplies the **face** — the eye
+geometry of an expression and the choreography that sequences it. bloub keeps
+the **body and the decor** — every silhouette, the thinking dots, the orbit's
+rings, the travelling "!", the burst's particles, the resting gaze drift and
+the sphere the eyes live on. `Sources/AuspexCore/Crew/AvatarLabFace.swift` is
+the single seam between them and is Auspex's own: it converts avatar-lab's face
+units (arcs on a sphere of radius 120) into bloub's degrees and ball-radius
+fractions, and nothing else in the tree interprets avatar-lab's numbers.
+`Sources/AuspexCore/Crew/AvatarSequencePlayer.swift` and
+`Sources/AuspexCore/Crew/CrewChoreographer.swift` are Auspex's own as well:
+avatar-lab plays a sequence off a browser timer with mutable cursors, and
+Auspex needs a seeded pure function of time so that sixty avatars can be
+sampled off one clock and a screenshot can be reproduced.
+
 ## Brand marks
 
 `Sources/AuspexApp/Resources/ProviderIcons/` carries the vendor marks Auspex uses to identify
