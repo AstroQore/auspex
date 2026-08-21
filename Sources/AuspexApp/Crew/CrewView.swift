@@ -577,6 +577,20 @@ enum CrewCardChrome: Sendable, Hashable {
 /// Its own clock, and a slow one: a 2.4-second breath cannot use more than a
 /// dozen frames a second, and only the cards that are actually shouting pay for
 /// it. A static ring is a sticker; a breathing one is a thing waiting for you.
+///
+/// ## The shadow's radius is constant, and that is not a detail
+///
+/// It breathed at first — `radius: 7 + 5 * breath` — and the wall went from
+/// 14 % of a core to **100 %**, pinned, with the main thread spinning in
+/// `LazySubviewPlacements.placeSubviews`. A shadow enlarges the view's drawing
+/// bounds, so a radius that changes is a *layout* change, and a layout change
+/// inside a `LazyVGrid` re-places every subview the lazy container is
+/// tracking — fourteen cards, twelve times a second, cascading through the
+/// enclosing `LazyVStack`. Measured A/B against `main`, which sat at 1–14 %.
+///
+/// Breathing the *colour* costs a redraw of one overlay and nothing else.
+/// The rule that follows: inside a lazy container, animate what is painted,
+/// never what is measured.
 private struct CrewAttentionRing: View {
     let colour: Color
 
@@ -587,7 +601,7 @@ private struct CrewAttentionRing: View {
             )
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(colour.opacity(0.45 + 0.4 * breath), lineWidth: 1.5)
-                .shadow(color: colour.opacity(0.14 + 0.20 * breath), radius: 7 + 5 * breath)
+                .shadow(color: colour.opacity(0.14 + 0.20 * breath), radius: 9)
         }
         .allowsHitTesting(false)
     }
