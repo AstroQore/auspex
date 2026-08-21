@@ -250,6 +250,51 @@ struct SceneBoundsTests {
         #expect(frame.floors.map(\.projectKey) == ["/Users/example/Code/auspex"])
     }
 
+    @Test("the day a person actually had: 1,200 sessions, windowed, then drawn")
+    func theWholeWayThrough() {
+        // The acceptance case, end to end: a week of bootstrapped sessions
+        // goes through the recency window and then through the layout, and
+        // what comes out is a map a camera can frame and a header whose
+        // numbers are about the day rather than about the week.
+        let projects = [
+            "/Users/example/Code/auspex",
+            "/Users/example/Code/storefront-web",
+            "/Users/example/Code/ingest-pipeline",
+            "/Users/example/Code/mobile-client"
+        ]
+        let week: TimeInterval = 7 * 24 * 3_600
+        var sessions = (0..<1_200).map { index in
+            Self.session(
+                "done-\(index)",
+                project: projects[index % projects.count],
+                state: .ended(reason: .exited),
+                endedAt: Self.epoch.addingTimeInterval(-week * TimeInterval(index) / 1_200)
+            )
+        }
+        sessions += (0..<12).map { index in
+            Self.session(
+                "live-\(index)",
+                project: projects[index % projects.count],
+                lastEventAt: Self.epoch
+            )
+        }
+        let raw = Self.board(sessions)
+
+        let frame = BoardFrameAssembler.frame(
+            board: raw, inputs: BoardFrameInputs(window: .twelveHours)
+        )
+        // The chips are about the day. Roughly a seventh of a seventh of the
+        // week's finished sessions survive twelve hours.
+        #expect(frame.summary.working == 12)
+        #expect(frame.summary.done < 120)
+        #expect(frame.olderHidden > 1_000)
+        #expect(frame.summary.done + frame.olderHidden + 12 == 1_212)
+
+        var layout = SceneLayout()
+        let scene = layout.update(with: frame.board)
+        #expect(Self.fitZoom(scene) >= 0.5)
+    }
+
     @Test("bounding a board twice gives the same map")
     func theBoundIsTotal() {
         // The cap has to break ties the same way every frame, or the map would
