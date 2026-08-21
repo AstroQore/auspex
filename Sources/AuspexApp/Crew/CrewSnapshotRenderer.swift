@@ -71,10 +71,10 @@ enum CrewSnapshotRenderer {
             guard let session = board.session(for: unit.lead.key) else { return nil }
             let instant = roster.instant(for: session, at: avatarTime, frozen: false)
             // The brood's faces, sampled at the same instant the lead's was.
-            let brood = unit.subagents.compactMap { member -> CrewSnapshotCard.Chick? in
+            let brood = unit.subagents.compactMap { member -> CrewSnapshotCard.Mini? in
                 guard let child = board.session(for: member.key) else { return nil }
                 let childInstant = roster.instant(for: child, at: avatarTime, frozen: false)
-                return CrewSnapshotCard.Chick(
+                return CrewSnapshotCard.Mini(
                     row: member,
                     frame: childInstant.frame,
                     isOver: childInstant.stance == .ended
@@ -154,10 +154,10 @@ struct CrewSnapshotCard: Identifiable {
     let descendants: Int
     /// The sessions folded into this card, each with the face it wore at the
     /// instant the lead's was sampled.
-    var brood: [Chick] = []
+    var brood: [Mini] = []
 
     /// One member, drawn without a clock.
-    struct Chick: Identifiable {
+    struct Mini: Identifiable {
         let row: BoardRow
         let frame: BloubFrame
         var isOver: Bool = false
@@ -206,11 +206,11 @@ struct CrewSnapshotSheet: View {
                     )
                 } brood: {
                     CrewBroodRow(members: card.brood.map(\.row)) { member in
-                        if let chick = card.brood.first(where: { $0.row.key == member.key }) {
-                            CrewChickAvatar(
+                        if let mini = card.brood.first(where: { $0.row.key == member.key }) {
+                            CrewMiniAvatar(
                                 harness: member.harness,
-                                frame: chick.frame,
-                                isOver: chick.isOver
+                                frame: mini.frame,
+                                isOver: mini.isOver
                             )
                         }
                     }

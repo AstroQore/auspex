@@ -529,6 +529,15 @@ final class LiveBoardModel {
     /// Every unit on the frame, in board order, before the filter bar.
     private(set) var units: [TaskUnit] = []
 
+    /// The frame the aviary draws: one session per piece of work.
+    ///
+    /// Its own property rather than a derivation in the scene's body, and
+    /// assigned only when the aviary is the mode on screen — it carries whole
+    /// `SessionSnapshot`s, which is the value every other property here exists
+    /// to keep out of the render loop, and `@Observable` compares before it
+    /// publishes. The same bargain ``groups`` makes for the flock.
+    private(set) var sceneBoard: BoardSnapshot = .empty
+
     /// Every unit on the frame by id, for the detail page and the palette.
     private(set) var unitIndex: [String: TaskUnit] = [:]
 
@@ -794,6 +803,7 @@ final class LiveBoardModel {
         // the board, on the main actor, whether or not anything is drawing it.
         // The crew wall gets it the moment it is switched to; see `viewMode`.
         if viewMode == .crew { groups = frame.groups }
+        if viewMode == .scene { sceneBoard = frame.sceneBoard }
         rowGroups = frame.rowGroups
         unitGroups = frame.unitGroups
         endedUnits = frame.endedUnits

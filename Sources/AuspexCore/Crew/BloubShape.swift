@@ -135,44 +135,6 @@ public enum BloubShape {
         )
     }
 
-    /// The brood's shape: an egg.
-    ///
-    /// ## Why the members are a different shape at all
-    ///
-    /// A flock card is one lead and everything it spawned. Drawn in the same
-    /// silhouette at two sizes, that reads as *one big session and some small
-    /// sessions*, and the reader has to work out which is which from the
-    /// geometry every time. Drawn as a bird and a brood of chicks it reads
-    /// itself: the thing a person is talking to, and the things it started.
-    ///
-    /// An egg rather than a smaller circle, because the difference has to
-    /// survive being 22 points tall. A superellipse a little narrower than
-    /// tall, with the lower half widened, is the whole of it — the face on top
-    /// is the engine's own, so a chick still blinks and looks around like
-    /// everything else on this wall.
-    public static func chick(
-        _ radius: Double,
-        rotation: Double = 0,
-        centerX: Double = 0,
-        centerY: Double = 0
-    ) -> BloubSilhouette {
-        let base = superellipseProfile(2.15, sx: 0.86, sy: 1)
-        // `sines` runs clockwise from the positive x axis and the canvas has y
-        // growing downward, so a positive sine is *below* the middle. Widening
-        // there is what makes an egg rather than a pear standing on its point.
-        let radii = (0..<BloubProfiles.sampleCount).map { i in
-            base[i] * radius * (1 + 0.11 * sines[i])
-        }
-        return BloubSilhouette(
-            radii: radii,
-            rotation: rotation,
-            centerX: centerX,
-            centerY: centerY,
-            scaleX: 1,
-            scaleY: 1
-        )
-    }
-
     /// Interpolates two silhouettes.
     public static func blend(
         _ a: BloubSilhouette,

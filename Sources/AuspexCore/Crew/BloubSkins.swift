@@ -13,6 +13,16 @@ public enum BloubShapeID: String, Sendable, CaseIterable, Hashable {
     case hexagon = "hexagone"
     case cloud = "nuage"
     case droplet = "goutte"
+    // The plump family — see ``FlockShapes``. The four above them that are not
+    // in it (capsule, triangle, hexagon, droplet) stay in the catalogue: they
+    // are bloub's own, the reference renders use them, and the transition
+    // suite morphs between them.
+    case bean
+    case eared
+    case lemon
+    case footed
+    case ghost
+    case sun
 }
 
 /// The customiser's colour ids. Raw values are bloub's own.
@@ -67,14 +77,19 @@ public enum BloubSkins {
         1.02
     )
 
-    /// Cloud: a union of bumps, wide at the bottom, two lobes on top.
+    /// Cloud: a fat body with four lobes around it.
+    ///
+    /// Rebuilt to hold the flock's plumpness bound — see ``FlockShapes`` — by
+    /// growing the middle rather than shrinking the lobes. The old one reached
+    /// down to 0.64 of its widest between two bumps, which read as a spike at
+    /// 22 points, and the mini avatars are drawn at 22.
     private static let cloud: [Double] = normalize(
         BloubShape.unionOfCirclesProfile([
-            (x: -0.44, y: 0.2, r: 0.54),
-            (x: 0.46, y: 0.2, r: 0.5),
-            (x: 0.02, y: 0.3, r: 0.6),
-            (x: -0.24, y: -0.3, r: 0.48),
-            (x: 0.3, y: -0.24, r: 0.44)
+            (x: 0, y: 0.05, r: 0.80),
+            (x: -0.46, y: 0.10, r: 0.44),
+            (x: 0.48, y: 0.12, r: 0.42),
+            (x: -0.26, y: -0.34, r: 0.44),
+            (x: 0.30, y: -0.30, r: 0.42)
         ]),
         1.02
     )
@@ -94,6 +109,75 @@ public enum BloubSkins {
         fromPolygon: BloubShape.hullOfCircles(-0.42, 0, 0.62, 0.42, 0, 0.62),
         centerX: 0,
         centerY: 0
+    )
+
+    /// Bean: a fat kidney, one side fuller than the other.
+    private static let bean: [Double] = normalize(
+        BloubShape.unionOfCirclesProfile([
+            (x: -0.20, y: -0.10, r: 0.74),
+            (x: 0.24, y: 0.14, r: 0.70),
+            (x: 0.02, y: 0.02, r: 0.72)
+        ]),
+        1.02
+    )
+
+    /// Eared cube: a fat squircle with a small blob at each top corner.
+    ///
+    /// The ears are circles merged into the *radial* profile rather than drawn
+    /// on top, so they morph with everything else and cost nothing extra to
+    /// sample — which is the whole reason every shape here is a radius table.
+    private static let eared: [Double] = normalize(
+        BloubShape.unionOfCirclesProfile([
+            (x: 0, y: 0, r: 0.86),
+            (x: -0.56, y: -0.52, r: 0.34),
+            (x: 0.56, y: -0.52, r: 0.34)
+        ]),
+        1.04
+    )
+
+    /// Lemon: wider than tall with two blunt ends. Blunt, not pointed — a tip
+    /// would break the plumpness bound this family is built on.
+    private static let lemon: [Double] = normalize(
+        BloubShape.unionOfCirclesProfile([
+            (x: -0.34, y: 0, r: 0.66),
+            (x: 0.34, y: 0, r: 0.66),
+            (x: 0, y: 0, r: 0.74)
+        ]),
+        1.03
+    )
+
+    /// Footed blob: a round body with one small foot at the bottom left.
+    private static let footed: [Double] = normalize(
+        BloubShape.unionOfCirclesProfile([
+            (x: 0.04, y: -0.04, r: 0.88),
+            (x: -0.52, y: 0.56, r: 0.34)
+        ]),
+        1.04
+    )
+
+    /// Ghost: a round dome with a gently scalloped hem.
+    ///
+    /// Three shallow lobes along the bottom and nothing at all along the top,
+    /// which is what makes it read as a hem rather than as a flower.
+    private static let ghost: [Double] = normalize(
+        BloubShape.angles.map { angle in
+            // `sin` is positive below the middle: the scallops only exist there.
+            let below = max(0, sin(angle))
+            return 1 + 0.055 * below * cos(3 * angle) - 0.02 * below
+        },
+        1.02
+    )
+
+    /// Sun: a round body with ten short blunt rays.
+    ///
+    /// Short on purpose. The family's rule is that the smallest radius is at
+    /// least 0.72 of the largest — a shape that fails it stops reading as
+    /// chubby at 56 points and reads as spiky — so a sun here is a gently
+    /// crenellated disc rather than a star. At this size that is what a sun
+    /// looks like anyway.
+    private static let sun: [Double] = normalize(
+        BloubShape.angles.map { 1 + 0.10 * cos(10 * $0) },
+        1.04
     )
 
     public static let all: [BloubBodyShape] = [
@@ -131,7 +215,13 @@ public enum BloubSkins {
             )
         ),
         BloubBodyShape(id: .cloud, radii: cloud),
-        BloubBodyShape(id: .droplet, radii: droplet)
+        BloubBodyShape(id: .droplet, radii: droplet),
+        BloubBodyShape(id: .bean, radii: bean),
+        BloubBodyShape(id: .eared, radii: eared),
+        BloubBodyShape(id: .lemon, radii: lemon),
+        BloubBodyShape(id: .footed, radii: footed),
+        BloubBodyShape(id: .ghost, radii: ghost),
+        BloubBodyShape(id: .sun, radii: sun)
     ]
 
     public static let byID: [BloubShapeID: BloubBodyShape] = Dictionary(

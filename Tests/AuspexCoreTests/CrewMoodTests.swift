@@ -14,34 +14,34 @@ import Testing
 struct CrewMoodTests {
     // MARK: The tables
 
-    @Test("every harness has a silhouette, and vendors share one")
-    func shapeTable() {
-        #expect(CrewMoodMap.shape(for: .claudeCode) == .circle)
-        #expect(CrewMoodMap.shape(for: .claudeCowork) == .circle)
-        #expect(CrewMoodMap.shape(for: .codex) == .squircle)
-        #expect(CrewMoodMap.shape(for: .chatgptWork) == .squircle)
-        #expect(CrewMoodMap.shape(for: .cursor) == .triangle)
-        #expect(CrewMoodMap.shape(for: .grokBuild) == .pebble)
-        #expect(CrewMoodMap.shape(for: .grokBot) == .droplet)
-        #expect(CrewMoodMap.shape(for: .antigravity) == .cloud)
-        #expect(CrewMoodMap.shape(for: .geminiCLI) == .capsule)
+    /// The body is the *session* now, not the harness — see ``FlockShapes``
+    /// for why, and `FlockShapesTests` for the family's own properties. What
+    /// this asserts is the mapping the wall goes through.
+    @Test("the body comes from the session and the harness is not in it")
+    func shapeComesFromTheSession() {
+        let key = SessionKey(harness: .cursor, sessionID: "a-session")
+        #expect(CrewMoodMap.shape(for: key) == FlockShapes.shape(for: key))
+        #expect(FlockShapes.family.contains(CrewMoodMap.shape(for: key)))
     }
 
-    /// Seven silhouettes over nine harnesses: the two pairs that share a vendor
-    /// share a shape, and everything else is distinct. A board where two
-    /// unrelated harnesses had the same outline would defeat the point of
-    /// having outlines at all.
-    @Test("only the two vendor pairs share a silhouette")
-    func shapesAreDistinctAcrossVendors() {
-        let shapes = Harness.allCases.map(CrewMoodMap.shape(for:))
-        #expect(Set(shapes).count == Harness.allCases.count - 2)
+    /// Nine harnesses no longer mean nine outlines — they mean nine accents.
+    /// A wall of ninety sessions where forty were the same triangle was one
+    /// bird drawn forty times.
+    @Test("two sessions of one harness are two different bodies")
+    func oneHarnessIsManyBodies() {
+        let shapes = (0..<40).map {
+            CrewMoodMap.shape(for: SessionKey(harness: .codex, sessionID: "s-\($0)"))
+        }
+        #expect(Set(shapes).count >= 8)
     }
 
-    /// The body no longer says what a session is doing — it says which harness
+    /// The body no longer says what a session is doing — it says which session
     /// it is, and nothing else. Everything else is the face.
-    @Test("the silhouette is the harness and never the state")
+    @Test("the silhouette is the session and never the state")
     func shapeIsStable() {
-        var driver = CrewAvatarDriver(harness: .cursor, state: .idle, at: 0)
+        let key = SessionKey(harness: .cursor, sessionID: "a")
+        let body = FlockShapes.shape(for: key)
+        var driver = CrewAvatarDriver(session: key, state: .idle, at: 0)
         let states: [SessionState] = [
             .thinking,
             .toolCalling(name: "shell"),
@@ -52,7 +52,7 @@ struct CrewMoodTests {
         ]
         for (index, state) in states.enumerated() {
             driver.update(state: state, isStale: false, at: Double(index) * 3)
-            #expect(driver.mood.shape == .triangle, "\(state) changed the silhouette")
+            #expect(driver.mood.shape == body, "\(state) changed the silhouette")
         }
     }
 
@@ -127,7 +127,7 @@ struct CrewMoodTests {
 
     @Test("a turn ending raises a celebration, and it expires")
     func softNotify() {
-        var driver = CrewAvatarDriver(harness: .claudeCode, state: .thinking, at: 0)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .claudeCode, sessionID: "a"), state: .thinking, at: 0)
         #expect(driver.mood.stance == .thinking)
 
         driver.update(state: .idle, isStale: false, at: 4)
@@ -148,7 +148,7 @@ struct CrewMoodTests {
     /// to announce — the celebration marks a turn *ending*, not idleness.
     @Test("a session that was idle all along raises nothing")
     func noNotifyWithoutATurn() {
-        var driver = CrewAvatarDriver(harness: .codex, state: .idle, at: 0)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .codex, sessionID: "a"), state: .idle, at: 0)
         driver.update(state: .idle, isStale: false, at: 5)
         #expect(!driver.isCelebrating)
         #expect(driver.mood.stance == .idle)
@@ -159,7 +159,7 @@ struct CrewMoodTests {
     /// same act still in progress.
     @Test("the spawn fires on the act, not on the condition")
     func spawningBurst() {
-        var driver = CrewAvatarDriver(harness: .claudeCode, state: .thinking, at: 0)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .claudeCode, sessionID: "a"), state: .thinking, at: 0)
         driver.update(state: .delegating(children: 1), isStale: false, at: 1)
         #expect(driver.mood.stance == .spawning)
 
@@ -179,7 +179,7 @@ struct CrewMoodTests {
     /// delegating — so the face says it instead.
     @Test("a child finishing is announced by the face")
     func childFinishedAccents() {
-        var driver = CrewAvatarDriver(harness: .claudeCode, state: .thinking, at: 0, seed: 0x31)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .claudeCode, sessionID: "a"), state: .thinking, at: 0, seed: 0x31)
         driver.update(state: .delegating(children: 3), isStale: false, at: 1)
         driver.update(state: .delegating(children: 3), isStale: false, at: 5)
         driver.update(state: .delegating(children: 2), isStale: false, at: 6)
@@ -190,7 +190,7 @@ struct CrewMoodTests {
     /// A long delegation never settles on something that reads as finished.
     @Test("a long delegation never looks asleep")
     func delegationDoesNotLookEnded() {
-        var driver = CrewAvatarDriver(harness: .grokBuild, state: .thinking, at: 0, seed: 7)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .grokBuild, sessionID: "a"), state: .thinking, at: 0, seed: 7)
         driver.update(state: .delegating(children: 2), isStale: false, at: 1)
         for t in stride(from: 1.0, through: 120, by: 0.5) {
             driver.update(state: .delegating(children: 2), isStale: false, at: t)
@@ -205,7 +205,7 @@ struct CrewMoodTests {
     /// bodies, so it survives the state language moving onto the face.
     @Test("a change of stance is still punctuated by a blink")
     func driverBlinks() {
-        var driver = CrewAvatarDriver(harness: .claudeCode, state: .idle, at: 0, seed: 0x2B)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .claudeCode, sessionID: "a"), state: .idle, at: 0, seed: 0x2B)
         driver.update(state: .thinking, isStale: false, at: 10)
         let lowest = stride(from: 10.0, through: 10.7, by: 0.005)
             .map { driver.choreographer.sample(at: $0).lid }
@@ -217,7 +217,7 @@ struct CrewMoodTests {
     /// a blink is exactly what says "awake".
     @Test("an ended session does not blink")
     func endedDoesNotBlink() {
-        var driver = CrewAvatarDriver(harness: .codex, state: .thinking, at: 0, seed: 9)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .codex, sessionID: "a"), state: .thinking, at: 0, seed: 9)
         driver.update(state: .ended(reason: .exited), isStale: false, at: 2)
         for t in stride(from: 4.0, through: 200, by: 0.05) {
             #expect(driver.choreographer.sample(at: t).lid == 1, "blinked at \(t)")
@@ -248,7 +248,7 @@ struct CrewMoodTests {
 
     @Test("a change of stance buys a second at the full rate")
     func cadenceAfterAChange() {
-        var driver = CrewAvatarDriver(harness: .claudeCode, state: .idle, at: 0, seed: 0x51)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .claudeCode, sessionID: "a"), state: .idle, at: 0, seed: 0x51)
         driver.update(state: .idle, isStale: false, at: 10)
         // settled idle, away from a blink and a reaction: the low rate
         #expect(driver.frameInterval(at: Self.quiet(driver, from: 10)) == CrewCadence.low)
@@ -274,7 +274,7 @@ struct CrewMoodTests {
     @Test("the rate follows the face, not the state")
     func cadencePerStance() {
         func settled(_ state: SessionState, isStale: Bool = false) -> Double? {
-            var driver = CrewAvatarDriver(harness: .codex, state: .idle, at: 0, seed: 0x77)
+            var driver = CrewAvatarDriver(session: SessionKey(harness: .codex, sessionID: "a"), state: .idle, at: 0, seed: 0x77)
             driver.update(state: state, isStale: isStale, at: 0)
             return driver.frameInterval(at: Self.quiet(driver, from: 30))
         }
@@ -293,7 +293,7 @@ struct CrewMoodTests {
     /// motion that is smooth but slow.
     @Test("a step morph asks for the middle rate")
     func cadenceDuringAStepMorph() {
-        var driver = CrewAvatarDriver(harness: .claudeCode, state: .idle, at: 0, seed: 0x99)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .claudeCode, sessionID: "a"), state: .idle, at: 0, seed: 0x99)
         driver.update(state: .idle, isStale: false, at: 0)
         var sawHalf = false
         for t in stride(from: 5.0, through: 120, by: 0.02) {
@@ -313,7 +313,7 @@ struct CrewMoodTests {
     /// future.
     @Test("an avatar wakes up for its own blinks")
     func cadenceAroundABlink() {
-        var driver = CrewAvatarDriver(harness: .claudeCode, state: .idle, at: 0, seed: 0x1234)
+        var driver = CrewAvatarDriver(session: SessionKey(harness: .claudeCode, sessionID: "a"), state: .idle, at: 0, seed: 0x1234)
         driver.update(state: .idle, isStale: false, at: 0)
 
         // Walk a minute at the rate the driver itself asks for, and collect

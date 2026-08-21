@@ -63,24 +63,21 @@ public struct CrewMood: Sendable, Hashable {
 /// window — which matters, because this is the only place where a new harness
 /// or a new session state would silently get a default.
 public enum CrewMoodMap {
-    /// One silhouette per harness.
+    /// The silhouette a session wears.
     ///
-    /// Total over `Harness` on purpose: adding a harness to the kit fails this
-    /// switch rather than quietly drawing it as a circle, exactly as
-    /// `HarnessStyle` does for the accent. The two harnesses that share a
-    /// vendor also share a shape — Claude Code and Claude Cowork are both
-    /// circles, Codex and ChatGPT Work both squircles — because they are one
-    /// vendor's two products, and the accent is what tells them apart.
-    public static func shape(for harness: Harness) -> BloubShapeID {
-        switch harness {
-        case .claudeCode, .claudeCowork: .circle
-        case .codex, .chatgptWork: .squircle
-        case .cursor: .triangle
-        case .grokBuild: .pebble
-        case .grokBot: .droplet
-        case .antigravity: .cloud
-        case .geminiCLI: .capsule
-        }
+    /// ## Why this is no longer a table over `Harness`
+    ///
+    /// It was one: Claude a circle, Cursor a triangle, Grok Bot a droplet, and
+    /// the two vendor pairs sharing a shape. It read as deliberate on a board
+    /// of eight and as wallpaper on a board of ninety — forty birds in the same
+    /// triangle is one bird drawn forty times, and the thing a person is
+    /// actually looking for is *the session they were watching*.
+    ///
+    /// So the shape is seeded by the session and the harness is carried by the
+    /// accent, which every other surface in the window already uses for it. See
+    /// ``FlockShapes``.
+    public static func shape(for session: SessionKey) -> BloubShapeID {
+        FlockShapes.shape(for: session)
     }
 
     /// How long a finished turn is celebrated for.
@@ -142,14 +139,14 @@ public enum CrewMoodMap {
 
     /// The whole mood for a session.
     public static func mood(
-        harness: Harness,
+        session: SessionKey,
         state: SessionState,
         isStale: Bool = false,
         isNotifying: Bool = false,
         isSpawning: Bool = false
     ) -> CrewMood {
         CrewMood(
-            shape: shape(for: harness),
+            shape: shape(for: session),
             stance: stance(
                 for: state,
                 isStale: isStale,
@@ -186,8 +183,11 @@ public struct CrewAvatarDriver: Sendable {
     /// one drawing.
     public private(set) var choreographer: CrewChoreographer
     /// Which harness this avatar is. Fixed for the life of the session, and
-    /// the only thing the mood cannot be re-derived without.
+    /// what decides its colour.
     public let harness: Harness
+    /// Which session this avatar is. Fixed for its life, and what decides its
+    /// body — see ``FlockShapes``.
+    public let session: SessionKey
     /// The mood currently being played.
     public private(set) var mood: CrewMood
     /// When the celebration stops, on the same clock.
@@ -209,7 +209,7 @@ public struct CrewAvatarDriver: Sendable {
     public static let popScale = 0.04
 
     public init(
-        harness: Harness,
+        session: SessionKey,
         state: SessionState,
         isStale: Bool = false,
         at now: Double,
@@ -226,12 +226,13 @@ public struct CrewAvatarDriver: Sendable {
             spawning = true
         }
         let mood = CrewMoodMap.mood(
-            harness: harness,
+            session: session,
             state: state,
             isStale: isStale,
             isSpawning: spawning
         )
-        self.harness = harness
+        self.harness = session.harness
+        self.session = session
         self.mood = mood
         lastSessionState = state
         var engine = BloubEngine(
@@ -298,7 +299,7 @@ public struct CrewAvatarDriver: Sendable {
         if let until = spawnUntil, now >= until { spawnUntil = nil }
 
         let next = CrewMoodMap.mood(
-            harness: harness,
+            session: session,
             state: state,
             isStale: isStale,
             isNotifying: notifyUntil != nil,

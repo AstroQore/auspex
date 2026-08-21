@@ -40,11 +40,14 @@ struct SceneContainerView: View {
         // tracked in a `body`, and a value read only inside `updateNSView`
         // would never schedule the update that reads it.
         //
-        // `board` rather than `rawBoard`: it is the frame with the person's
-        // ignore rules already applied, so a session they told Auspex to stop
-        // showing has no desk, and the office cannot disagree with the wall
-        // about who is here.
-        let board = model.board
+        // `sceneBoard` rather than `board`: it is the frame reduced to one
+        // session per piece of work, with the task's title on the nameplate —
+        // see ``SceneUnits``. A delegation of four used to take four desks in a
+        // row, three of which appeared for one turn and vacated, which is
+        // exactly the churn the seating rules exist to prevent. The person's
+        // ignore rules and the wall's filters are already applied to it, so the
+        // office cannot disagree with the ledger about who is here.
+        let board = model.sceneBoard
         let selected = model.selectedKey
         // One property for every surface: the sidebar sets it, the wall keeps
         // that project's sections, and the camera flies to that room.
@@ -667,6 +670,19 @@ enum SceneSnapshotRenderer {
         // policy keeps it out of the Dock and off the menu bar while it does.
         NSApplication.shared.setActivationPolicy(.prohibited)
 
+        // One desk per piece of work, exactly as the live aviary draws it —
+        // see ``SceneUnits``. A renderer that still drew one per session would
+        // be a picture of an app that no longer exists.
+        let board = SceneUnits.board(
+            from: board,
+            units: TaskUnitBuilder.units(
+                sessions: board.sessions,
+                board: board,
+                ledger: .empty,
+                builder: BoardRowBuilder(board: board, now: board.generatedAt),
+                now: board.generatedAt
+            )
+        )
         let appearance = appearance.nsAppearance
         let theme = SceneTheme.resolved(for: appearance)
         let scene = OfficeScene(theme: theme)

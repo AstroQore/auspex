@@ -249,10 +249,10 @@ struct CrewView: View {
                     onSelect: { model.selectedKey = $0 }
                 ) { member in
                     if let child = model.session(for: member.key) {
-                        CrewLiveChick(
+                        CrewLiveMini(
                             session: child,
                             roster: roster,
-                            // A chick inherits the card's own pause: a wall
+                            // A mini inherits the card's own pause: a wall
                             // nobody can see should not be costing frames, and
                             // there are eight times as many of these as there
                             // are leads.
@@ -816,7 +816,7 @@ final class CrewRoster {
         let clock = now + phase
 
         var driver = drivers[key] ?? CrewAvatarDriver(
-            harness: key.harness,
+            session: key,
             state: session.state,
             isStale: session.isStale,
             at: clock,

@@ -140,6 +140,14 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     public let unitIndex: [String: TaskUnit]
     /// What the filter bar can offer, from what is actually on this frame.
     public let filterOptions: TaskFilters.Options
+    /// The frame the aviary is drawn from: one session per piece of work — see
+    /// ``SceneUnits``.
+    ///
+    /// Derived here rather than in the scene's own update, for the reason
+    /// everything else on this type is: the office rebuilds its floor plan
+    /// from a frame, and a frame reduced on the main actor at eight frames a
+    /// second is the work this whole arrangement moved off it.
+    public let sceneBoard: BoardSnapshot
     /// Which unit each session is folded into, so selecting a card and
     /// selecting a session are the same gesture seen from two ends.
     public let unitBySession: [SessionKey: String]
@@ -204,6 +212,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         units: [TaskUnit] = [],
         unitIndex: [String: TaskUnit] = [:],
         filterOptions: TaskFilters.Options = .none,
+        sceneBoard: BoardSnapshot? = nil,
         unitBySession: [SessionKey: String] = [:],
         endedRows: [BoardRow],
         summary: BoardSummary,
@@ -218,6 +227,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.units = units
         self.unitIndex = unitIndex
         self.filterOptions = filterOptions
+        self.sceneBoard = sceneBoard ?? board
         self.unitBySession = unitBySession
         self.sequence = sequence
         self.board = board
@@ -283,6 +293,12 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             units: kept(units, previous.units),
             unitIndex: kept(unitIndex, previous.unitIndex),
             filterOptions: kept(filterOptions, previous.filterOptions),
+            // The same rule ``board`` follows, and for the same reason: a
+            // reduced frame carries `generatedAt`, which moves on every tick,
+            // so comparing it would make every frame a new one and the repeat
+            // check useless. It is a function of the board and the units, and
+            // both of those have already been asked.
+            sceneBoard: boardMoved ? sceneBoard : previous.sceneBoard,
             unitBySession: kept(unitBySession, previous.unitBySession),
             endedRows: kept(endedRows, previous.endedRows),
             summary: kept(summary, previous.summary),
@@ -538,6 +554,11 @@ public actor BoardFrameAssembler {
             // dropped the option a person is *about* to swap to would make the
             // bar a trap you can only get out of by clearing it.
             filterOptions: TaskFilters.options(for: allUnits),
+            // Over the units the wall is drawing rather than over every one:
+            // the office and the wall are two pictures of the same board, and
+            // a desk for a card that is filtered out would be a room saying
+            // something the wall does not.
+            sceneBoard: SceneUnits.board(from: board, units: liveUnits + unitSplit.ended),
             unitBySession: unitBySession,
             endedRows: inputs.bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows,
             // Over units, and counted before the bucket filter, on purpose: the
