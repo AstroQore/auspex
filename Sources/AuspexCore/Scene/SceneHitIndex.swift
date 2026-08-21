@@ -126,7 +126,7 @@ public struct SceneHitIndex: Sendable, Equatable {
         switch kind {
         case .desk: metrics.cellWidth
         case .tableHead, .tableNorth, .tableSouth: metrics.tableSeatSpacing
-        case .bench, .note, .doze: metrics.gardenSeatSpacing
+        case .call, .note, .bench, .doze: metrics.gardenSeatSpacing
         case .gate: metrics.gardenSeatSpacing * 0.4
         }
     }

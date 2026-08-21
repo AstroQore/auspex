@@ -145,14 +145,24 @@ final class LiveBoardModel {
         SessionRecency.hint(hidden: olderHidden, window: sessionWindow)
     }
 
-    /// The sessions that finished something nobody has read.
+    /// What each session on the frame is signalling, if anything.
     ///
-    /// Derived here rather than in the scene because the answer needs
-    /// ``seenAt``, which is Auspex's own record of what the *reader* has
-    /// looked at, and the scene has no business holding it. It is a `Set`, so
-    /// a frame in which nothing was read and nothing finished publishes
-    /// nothing and invalidates nobody.
-    private(set) var unseenDoneKeys: Set<SessionKey> = []
+    /// Derived with the frame rather than in the surfaces that read it,
+    /// because the answer needs Auspex's own record of what the *reader* has
+    /// dealt with and neither the scene nor the crew wall has any business
+    /// holding that. Only the sessions actually saying something are in it, so
+    /// a quiet frame publishes an empty dictionary and invalidates nobody.
+    private(set) var attention: [SessionKey: AttentionState] = [:]
+
+    /// The sessions calling for a person, and the ones that reported
+    /// finishing.
+    ///
+    /// Stored rather than computed per body: they are what the crew wall tests
+    /// membership against once per card, and a `Set` published only when it
+    /// moves is what keeps a wall of forty avatars out of the render loop on a
+    /// frame where nothing was said.
+    private(set) var needsYouKeys: Set<SessionKey> = []
+    private(set) var doneReportedKeys: Set<SessionKey> = []
 
     /// How the live sessions are drawn: the grid of cards, or the scene.
     ///
@@ -341,17 +351,22 @@ final class LiveBoardModel {
     /// The notification goes with it: an alert still sitting in Notification
     /// Centre for something the person has already dealt with is the fastest
     /// way to teach somebody to ignore alerts.
-    func dismissNotice(_ key: SessionKey) {
-        guard notices.removeValue(forKey: key) != nil else { return }
+    func dismissNotice(_ key: SessionKey, at date: Date = Date()) {
+        let hadNotice = notices.removeValue(forKey: key) != nil
+        // The acknowledgement is written whether or not there was a notice to
+        // remove: a harness's own permission wait has no row to clear, and a
+        // person dismissing that card has still said they have dealt with it.
+        let isNew = (acknowledgedAt[key] ?? .distantPast) < date
+        if isNew { acknowledgedAt[key] = date }
+        guard hadNotice || isNew else { return }
         scheduleAssembly()
-        clearThrough(key)
-    }
-
-    /// Writes a dismissal through to the store and takes the alert back.
-    private func clearThrough(_ key: SessionKey) {
+        let repository = repository
         let ledger = ledger
         Task.detached(priority: .utility) {
-            try? ledger?.clearNotice(session: key)
+            if hadNotice { try? ledger?.clearNotice(session: key) }
+            if isNew {
+                try? repository?.acknowledge(key: key, at: date, reason: .dismissed)
+            }
             await AgentNotifier.shared.withdraw(session: key)
         }
     }
@@ -372,9 +387,13 @@ final class LiveBoardModel {
             return notice.isAnswered(byPromptAt: session.brief.lastPromptAt)
         }
         guard !answered.isEmpty else { return }
+        let ledger = ledger
         for key in answered.keys {
             notices.removeValue(forKey: key)
-            clearThrough(key)
+            Task.detached(priority: .utility) {
+                try? ledger?.clearNotice(session: key)
+                await AgentNotifier.shared.withdraw(session: key)
+            }
         }
     }
 
@@ -561,6 +580,7 @@ final class LiveBoardModel {
             focusedProjectKey: focusedProjectKey,
             bucketFilter: bucketFilter,
             seenAt: seenAt,
+            acknowledgedAt: acknowledgedAt,
             derivedBriefs: derivedBriefs,
             projectNames: projectNames,
             notices: notices,
@@ -597,7 +617,11 @@ final class LiveBoardModel {
         endedRows = frame.endedRows
         summary = frame.summary
         sessionCount = frame.sessionCount
-        unseenDoneKeys = frame.unseenDoneKeys
+        attention = frame.attention
+        needsYouKeys = Set(frame.attention.compactMap { $0.value.wantsPerson ? $0.key : nil })
+        doneReportedKeys = Set(
+            frame.attention.compactMap { $0.value.isDoneReported ? $0.key : nil }
+        )
         olderHidden = frame.olderHidden
         refreshSelection()
         onTree?(frame.tree)
@@ -689,12 +713,106 @@ final class LiveBoardModel {
     /// the in-memory map is updated first so the dot clears on the same frame
     /// as the click rather than a persist interval later.
     func markSeen(_ key: SessionKey, at date: Date = Date()) {
-        if let existing = seenAt[key], existing >= date { return }
+        // Opening a card is also the ordinary way a signal gets cleared, so
+        // the acknowledgement rides along. Its own write, because a dismissal
+        // acknowledges without ever having read anything and the two stamps
+        // have to be able to differ.
+        let isNew = (acknowledgedAt[key] ?? .distantPast) < date
+        if isNew {
+            acknowledgedAt[key] = date
+            withdrawAlert(for: key)
+        }
+        if let existing = seenAt[key], existing >= date {
+            if isNew { scheduleAssembly() }
+            return
+        }
         seenAt[key] = date
         scheduleAssembly()
         guard let repository else { return }
         Task.detached(priority: .utility) {
             try? repository.markSeen(key: key, at: date)
+            if isNew {
+                try? repository.acknowledge(key: key, at: date, reason: .opened)
+            }
+        }
+    }
+
+    /// Takes back the macOS alert for a session whose card has just been dealt
+    /// with. The card and the notification are two views of one call, and a
+    /// banner outliving the thing it was about is what teaches people to
+    /// dismiss banners unread.
+    private func withdrawAlert(for key: SessionKey) {
+        Task.detached(priority: .utility) {
+            await AgentNotifier.shared.withdraw(session: key)
+        }
+    }
+
+    /// When the person last cleared each session's attention.
+    ///
+    /// Auspex's own state, like ``seenAt``, and held the same way: in memory,
+    /// written through, never queried per card. It is the half of the
+    /// attention model the machine cannot supply — an agent knows it asked a
+    /// question, and only Auspex knows whether anybody has dealt with it.
+    private(set) var acknowledgedAt: [SessionKey: Date] = [:]
+
+    /// Clears one session's attention and writes it through.
+    ///
+    /// The reason is recorded rather than inferred: "this card went quiet" has
+    /// three explanations, and a board that looks wrong is much easier to
+    /// argue with when the store says which one applied.
+    func acknowledge(_ key: SessionKey, reason: SessionAckReason, at date: Date = Date()) {
+        if let existing = acknowledgedAt[key], existing >= date { return }
+        acknowledgedAt[key] = date
+        scheduleAssembly()
+        guard let repository else { return }
+        Task.detached(priority: .utility) {
+            try? repository.acknowledge(key: key, at: date, reason: reason)
+        }
+    }
+
+    /// Clears every signal on the board at once — the header's "Mark all as
+    /// seen".
+    ///
+    /// Over the sessions that are actually saying something rather than over
+    /// the whole board: a machine with six hundred sessions on it should not
+    /// write six hundred rows to answer a click that was about the four red
+    /// cards.
+    func markAllSeen(at date: Date = Date()) {
+        let keys = attention.keys.filter { (acknowledgedAt[$0] ?? .distantPast) < date }
+        guard !keys.isEmpty else { return }
+        for key in keys { acknowledgedAt[key] = date }
+        scheduleAssembly()
+        // The alerts go with the cards. An alert still sitting in Notification
+        // Centre for something the person has just cleared in bulk is the
+        // fastest way to teach somebody to ignore alerts.
+        let repository = repository
+        Task.detached(priority: .utility) {
+            for key in keys {
+                try? repository?.acknowledge(key: key, at: date, reason: .markedAll)
+                await AgentNotifier.shared.withdraw(session: key)
+            }
+        }
+    }
+
+    /// Whether anything is signalling, which is what the "Mark all as seen"
+    /// control is enabled by.
+    var hasAttention: Bool { !attention.isEmpty }
+
+    /// Reloads what has already been dealt with, so a relaunch does not put a
+    /// week of answered questions back on the board.
+    func loadAcknowledgements() {
+        guard let repository else { return }
+        Task { [weak self] in
+            let stored = await Task.detached(priority: .utility) {
+                () -> [SessionKey: SessionAcknowledgement] in
+                (try? repository.allAcknowledgements()) ?? [:]
+            }.value
+            guard let self, !stored.isEmpty else { return }
+            for (key, record) in stored
+            where (self.acknowledgedAt[key] ?? .distantPast) < record.at {
+                self.acknowledgedAt[key] = record.at
+            }
+            self.scheduleAssembly()
         }
     }
 
@@ -875,6 +993,7 @@ final class LiveBoardModel {
     func start(registry: SessionRegistry, repository: SessionRepository?) {
         self.repository = repository
         loadSeen()
+        loadAcknowledgements()
         consumeTask?.cancel()
         consumeTask = Task { [weak self] in
             // The registry publishes up to 20 frames a second; a wall of a few

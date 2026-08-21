@@ -62,7 +62,17 @@ public struct SceneLayout: Sendable, Equatable {
     /// family has stopped meeting.
     private var tables: [TableState?]
 
-    /// Who is on which bench. `nil` is a seat somebody got up from.
+    /// Who is on the front row by the path — the waiting bench. `nil` is a
+    /// place somebody got up from.
+    ///
+    /// A table of its own rather than a slice of the lawn's, because the two
+    /// have different rules: the lawn is bounded and gives way when a
+    /// repository is busy, and the waiting bench never is. A session that said
+    /// it wants you is never one of the ones the map decided not to draw.
+    private var waitingSeats: [SessionKey?]
+
+    /// Who is on which bench on the back lawn. `nil` is a seat somebody got up
+    /// from.
     private var gardenSeats: [SessionKey?]
 
     /// Who is in the queue for the gate, in the order they joined it.
@@ -73,6 +83,7 @@ public struct SceneLayout: Sendable, Equatable {
         self.metrics = metrics
         self.floors = []
         self.tables = []
+        self.waitingSeats = []
         self.gardenSeats = []
         self.gateQueue = []
     }
@@ -142,16 +153,16 @@ public struct SceneLayout: Sendable, Equatable {
     ///   - zones: which annexes are switched on. ``SceneZoneOptions/officeOnly``
     ///     produces exactly the office this layout produced before the annexes
     ///     existed, down to the coordinates.
-    ///   - unseenDone: the sessions the task ledger calls finished-and-unread.
-    ///     They are the ones that sit in the garden holding a note, and there
-    ///     is no way to derive the set from the board — it is a fact about
-    ///     what the *reader* has looked at.
+    ///   - attention: what each session is signalling, if anything. They are
+    ///     the ones that sit on the waiting bench by the path, and there is no
+    ///     way to derive the map from the board — it is made of things agents
+    ///     and harnesses said, which Auspex holds and the transcript does not.
     public mutating func update(
         with board: BoardSnapshot,
         zones: SceneZoneOptions = .all,
-        unseenDone: Set<SessionKey> = []
+        attention: [SessionKey: AttentionState] = [:]
     ) -> SceneFrame {
-        let plan = Plan(board: board, zones: zones, unseenDone: unseenDone, metrics: metrics)
+        let plan = Plan(board: board, zones: zones, attention: attention, metrics: metrics)
         sweep(plan)
         seat(plan)
         return geometry(plan)
@@ -190,7 +201,7 @@ public struct SceneLayout: Sendable, Equatable {
         init(
             board: BoardSnapshot,
             zones: SceneZoneOptions,
-            unseenDone: Set<SessionKey>,
+            attention: [SessionKey: AttentionState],
             metrics: SceneMetrics
         ) {
             self.board = board
@@ -253,7 +264,7 @@ public struct SceneLayout: Sendable, Equatable {
             let placement = SceneZoning.placements(
                 sessions: board.sessions,
                 parent: roomParent,
-                unseenDone: unseenDone,
+                attention: attention,
                 options: zones
             )
             self.placement = placement
@@ -307,14 +318,19 @@ public struct SceneLayout: Sendable, Equatable {
         ///   ``SceneMetrics/gateQueueLimit``; everything that finished before
         ///   them has left, and leaves no desk behind either — it is never
         ///   coming back to sit at one.
-        /// - **The garden seats a bounded number per project**, most useful
-        ///   first: a session holding an unread note before one that is merely
-        ///   dozing, and a dozing one before a bench. The rest are counted on
-        ///   the nameplate. Per project rather than in total, so one busy
-        ///   repository cannot push a quiet one's single bench off the map.
+        /// - **The back lawn seats a bounded number per project**, dozing
+        ///   before resting: a session that may be wrong about working is
+        ///   worth more of the picture than one with nothing outstanding. The
+        ///   rest are counted on the nameplate. Per project rather than in
+        ///   total, so one busy repository cannot push a quiet one's single
+        ///   bench off the map.
         ///
-        /// Nothing here can remove a session that is working, blocked, or at a
-        /// table: those never reach a garden placement in the first place.
+        /// Nothing here can remove a session that is working, at a table, or on
+        /// the **waiting bench**. The last of those is the point: the front row
+        /// is made of things that were said out loud, and a map that quietly
+        /// dropped one would be hiding exactly what it exists to show. It is
+        /// bounded by the vocabulary instead — nothing lands there without an
+        /// agent or a harness having put it there.
         private static func bound(
             order: [SessionKey],
             sessions: [SessionSnapshot],
@@ -363,16 +379,11 @@ public struct SceneLayout: Sendable, Equatable {
             }
             var overflow = 0
             for (_, keys) in resting {
-                // A note is somebody waiting to be read, which is the errand
-                // this whole app exists to hand over; a doze is a session that
-                // may be wrong about working. A bench is the one with nothing
-                // outstanding, so it is the one that gives way.
+                // A doze is a session that may be wrong about claiming to
+                // work. A bench is the one with nothing outstanding, so it is
+                // the one that gives way.
                 let seated = keep(keys, limit: max(0, metrics.gardenSeatsPerProject)) { key in
-                    switch placement[key]?.kind {
-                    case .note: 0
-                    case .doze: 1
-                    default: 2
-                    }
+                    placement[key]?.kind == .doze ? 0 : 1
                 }
                 for key in keys where !seated.contains(key) {
                     offMap.insert(key)
@@ -450,8 +461,10 @@ public struct SceneLayout: Sendable, Equatable {
         }
         while let last = tables.last, last == nil { tables.removeLast() }
 
+        release(&waitingSeats) { plan.draws($0) && plan.place($0).kind.isWaitingBench }
         release(&gardenSeats) { plan.draws($0) && plan.place($0).kind.isGardenRest }
         release(&gateQueue) { plan.draws($0) && plan.place($0).kind == .gate }
+        while let last = waitingSeats.last, last == nil { waitingSeats.removeLast() }
         while let last = gardenSeats.last, last == nil { gardenSeats.removeLast() }
         while let last = gateQueue.last, last == nil { gateQueue.removeLast() }
     }
@@ -522,6 +535,8 @@ public struct SceneLayout: Sendable, Equatable {
             }
         }
 
+        var waiting: Set<SessionKey> = []
+        for key in waitingSeats { if let key { waiting.insert(key) } }
         var resting: Set<SessionKey> = []
         for key in gardenSeats { if let key { resting.insert(key) } }
         var leaving: Set<SessionKey> = []
@@ -529,7 +544,9 @@ public struct SceneLayout: Sendable, Equatable {
 
         for key in plan.order where plan.draws(key) {
             let kind = plan.place(key).kind
-            if kind.isGardenRest, !resting.contains(key) {
+            if kind.isWaitingBench, !waiting.contains(key) {
+                Self.claim(key, in: &waitingSeats)
+            } else if kind.isGardenRest, !resting.contains(key) {
                 Self.claim(key, in: &gardenSeats)
             } else if kind == .gate, !leaving.contains(key) {
                 Self.claim(key, in: &gateQueue)
@@ -788,7 +805,12 @@ public struct SceneLayout: Sendable, Equatable {
             top: officeBottom
         )
         annexes.layOutMeeting(tables: tables, plan: plan)
-        annexes.layOutGarden(resting: gardenSeats, leaving: gateQueue, plan: plan)
+        annexes.layOutGarden(
+            waiting: waitingSeats,
+            resting: gardenSeats,
+            leaving: gateQueue,
+            plan: plan
+        )
 
         // Where somebody is, not where their desk is. A parent who has walked
         // to a table and a child that followed it there are still a delegation,
@@ -1009,7 +1031,26 @@ public struct SceneLayout: Sendable, Equatable {
 
         // MARK: Garden
 
+        /// Lays the garden out: the back lawn, then the waiting bench along
+        /// the path at the front, then the gate.
+        ///
+        /// ## Why the front row exists
+        ///
+        /// The garden used to be one grid of benches, and the two things a
+        /// person actually comes to this map for — *is anything stuck on me*
+        /// and *did anything finish* — were somewhere inside it, next to a
+        /// dozen sessions doing nothing. A picture where the urgent thing is
+        /// laid out exactly like the unimportant thing is a picture you have to
+        /// read rather than glance at.
+        ///
+        /// So the garden has a front and a back. The front row runs along the
+        /// walkway, is the last thing between the reader and the path, and
+        /// holds only sessions that said something out loud: a red `!` for
+        /// somebody waiting on a person, a green `✓` for a receipt nobody has
+        /// read. The back lawn is everything that is merely resting, and it is
+        /// the half that gives way when a busy repository fills the map.
         mutating func layOutGarden(
+            waiting: [SessionKey?],
             resting: [SessionKey?],
             leaving: [SessionKey?],
             plan: Plan
@@ -1018,7 +1059,9 @@ public struct SceneLayout: Sendable, Equatable {
             let leavingCount = leaving.count
             // The overflow counts too: a garden with twelve benches and forty
             // more people in it has to be drawn to be able to say so.
-            guard !resting.isEmpty || leavingCount > 0 || plan.gardenOverflow > 0 else { return }
+            guard !waiting.isEmpty || !resting.isEmpty || leavingCount > 0
+                || plan.gardenOverflow > 0
+            else { return }
 
             let top = cursor + metrics.floorGap
             // The gate end is kept clear of benches, and it widens with the
@@ -1030,34 +1073,66 @@ public struct SceneLayout: Sendable, Equatable {
             )
             let usable = width - Self.padding * 2 - reserve
             let columns = max(1, Int((usable / metrics.gardenSeatSpacing).rounded(.down)))
-            let rows = max(1, (resting.count + columns - 1) / columns)
+            let lawnRows = resting.isEmpty
+                ? 0 : max(1, (resting.count + columns - 1) / columns)
+            // The waiting bench wraps like the lawn does. It is normally one
+            // row and it has to survive the afternoon where it is not.
+            let waitingRows = waiting.isEmpty
+                ? 0 : max(1, (waiting.count + columns - 1) / columns)
+            // At least one row of garden even when nobody is in it, because the
+            // gate stands in it and the overflow count is written on it.
+            let rows = max(1, lawnRows + waitingRows)
             let height = metrics.floorHeaderHeight + CGFloat(rows) * metrics.gardenRowHeight
             let rect = CGRect(x: left, y: top, width: width, height: height)
 
+            /// The floor line of one row, counting from the top of the strip.
+            func rowY(_ row: Int) -> CGFloat {
+                top + metrics.floorHeaderHeight
+                    + CGFloat(row + 1) * metrics.gardenRowHeight - Self.seatLift
+            }
+
+            /// Where the `index`th person in a band stands.
+            func anchor(index: Int, firstRow: Int) -> CGPoint {
+                CGPoint(
+                    x: left + Self.padding
+                        + (CGFloat(index % columns) + 0.5) * metrics.gardenSeatSpacing,
+                    y: rowY(firstRow + index / columns)
+                )
+            }
+
             var occupancy = 0
+            // The lawn first, at the back, because the strip is drawn top to
+            // bottom and the path is along the bottom edge.
             for (index, key) in resting.enumerated() {
                 if key != nil { occupancy += 1 }
-                let column = index % columns
-                let row = index / columns
-                let anchor = CGPoint(
-                    x: left + Self.padding
-                        + (CGFloat(column) + 0.5) * metrics.gardenSeatSpacing,
-                    y: top + metrics.floorHeaderHeight
-                        + CGFloat(row + 1) * metrics.gardenRowHeight - Self.seatLift
-                )
                 seats.append(
                     SceneSeat(
                         id: "z.garden.s\(index)",
                         session: key,
                         kind: key.map { plan.place($0).kind } ?? .bench,
-                        anchor: anchor,
+                        anchor: anchor(index: index, firstRow: 0),
+                        scale: 1
+                    )
+                )
+            }
+            // Then the front row, nearest the walkway. Its own id prefix, so a
+            // renderer diffing nodes never mistakes a bench on the lawn for a
+            // place on the waiting bench and animates somebody sideways across
+            // the garden when a receipt arrives.
+            for (index, key) in waiting.enumerated() {
+                if key != nil { occupancy += 1 }
+                seats.append(
+                    SceneSeat(
+                        id: "z.garden.w\(index)",
+                        session: key,
+                        kind: key.map { plan.place($0).kind } ?? .note,
+                        anchor: anchor(index: index, firstRow: lawnRows),
                         scale: 1
                     )
                 )
             }
 
-            let gateY = top + metrics.floorHeaderHeight
-                + metrics.gardenRowHeight - Self.seatLift
+            let gateY = rowY(0)
             let gatePoint = CGPoint(x: rect.maxX - reserve / 2, y: gateY)
             gate = gatePoint
             for (index, key) in leaving.enumerated() {

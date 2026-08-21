@@ -245,7 +245,7 @@ struct TaskRepositoryTests {
         #expect(try repository.liveNotices()[key]?.kind == .done)
     }
 
-    @Test("only a needs_input notice is answered by the next prompt")
+    @Test("a notice of any kind is answered by the next prompt")
     func autoClearRule() {
         let asked = AgentNotice(
             session: Fixtures.key(), kind: .needsInput, message: "?", createdAt: Fixtures.date(0)
@@ -254,10 +254,14 @@ struct TaskRepositoryTests {
         #expect(!asked.isAnswered(byPromptAt: Fixtures.date(-10)))
         #expect(!asked.isAnswered(byPromptAt: nil))
 
+        // Every kind, and not only a question: typing into the session's own
+        // terminal is the clearing gesture that happens where the work is, and
+        // it is the one nobody should have to visit Auspex to perform.
         let blocked = AgentNotice(
             session: Fixtures.key(), kind: .blocked, message: "!", createdAt: Fixtures.date(0)
         )
-        #expect(!blocked.isAnswered(byPromptAt: Fixtures.date(10)))
+        #expect(blocked.isAnswered(byPromptAt: Fixtures.date(10)))
+        #expect(!blocked.isAnswered(byPromptAt: Fixtures.date(-10)))
     }
 
     // MARK: - Reports

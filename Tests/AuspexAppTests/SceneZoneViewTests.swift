@@ -42,7 +42,7 @@ struct SceneZoneViewTests {
             reduceMotion: true,
             theme: theme,
             zones: zones,
-            unseenDone: SceneSnapshotRenderer.demoUnseenDone(board)
+            attention: SceneSnapshotRenderer.demoAttention(board)
         )
         view.layoutSubtreeIfNeeded()
         scene.update(CACurrentMediaTime())
@@ -56,7 +56,7 @@ struct SceneZoneViewTests {
         return layout.update(
             with: board,
             zones: zones,
-            unseenDone: SceneSnapshotRenderer.demoUnseenDone(board)
+            attention: SceneSnapshotRenderer.demoAttention(board)
         )
     }
 
@@ -74,10 +74,12 @@ struct SceneZoneViewTests {
         #expect(atTheTable.count == 3)
         #expect(atTheTable.filter { $0.kind == .tableHead }.count == 1)
 
-        // And the garden's four ways of not working.
+        // The garden's five ways of not being at a desk: the front row's two,
+        // and the back lawn's three.
         let kinds = Set(frame.seats.filter { $0.session != nil }.map(\.kind))
-        #expect(kinds.contains(.bench))
+        #expect(kinds.contains(.call))
         #expect(kinds.contains(.note))
+        #expect(kinds.contains(.bench))
         #expect(kinds.contains(.doze))
         #expect(kinds.contains(.gate))
         #expect(frame.gate != nil)
@@ -96,8 +98,12 @@ struct SceneZoneViewTests {
         }
     }
 
-    @Test("Nobody waiting on a person is anywhere but their desk")
-    func blockedStaysAtTheDesk() {
+    @Test("Everybody waiting on a person is on the front row, together")
+    func blockedIsOnTheWaitingBench() {
+        // One place to look. A raised hand among forty desks is something you
+        // have to find; the bench by the path is where the eye lands first,
+        // and it is the same row whether the harness reported the block or the
+        // agent said so.
         let board = SceneSnapshotRenderer.demoBoard(elapsed: Self.elapsed)
         let frame = Self.map()
         let blocked = board.sessions.filter {
@@ -106,8 +112,16 @@ struct SceneZoneViewTests {
         }
         #expect(!blocked.isEmpty, "the demo has to have one for this to mean anything")
         for session in blocked {
-            #expect(frame.seat(for: session.key) == nil)
-            #expect(frame.slot(for: session.key)?.isAway == false)
+            #expect(frame.seat(for: session.key)?.kind == .call)
+            #expect(frame.slot(for: session.key)?.isAway == true)
+        }
+
+        // The front row runs below the back lawn, along the walkway: it is the
+        // last thing between the reader and the path.
+        let waiting = frame.seats.filter { $0.kind.isWaitingBench }
+        let lawn = frame.seats.filter { $0.kind.isGardenRest }
+        if let lowestLawn = lawn.map(\.anchor.y).max(), let front = waiting.map(\.anchor.y).min() {
+            #expect(front > lowestLawn)
         }
     }
 

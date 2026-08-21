@@ -5,81 +5,58 @@ import Foundation
 /// The board as a ledger of assignments rather than a wall of activity.
 ///
 /// The state machine answers *what is this session doing*. Somebody running a
-/// dozen sessions across five harnesses needs three answers before that one is
-/// worth anything: **what did I ask for**, **is it finished**, and **have I
-/// looked at it since**. The third is the only one no harness can answer,
-/// because it is not a fact about the session at all — it is a fact about the
-/// person, and Auspex is the only thing in the room that holds both.
+/// dozen sessions across five harnesses needs two more answers before that one
+/// is worth anything: **is anything stuck on me**, and **did anything finish
+/// while I was elsewhere**. Neither is a fact about the session's transcript.
 ///
-/// So: a session is *done and unseen* when its last turn closed after the last
-/// time its card was opened. That is the state a board exists to surface — the
-/// agent has stopped, it is waiting to be read, and nothing else on the
-/// machine will ever mention it again.
+/// ## Two axes, and only one of them is inferred
+///
+/// **Activity** — working, idle, stale, ended — is inferred for every session
+/// on the machine, always. **Attention** — needs you, done reported — comes
+/// only from something explicit: an agent calling `auspex.notify`, a
+/// `PermissionRequest` hook, a harness's own permission wait. See
+/// ``AttentionState``.
+///
+/// The bucket is the two axes folded into the one question a header asks, and
+/// the fold is *attention first*: a session that is blocked is blocked whatever
+/// its transcript looks like from outside, and a session whose agent said it
+/// finished is finished whether or not its process is still alive.
 public enum TaskLedger {
-    /// Whether a session has finished something *the person asked for* and has
-    /// not read.
+    /// Whether a session is idle with the agent having spoken last, and has
+    /// not been opened since.
     ///
-    /// Four conditions, and every one of them is a way the bucket goes wrong
-    /// without it:
+    /// The old `doneUnseen` inference, kept as a *dot* and nothing else. It is
+    /// counted nowhere, sorted by nothing, and never notified — because on a
+    /// machine that has been running agents all week it is true of hundreds of
+    /// sessions at once, and a bucket that large is a bucket nobody reads.
     ///
-    /// - **A turn closed.** `lastTurnEndedAt` and not `endedAt`, because the
-    ///   common case is a session that is still open in a terminal and has
-    ///   simply stopped talking. Waiting for the process to exit would mean
-    ///   never flagging the sessions a person actually forgets about.
-    /// - **It is not still working.** `idle` and `ended` only. A session that
-    ///   closed a turn and immediately opened another is not waiting on
-    ///   anybody, and a session blocked on a permission is already the loudest
-    ///   thing on the board — calling it "done" as well would be two claims
-    ///   about one card.
+    /// It survives because it is still worth a glance on a card that is
+    /// already in front of you: *this one stopped after saying something, and
+    /// you have not looked*. Three conditions, and each is a way the dot goes
+    /// wrong without it:
+    ///
+    /// - **A turn closed and the session is idle.** Not ended: a finished
+    ///   session is in the collapsed fold, where a dot would be decoration.
     /// - **Nobody delegated it.** A subagent is a step inside somebody else's
-    ///   task, not a task. Its parent is what the person assigned and what they
-    ///   will read; flagging the twelve children a single prompt spawned buries
-    ///   the one row that is actually theirs.
-    /// - **It has an assignment.** With no ``SessionBrief/firstPrompt`` there is
-    ///   nothing to say the session finished *doing* — a card reading
-    ///   "done · 3 h ago" with no line above it tells a person to go and look at
-    ///   something in order to find out what it was.
-    ///
-    /// A session never opened reads as unseen, which is right: the person has
-    /// not looked at it.
-    public static func isUnseenDone(
+    ///   task, not a task.
+    /// - **It has an assignment.** With no ``SessionBrief/firstPrompt`` there
+    ///   is nothing the reply is a reply *to*.
+    public static func isQuietReply(
         state: SessionState,
         lastTurnEndedAt: Date?,
         lastSeenAt: Date?,
         isChild: Bool,
-        hasAssignment: Bool,
-        notice: AgentNotice? = nil
+        hasAssignment: Bool
     ) -> Bool {
-        // An agent that called `notify(done)` said so itself, and that beats
-        // every inference below: it needs no `firstPrompt` to have been
-        // observed, it works for a subagent a person deliberately asked about,
-        // and it works for a harness whose store never records a turn
-        // boundary. What it still respects is the person: a receipt read is a
-        // receipt done with.
-        if let notice, notice.kind == .done {
-            return notice.createdAt > (lastSeenAt ?? .distantPast)
-        }
-        // A live call for a person is not "finished"; it is the other bucket,
-        // and `bucket(state:isUnseenDone:notice:)` puts it there.
-        if notice?.kind.wantsPerson == true { return false }
         guard let lastTurnEndedAt, !isChild, hasAssignment else { return false }
-        switch state {
-        case .idle, .ended: break
-        case .thinking, .toolCalling, .writingFile, .delegating, .waitingPermission: return false
-        }
+        guard case .idle = state else { return false }
         guard let lastSeenAt else { return true }
         return lastTurnEndedAt > lastSeenAt
     }
 
-    /// The same question asked of a whole snapshot, which is how every surface
-    /// but the row builder asks it.
-    ///
-    /// The row builder is the exception because a card may be showing a brief
-    /// rebuilt from the store rather than the session's own — see
-    /// ``BoardRowBuilder/brief(for:)`` — and the flag has to agree with the
-    /// line the card actually draws.
-    public static func isUnseenDone(_ session: SessionSnapshot, lastSeenAt: Date?) -> Bool {
-        isUnseenDone(
+    /// The same question asked of a whole snapshot.
+    public static func isQuietReply(_ session: SessionSnapshot, lastSeenAt: Date?) -> Bool {
+        isQuietReply(
             state: session.state,
             lastTurnEndedAt: session.brief.lastTurnEndedAt,
             lastSeenAt: lastSeenAt,
@@ -99,106 +76,109 @@ public enum TaskLedger {
         identity.parent != nil || identity.parentLink != nil
     }
 
+    /// One session's attention, from the frame's own inputs.
+    ///
+    /// A convenience over ``AttentionState/derive(state:notice:acknowledgedAt:lastPromptAt:lastEventAt:now:)``
+    /// so the assembler, the menu bar and the scene all ask the same way and
+    /// cannot fall out of step by passing the arguments in a different order.
+    public static func attention(
+        of session: SessionSnapshot,
+        notice: AgentNotice?,
+        acknowledgedAt: Date?,
+        now: Date
+    ) -> AttentionState {
+        AttentionState.derive(
+            state: session.state,
+            notice: notice,
+            acknowledgedAt: acknowledgedAt,
+            lastPromptAt: session.brief.lastPromptAt,
+            lastEventAt: session.lastEventAt,
+            now: now
+        )
+    }
+
     /// Which bucket a row belongs to, for counting, filtering, and sorting.
     ///
     /// One row is in exactly one bucket, and the order of the cases is the
     /// order a person asks about them: *is anything stuck on me*, *did
-    /// anything finish while I was elsewhere*, *what is in flight*, *what is
-    /// sitting open*, *what is history*.
+    /// anything report finishing*, *what is in flight*, *what is sitting
+    /// open*, *what is history*.
     public enum Bucket: String, CaseIterable, Sendable, Hashable {
-        /// Blocked on a person and going nowhere without one.
+        /// Blocked on a person and going nowhere without one. Explicit only.
         case needsYou
-        /// Finished a turn since the card was last opened.
-        case doneUnseen
+        /// An agent said it finished something. Explicit only.
+        case doneReported
         /// Thinking, running a tool, writing, or waiting on a child.
         case working
-        /// Open with nothing outstanding, and already read.
+        /// Open with nothing outstanding.
         case idle
-        /// Over, and already read.
-        case done
+        /// Over.
+        case ended
 
         /// The word after the number on a summary chip.
         public var label: String {
             switch self {
             case .needsYou: "needs you"
-            case .doneUnseen: "done unseen"
+            case .doneReported: "done"
             case .working: "working"
             case .idle: "idle"
-            case .done: "done"
+            case .ended: "ended"
+            }
+        }
+
+        /// Whether this bucket is one an agent put a session in by saying
+        /// something, rather than one Auspex inferred.
+        public var isAttention: Bool {
+            switch self {
+            case .needsYou, .doneReported: true
+            case .working, .idle, .ended: false
             }
         }
     }
 
     /// The bucket for one row.
     public static func bucket(of row: BoardRow) -> Bucket {
-        bucket(state: row.state, isUnseenDone: row.isUnseenDone, needsPerson: row.needsPerson)
-    }
-
-    /// The bucket for one session, given what has been read and what its agent
-    /// has said.
-    public static func bucket(
-        of session: SessionSnapshot,
-        lastSeenAt: Date?,
-        notice: AgentNotice? = nil
-    ) -> Bucket {
-        bucket(
-            state: session.state,
-            isUnseenDone: isUnseenDone(
-                state: session.state,
-                lastTurnEndedAt: session.brief.lastTurnEndedAt,
-                lastSeenAt: lastSeenAt,
-                isChild: isChild(session.identity),
-                hasAssignment: session.brief.firstPrompt != nil,
-                notice: notice
-            ),
-            needsPerson: notice?.kind.wantsPerson == true
-        )
+        bucket(attention: row.attention, state: row.state)
     }
 
     /// The one place the bucket is decided, so a row and the session behind it
     /// can never land in different ones.
     ///
-    /// `needsYou` wins over `doneUnseen` and cannot lose: being blocked is the
-    /// only state a person has to act on *now*, and `isUnseenDone` already
-    /// excludes it — the check here is belt and braces for a caller that built
-    /// the flag some other way.
-    ///
-    /// `needsPerson` is the agent's own claim — it called `auspex.notify` — and
-    /// it wins for the same reason `waitingPermission` does: a session that
-    /// says it is stuck on somebody is stuck on somebody, whatever its
-    /// transcript looks like from outside. This is the one place the passive
-    /// layer and the reported layer meet, and they agree by construction
-    /// because both land in the same bucket.
-    public static func bucket(
-        state: SessionState,
-        isUnseenDone: Bool,
-        needsPerson: Bool = false
-    ) -> Bucket {
-        if needsPerson { return .needsYou }
-        if case .waitingPermission = state { return .needsYou }
-        if isUnseenDone { return .doneUnseen }
+    /// Attention wins over activity, and both attention buckets do. `needsYou`
+    /// because being blocked is the only thing a person has to act on *now*;
+    /// `doneReported` because an agent that says it finished has said the most
+    /// useful true thing about itself, and whether its process happens to still
+    /// be alive is the card's business rather than the header's.
+    public static func bucket(attention: AttentionState, state: SessionState) -> Bucket {
+        switch attention {
+        case .needsYou: return .needsYou
+        case .doneReported: return .doneReported
+        case .none: break
+        }
         switch state {
         case .thinking, .toolCalling, .writingFile, .delegating: return .working
-        case .idle: return .idle
-        case .ended: return .done
+        // Belt and braces. A harness wait always derives to `needsYou` above;
+        // this catches a caller that built the attention some other way.
         case .waitingPermission: return .needsYou
+        case .idle: return .idle
+        case .ended: return .ended
         }
     }
 
     // MARK: - Order
 
-    /// Board order within a group: what needs a person, then what finished
-    /// while they were elsewhere, then what is running, then what is quiet.
+    /// Board order within a group: what needs a person, then what reported
+    /// finishing, then what is running, then what is quiet.
     ///
     /// Deliberately *not* ``BoardSnapshot/sorted(_:)``'s order, which ranks by
-    /// state alone. A row that finished an hour ago and has not been read is
-    /// more urgent than one that is halfway through a `swift build`, and a
-    /// state rank cannot express that because "unseen" is not a state.
+    /// state alone. A session whose agent said it finished an hour ago is more
+    /// urgent than one halfway through a `swift build`, and a state rank cannot
+    /// express that because "reported" is not a state.
     ///
     /// The tie-break inside each bucket is the clock that bucket is about —
-    /// when the turn closed for the unseen ones, last activity for everything
-    /// else — and then the key, so a board of identical rows does not reshuffle
-    /// on every tick.
+    /// when the signal arrived for the attention ones, last activity for
+    /// everything else — and then the key, so a board of identical rows does
+    /// not reshuffle on every tick.
     public static func sorted(_ rows: [BoardRow]) -> [BoardRow] {
         guard rows.count > 1 else { return rows }
         // The keys are derived once per row and the *indices* are sorted.
@@ -230,10 +210,10 @@ public enum TaskLedger {
             self.id = row.key.description
         }
 
-        init(_ session: SessionSnapshot, lastSeenAt: Date?, notice: AgentNotice? = nil) {
-            let bucket = TaskLedger.bucket(of: session, lastSeenAt: lastSeenAt, notice: notice)
+        init(_ session: SessionSnapshot, attention: AttentionState, noticeAt: Date?) {
+            let bucket = TaskLedger.bucket(attention: attention, state: session.state)
             self.rank = TaskLedger.rank(bucket)
-            self.clock = TaskLedger.clock(of: session, in: bucket)
+            self.clock = TaskLedger.clock(of: session, in: bucket, signalAt: noticeAt)
             self.id = session.key.description
         }
 
@@ -248,21 +228,23 @@ public enum TaskLedger {
     public static func rank(_ bucket: Bucket) -> Int {
         switch bucket {
         case .needsYou: 0
-        case .doneUnseen: 1
+        case .doneReported: 1
         case .working: 2
         case .idle: 3
-        case .done: 4
+        case .ended: 4
         }
     }
 
     /// The instant a bucket is ordered by.
     static func clock(of row: BoardRow, in bucket: Bucket) -> Date {
         switch bucket {
-        case .doneUnseen:
-            row.lastTurnEndedAt ?? row.endedAt ?? row.lastEventAt ?? .distantPast
-        case .done:
+        case .needsYou, .doneReported:
+            // When the signal arrived, which is the whole of what these two
+            // buckets are about. The newest call is the one at the top.
+            row.notice?.at ?? row.lastEventAt ?? .distantPast
+        case .ended:
             row.endedAt ?? row.lastEventAt ?? .distantPast
-        case .needsYou, .working, .idle:
+        case .working, .idle:
             row.lastEventAt ?? .distantPast
         }
     }
@@ -275,45 +257,51 @@ public enum TaskLedger {
     /// window from the third row of the menu bar should land on the third card.
     public static func sorted(
         _ sessions: [SessionSnapshot],
-        seenAt: [SessionKey: Date],
+        attention: [SessionKey: AttentionState],
         notices: [SessionKey: AgentNotice] = [:]
     ) -> [SessionSnapshot] {
         guard sessions.count > 1 else { return sessions }
         // Keyed once for the same reasons as the row form, and one more: the
-        // naive comparator hashes a `SessionKey` into `seenAt` twice per
+        // naive comparator hashes a `SessionKey` into the maps twice per
         // comparison, and a `SessionSnapshot` is the most expensive value in
         // the package to copy.
         let keys = sessions.map {
-            SortKey($0, lastSeenAt: seenAt[$0.key], notice: notices[$0.key])
+            SortKey(
+                $0,
+                attention: attention[$0.key] ?? .none,
+                noticeAt: notices[$0.key]?.createdAt
+            )
         }
         let order = sessions.indices.sorted { SortKey.precedes(keys[$0], keys[$1]) }
         return order.map { sessions[$0] }
     }
 
-    static func clock(of session: SessionSnapshot, in bucket: Bucket) -> Date {
+    static func clock(
+        of session: SessionSnapshot,
+        in bucket: Bucket,
+        signalAt: Date? = nil
+    ) -> Date {
         switch bucket {
-        case .doneUnseen:
-            session.brief.lastTurnEndedAt ?? session.endedAt ?? session.lastEventAt ?? .distantPast
-        case .done:
+        case .needsYou, .doneReported:
+            signalAt ?? session.lastEventAt ?? .distantPast
+        case .ended:
             session.endedAt ?? session.lastEventAt ?? .distantPast
-        case .needsYou, .working, .idle:
+        case .working, .idle:
             session.lastEventAt ?? .distantPast
         }
     }
 
     /// Whether a session belongs on a surface that shows what still wants
-    /// attention: everything live, plus the finished ones nobody has read.
+    /// attention: everything live, plus anything an agent has spoken about.
     ///
-    /// The menu bar's list. A session that ended and was read is history and
-    /// belongs on the board's collapsed section, not in a panel a person opens
-    /// to ask what is outstanding.
+    /// The menu bar's list. A session that ended quietly is history and belongs
+    /// on the board's collapsed section, not in a panel a person opens to ask
+    /// what is outstanding.
     public static func wantsAttention(
         _ session: SessionSnapshot,
-        lastSeenAt: Date?,
-        notice: AgentNotice? = nil
+        attention: AttentionState
     ) -> Bool {
-        if notice?.isLive == true { return true }
-        return !session.state.isEnded || isUnseenDone(session, lastSeenAt: lastSeenAt)
+        attention.isSignalling || !session.state.isEnded
     }
 
     // MARK: - Counting and filtering

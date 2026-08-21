@@ -49,7 +49,7 @@ struct SceneContainerView: View {
         // note. Both are read here rather than inside `updateNSView` for the
         // same reason `board` is: observation is tracked in a `body`.
         let zones = model.sceneZones
-        let unseenDone = model.unseenDoneKeys
+        let attention = model.attention
 
         ZStack(alignment: .topTrailing) {
             OfficeSceneRepresentable(
@@ -58,7 +58,7 @@ struct SceneContainerView: View {
                 focusedProject: focused,
                 reduceMotion: reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                 zones: zones,
-                unseenDone: unseenDone,
+                attention: attention,
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
                 onFocusProject: { model.focusedProjectKey = $0 },
@@ -363,7 +363,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let focusedProject: String?
     let reduceMotion: Bool
     let zones: SceneZoneOptions
-    let unseenDone: Set<SessionKey>
+    let attention: [SessionKey: AttentionState]
     let commands: SceneCommands
     let onSelect: (SessionKey?) -> Void
     let onFocusProject: (String?) -> Void
@@ -402,7 +402,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
             reduceMotion: reduceMotion,
             theme: SceneTheme.resolved(for: view.effectiveAppearance),
             zones: zones,
-            unseenDone: unseenDone
+            attention: attention
         )
     }
 
@@ -613,7 +613,7 @@ enum SceneSnapshotRenderer {
         scale: CGFloat = 2,
         focusing project: String? = nil,
         zones: SceneZoneOptions = .all,
-        unseenDone: Set<SessionKey> = [],
+        attention: [SessionKey: AttentionState] = [:],
         appearance: NSAppearance = NSAppearance(named: .darkAqua) ?? NSAppearance()
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
@@ -632,7 +632,7 @@ enum SceneSnapshotRenderer {
             reduceMotion: true,
             theme: theme,
             zones: zones,
-            unseenDone: unseenDone
+            attention: attention
         )
 
         let bounds = scene.contentBounds
@@ -714,21 +714,28 @@ enum SceneSnapshotRenderer {
         return BoardSnapshot(generatedAt: now, sessions: Array(snapshots.values))
     }
 
-    /// Which of the demo board's sessions finished something nobody has read.
+    /// What the demo board's sessions are signalling.
     ///
-    /// The garden's whole point is that this is visible, and it is the one
-    /// thing about a board that cannot be derived from a harness store — so
-    /// the demo states which of its sessions the imaginary reader has opened,
-    /// and the ledger answers from that exactly as it does for a real board.
+    /// The waiting bench's whole point is that this is visible, and it is the
+    /// one thing about a board no harness store holds — so the demo says it
+    /// out loud in ``DemoScript/notices(now:)``, and the same derivation the
+    /// live board runs answers from that. A renderer has no store, which is
+    /// exactly why the notices are a value rather than only rows in one.
     @MainActor
-    static func demoUnseenDone(_ board: BoardSnapshot) -> Set<SessionKey> {
-        let seen = DemoScript.seenAt(now: board.generatedAt)
-        var unseen: Set<SessionKey> = []
-        for session in board.sessions
-        where TaskLedger.isUnseenDone(session, lastSeenAt: seen[session.key]) {
-            unseen.insert(session.key)
+    static func demoAttention(_ board: BoardSnapshot) -> [SessionKey: AttentionState] {
+        let notices = DemoScript.notices(now: board.generatedAt)
+        var attention: [SessionKey: AttentionState] = [:]
+        for session in board.sessions {
+            let state = TaskLedger.attention(
+                of: session,
+                notice: notices[session.key],
+                acknowledgedAt: nil,
+                now: board.generatedAt
+            )
+            guard state.isSignalling else { continue }
+            attention[session.key] = state
         }
-        return unseen
+        return attention
     }
 
     enum RenderError: Error, CustomStringConvertible {

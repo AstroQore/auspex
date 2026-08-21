@@ -62,15 +62,25 @@ struct SceneZoneTests {
 
     private static func placements(
         _ sessions: [SessionSnapshot],
-        unseenDone: Set<SessionKey> = [],
+        attention: [SessionKey: AttentionState] = [:],
         options: SceneZoneOptions = .all
     ) -> [SessionKey: SceneZoning.Placement] {
         SceneZoning.placements(
             sessions: sessions,
             parent: parents(sessions),
-            unseenDone: unseenDone,
+            attention: attention,
             options: options
         )
+    }
+
+    /// One session reporting that it finished.
+    private static func reported(_ id: String) -> [SessionKey: AttentionState] {
+        [key(id): .doneReported(summary: "shipped", source: .agent)]
+    }
+
+    /// One session asking for a person.
+    private static func calling(_ id: String) -> [SessionKey: AttentionState] {
+        [key(id): .needsYou(reason: "which one?", source: .agent)]
     }
 
     // MARK: Placement
@@ -89,10 +99,16 @@ struct SceneZoneTests {
         }
     }
 
-    @Test("A session waiting on a person never leaves its desk")
-    func blockedNeverLeaves() {
-        // Everything else about it says garden: it is stale, it is unread, and
-        // it has a delegating parent. None of that may move it.
+    @Test("A session waiting on a person walks to the front row")
+    func blockedGoesToTheWaitingBench() {
+        // Everything else about it says stay: it is stale and it has a
+        // delegating parent whose table it would otherwise sit at. Attention
+        // beats all of it.
+        //
+        // This is a change of mind from the office-only scene, and the reason
+        // is what a person's eye does: a raised hand among forty desks is
+        // something you have to find, and the front row by the path is where
+        // you look first.
         let parent = Self.session("parent", state: .delegating(children: 1))
         let blocked = Self.session(
             "blocked",
@@ -100,11 +116,20 @@ struct SceneZoneTests {
             state: .waitingPermission(tool: "Bash"),
             stale: true
         )
-        let places = Self.placements(
-            [parent, blocked], unseenDone: [blocked.key]
-        )
-        #expect(places[blocked.key] == .desk)
+        let places = Self.placements([parent, blocked])
+        #expect(places[blocked.key]?.kind == .call)
+        #expect(places[blocked.key]?.kind.isWaitingBench == true)
         #expect(places[parent.key]?.zone == .meeting)
+    }
+
+    @Test("With the garden switched off a blocked session keeps its desk")
+    func blockedStaysWithoutAGarden() {
+        // There is nowhere to walk to, and the desk is where the strobing
+        // monitor already is.
+        let blocked = Self.session("blocked", state: .waitingPermission(tool: "Bash"))
+        #expect(
+            Self.placements([blocked], options: .officeOnly)[blocked.key] == .desk
+        )
     }
 
     @Test("A delegating family takes one table, however deep it goes")
@@ -143,28 +168,49 @@ struct SceneZoneTests {
         #expect(places[done.key]?.kind == .gate)
     }
 
-    @Test("The garden sorts the resting from the finished from the forgotten")
+    @Test("The garden sorts the front row from the back lawn")
     func gardenKinds() {
         let idle = Self.session("idle", state: .idle)
         let stale = Self.session("stale", state: .thinking, stale: true)
         let over = Self.session("over", state: .ended(reason: .exited))
-        let unread = Self.session("unread", state: .idle)
+        let reported = Self.session("reported", state: .idle)
         let places = Self.placements(
-            [idle, stale, over, unread], unseenDone: [unread.key]
+            [idle, stale, over, reported], attention: Self.reported("reported")
         )
         #expect(places[idle.key]?.kind == .bench)
         #expect(places[stale.key]?.kind == .doze)
         #expect(places[over.key]?.kind == .gate)
-        #expect(places[unread.key]?.kind == .note)
+        #expect(places[reported.key]?.kind == .note)
+        // The lawn and the front row are different tables, and the layout
+        // relies on being able to tell them apart.
+        #expect(places[idle.key]?.kind.isGardenRest == true)
+        #expect(places[reported.key]?.kind.isGardenRest == false)
+        #expect(places[reported.key]?.kind.isWaitingBench == true)
     }
 
-    @Test("Something finished and unread waits on a bench rather than walking out")
-    func unreadBeatsEnded() {
-        // The ledger ranks `done unseen` above `done` for the same reason: the
-        // one fact no harness on the machine holds is whether you have looked.
+    @Test("A receipt waits on the bench rather than walking out")
+    func reportedBeatsEnded() {
+        // The process exiting does not un-finish the work or un-write the line
+        // somebody still has to read.
         let over = Self.session("over", state: .ended(reason: .exited))
-        let places = Self.placements([over], unseenDone: [over.key])
+        let places = Self.placements([over], attention: Self.reported("over"))
         #expect(places[over.key]?.kind == .note)
+    }
+
+    @Test("Both attention buckets share the one front row")
+    func bothBucketsShareTheRow() {
+        // One place to look rather than a hunt through the building. What the
+        // two have in common is that you are the next thing that has to happen.
+        let asking = Self.session("asking", state: .thinking)
+        let reported = Self.session("reported", state: .toolCalling(name: "swift"))
+        let places = Self.placements(
+            [asking, reported],
+            attention: Self.calling("asking").merging(Self.reported("reported")) { a, _ in a }
+        )
+        #expect(places[asking.key]?.kind == .call)
+        #expect(places[reported.key]?.kind == .note)
+        #expect(places[asking.key]?.zone == .garden)
+        #expect(places[reported.key]?.zone == .garden)
     }
 
     @Test("A stale session that was only idle is idle, not asleep")
@@ -300,13 +346,14 @@ struct SceneZoneTests {
         let resting = (0..<3).map { Self.session("r\($0)", state: .idle) }
         let before = layout.update(with: Self.board(resting))
 
-        // The middle one finishes a turn nobody has read. Same bench.
+        // The middle one reports finishing, so it gets up and walks to the
+        // front row. Nobody else moves.
         let after = layout.update(
-            with: Self.board(resting), unseenDone: [Self.key("r1")]
+            with: Self.board(resting), attention: Self.reported("r1")
         )
-        #expect(before.seat(for: Self.key("r1"))?.anchor == after.seat(for: Self.key("r1"))?.anchor)
         #expect(after.seat(for: Self.key("r1"))?.kind == .note)
         #expect(before.seat(for: Self.key("r0"))?.anchor == after.seat(for: Self.key("r0"))?.anchor)
+        #expect(before.seat(for: Self.key("r2"))?.anchor == after.seat(for: Self.key("r2"))?.anchor)
     }
 
     @Test("A table seats the head at one end and the children down the sides")
@@ -438,8 +485,8 @@ struct SceneZoneTests {
         ]
         var layout = SceneLayout()
         let board = Self.board(sessions)
-        let first = layout.update(with: board, unseenDone: [Self.key("rest")])
-        let second = layout.update(with: board, unseenDone: [Self.key("rest")])
+        let first = layout.update(with: board, attention: Self.reported("rest"))
+        let second = layout.update(with: board, attention: Self.reported("rest"))
         #expect(first == second)
     }
 

@@ -174,37 +174,52 @@ struct DemoScriptTests {
         #expect(sessions.count { $0.brief.followUpPrompt != nil } >= 6)
     }
 
-    @Test("the demo board has something finished that nobody has read")
-    func theBoardHasADoneUnseenSession() {
-        let sessions = demoSnapshots()
-        let unseen = sessions.filter {
-            TaskLedger.isUnseenDone(
-                state: $0.state,
-                lastTurnEndedAt: $0.brief.lastTurnEndedAt,
-                lastSeenAt: nil
-            ,
-            isChild: false,
-            hasAssignment: true)
-        }
-        #expect(!unseen.isEmpty, "the board's own feature should be visible in a screenshot")
-        // Both shapes: one that exited, and one still sitting open in its
-        // editor. They read very differently on a card and both have to work.
-        #expect(unseen.contains { $0.state.isEnded })
-        #expect(unseen.contains { !$0.state.isEnded })
+    @Test("the demo board says both loud things out loud")
+    func theBoardHasBothAttentionBuckets() {
+        // The two buckets a header counts are made of explicit signals, so a
+        // demo that only *implied* them would screenshot as a board with the
+        // chips missing — which is the half of the app the demo is for.
+        let now = epoch.addingTimeInterval(60)
+        let notices = DemoScript.notices(now: now)
+        #expect(notices.values.contains { $0.kind.wantsPerson })
+        #expect(notices.values.contains { $0.kind == .done })
+        // And each is about a session that is actually on the board.
+        let keys = Set(DemoScript.sessionKeys)
+        #expect(notices.keys.allSatisfy(keys.contains))
     }
 
-    @Test("a session opened stops being unseen")
+    @Test("the demo board has a quiet reply for the faint dot")
+    func theBoardHasAQuietReply() {
+        let sessions = demoSnapshots()
+        let quiet = sessions.filter {
+            TaskLedger.isQuietReply(
+                state: $0.state,
+                lastTurnEndedAt: $0.brief.lastTurnEndedAt,
+                lastSeenAt: nil,
+                isChild: false,
+                hasAssignment: true
+            )
+        }
+        #expect(!quiet.isEmpty, "the card's faint dot should be visible in a screenshot")
+        // Idle, not ended: an ended session is in the collapsed fold, where a
+        // dot would be decoration.
+        #expect(quiet.allSatisfy { !$0.state.isEnded })
+    }
+
+    @Test("a session opened stops showing the dot")
     func openingClearsTheFlag() throws {
         let sessions = demoSnapshots()
         let session = try #require(
-            sessions.first { $0.brief.lastTurnEndedAt != nil && !$0.state.isActive }
+            sessions.first { $0.brief.lastTurnEndedAt != nil && $0.state == .idle }
         )
         let after = try #require(session.brief.lastTurnEndedAt).addingTimeInterval(1)
-        #expect(TaskLedger.isUnseenDone(
-            state: session.state, lastTurnEndedAt: session.brief.lastTurnEndedAt, lastSeenAt: after
-        ,
+        #expect(TaskLedger.isQuietReply(
+            state: session.state,
+            lastTurnEndedAt: session.brief.lastTurnEndedAt,
+            lastSeenAt: after,
             isChild: false,
-            hasAssignment: true) == false)
+            hasAssignment: true
+        ) == false)
     }
 
     @Test("the two harnesses that share a store are still separate sessions")
@@ -328,10 +343,11 @@ struct DemoScriptTests {
             #expect(seen[key] == now)
         }
 
-        // And the ledger agrees: exactly the declared ones read as unseen.
+        // And the ledger agrees: exactly the declared one reads as a quiet
+        // reply.
         let sessions = demoSnapshots(upTo: instant)
         let flagged = sessions.filter {
-            TaskLedger.isUnseenDone($0, lastSeenAt: seen[$0.key])
+            TaskLedger.isQuietReply($0, lastSeenAt: seen[$0.key])
         }
         #expect(Set(flagged.map(\.key)) == Set(unread))
     }

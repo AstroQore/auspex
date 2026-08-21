@@ -148,8 +148,8 @@ final class SceneDirector {
     /// - Returns: `true` when the layout changed, so the camera knows whether
     ///   its bounds are still valid.
     @discardableResult
-    func apply(_ board: BoardSnapshot, unseenDone: Set<SessionKey> = []) -> Bool {
-        let next = layout.update(with: board, zones: options, unseenDone: unseenDone)
+    func apply(_ board: BoardSnapshot, attention: [SessionKey: AttentionState] = [:]) -> Bool {
+        let next = layout.update(with: board, zones: options, attention: attention)
         let moved = next != frame
         frame = next
 

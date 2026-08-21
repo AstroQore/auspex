@@ -43,7 +43,7 @@ struct BoardSummaryTests {
         #expect(summary.working == 4)
         #expect(summary.needsYou == 0)
         #expect(summary.idle == 0)
-        #expect(summary.done == 0)
+        #expect(summary.ended == 0)
     }
 
     @Test("each of the other three kinds counts exactly one state")
@@ -57,7 +57,7 @@ struct BoardSummaryTests {
 
         #expect(summary.needsYou == 1)
         #expect(summary.idle == 2)
-        #expect(summary.done == 1)
+        #expect(summary.ended == 1)
         #expect(summary.working == 0)
     }
 
@@ -72,7 +72,7 @@ struct BoardSummaryTests {
         ]))
 
         #expect(summary.live == 3)
-        #expect(summary.done == 2)
+        #expect(summary.ended == 2)
     }
 
     @Test("a summary of a frame agrees with a summary of its counts")
@@ -89,20 +89,20 @@ struct BoardSummaryTests {
 
     // MARK: - Chips
 
-    @Test("a chip with nothing in it is dropped, except done")
+    @Test("a chip with nothing in it is dropped")
     func emptyChipsAreDropped() {
         let summary = BoardSummary(counts: BoardSnapshot.Counts(sessions: [
             session("a", state: .thinking)
         ]))
         let kinds = summary.chips.map(\.kind)
 
-        // A red chip that is always on screen is a red chip nobody looks at;
-        // `0 done` on a machine that has just started is simply true.
-        #expect(kinds == [.working, .done])
+        // A red chip that is always on screen is a red chip nobody looks at,
+        // and the same goes for the green one beside it.
+        #expect(kinds == [.working])
         #expect(summary.chips.first?.value == 1)
     }
 
-    @Test("chips read in urgency order")
+    @Test("chips read in urgency order, and history is not one of them")
     func chipsAreInUrgencyOrder() {
         let summary = BoardSummary(counts: BoardSnapshot.Counts(sessions: [
             session("a", state: .idle),
@@ -111,14 +111,17 @@ struct BoardSummaryTests {
             session("d", state: .ended(reason: .exited), isAlive: false)
         ]))
 
-        #expect(summary.chips.map(\.kind) == [.needsYou, .working, .idle, .done])
-        #expect(summary.chips.map(\.value) == [1, 1, 1, 1])
+        // The finished session is counted and gets no chip: the fold at the
+        // bottom of the board is where history is read.
+        #expect(summary.chips.map(\.kind) == [.needsYou, .working, .idle])
+        #expect(summary.chips.map(\.value) == [1, 1, 1])
+        #expect(summary.ended == 1)
     }
 
-    @Test("an empty board shows only the done chip")
-    func emptyBoardShowsOnlyDone() {
+    @Test("an empty board shows no chips at all")
+    func emptyBoardShowsNothing() {
         let summary = BoardSummary(board: .empty)
-        #expect(summary.chips.map(\.kind) == [.done])
+        #expect(summary.chips.isEmpty)
         #expect(summary.live == 0)
     }
 

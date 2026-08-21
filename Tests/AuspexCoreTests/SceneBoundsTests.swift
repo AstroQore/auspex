@@ -183,10 +183,11 @@ struct SceneBoundsTests {
         sessions.append(note)
 
         let frame = layout.update(
-            with: Self.board(sessions), unseenDone: [note.key]
+            with: Self.board(sessions),
+            attention: [note.key: .doneReported(summary: "shipped", source: .agent)]
         )
         let seated = Set(
-            frame.seats.compactMap { $0.kind.isGardenRest ? $0.session?.sessionID : nil }
+            frame.seats.compactMap { $0.kind.isWaitingBench ? $0.session?.sessionID : nil }
         )
         // Oldest on the board by a mile, and still seated.
         #expect(seated.contains("unread"))
@@ -286,9 +287,9 @@ struct SceneBoundsTests {
         // The chips are about the day. Roughly a seventh of a seventh of the
         // week's finished sessions survive twelve hours.
         #expect(frame.summary.working == 12)
-        #expect(frame.summary.done < 120)
+        #expect(frame.summary.ended < 120)
         #expect(frame.olderHidden > 1_000)
-        #expect(frame.summary.done + frame.olderHidden + 12 == 1_212)
+        #expect(frame.summary.ended + frame.olderHidden + 12 == 1_212)
 
         var layout = SceneLayout()
         let scene = layout.update(with: frame.board)

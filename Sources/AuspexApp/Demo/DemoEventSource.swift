@@ -33,14 +33,25 @@ actor DemoEventSource {
     /// start over rather than snapping back mid-animation.
     private static let loopGap = Duration.seconds(5)
 
+    /// Called once per loop, a few seconds in, so the demo's agents can say
+    /// the things a board's two loud buckets are made of.
+    ///
+    /// A hook rather than something this type does itself, because a notice is
+    /// not an event: it goes into the task ledger and onto the board model,
+    /// neither of which the event source knows about. What it does know is
+    /// *when* — see ``DemoScript/noticeOffset``.
+    private let onLoop: (@Sendable () async -> Void)?
+
     init(
         continuation: AsyncStream<AgentEvent>.Continuation,
         seed: UInt64 = DemoScript.defaultSeed,
-        lendsProcess: Bool = true
+        lendsProcess: Bool = true,
+        onLoop: (@Sendable () async -> Void)? = nil
     ) {
         self.continuation = continuation
         self.seed = seed
         self.lendsProcess = lendsProcess
+        self.onLoop = onLoop
     }
 
     /// Runs until the surrounding task is cancelled.
@@ -64,7 +75,15 @@ actor DemoEventSource {
         let script = DemoScript.make(seed: seed, startedAt: Date(), generation: generation)
         let start = ContinuousClock.now
         var lentPID = false
+        var didCall = false
         for step in script.steps {
+            // After every session's live prompt has landed, because a call is
+            // cleared by the person talking to that session again — one filed
+            // before the loop's prompts would answer itself within seconds.
+            if !didCall, step.offset >= DemoScript.noticeOffset {
+                didCall = true
+                await onLoop?()
+            }
             let due = start.advanced(by: .seconds(step.offset))
             if due > ContinuousClock.now {
                 do {
@@ -84,6 +103,10 @@ actor DemoEventSource {
                 await lendProcess(to: identity.key)
             }
         }
+        // A short script — a test's, or one whose last beat lands early — never
+        // reached the offset above, and a demo with nothing on its header is
+        // not the demo.
+        if !didCall { await onLoop?() }
     }
 
     /// Gives one demo session the pid of a live `/bin/sleep`.

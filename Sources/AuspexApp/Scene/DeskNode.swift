@@ -114,7 +114,7 @@ final class DeskNode: SKNode {
             switch kind {
             case .desk: self = .workstation
             case .tableHead, .tableNorth, .tableSouth: self = .tableSeat
-            case .bench, .note, .doze: self = .gardenSeat
+            case .call, .note, .bench, .doze: self = .gardenSeat
             case .gate: self = .bare
             }
         }
@@ -427,12 +427,19 @@ final class DeskNode: SKNode {
         case .gate:
             sprite.walk(.right, reduceMotion: look.reduceMotion)
         // Somebody waiting to be read is *sitting there*, whether or not the
-        // process behind them has exited. Most of the sessions on this bench
-        // are `ended`, and the ended pose fades them out — which would leave
-        // the garden holding a note with nobody under it, and lose the one
-        // thing the annex was built to show.
+        // process behind them has exited. Half the sessions on this bench are
+        // `ended`, and the ended pose fades them out — which would leave the
+        // garden holding a note with nobody under it, and lose the one thing
+        // the annex was built to show.
         case .note:
             sprite.apply(pose: .idle, reduceMotion: look.reduceMotion)
+        // And somebody waiting on a person has their hand up, wherever the
+        // state machine thinks they are. The pose is what the front row is
+        // *for*: a raised hand reads from the far side of the map, and the
+        // whole point of moving them out of the office was that a hand up
+        // among forty desks does not.
+        case .call:
+            sprite.apply(pose: .blocked, reduceMotion: look.reduceMotion)
         default:
             sprite.apply(pose: look.pose, reduceMotion: look.reduceMotion)
         }
@@ -604,6 +611,8 @@ final class DeskNode: SKNode {
         // were elsewhere sits there holding the note that says so, and that
         // is readable from further away than any monitor colour.
         case .note: kind = .done
+        // The loudest thing on the map, and the only one allowed to be.
+        case .call: kind = .alert
         case .doze: kind = .asleep
         case .bench, .gate: kind = nil
         // Nothing over anybody's head at a table. The projector at the end of

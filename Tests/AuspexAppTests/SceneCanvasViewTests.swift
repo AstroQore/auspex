@@ -298,7 +298,7 @@ struct SceneCanvasViewTests {
     @Test("Hovering is answered once per drawn frame, however often the pointer moves")
     func hoverIsCoalesced() throws {
         let (_, scene) = Self.canvas()
-        let slot = try #require(Self.floorPlan().slots.first { $0.session != nil })
+        let slot = try #require(Self.floorPlan().slots.first { $0.isOccupied })
         let onTheDesk = CGPoint(x: slot.anchor.x, y: slot.anchor.y - 30 * slot.scale)
 
         // Fifty mouse-moved events between two frames is an ordinary trackpad.
@@ -324,7 +324,7 @@ struct SceneCanvasViewTests {
         scene.onSelect = { selected = .some($0) }
         scene.onFocusProject = { _ in }
 
-        let slot = try #require(Self.floorPlan().slots.first { $0.session != nil })
+        let slot = try #require(Self.floorPlan().slots.first { $0.isOccupied })
         scene.click(
             atLayoutPoint: CGPoint(x: slot.anchor.x, y: slot.anchor.y - 30 * slot.scale),
             clickCount: 1

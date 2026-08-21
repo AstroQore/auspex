@@ -87,11 +87,23 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     public let latestPrompt: String?
     /// The last thing the model said in prose.
     public let latestAssistant: String?
-    /// When a turn last closed. What "done · 12 min ago" is measured from.
+    /// When a turn last closed. What "replied · 12 min ago" is measured from.
     public let lastTurnEndedAt: Date?
-    /// `true` when a turn closed after the card was last opened — see
-    /// ``TaskLedger/isUnseenDone(state:lastTurnEndedAt:lastSeenAt:isChild:hasAssignment:)``.
-    public let isUnseenDone: Bool
+    /// `true` when the session is idle, the agent spoke last, and nobody has
+    /// opened the card since — see
+    /// ``TaskLedger/isQuietReply(state:lastTurnEndedAt:lastSeenAt:isChild:hasAssignment:)``.
+    ///
+    /// A dot on this card and nothing more. It is inferred, so it is counted
+    /// nowhere and notified never; the two buckets a header counts come from
+    /// ``attention``.
+    public let isQuietReply: Bool
+    /// Whether a person has something to do about this session, and why.
+    ///
+    /// Derived once per frame from every explicit source at once — the agent's
+    /// `auspex.notify`, a `PermissionRequest` hook, a harness's own permission
+    /// wait — so the card, the chip that counts it, and the seat it takes in
+    /// the scene cannot disagree.
+    public let attention: AttentionState
     /// What the agent itself said it needs, when it called for a person
     /// through `auspex.notify`.
     ///
@@ -111,10 +123,10 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     public var id: SessionKey { key }
 
     /// Whether a person has to do something before this session moves.
-    public var needsPerson: Bool {
-        if case .waitingPermission = state { return true }
-        return notice?.kind.wantsPerson == true
-    }
+    public var needsPerson: Bool { attention.wantsPerson }
+
+    /// Whether an agent has reported finishing something here.
+    public var isDoneReported: Bool { attention.isDoneReported }
 
     /// One agent's call for a person, flattened for the card.
     public struct RowNotice: Sendable, Equatable {
@@ -182,7 +194,8 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         latestPrompt: String? = nil,
         latestAssistant: String? = nil,
         lastTurnEndedAt: Date? = nil,
-        isUnseenDone: Bool = false,
+        isQuietReply: Bool = false,
+        attention: AttentionState = .none,
         notice: RowNotice? = nil,
         reportedFocus: String? = nil
     ) {
@@ -213,7 +226,8 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         self.latestPrompt = latestPrompt
         self.latestAssistant = latestAssistant
         self.lastTurnEndedAt = lastTurnEndedAt
-        self.isUnseenDone = isUnseenDone
+        self.isQuietReply = isQuietReply
+        self.attention = attention
         self.notice = notice
         self.reportedFocus = reportedFocus
     }
@@ -270,15 +284,25 @@ public struct BoardRowBuilder: Sendable {
     private let notices: [SessionKey: AgentNotice]
     /// What agents said they are doing.
     private let reports: [SessionKey: AgentReport]
+    /// When the person last cleared each session's attention — opened its
+    /// card, dismissed the call, or marked everything seen.
+    private let acknowledgedAt: [SessionKey: Date]
+    /// The instant every row's attention is derived against, so the age-out is
+    /// a property of the frame rather than of the wall clock.
+    private let now: Date
 
     public init(
         board: BoardSnapshot,
         seenAt: [SessionKey: Date] = [:],
         briefs: [SessionKey: SessionBrief] = [:],
         notices: [SessionKey: AgentNotice] = [:],
-        reports: [SessionKey: AgentReport] = [:]
+        reports: [SessionKey: AgentReport] = [:],
+        acknowledgedAt: [SessionKey: Date] = [:],
+        now: Date? = nil
     ) {
         self.board = board
+        self.acknowledgedAt = acknowledgedAt
+        self.now = now ?? board.generatedAt
         var index: [SessionKey: SessionSnapshot] = [:]
         index.reserveCapacity(board.sessions.count)
         for session in board.sessions { index[session.key] = session }
@@ -330,14 +354,14 @@ public struct BoardRowBuilder: Sendable {
             latestPrompt: brief.latestPrompt == title ? nil : brief.followUpPrompt,
             latestAssistant: brief.latestAssistant,
             lastTurnEndedAt: brief.lastTurnEndedAt,
-            isUnseenDone: TaskLedger.isUnseenDone(
+            isQuietReply: TaskLedger.isQuietReply(
                 state: session.state,
                 lastTurnEndedAt: brief.lastTurnEndedAt,
                 lastSeenAt: seenAt[session.key],
                 isChild: TaskLedger.isChild(session.identity),
-                hasAssignment: brief.firstPrompt != nil,
-                notice: notice
+                hasAssignment: brief.firstPrompt != nil
             ),
+            attention: attention(for: session, brief: brief, notice: notice),
             notice: notice.map(BoardRow.RowNotice.init),
             reportedFocus: report?.line
         )
@@ -346,6 +370,35 @@ public struct BoardRowBuilder: Sendable {
     /// Rows for a run of sessions, in the order given.
     public func rows(for sessions: [SessionSnapshot]) -> [BoardRow] {
         sessions.map { row(for: $0) }
+    }
+
+    /// What one session is signalling, if anything.
+    ///
+    /// Public so the assembler can answer for every session on the frame
+    /// without building a row for each — a row walks the delegation forest to
+    /// count descendants, which is the expensive half — while still going
+    /// through *this* builder, so the map and the cards it is drawn beside
+    /// cannot disagree about which brief they read.
+    public func attention(for session: SessionSnapshot) -> AttentionState {
+        attention(for: session, brief: brief(for: session), notice: notices[session.key])
+    }
+
+    private func attention(
+        for session: SessionSnapshot,
+        brief: SessionBrief,
+        notice: AgentNotice?
+    ) -> AttentionState {
+        AttentionState.derive(
+            state: session.state,
+            notice: notice,
+            acknowledgedAt: acknowledgedAt[session.key],
+            // The brief the *card* is drawing, not the session's own: a row
+            // rebuilt from the store has to agree with the line above it about
+            // when the person last spoke here.
+            lastPromptAt: brief.lastPromptAt,
+            lastEventAt: session.lastEventAt,
+            now: now
+        )
     }
 
     /// What this session was asked to do: its own brief, or the one rebuilt

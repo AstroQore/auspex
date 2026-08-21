@@ -236,9 +236,9 @@ struct BoardView: View {
 /// what it was called, where it ran, and when it stopped.
 ///
 /// One exception, and it is the reason this section is worth scrolling to: a
-/// row nobody has read since it finished keeps its mark bright, gains a green
-/// dot, and says `unseen` where the others say how they ended. A finished
-/// session is history; a finished session nobody has read is an errand.
+/// row whose agent reported finishing keeps its mark bright, gains the green
+/// mark, and says `reported` where the others say how they ended. A finished
+/// session is history; one that filed a receipt nobody has read is an errand.
 struct EndedSessionRow: View, Equatable {
     let row: BoardRow
     let isSelected: Bool
@@ -248,12 +248,13 @@ struct EndedSessionRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            HarnessBadge(harness: row.harness, size: 16, isMuted: !row.isUnseenDone)
-            if row.isUnseenDone { UnseenDot() }
+        let isReported = row.isDoneReported
+        return HStack(spacing: 10) {
+            HarnessBadge(harness: row.harness, size: 16, isMuted: !isReported)
+            if isReported { AttentionBadge(attention: row.attention, size: 13) }
             Text(row.title)
                 .font(AuspexType.caption)
-                .foregroundStyle(row.isUnseenDone ? AuspexPalette.text : AuspexPalette.text2)
+                .foregroundStyle(isReported ? AuspexPalette.text : AuspexPalette.text2)
                 .lineLimit(1)
                 .truncationMode(.tail)
             if let project = row.project {
@@ -264,12 +265,10 @@ struct EndedSessionRow: View, Equatable {
                     .layoutPriority(-1)
             }
             Spacer(minLength: 8)
-            Text(row.isUnseenDone ? "unseen" : reason)
+            Text(isReported ? "reported" : reason)
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(
-                    row.isUnseenDone
-                        ? AuspexPalette.stateWriting.opacity(0.8)
-                        : AuspexPalette.text3
+                    isReported ? AuspexPalette.stateWriting : AuspexPalette.text3
                 )
                 .fixedSize()
             Text(RelativeTimeText.since(row.endedAt ?? row.lastEventAt))

@@ -90,15 +90,17 @@ struct AgentNoticeBoardTests {
         await model.settle()
         #expect(model.summary.working == 1)
 
-        model.apply(notice: notice(.blocked, "the build cannot find the kit"))
+        // After its last recorded event, which is the ordinary shape: the
+        // harness writes the tool call, then the notice arrives.
+        model.apply(notice: notice(.blocked, "the build cannot find the kit", at: 90))
 
         await model.settle()
         #expect(model.summary.needsYou == 1)
         #expect(model.summary.working == 0)
     }
 
-    @Test("done is a receipt, not a call: it lands in done-unseen")
-    func doneLandsInDoneUnseen() async throws {
+    @Test("done is a receipt, not a call: it lands in the done bucket")
+    func doneLandsInDoneReported() async throws {
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle)]))
         await model.settle()
@@ -106,9 +108,29 @@ struct AgentNoticeBoardTests {
         await model.settle()
 
         let row = try #require(visibleRow(model))
-        #expect(TaskLedger.bucket(of: row) == .doneUnseen)
-        #expect(model.summary.doneUnseen == 1)
+        #expect(TaskLedger.bucket(of: row) == .doneReported)
+        #expect(row.attention == .doneReported(
+            summary: "migration and 12 tests landed", source: .agent
+        ))
+        #expect(model.summary.doneReported == 1)
         #expect(model.summary.needsYou == 0)
+    }
+
+    @Test("a turn ending on its own puts nothing in the done bucket")
+    func aClosedTurnIsNotAReceipt() async throws {
+        // The change this whole model is about. On a machine that has been
+        // running agents all week the old inference labelled hundreds of
+        // sessions as errands; now a session has to say so.
+        let model = LiveBoardModel()
+        model.apply(frame([session(state: .idle, lastTurnEndedAt: 30)]))
+        await model.settle()
+
+        let row = try #require(visibleRow(model))
+        #expect(model.summary.doneReported == 0)
+        #expect(model.summary.idle == 1)
+        #expect(row.attention == .none)
+        // It survives as a dot on the card, and nothing more.
+        #expect(row.isQuietReply)
     }
 
     @Test("opening the card is what makes a done receipt read")
@@ -118,12 +140,29 @@ struct AgentNoticeBoardTests {
         await model.settle()
         model.apply(notice: notice(.done, "finished", at: 30))
         await model.settle()
-        #expect(model.summary.doneUnseen == 1)
+        #expect(model.summary.doneReported == 1)
 
         model.markSeen(Self.key, at: Self.epoch.addingTimeInterval(40))
 
         await model.settle()
-        #expect(model.summary.doneUnseen == 0)
+        #expect(model.summary.doneReported == 0)
+    }
+
+    @Test("marking all as seen clears every card that is signalling")
+    func markAllSeenClearsTheBoard() async {
+        let model = LiveBoardModel()
+        model.apply(frame([session(state: .idle)]))
+        await model.settle()
+        model.apply(notice: notice(.blocked, "no network", at: 30))
+        await model.settle()
+        #expect(model.summary.needsYou == 1)
+        #expect(model.hasAttention)
+
+        model.markAllSeen(at: Self.epoch.addingTimeInterval(40))
+
+        await model.settle()
+        #expect(model.summary.needsYou == 0)
+        #expect(!model.hasAttention)
     }
 
     // MARK: - Auto-clear
@@ -147,19 +186,48 @@ struct AgentNoticeBoardTests {
         #expect(visibleRow(model)?.notice == nil)
     }
 
-    @Test("a blocker is not answered by the person talking about something else")
-    func promptDoesNotClearABlocker() async {
+    @Test("a blocker is cleared by the person talking to that session too")
+    func promptClearsABlocker() async {
+        // Every clearing rule is about the *person*, and typing into the
+        // session's own terminal is the one that happens where the work is.
+        // Nobody should have to visit Auspex to say something they have
+        // already said to the agent.
         let model = LiveBoardModel()
         model.apply(frame([session(state: .idle, lastPromptAt: 0)]))
         await model.settle()
         model.apply(notice: notice(.blocked, "no network", at: 10))
         await model.settle()
+        #expect(model.summary.needsYou == 1)
 
         model.apply(frame([session(state: .thinking, lastPromptAt: 20)]))
 
         await model.settle()
-        #expect(model.notices.count == 1)
+        #expect(model.notices.isEmpty)
+        #expect(model.summary.needsYou == 0)
+    }
+
+    @Test("an agent that went back to work stops being counted")
+    func backToWorkClearsTheCall() async {
+        let model = LiveBoardModel()
+        model.apply(frame([session(state: .idle, lastPromptAt: 0)]))
+        await model.settle()
+        model.apply(notice: notice(.blocked, "no network", at: 10))
+        await model.settle()
         #expect(model.summary.needsYou == 1)
+
+        // No new prompt: whatever it was waiting for arrived somewhere Auspex
+        // cannot see, and it is running tools again.
+        var moved = session(state: .toolCalling(name: "Bash"), lastPromptAt: 0)
+        // Well past the grace period that covers the transcript recording the
+        // call itself — this is a session that genuinely carried on.
+        moved.lastEventAt = Self.epoch.addingTimeInterval(300)
+        model.apply(BoardSnapshot(
+            generatedAt: Self.epoch.addingTimeInterval(360), sessions: [moved]
+        ))
+        await model.settle()
+
+        #expect(model.summary.needsYou == 0)
+        #expect(model.summary.working == 1)
     }
 
     @Test("a prompt older than the question does not answer it")

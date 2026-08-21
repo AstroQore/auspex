@@ -116,9 +116,9 @@ struct MenuBarLabel: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                 Text("\(summary.needsYou)")
             }
-            if summary.doneUnseen > 0 {
+            if summary.doneReported > 0 {
                 Image(systemName: "checkmark.circle")
-                Text("\(summary.doneUnseen)")
+                Text("\(summary.doneReported)")
             }
             if summary.working > 0 {
                 Image(systemName: "play.fill")
@@ -146,7 +146,7 @@ struct MenuBarLabel: View {
     private func accessibilityLabel(_ summary: BoardSummary) -> String {
         var parts = ["Auspex"]
         if summary.needsYou > 0 { parts.append("\(summary.needsYou) needs you") }
-        if summary.doneUnseen > 0 { parts.append("\(summary.doneUnseen) done unseen") }
+        if summary.doneReported > 0 { parts.append("\(summary.doneReported) done") }
         if summary.working > 0 { parts.append("\(summary.working) working") }
         if summary.idle > 0 { parts.append("\(summary.idle) idle") }
         if parts.count == 1 { parts.append("nothing running") }
@@ -169,28 +169,27 @@ struct MenuBarContent: View {
 
     var body: some View {
         let board = environment.board
-        let seenAt = board.seenAt
-        // Live sessions, plus the finished ones nobody has read. A session
-        // that ended and was looked at is history and belongs on the board's
-        // collapsed section; one that ended and was not is the errand this
-        // panel exists to hand over.
-        // Notices are the fourth reason a session belongs here, beside live,
-        // blocked and unread: an agent that called for a person is the single
-        // most urgent thing this panel can show.
+        // Live sessions, plus anything an agent has spoken about. A session
+        // that ended quietly is history and belongs on the board's collapsed
+        // section; one that filed a receipt or a question on its way out is the
+        // errand this panel exists to hand over.
         let notices = board.notices
+        let attention = board.attention
         let sessions = TaskLedger.sorted(
             board.board.sessions.filter {
-                TaskLedger.wantsAttention(
-                    $0, lastSeenAt: seenAt[$0.key], notice: notices[$0.key]
-                )
+                TaskLedger.wantsAttention($0, attention: attention[$0.key] ?? .none)
             },
-            seenAt: seenAt,
+            attention: attention,
             notices: notices
         )
         let summary = board.summary
 
         VStack(alignment: .leading, spacing: 2) {
-            header(count: summary.live, needsYou: summary.needsYou, doneUnseen: summary.doneUnseen)
+            header(
+                count: summary.live,
+                needsYou: summary.needsYou,
+                doneReported: summary.doneReported
+            )
 
             if sessions.isEmpty {
                 Text(environment.mode == .demo ? "Demo starting…" : "No live sessions")
@@ -202,9 +201,7 @@ struct MenuBarContent: View {
                 ForEach(sessions.prefix(Self.listLimit), id: \.key) { session in
                     MenuBarRow(
                         session: session,
-                        isUnseenDone: TaskLedger.isUnseenDone(
-                            session, lastSeenAt: seenAt[session.key]
-                        ),
+                        attention: attention[session.key] ?? .none,
                         notice: notices[session.key]
                     ) { open(session.key) }
                 }
@@ -240,7 +237,7 @@ struct MenuBarContent: View {
         .auspexControlFocus()
     }
 
-    private func header(count: Int, needsYou: Int, doneUnseen: Int) -> some View {
+    private func header(count: Int, needsYou: Int, doneReported: Int) -> some View {
         HStack(spacing: 8) {
             Text("Live")
                 .font(.system(size: 13, weight: .bold))
@@ -250,17 +247,21 @@ struct MenuBarContent: View {
                 .auspexTabularDigits()
                 .foregroundStyle(AuspexPalette.text3)
             Spacer(minLength: 4)
-            if doneUnseen > 0 {
+            if doneReported > 0 {
                 HStack(spacing: 5) {
-                    StateDot(color: AuspexPalette.stateWriting.opacity(0.8), glows: false)
-                    Text("\(doneUnseen) done unseen")
+                    Text(verbatim: "✓")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(AuspexPalette.stateWriting)
+                    Text("\(doneReported) done")
                         .font(AuspexType.caption)
-                        .foregroundStyle(AuspexPalette.stateWriting.opacity(0.8))
+                        .foregroundStyle(AuspexPalette.stateWriting)
                 }
             }
             if needsYou > 0 {
                 HStack(spacing: 5) {
-                    StateDot(color: AuspexPalette.statePermission, glows: true)
+                    Text(verbatim: "!")
+                        .font(.system(size: 10, weight: .black))
+                        .foregroundStyle(AuspexPalette.statePermission)
                     Text(needsYou == 1 ? "1 needs you" : "\(needsYou) needs you")
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.statePermission)
@@ -287,7 +288,10 @@ struct MenuBarContent: View {
 /// menu.
 private struct MenuBarRow: View {
     let session: SessionSnapshot
-    var isUnseenDone = false
+    /// Whether a person has something to do about it, and why — the board's
+    /// own answer, passed in rather than re-derived, so the panel and the wall
+    /// cannot disagree about which sessions are asking.
+    var attention: AttentionState = .none
     /// What the agent itself said, when it called. It replaces the inferred
     /// subtitle: a sentence somebody wrote on purpose beats one Auspex
     /// assembled out of a state and a project name.
@@ -311,8 +315,10 @@ private struct MenuBarRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 6)
-                if isUnseenDone, notice == nil { UnseenDot() }
-                if let notice, notice.kind.wantsPerson {
+                if attention.isSignalling {
+                    AttentionBadge(attention: attention, size: 15)
+                }
+                if let notice, notice.kind.wantsPerson, attention.wantsPerson {
                     NoticePill(kind: notice.kind)
                 } else {
                     StatePill(state: session.state, isStale: session.isStale)
@@ -342,10 +348,8 @@ private struct MenuBarRow: View {
     /// the window — and "two of them are not in the changelog" decides that,
     /// while "storefront-web · idle" does not.
     private var subtitle: String {
+        if let message = attention.message { return message }
         if let notice { return notice.message }
-        if isUnseenDone, let said = session.brief.latestAssistant, !said.isEmpty {
-            return said
-        }
         var parts: [String] = []
         if let project = BoardGrouping.projectName(for: session) { parts.append(project) }
         if let activity = session.state.activityDescription {

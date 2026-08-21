@@ -34,6 +34,13 @@ public struct BoardFrameInputs: Sendable, Equatable {
     public var bucketFilter: TaskLedger.Bucket?
     /// When the person last opened each session — Auspex's own record.
     public var seenAt: [SessionKey: Date]
+    /// When the person last cleared each session's attention: opened its card,
+    /// dismissed the call, or marked everything seen.
+    ///
+    /// Separate from ``seenAt`` because they answer different questions. Seen
+    /// is *the transcript was on screen*; acknowledged is *the signal has been
+    /// dealt with*, which a dismissal performs without anybody reading a word.
+    public var acknowledgedAt: [SessionKey: Date]
     /// Briefs rebuilt from the store, for sessions the pipeline folded none for.
     public var derivedBriefs: [SessionKey: SessionBrief]
     /// Project display names by root path, from `projects.name`.
@@ -53,6 +60,7 @@ public struct BoardFrameInputs: Sendable, Equatable {
         focusedProjectKey: String? = nil,
         bucketFilter: TaskLedger.Bucket? = nil,
         seenAt: [SessionKey: Date] = [:],
+        acknowledgedAt: [SessionKey: Date] = [:],
         derivedBriefs: [SessionKey: SessionBrief] = [:],
         projectNames: [String: String] = [:],
         notices: [SessionKey: AgentNotice] = [:],
@@ -67,6 +75,7 @@ public struct BoardFrameInputs: Sendable, Equatable {
         self.focusedProjectKey = focusedProjectKey
         self.bucketFilter = bucketFilter
         self.seenAt = seenAt
+        self.acknowledgedAt = acknowledgedAt
         self.derivedBriefs = derivedBriefs
         self.projectNames = projectNames
         self.notices = notices
@@ -104,9 +113,17 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// How many sessions the frame holds.
     public var sessionCount: Int { board.sessions.count }
 
-    /// The sessions that finished a task the person has not opened since — the
-    /// scene's garden shows *which*, so the set travels with the frame.
-    public let unseenDoneKeys: Set<SessionKey>
+    /// What every session on the frame is signalling, if anything.
+    ///
+    /// Derived once, here, and carried whole: the scene needs to know *which*
+    /// sessions to put on the waiting bench, the crew wall needs to know which
+    /// card wears a ring, and the menu bar sorts by it. Three surfaces
+    /// re-deriving it is three chances to draw a board that disagrees with its
+    /// own header.
+    ///
+    /// Only the sessions that are actually saying something are in it. On a
+    /// quiet machine it is empty, which is the common case and costs nothing.
+    public let attention: [SessionKey: AttentionState]
 
     /// How many sessions the recency window left out of this frame.
     ///
@@ -125,7 +142,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         endedRows: [BoardRow],
         summary: BoardSummary,
         tree: ProjectTree,
-        unseenDoneKeys: Set<SessionKey> = [],
+        attention: [SessionKey: AttentionState] = [:],
         olderHidden: Int = 0
     ) {
         self.sequence = sequence
@@ -137,7 +154,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.endedRows = endedRows
         self.summary = summary
         self.tree = tree
-        self.unseenDoneKeys = unseenDoneKeys
+        self.attention = attention
         self.olderHidden = olderHidden
     }
 }
@@ -263,7 +280,12 @@ public actor BoardFrameAssembler {
             seenAt: inputs.seenAt,
             briefs: inputs.derivedBriefs,
             notices: inputs.notices,
-            reports: inputs.reports
+            reports: inputs.reports,
+            acknowledgedAt: inputs.acknowledgedAt,
+            // The frame's own instant rather than the wall clock, so the
+            // age-out is replayable and a test can hand it a board from last
+            // week without half the assertions expiring.
+            now: raw.generatedAt
         )
         let groups = BoardGrouping.groups(
             for: board,
@@ -306,6 +328,19 @@ public actor BoardFrameAssembler {
         let ended = EndedSessions.split(kept).ended
         let endedRows = TaskLedger.sorted(builder.rows(for: ended))
 
+        // The same question the rows already answered, kept as the answers
+        // rather than as a count: the scene has to know *which* sessions sit on
+        // the waiting bench, and the crew wall which card wears a ring. Derived
+        // over `kept` — the sessions this frame is actually about — and only
+        // the ones saying something are stored, so a quiet machine carries an
+        // empty dictionary.
+        var attention: [SessionKey: AttentionState] = [:]
+        for session in kept {
+            let state = builder.attention(for: session)
+            guard state.isSignalling else { continue }
+            attention[session.key] = state
+        }
+
         return AssembledBoardFrame(
             sequence: sequence,
             board: board,
@@ -316,7 +351,7 @@ public actor BoardFrameAssembler {
             endedRows: inputs.bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows,
             // Counted before the bucket filter, on purpose: a chip that zeroed
             // the others when clicked would leave no way back to them.
-            summary: BoardSummary(sessions: kept, seenAt: inputs.seenAt, notices: inputs.notices),
+            summary: BoardSummary(sessions: kept, attention: attention),
             // A builder of its own, deliberately. The sidebar's rows have never
             // carried the seen-at map or the backfilled briefs, so sharing the
             // one above would quietly change what the tree's rows are titled on
@@ -329,13 +364,7 @@ public actor BoardFrameAssembler {
                 names: inputs.projectNames,
                 builder: BoardRowBuilder(board: board)
             ),
-            // The same question the summary's tally answers, kept as the
-            // answers rather than the count: the scene's garden has to know
-            // *which* sessions sit holding a note.
-            unseenDoneKeys: Set(kept.compactMap { session in
-                TaskLedger.isUnseenDone(session, lastSeenAt: inputs.seenAt[session.key])
-                    ? session.key : nil
-            }),
+            attention: attention,
             olderHidden: windowed.hidden
         )
     }

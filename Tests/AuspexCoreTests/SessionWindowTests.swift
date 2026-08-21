@@ -209,7 +209,7 @@ struct SessionWindowTests {
             inputs: BoardFrameInputs(window: .twelveHours)
         )
         // Twelve of the forty are inside twelve hours, plus the live one.
-        #expect(frame.summary.done == 12)
+        #expect(frame.summary.ended == 12)
         #expect(frame.endedRows.count == 12)
         #expect(frame.olderHidden == 28)
         #expect(frame.sessionCount == 13)
@@ -218,7 +218,7 @@ struct SessionWindowTests {
             board: board,
             inputs: BoardFrameInputs(window: .all)
         )
-        #expect(whole.summary.done == 40)
+        #expect(whole.summary.ended == 40)
         #expect(whole.olderHidden == 0)
     }
 

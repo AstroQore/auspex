@@ -10,16 +10,16 @@ import Foundation
 /// the order they ask them:
 ///
 /// 1. **Needs you** — is anything stuck on me?
-/// 2. **Done unseen** — did anything finish while I was elsewhere?
+/// 2. **Done** — did anything *say* it finished while I was elsewhere?
 /// 3. **Working** — how much is in flight?
 /// 4. **Idle** — how much is sitting open doing nothing?
-/// 5. **Done** — how much history is behind this?
+/// 5. **Ended** — how much history is behind this? (Counted, never a chip.)
 ///
-/// The second is the one no harness can answer, because it is half a fact
-/// about the person: a session is *done unseen* when its last turn closed
-/// after the last time its card was opened. It is also the number this whole
-/// app exists for — an agent that finished an hour ago and was never read is
-/// the thing a person running twelve of them actually loses.
+/// The first two are the ones no harness can answer, and they are counted only
+/// from something explicit: an agent calling `auspex.notify`, a
+/// `PermissionRequest` hook, a harness's own permission wait. A turn simply
+/// ending counts towards neither — see ``AttentionState`` for why that
+/// inference was worth removing.
 ///
 /// `working` deliberately folds thinking, tooling, and delegating together:
 /// the distinction between them is what the *cards* are for, and a header that
@@ -31,35 +31,40 @@ import Foundation
 /// call sites each folding the counts their own way is three chances to
 /// disagree about what "working" means.
 public struct BoardSummary: Sendable, Equatable, Hashable {
-    /// Sessions blocked on a person.
+    /// Sessions something explicit says are blocked on a person.
     public let needsYou: Int
-    /// Sessions that closed a turn since their card was last opened.
-    ///
-    /// Overlaps the others by construction: a done-unseen session is also
-    /// idle or ended, and is counted in both. That is deliberate — `idle`
-    /// answers "how much is sitting open" and this answers "how much is
-    /// waiting to be read", and a person asks them separately.
-    public let doneUnseen: Int
+    /// Sessions whose agent reported finishing something.
+    public let doneReported: Int
     /// Sessions doing something: thinking, running a tool, writing, or waiting
     /// on children.
     public let working: Int
     /// Sessions that are open with nothing outstanding.
     public let idle: Int
     /// Sessions that are over.
-    public let done: Int
+    public let ended: Int
+
+    /// The five numbers, given directly. Every session is in exactly one of
+    /// them, so they add up to the board.
+    public init(needsYou: Int, doneReported: Int, working: Int, idle: Int, ended: Int) {
+        self.needsYou = needsYou
+        self.doneReported = doneReported
+        self.working = working
+        self.idle = idle
+        self.ended = ended
+    }
 
     /// Folds a frame's per-state tallies into the numbers the header shows.
     ///
-    /// `doneUnseen` cannot be derived from state alone — it needs Auspex's own
-    /// record of what has been opened — so a caller that has the rows passes
-    /// it, and one that only has the counts leaves it at zero rather than
-    /// guessing.
-    public init(counts: BoardSnapshot.Counts, doneUnseen: Int = 0) {
+    /// Activity only: with no attention map there is nothing explicit to read,
+    /// so `doneReported` is zero and `needsYou` holds only the permission
+    /// waits — which are themselves an explicit signal, and the one a state
+    /// tally can see.
+    public init(counts: BoardSnapshot.Counts, doneReported: Int = 0) {
         self.needsYou = counts.waitingPermission
-        self.doneUnseen = doneUnseen
+        self.doneReported = doneReported
         self.working = counts.thinking + counts.tooling + counts.delegating
         self.idle = counts.idle
-        self.done = counts.ended
+        self.ended = counts.ended
     }
 
     /// A summary of one frame.
@@ -67,76 +72,54 @@ public struct BoardSummary: Sendable, Equatable, Hashable {
         self.init(counts: board.counts)
     }
 
-    /// A summary of a set of sessions, told what has been read and what the
-    /// agents have said.
+    /// A summary of a set of sessions and what each of them is signalling.
     ///
-    /// The form the board uses per frame: it already holds the sessions, the
-    /// seen-at map and the notices, and deriving rows for the whole board just
-    /// to count them would pay for a delegation-tree walk per session.
+    /// The form the board uses per frame: it already holds the sessions and
+    /// the attention map, and deriving rows for the whole board just to count
+    /// them would pay for a delegation-tree walk per session.
     ///
-    /// A session whose agent called `auspex.notify` is *moved* into "needs
-    /// you" rather than added to it. Counting it in both would make the five
-    /// numbers add up to more than the board has cards on it, and the chip a
-    /// person is most likely to click would be the one that lies.
-    public init(
-        sessions: [SessionSnapshot],
-        seenAt: [SessionKey: Date],
-        notices: [SessionKey: AgentNotice] = [:]
-    ) {
-        var counts = BoardSnapshot.Counts(sessions: sessions)
-        var unseen = 0
+    /// A session is *moved* into its attention bucket rather than added to it,
+    /// so the five numbers add up to the number of cards on the wall. Counting
+    /// a blocked session as working as well would make the chip a person is
+    /// most likely to click the one that lies.
+    public init(sessions: [SessionSnapshot], attention: [SessionKey: AttentionState]) {
+        var tally: [TaskLedger.Bucket: Int] = [:]
         for session in sessions {
-            let notice = notices[session.key]
-            if TaskLedger.isUnseenDone(
-                state: session.state,
-                lastTurnEndedAt: session.brief.lastTurnEndedAt,
-                lastSeenAt: seenAt[session.key],
-                isChild: TaskLedger.isChild(session.identity),
-                hasAssignment: session.brief.firstPrompt != nil,
-                notice: notice
-            ) {
-                unseen += 1
-            }
-            guard notice?.kind.wantsPerson == true else { continue }
-            if case .waitingPermission = session.state { continue }
-            counts.waitingPermission += 1
-            switch session.state {
-            case .thinking: counts.thinking -= 1
-            case .toolCalling, .writingFile: counts.tooling -= 1
-            case .delegating: counts.delegating -= 1
-            case .idle: counts.idle -= 1
-            case .ended: counts.ended -= 1
-            case .waitingPermission: break
-            }
+            let bucket = TaskLedger.bucket(
+                attention: attention[session.key] ?? .none,
+                state: session.state
+            )
+            tally[bucket, default: 0] += 1
         }
-        self.init(counts: counts, doneUnseen: unseen)
+        self.init(
+            needsYou: tally[.needsYou] ?? 0,
+            doneReported: tally[.doneReported] ?? 0,
+            working: tally[.working] ?? 0,
+            idle: tally[.idle] ?? 0,
+            ended: tally[.ended] ?? 0
+        )
     }
 
     /// A summary of the rows a board actually drew.
     ///
     /// The form the board itself uses: rows already carry
-    /// ``BoardRow/isUnseenDone``, which is the one number a `BoardSnapshot`
-    /// cannot produce on its own.
+    /// ``BoardRow/attention``, which is the one thing a `BoardSnapshot` cannot
+    /// produce on its own.
     public init(rows: [BoardRow]) {
-        var counts = BoardSnapshot.Counts()
-        var unseen = 0
-        for row in rows {
-            switch row.state {
-            case .thinking: counts.thinking += 1
-            case .toolCalling, .writingFile: counts.tooling += 1
-            case .delegating: counts.delegating += 1
-            case .waitingPermission: counts.waitingPermission += 1
-            case .idle: counts.idle += 1
-            case .ended: counts.ended += 1
-            }
-            if row.isUnseenDone { unseen += 1 }
-        }
-        self.init(counts: counts, doneUnseen: unseen)
+        var tally: [TaskLedger.Bucket: Int] = [:]
+        for row in rows { tally[TaskLedger.bucket(of: row), default: 0] += 1 }
+        self.init(
+            needsYou: tally[.needsYou] ?? 0,
+            doneReported: tally[.doneReported] ?? 0,
+            working: tally[.working] ?? 0,
+            idle: tally[.idle] ?? 0,
+            ended: tally[.ended] ?? 0
+        )
     }
 
     /// Everything except the finished ones — the number beside the board's
     /// heading.
-    public var live: Int { needsYou + working + idle }
+    public var live: Int { needsYou + doneReported + working + idle }
 
     /// What a chip is about, and what a click on it filters the board to.
     ///
@@ -150,25 +133,30 @@ public struct BoardSummary: Sendable, Equatable, Hashable {
     public func value(for kind: Kind) -> Int {
         switch kind {
         case .needsYou: needsYou
-        case .doneUnseen: doneUnseen
+        case .doneReported: doneReported
         case .working: working
         case .idle: idle
-        case .done: done
+        case .ended: ended
         }
     }
 
     /// The chips the header draws, in reading order, with the empty ones
     /// dropped.
     ///
-    /// `done` survives at zero and the rest do not. A board that has never
-    /// finished anything is a board that has just started, and saying `0 done`
-    /// there is honest; saying `0 needs you` on every quiet machine teaches a
-    /// reader that the red chip is always present, which is exactly what it
-    /// must not be — and the same is true of the green one beside it.
+    /// Two rules, and both are about what a chip *teaches* by being there:
+    ///
+    /// - **A zero is not a chip.** Saying `0 needs you` on every quiet machine
+    ///   teaches a reader that the red chip is always present, which is exactly
+    ///   what it must not be — and the same is true of the green one beside it.
+    /// - **`ended` never gets one.** The finished sessions have a fold of their
+    ///   own at the bottom of the board with its own count, and a header chip
+    ///   for history would be the loudest row in the window quoting the least
+    ///   urgent number in it.
     public var chips: [(kind: Kind, value: Int)] {
         Kind.allCases.compactMap { kind in
+            guard kind != .ended else { return nil }
             let value = value(for: kind)
-            guard value > 0 || kind == .done else { return nil }
+            guard value > 0 else { return nil }
             return (kind, value)
         }
     }

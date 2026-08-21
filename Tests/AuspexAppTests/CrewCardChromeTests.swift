@@ -22,6 +22,15 @@ import Testing
 struct CrewCardChromeTests {
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
 
+    /// One session asking, and one reporting. Both are things something *said*
+    /// — the wall never infers a ring.
+    private static let calling = AttentionState.needsYou(
+        reason: "Waiting for permission: bash", source: .harness
+    )
+    private static let reported = AttentionState.doneReported(
+        summary: "renamed 24 tokens", source: .agent
+    )
+
     private func session(
         _ state: SessionState,
         turns: Int = 3,
@@ -50,22 +59,23 @@ struct CrewCardChromeTests {
     func blocked() {
         let chrome = CrewCardChrome.of(
             session(.waitingPermission(tool: "bash")),
-            isUnseenDone: false
+            attention: Self.calling
         )
         #expect(chrome == .blocked)
         #expect(chrome.ringColour != nil)
         #expect(chrome.badge?.symbol == "exclamationmark")
     }
 
-    @Test("a finished turn nobody has read gets a tick")
+    @Test("an agent that reported finishing gets a tick")
     func done() {
-        let chrome = CrewCardChrome.of(session(.idle), isUnseenDone: true)
+        let chrome = CrewCardChrome.of(session(.idle), attention: Self.reported)
         #expect(chrome == .done)
         #expect(chrome.badge?.symbol == "checkmark")
         // The tick is the board's judgement, not the avatar's clock. The
         // celebration lasts twenty seconds because a wall of permanent confetti
-        // is not good news; the tick stays until somebody has looked.
-        #expect(CrewCardChrome.of(session(.idle), isUnseenDone: false) == CrewCardChrome.none)
+        // is not good news; the tick stays until the receipt has been dealt
+        // with. A turn simply ending is not a receipt and gets nothing.
+        #expect(CrewCardChrome.of(session(.idle), attention: .none) == CrewCardChrome.none)
     }
 
     @Test("a working session is never chrome, however recently it spoke")
@@ -76,7 +86,7 @@ struct CrewCardChromeTests {
             .writingFile(path: "/Users/example/a.swift"),
             .delegating(children: 2)
         ] {
-            #expect(CrewCardChrome.of(session(state, lastEventAgo: 0.5), isUnseenDone: false)
+            #expect(CrewCardChrome.of(session(state, lastEventAgo: 0.5), attention: .none)
                 == CrewCardChrome.none, "\(state)")
         }
     }
@@ -86,7 +96,7 @@ struct CrewCardChromeTests {
     @Test("needs-you outranks a tick")
     func blockedOutranksDone() {
         #expect(
-            CrewCardChrome.of(session(.waitingPermission(tool: nil)), isUnseenDone: true)
+            CrewCardChrome.of(session(.waitingPermission(tool: nil)), attention: Self.calling)
                 == .blocked
         )
     }
@@ -95,7 +105,7 @@ struct CrewCardChromeTests {
     func endedIsQuiet() {
         let chrome = CrewCardChrome.of(
             session(.ended(reason: .exited), lastEventAgo: 1, endedAgo: 5),
-            isUnseenDone: true
+            attention: .none
         )
         #expect(chrome == .over)
         #expect(chrome.ringColour == nil)

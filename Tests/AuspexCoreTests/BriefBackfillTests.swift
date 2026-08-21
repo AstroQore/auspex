@@ -420,13 +420,13 @@ struct BriefBackfillSeenSeedingTests {
         // At the moment the turn closed, not at `now`: "read today" would be a
         // claim about today that is not true, and it would outlive the pass.
         #expect(try fixture.repository.lastSeen(key: key) == Fixtures.date(0))
-        #expect(!TaskLedger.isUnseenDone(
+        #expect(!TaskLedger.isQuietReply(
             state: .idle,
             lastTurnEndedAt: Fixtures.date(0),
-            lastSeenAt: try fixture.repository.lastSeen(key: key)
-        ,
+            lastSeenAt: try fixture.repository.lastSeen(key: key),
             isChild: false,
-            hasAssignment: true))
+            hasAssignment: true
+        ))
     }
 
     @Test("a session that was active this week stays unread")
@@ -442,13 +442,13 @@ struct BriefBackfillSeenSeedingTests {
         #expect(try fixture.repository.lastSeen(key: key) == nil)
         // Which is the whole point: this is a session somebody may have
         // forgotten this week, and it stays on the board saying so.
-        #expect(TaskLedger.isUnseenDone(
+        #expect(TaskLedger.isQuietReply(
             state: .idle,
             lastTurnEndedAt: Fixtures.date(3 * 24 * 3600 - 3600),
-            lastSeenAt: nil
-        ,
+            lastSeenAt: nil,
             isChild: false,
-            hasAssignment: true))
+            hasAssignment: true
+        ))
     }
 
     @Test("the boundary belongs to the window: exactly 48 hours old stays unread")

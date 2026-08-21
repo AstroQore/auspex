@@ -60,6 +60,9 @@ struct SessionCard: View, Equatable {
         lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
     }
 
+    /// The card's ring colour, or `nil` when nothing is being said.
+    private var attentionColour: Color? { AttentionStyle.colour(row.attention) }
+
     var body: some View {
         let style = row.state.style
         let accent = row.harness.style.accent
@@ -72,9 +75,7 @@ struct SessionCard: View, Equatable {
             // somebody wrote on purpose — and because a person scanning a wall
             // for what needs them should not have to read past two inferred
             // lines to find it.
-            if let notice = row.notice {
-                NoticeBanner(notice: notice, onDismiss: onDismissNotice)
-            }
+            AttentionBanner(attention: row.attention, onDismiss: onDismissNotice)
             ledgerLines
             activityLine(style: style)
             chips
@@ -87,12 +88,13 @@ struct SessionCard: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
         .panelChrome(
             isSelected: isSelected,
-            // A card whose agent called for a person glows for the same reason
-            // a permission prompt does — it is the same fact, arrived at two
-            // ways — so the wall reads identically whether the harness reported
-            // it or the agent said it.
-            isHighlighted: style.isAlarming || row.needsPerson,
-            highlightColor: row.notice.map { NoticeStyle.color($0.kind) } ?? style.color
+            // One ring, two colours, and the source of the claim does not
+            // change either: a card glows red whether the harness reported the
+            // block or the agent said so, and green when an agent reported
+            // finishing. Only the red one breathes — see ``AttentionStyle``.
+            isHighlighted: attentionColour != nil,
+            breathes: AttentionStyle.breathes(row.attention),
+            highlightColor: attentionColour ?? style.color
         )
         .overlay(alignment: .leading) {
             // The rail: harness identity, full height, and the only place the
@@ -140,13 +142,20 @@ struct SessionCard: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
             // Nudged down to the cap height of the title beside it, which is
             // top-aligned so a two-line assignment grows downwards.
-            if row.isUnseenDone, row.notice == nil { UnseenDot().padding(.top, 7) }
+            if row.isQuietReply, !row.attention.isSignalling {
+                QuietReplyDot().padding(.top, 7)
+            }
             if row.isStale, !isOver { StaleTag() }
             // The agent's claim replaces the observation rather than sitting
             // beside it. Two pills — "idle" and "needs input" — would be the
             // card arguing with itself, and the reader would have to know
             // which one to believe.
-            if let notice = row.notice {
+            //
+            // Only for a claim an agent actually made. A harness's permission
+            // wait is already the state pill's own word, and swapping that for
+            // a filled pill would say "somebody wrote this" about something
+            // nobody wrote.
+            if let notice = row.notice, row.attention.source == .agent {
                 NoticePill(kind: notice.kind)
             } else {
                 StatePill(state: row.state, isStale: row.isStale)
@@ -280,8 +289,8 @@ struct SessionCard: View, Equatable {
     /// that decides whether to go and look.
     private var footer: some View {
         HStack(spacing: 14) {
-            if row.isUnseenDone, let endedAt = row.lastTurnEndedAt {
-                DoneLabel(at: endedAt)
+            if row.isQuietReply, let endedAt = row.lastTurnEndedAt {
+                QuietReplyLabel(at: endedAt)
             } else {
                 HStack(spacing: 5) {
                     Text(elapsedLabel)
@@ -360,22 +369,28 @@ private struct LedgerLine: View {
     }
 }
 
-/// The dot that says a session finished something nobody has read.
+/// The dot that says a session went quiet after the agent spoke, and nobody
+/// has opened it since.
 ///
-/// The board's "something was made" green, held back a step. It is good news,
-/// not live news, and it must not compete with the red that means a person is
-/// being waited on.
-struct UnseenDot: View {
+/// Deliberately faint, and deliberately counted nowhere. It is an *inference*
+/// — a turn ended, the card was not opened — and inferences are why the board
+/// used to claim four hundred sessions wanted attention. What it is still good
+/// for is a card already in front of you: this one replied and you have not
+/// read the reply.
+///
+/// The board's "something was made" green, held back a step, so it cannot be
+/// mistaken for the solid green badge that means an agent *said* it finished.
+struct QuietReplyDot: View {
     var body: some View {
         Circle()
-            .fill(AuspexPalette.stateWriting.opacity(0.8))
-            .frame(width: 7, height: 7)
-            .accessibilityLabel("Finished, and you have not looked at it")
+            .fill(AuspexPalette.stateWriting.opacity(0.55))
+            .frame(width: 6, height: 6)
+            .accessibilityLabel("Replied, and you have not looked at it")
     }
 }
 
-/// *done · 12 min ago · unseen*, in place of the stopwatch.
-private struct DoneLabel: View {
+/// *replied · 12 min ago*, in place of the stopwatch.
+private struct QuietReplyLabel: View {
     let at: Date
     /// Optional for the same reason ``ElapsedLabel``'s is: an offscreen
     /// render and a preview have no clock, and a label that traps there
@@ -384,7 +399,7 @@ private struct DoneLabel: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Text("done")
+            Text("replied")
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
             // Reads the shared clock rather than owning one, so this label
@@ -392,10 +407,7 @@ private struct DoneLabel: View {
             Text(RelativeTimeText.since(at, now: clock?.now ?? Date()))
                 .font(AuspexType.monoClock)
                 .auspexTabularDigits()
-                .foregroundStyle(AuspexPalette.stateWriting.opacity(0.8))
-            Text("· unseen")
-                .font(AuspexType.caption)
-                .foregroundStyle(AuspexPalette.stateWriting.opacity(0.8))
+                .foregroundStyle(AuspexPalette.stateWriting.opacity(0.7))
         }
         .fixedSize()
     }

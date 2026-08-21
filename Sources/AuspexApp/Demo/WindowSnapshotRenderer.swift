@@ -93,8 +93,9 @@ enum WindowSnapshotRenderer {
     static func summary(of environment: AppEnvironment) -> String {
         let summary = environment.board.summary
         return "\(environment.board.board.sessions.count) sessions — "
-            + "\(summary.needsYou) needs you, \(summary.working) working, "
-            + "\(summary.idle) idle, \(summary.done) done"
+            + "\(summary.needsYou) needs you, \(summary.doneReported) done, "
+            + "\(summary.working) working, \(summary.idle) idle, "
+            + "\(summary.ended) ended"
     }
 
     enum RenderError: Error {

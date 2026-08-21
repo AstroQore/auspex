@@ -54,6 +54,13 @@ private enum GridTile {
 struct PanelChrome: ViewModifier {
     var isSelected = false
     var isHighlighted = false
+    /// Whether the glow breathes rather than sitting still.
+    ///
+    /// Reserved for the one thing on the board that is *asking*. A still ring
+    /// is a label; a breathing one is something waiting for you, and the
+    /// difference is what a person reads from the far side of a desk without
+    /// looking directly at the window.
+    var breathes = false
     var highlightColor: Color = .clear
     var cornerRadius: CGFloat = 10
 
@@ -71,7 +78,9 @@ struct PanelChrome: ViewModifier {
             // colour is not free — it still allocates the offscreen buffer the
             // blur would need — and on a wall of forty cards that is forty
             // buffers redrawn for nothing.
-            .modifier(ConditionalGlow(isOn: isHighlighted, color: highlightColor))
+            .modifier(
+                ConditionalGlow(isOn: isHighlighted, breathes: breathes, color: highlightColor)
+            )
     }
 
     private var borderColor: Color {
@@ -81,13 +90,36 @@ struct PanelChrome: ViewModifier {
     }
 }
 
-/// A glow that exists only while it is on.
+/// A glow that exists only while it is on, and breathes only when it is
+/// asking.
+///
+/// ## The radius is constant, and that is not a detail
+///
+/// A shadow enlarges the view's drawing bounds, so a radius that changes is a
+/// *layout* change — and a layout change inside a lazy grid re-places every
+/// subview the container is tracking. The crew wall learned this the
+/// expensive way (see ``BreathingRing``): 14 % of a core became 100 %, pinned,
+/// with the main thread inside `LazySubviewPlacements.placeSubviews`.
+///
+/// So the breath is in the *colour*, which is a paint change and nothing else,
+/// and only the cards that are actually shouting pay for it.
 private struct ConditionalGlow: ViewModifier {
     let isOn: Bool
+    var breathes = false
     let color: Color
+    @State private var isDim = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
-        if isOn {
+        if isOn, breathes, !reduceMotion {
+            content
+                .shadow(color: color.opacity(isDim ? 0.10 : 0.34), radius: 14)
+                .animation(
+                    .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
+                    value: isDim
+                )
+                .onAppear { isDim = true }
+        } else if isOn {
             content.shadow(color: color.opacity(0.22), radius: 14)
         } else {
             content
@@ -100,6 +132,7 @@ extension View {
     func panelChrome(
         isSelected: Bool = false,
         isHighlighted: Bool = false,
+        breathes: Bool = false,
         highlightColor: Color = .clear,
         cornerRadius: CGFloat = 10
     ) -> some View {
@@ -107,6 +140,7 @@ extension View {
             PanelChrome(
                 isSelected: isSelected,
                 isHighlighted: isHighlighted,
+                breathes: breathes,
                 highlightColor: highlightColor,
                 cornerRadius: cornerRadius
             )

@@ -341,12 +341,17 @@ public struct AgentNotice: Hashable, Sendable, Codable {
 
     /// Whether the person's next prompt has already answered it.
     ///
-    /// The auto-clear rule, in one place so the board and the store agree:
-    /// a call for input is answered by the person talking to that session
-    /// again. Nothing else clears itself — a `blocked` notice is about the
-    /// world, not about the conversation, and `done` is a receipt.
+    /// The auto-clear rule, in one place so the board and the store agree: a
+    /// person who has typed into that session's terminal since the call was
+    /// made has dealt with it, whatever the call was. A question has been
+    /// answered, a block has been unblocked or overtaken, and a receipt has
+    /// been read by somebody who then asked for the next thing.
+    ///
+    /// It is the one clearing gesture that happens where the *work* is rather
+    /// than where the board is, which is why it matters: nobody should have to
+    /// visit Auspex to tell it something they have already told the agent.
     public func isAnswered(byPromptAt promptAt: Date?) -> Bool {
-        guard kind == .needsInput, let promptAt else { return false }
+        guard let promptAt else { return false }
         return promptAt > createdAt
     }
 }

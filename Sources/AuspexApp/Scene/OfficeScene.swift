@@ -136,7 +136,7 @@ final class OfficeScene: SKScene {
         reduceMotion: Bool,
         theme: SceneTheme,
         zones: SceneZoneOptions = .all,
-        unseenDone: Set<SessionKey> = []
+        attention: [SessionKey: AttentionState] = [:]
     ) {
         if self.theme.id != theme.id {
             self.theme = theme
@@ -155,7 +155,7 @@ final class OfficeScene: SKScene {
         for session in board.sessions { byKey[session.key] = session }
         sessions = byKey
 
-        let moved = director.apply(board, unseenDone: unseenDone)
+        let moved = director.apply(board, attention: attention)
         overviewIsStale = true
         if moved {
             cameraController.setContentRect(director.contentRect)

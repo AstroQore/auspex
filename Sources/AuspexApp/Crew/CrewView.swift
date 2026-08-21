@@ -195,10 +195,7 @@ struct CrewView: View {
             session: session,
             isSelected: model.selectedKey == session.key,
             descendantCount: model.descendantCount(of: session.key),
-            chrome: CrewCardChrome.of(
-                session,
-                isUnseenDone: model.unseenDoneKeys.contains(session.key)
-            )
+            chrome: CrewCardChrome.of(session, attention: model.attention[session.key] ?? .none)
         ) {
             CrewLiveAvatar(
                 session: session,
@@ -542,7 +539,7 @@ enum CrewCardChrome: Sendable, Hashable {
     case none
     /// Waiting on you. It will not resolve itself.
     case blocked
-    /// A turn finished and nobody has looked yet.
+    /// An agent reported finishing something.
     case done
     /// Over.
     case over
@@ -566,21 +563,22 @@ enum CrewCardChrome: Sendable, Hashable {
 
     /// What a session's card is saying.
     ///
-    /// Derived from the snapshot and the board's own unseen-done set rather
-    /// than from the avatar's driver, so a renderer with no roster gets the
-    /// same answer as the live wall.
+    /// Read off the board's own attention map rather than re-derived from the
+    /// avatar's driver, so a renderer with no roster gets the same answer as
+    /// the live wall — and so the ring here and the chip in the header are the
+    /// same claim rather than two guesses that usually agree.
     ///
     /// The tick and the dance are deliberately **not** the same clock. The
     /// avatar celebrates for twenty seconds because a celebration that went on
     /// all afternoon would be a wall of permanent confetti; the tick stays
-    /// until the person has actually looked, because that is what it is for.
-    /// `isUnseenDone` is the board's own judgement — the same one the card list
-    /// draws its unseen dot from, so the two surfaces cannot disagree about
-    /// which sessions are waiting to be read.
-    static func of(_ session: SessionSnapshot, isUnseenDone: Bool) -> CrewCardChrome {
-        if session.state.isEnded { return .over }
-        if case .waitingPermission = session.state { return .blocked }
-        return isUnseenDone ? .done : .none
+    /// until the receipt has been dealt with, because that is what it is for.
+    static func of(_ session: SessionSnapshot, attention: AttentionState) -> CrewCardChrome {
+        switch attention {
+        case .needsYou: return .blocked
+        case .doneReported: return .done
+        case .none: break
+        }
+        return session.state.isEnded ? .over : .none
     }
 }
 

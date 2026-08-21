@@ -41,6 +41,9 @@ struct BoardHeader: View {
                     Color.clear.frame(width: 0, height: 0)
                 }
                 Spacer(minLength: 8)
+                if model.hasAttention {
+                    markAllSeen.fixedSize()
+                }
                 if model.ignoredCount > 0 {
                     ignoredToggle.fixedSize()
                 }
@@ -119,6 +122,45 @@ struct BoardHeader: View {
         default:
             ""
         }
+    }
+
+    /// Clears every signal on the board at once.
+    ///
+    /// On screen only while something is actually signalling, which is the
+    /// same rule the chips follow and for the same reason: a control that is
+    /// always there and usually does nothing is a control people stop seeing.
+    ///
+    /// It is the escape hatch the whole attention model needs to be safe. Every
+    /// other clearing rule is automatic — you opened the card, you answered in
+    /// the terminal, a day went by — and a person who has just dealt with six
+    /// agents somewhere else needs one gesture that says so, or they will learn
+    /// to ignore the red instead.
+    private var markAllSeen: some View {
+        Button { model.markAllSeen() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Mark all as seen")
+                    .font(AuspexType.caption)
+            }
+            .foregroundStyle(AuspexPalette.text3)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AuspexPalette.bg1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 8))
+        .help(
+            "Clear every card that is asking or reporting. "
+                + "A session that is still blocked will say so again."
+        )
     }
 
     /// What the rules are hiding, and the switch that reveals it.
@@ -257,9 +299,9 @@ struct BoardHeader: View {
     }
 }
 
-/// The numbers, each with a dot in its state's colour, and each a filter.
+/// The numbers, each with its bucket's mark, and each a filter.
 ///
-/// Zeroes are dropped for the live kinds and kept for `done`, which is
+/// Zeroes are dropped and `ended` never appears at all, which is
 /// ``BoardSummary/chips``' rule and not this view's: a red chip that is always
 /// on screen is a red chip nobody looks at.
 ///
@@ -284,15 +326,19 @@ struct SummaryChips: View {
                 let isOn = selected == chip.kind
                 Button { onSelect(chip.kind) } label: {
                     HStack(spacing: 5) {
-                        StateDot(
-                            color: Self.color(for: chip.kind),
-                            glows: chip.kind == .needsYou || isOn
-                        )
+                        if let mark = Self.mark(for: chip.kind) {
+                            Text(mark)
+                                .font(.system(size: 10, weight: .black))
+                                .foregroundStyle(Self.color(for: chip.kind))
+                                .frame(width: 8)
+                        } else {
+                            StateDot(color: Self.color(for: chip.kind), glows: isOn)
+                        }
                         Text("\(chip.value)")
                             .font(.system(size: 11.5, weight: .bold))
                             .auspexTabularDigits()
                             .foregroundStyle(
-                                chip.kind == .done && !isOn
+                                chip.kind == .idle && !isOn
                                     ? AuspexPalette.text3
                                     : AuspexPalette.text
                             )
@@ -328,18 +374,30 @@ struct SummaryChips: View {
     }
 
     /// One colour per kind, from the state palette — so the chip that says
-    /// "needs you" is the same red as the pill on the card it is counting.
-    ///
-    /// `doneUnseen` borrows the writing green at 80 %: it is the same
-    /// "something was made" the board uses everywhere, held back a step
-    /// because a finished session is good news rather than live news.
+    /// "needs you" is the same red as the ring on the card it is counting.
     static func color(for kind: BoardSummary.Kind) -> Color {
         switch kind {
         case .needsYou: AuspexPalette.statePermission
-        case .doneUnseen: AuspexPalette.stateWriting.opacity(0.8)
+        case .doneReported: AuspexPalette.stateWriting
         case .working: AuspexPalette.stateTool
         case .idle: AuspexPalette.stateIdle
-        case .done: AuspexPalette.stateEnded
+        case .ended: AuspexPalette.stateEnded
+        }
+    }
+
+    /// The mark in front of the number, for the two chips that are about
+    /// something explicit.
+    ///
+    /// `! 2 needs you` and `✓ 1 done` read as claims; `3 working` and `9 idle`
+    /// read as tallies, which is what they are. The mark is the same character
+    /// the scene puts over an agent's head and the crew wall puts in a corner,
+    /// so it is learned once.
+    static func mark(for kind: BoardSummary.Kind) -> String? {
+        switch kind {
+        case .needsYou: "!"
+        case .doneReported: "✓"
+        case .working: "▶"
+        case .idle, .ended: nil
         }
     }
 }

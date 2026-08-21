@@ -82,11 +82,15 @@ public enum SceneSeatKind: String, Sendable, Hashable, CaseIterable {
     case tableNorth
     /// A child on the near side.
     case tableSouth
-    /// Resting in the garden. Nothing outstanding.
-    case bench
-    /// Finished something nobody has read, holding the note that says so.
+    /// On the waiting bench by the path, wanting a person. The loudest place
+    /// on the map.
+    case call
+    /// On the waiting bench holding the note that says it finished.
     case note
-    /// Asleep. Claims to be working and has not said anything for a long time.
+    /// Resting on the back lawn. Nothing outstanding.
+    case bench
+    /// Asleep on the back lawn. Claims to be working and has not said anything
+    /// for a long time.
     case doze
     /// On the way out through the gate.
     case gate
@@ -96,20 +100,34 @@ public enum SceneSeatKind: String, Sendable, Hashable, CaseIterable {
         switch self {
         case .desk: .office
         case .tableHead, .tableNorth, .tableSouth: .meeting
-        case .bench, .note, .doze, .gate: .garden
+        case .call, .note, .bench, .doze, .gate: .garden
         }
     }
 
     /// Whether somebody in this seat is on their way off the map.
     public var isLeaving: Bool { self == .gate }
 
-    /// Whether this is one of the garden's held places — a bench, a blanket,
-    /// or a patch of shade. The gate is not one: nobody keeps a place in a
-    /// queue they are about to walk out of.
+    /// Whether this is the front row of the garden — the bench by the path,
+    /// facing the way somebody would walk in.
+    ///
+    /// The two kinds here are the two attention buckets, and they are in the
+    /// same row on purpose: what they have in common is that *you* are the
+    /// next thing that has to happen. Everything else in the garden is resting.
+    public var isWaitingBench: Bool {
+        switch self {
+        case .call, .note: true
+        case .desk, .tableHead, .tableNorth, .tableSouth, .bench, .doze, .gate: false
+        }
+    }
+
+    /// Whether this is one of the back lawn's held places — a bench or a patch
+    /// of shade. The gate is not one: nobody keeps a place in a queue they are
+    /// about to walk out of, and neither is the waiting bench, which has a
+    /// table of its own.
     public var isGardenRest: Bool {
         switch self {
-        case .bench, .note, .doze: true
-        case .desk, .tableHead, .tableNorth, .tableSouth, .gate: false
+        case .bench, .doze: true
+        case .desk, .tableHead, .tableNorth, .tableSouth, .call, .note, .gate: false
         }
     }
 }
@@ -119,12 +137,12 @@ public enum SceneSeatKind: String, Sendable, Hashable, CaseIterable {
 /// ## Why this is a free function over a board rather than a method on a state
 ///
 /// Two of the three answers are not properties of a session at all. A subagent
-/// goes to the meeting room because *its parent* is delegating, and a finished
-/// session sits on a bench holding a note because *nobody has read it* — which
-/// is a fact about the person, held by Auspex and by nothing else on the
-/// machine. So the placement takes the board, the delegation edges the board
-/// admits to, and the set of sessions the ledger calls unseen, and answers for
-/// all of them at once.
+/// goes to the meeting room because *its parent* is delegating, and a session
+/// sits on the waiting bench because something explicit said it wants a person
+/// or has finished — which is a fact Auspex holds and nothing else on the
+/// machine does. So the placement takes the board, the delegation edges the
+/// board admits to, and what each session is signalling, and answers for all
+/// of them at once.
 ///
 /// It is pure: same inputs, same answer, no clock and no I/O. That is what
 /// makes "a blocked session never leaves its desk" a test rather than a hope.
@@ -157,12 +175,13 @@ public enum SceneZoning {
     ///   - parent: the delegation edges, already filtered to sessions that are
     ///     on this board. ``SceneLayout`` has this map; asking it to hand it
     ///     over is cheaper and less error-prone than deriving it twice.
-    ///   - unseenDone: the sessions the task ledger calls finished-and-unread.
+    ///   - attention: what each session is signalling, if anything. Only the
+    ///     sessions that are actually saying something need be in it.
     ///   - options: which annexes are switched on.
     public static func placements(
         sessions: [SessionSnapshot],
         parent: [SessionKey: SessionKey],
-        unseenDone: Set<SessionKey>,
+        attention: [SessionKey: AttentionState],
         options: SceneZoneOptions
     ) -> [SessionKey: Placement] {
         var byKey: [SessionKey: SessionSnapshot] = [:]
@@ -177,7 +196,7 @@ public enum SceneZoning {
                 session,
                 sessions: byKey,
                 parent: parent,
-                unseenDone: unseenDone,
+                attention: attention[session.key] ?? .none,
                 options: options
             )
         }
@@ -189,14 +208,41 @@ public enum SceneZoning {
         _ session: SessionSnapshot,
         sessions: [SessionKey: SessionSnapshot],
         parent: [SessionKey: SessionKey],
-        unseenDone: Set<SessionKey>,
+        attention: AttentionState,
         options: SceneZoneOptions
     ) -> Placement {
-        // A session blocked on a person never leaves its desk, whatever else
-        // is true of it. It is the one thing in the scene allowed to shout,
-        // and a shout from a bench in the garden is a shout somebody has to go
-        // looking for.
-        if case .waitingPermission = session.state { return .desk }
+        // Attention first, and it beats everything else on the map — the
+        // meeting it was in, the fact that its process has exited, the desk it
+        // was at. Somebody who is waiting on *you* is not doing any of those
+        // things any more, whatever their transcript still says.
+        //
+        // This is a change of mind and worth saying so: a blocked session used
+        // to keep its desk, on the theory that a shout from the garden is a
+        // shout you have to go looking for. It reads the other way round in
+        // practice. A desk in a room of forty desks is where you hide; the
+        // front row by the path is where a person's eye lands first, and it is
+        // the same row for both buckets so there is one place to look rather
+        // than a hunt through the building.
+        if options.garden {
+            switch attention {
+            case .needsYou: return Placement(kind: .call)
+            case .doneReported: return Placement(kind: .note)
+            case .none:
+                // Belt and braces, and the same one ``TaskLedger/bucket``
+                // keeps: a harness's permission wait always derives to
+                // `needsYou`, and a caller that built the map some other way
+                // must not be able to seat a blocked session at a table.
+                if case .waitingPermission = session.state {
+                    return Placement(kind: .call)
+                }
+            }
+        } else if case .waitingPermission = session.state {
+            // With the garden switched off there is nowhere to walk to, and
+            // the desk is where the strobing monitor already is.
+            return .desk
+        } else if attention.wantsPerson {
+            return .desk
+        }
 
         if options.meetingRoom, !session.state.isEnded,
            let table = table(for: session, sessions: sessions, parent: parent) {
@@ -210,11 +256,6 @@ public enum SceneZoning {
 
         guard options.garden else { return .desk }
 
-        // Unseen beats ended on purpose, and it is the ledger's own order:
-        // something that finished while you were elsewhere is waiting to be
-        // read, and walking it off the map would be Auspex throwing away the
-        // one fact no harness on the machine can tell you.
-        if unseenDone.contains(session.key) { return Placement(kind: .note) }
         if session.state.isEnded { return Placement(kind: .gate) }
         if session.isStale, session.state.isActive { return Placement(kind: .doze) }
         if case .idle = session.state { return Placement(kind: .bench) }

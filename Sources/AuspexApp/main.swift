@@ -55,27 +55,29 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
             exit(2)
         }
         let zones: SceneZoneOptions = officeOnly ? .officeOnly : .all
-        let unseenDone = SceneSnapshotRenderer.demoUnseenDone(board)
+        let attention = SceneSnapshotRenderer.demoAttention(board)
         try SceneSnapshotRenderer.render(
             board: board,
             to: URL(fileURLWithPath: path),
             focusing: project,
             zones: zones,
-            unseenDone: unseenDone
+            attention: attention
         )
         // Report what was drawn. Choosing *when* in the demo loop to render is
         // the whole job of picking a good screenshot, and this tally is how it
         // is chosen — which now includes the two states only the annexes draw.
         let counts = board.counts
         let stale = board.sessions.filter { $0.isStale && $0.state.isActive }.count
+        let needsYou = attention.values.count { $0.wantsPerson }
+        let reported = attention.values.count { $0.isDoneReported }
         let framing = project.map { " framed on \(($0 as NSString).lastPathComponent)" } ?? ""
         let map = officeOnly ? " office only" : ""
+        let activity = "\(counts.thinking) thinking, \(counts.tooling) tooling, "
+            + "\(counts.delegating) delegating, \(counts.idle) idle, "
+            + "\(stale) stale, \(counts.ended) ended"
+        let waiting = "\(needsYou) needs you, \(reported) done"
         let summary = "auspex: \(board.sessions.count) sessions at t+\(Int(elapsed))s"
-            + "\(framing)\(map) — "
-            + "\(counts.thinking) thinking, \(counts.tooling) tooling, "
-            + "\(counts.delegating) delegating, \(counts.waitingPermission) blocked, "
-            + "\(counts.idle) idle, \(stale) stale, \(unseenDone.count) done unseen, "
-            + "\(counts.ended) ended\n"
+            + "\(framing)\(map) — \(activity) — \(waiting)\n"
         FileHandle.standardOutput.write(Data(summary.utf8))
         exit(0)
     } catch {

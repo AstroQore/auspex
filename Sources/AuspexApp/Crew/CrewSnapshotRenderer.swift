@@ -53,14 +53,14 @@ enum CrewSnapshotRenderer {
             }
             now += 1.0 / 30
         }
-        let unseen = SceneSnapshotRenderer.demoUnseenDone(board)
+        let attention = SceneSnapshotRenderer.demoAttention(board)
         let cards = board.sessions.map { session -> CrewSnapshotCard in
             let instant = roster.instant(for: session, at: avatarTime, frozen: false)
             return CrewSnapshotCard(
                 session: session,
                 frame: instant.frame,
                 descendants: board.tree.descendants(of: session.key).count,
-                chrome: CrewCardChrome.of(session, isUnseenDone: unseen.contains(session.key)),
+                chrome: CrewCardChrome.of(session, attention: attention[session.key] ?? .none),
                 isOver: instant.stance == .ended
             )
         }

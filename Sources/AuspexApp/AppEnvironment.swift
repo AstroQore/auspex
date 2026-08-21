@@ -281,7 +281,7 @@ public final class AppEnvironment {
 
         switch mode {
         case .demo:
-            startDemo(into: continuation)
+            startDemo(store: store, into: continuation)
         case .live:
             startLive(store: store, table: table, into: continuation)
         }
@@ -477,10 +477,43 @@ public final class AppEnvironment {
         })
     }
 
-    private func startDemo(into continuation: AsyncStream<AgentEvent>.Continuation) {
+    /// Replays the fabricated board, and lets its agents speak once per loop.
+    ///
+    /// The second half is not decoration. The two loud buckets are made of
+    /// things agents said out loud, and a call is cleared by the person
+    /// talking to that session again — so a demo that filed its notices once
+    /// at launch would show an empty header from the first loop onwards, which
+    /// is a demo of the passive half of the app.
+    private func startDemo(
+        store: AuspexStore,
+        into continuation: AsyncStream<AgentEvent>.Continuation
+    ) {
+        let ledger = TaskRepository(store: store)
+        let board = board
         let source = DemoEventSource(
             continuation: continuation,
-            lendsProcess: offersSignalTarget
+            lendsProcess: offersSignalTarget,
+            onLoop: { [weak board] in
+                let now = Date()
+                let notices = DemoScript.notices(now: now)
+                for notice in notices.values.sorted(by: {
+                    $0.session.description < $1.session.description
+                }) {
+                    _ = try? ledger.recordNotice(
+                        session: notice.session,
+                        kind: notice.kind,
+                        message: notice.message,
+                        urgency: notice.urgency,
+                        now: notice.createdAt
+                    )
+                }
+                // Applied on the spot rather than by re-reading, so the cards
+                // move on the frame the notices land on. No system
+                // notification: nothing on a fabricated board happened.
+                await MainActor.run {
+                    for notice in notices.values { board?.apply(notice: notice) }
+                }
+            }
         )
         demoSource = source
         pipelineTasks.append(Task.detached { await source.run() })

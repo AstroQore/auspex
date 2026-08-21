@@ -119,12 +119,71 @@ public struct DemoScript: Sendable, Equatable {
     ///
     /// The one fact about a board that no harness on the machine holds is
     /// whether a person has *looked*. Everything else in this script is
-    /// derivable from events; this is not, so the demo has to state it — and
-    /// stating it is what lets a screenshot show the garden's whole point,
-    /// which is a session sitting there holding the note that says it finished
-    /// while you were elsewhere.
+    /// derivable from events; this is not, so the demo has to state it.
+    ///
+    /// It drives the faint reply dot and nothing else. What a *bucket* is made
+    /// of is something an agent said out loud, and the demo says those in
+    /// ``DemoTaskLedger`` — a `blocked` call and a `done` receipt — because
+    /// that is where a real board's two loud buckets come from too.
+    ///
+    /// Session 8, deliberately: it closes a turn and stays open in the editor,
+    /// which is the shape the dot is about. An ended session is in the
+    /// collapsed fold, where a dot would be decoration.
     public static var unreadSessionKeys: [SessionKey] {
-        [SessionKey(harness: .claudeCode, sessionID: "7a1b9d43-5e02-4c8f-b6d1-3e90f2a71c55")]
+        [SessionKey(harness: .cursor, sessionID: "e07c4a91b2d8635f")]
+    }
+
+    /// What the demo's agents have said out loud, as of `now`.
+    ///
+    /// The two loud buckets on a real board are made of explicit signals —
+    /// `auspex.notify`, a permission hook, a harness's own wait — and never of
+    /// an inference. So the demo says them out loud too, and one list serves
+    /// both the running app (``DemoTaskLedger`` writes these into its
+    /// in-memory ledger) and the headless renderers, which have no store to
+    /// read and would otherwise have to fabricate a second, divergent board.
+    ///
+    /// `blocked` rather than `needs_input` for the call, and that is the
+    /// clearing rule working rather than a preference: a demo replays a
+    /// scripted conversation on a loop, so every session is about to receive
+    /// another prompt — and any notice is answered by the person talking to
+    /// that session again. It would clear itself within seconds of the demo
+    /// starting, which is correct and would make for a demo of nothing. A
+    /// blocker is about the world rather than about the conversation.
+    /// How far into a loop the demo's notices are recorded.
+    ///
+    /// After every scripted session has received its live prompt, and for the
+    /// reason a real board has: a call is cleared by the person talking to
+    /// that session again, so a notice filed *before* the loop's prompts would
+    /// answer itself within seconds and the demo would show an empty header.
+    public static let noticeOffset: TimeInterval = 8
+
+    public static func notices(now: Date) -> [SessionKey: AgentNotice] {
+        let keys = sessionKeys
+        var notices: [SessionKey: AgentNotice] = [:]
+        if keys.count > 4 {
+            notices[keys[4]] = AgentNotice(
+                session: keys[4],
+                kind: .blocked,
+                message:
+                    "Two step enums disagree about status 9. "
+                    + "Ship the partial decode, or keep digging?",
+                createdAt: now.addingTimeInterval(-2)
+            )
+        }
+        // Session 6 closes its turn and exits a few seconds later, which is
+        // exactly the case a receipt has to survive: the process going away
+        // does not un-finish the work, or un-write the line somebody still has
+        // to read.
+        if keys.count > 5 {
+            notices[keys[5]] = AgentNotice(
+                session: keys[5],
+                kind: .done,
+                message:
+                    "Fixed the three-way split: the remainder is distributed, not truncated.",
+                createdAt: now.addingTimeInterval(-2)
+            )
+        }
+        return notices
     }
 
     /// What the reader has looked at, as of `now`: everything except

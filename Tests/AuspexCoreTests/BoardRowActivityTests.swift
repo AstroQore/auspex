@@ -69,7 +69,7 @@ struct BoardRowRebuiltBriefTests {
         #expect(row.lastTurnEndedAt == Fixtures.date(120))
         // Nothing has been opened, and a turn closed: this is the state the
         // ledger exists to surface.
-        #expect(row.isUnseenDone)
+        #expect(row.isQuietReply)
         // The headline is read off the same brief the body is, so the
         // assignment is never printed twice.
         #expect(row.title == assignment)
@@ -82,7 +82,7 @@ struct BoardRowRebuiltBriefTests {
 
         #expect(row.assignedTask == nil)
         #expect(row.lastTurnEndedAt == nil)
-        #expect(!row.isUnseenDone)
+        #expect(!row.isQuietReply)
         #expect(row.title == "widget")
     }
 
