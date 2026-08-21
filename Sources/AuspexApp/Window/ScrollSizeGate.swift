@@ -94,7 +94,11 @@ struct ProposalOnlyLayout: Layout {
     ) {
         let size = ProposedViewSize(width: bounds.width, height: bounds.height)
         for subview in subviews {
-            subview.place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: size)
+            subview.place(
+                at: CGPoint(x: bounds.minX, y: bounds.minY),
+                anchor: .topLeading,
+                proposal: size
+            )
         }
     }
 }

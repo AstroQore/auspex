@@ -72,7 +72,9 @@ final class MainThreadMeter {
 
     /// Stops measuring and prints whatever is left.
     func stop() {
-        for observer in observers { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        for observer in observers {
+            CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes)
+        }
         observers.removeAll()
         report()
     }

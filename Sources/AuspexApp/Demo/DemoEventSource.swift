@@ -21,7 +21,8 @@ actor DemoEventSource {
     private let continuation: AsyncStream<AgentEvent>.Continuation
     private let seed: UInt64
 
-    /// How many times over to run the cast — see ``DemoScript/make(seed:startedAt:generation:scale:)``.
+    /// How many times over to run the cast — see
+    /// ``DemoScript/make(seed:startedAt:generation:scale:)``.
     private let scale: Int
 
     /// The real `/bin/sleep` one demo session borrows a pid from, so that
