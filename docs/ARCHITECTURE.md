@@ -333,7 +333,8 @@ changes a second — and goes to 60 for the length of a gesture.
 
 The scene's zones shipped: one continuous map — the office, a meeting room
 strip where a delegating session sits at a long table with its sub-agents,
-and a garden where idle sessions rest, unseen-done ones hold a note, and an
+and a garden whose front row holds whatever is asking or reporting, whose back
+lawn rests the idle and the dozing, and where an
 ended session walks out through the gate. `SceneLayout` owns the plan;
 Settings → Scene switches either annex off, which returns everyone to their
 desks.

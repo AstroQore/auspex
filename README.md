@@ -30,7 +30,7 @@ agents themselves can say what they need.
 Running four or five agent harnesses at once means four or five terminal tabs,
 none of which can tell you which agent is blocked on a permission prompt, which
 one has been thinking for six minutes, which two are editing the same file, or
-which one finished twenty minutes ago and is sitting there waiting to be read.
+which one said it finished twenty minutes ago and is waiting to be read.
 Each harness already writes a detailed session log to disk. Auspex reads all of
 them and puts the answer in one window.
 
@@ -104,16 +104,47 @@ collapses to a static pose.
 | Tool call | screen flickers, amber | hands alternate, fast |
 | Writing a file | steady green, paper on the desk | hands alternate, half speed |
 | Delegating | steady violet, the tether pulses | stands, holds a note out |
-| Waiting for permission | strobes red | hand up, red `!` bubble |
-| Idle · Stale · Ended | dim · dim · dark | slumped · `zzz` · gone |
+| Idle · Stale · Ended | dim · dim · dark | slumped · `zzz` · walks out the gate |
 
-Exactly one of those is allowed to shout, and it is the one that will never
-resolve itself without a person.
+Exactly one thing is allowed to shout, and it is the one that will never
+resolve itself without a person — but it is not a state. See below.
 
 | | |
 | --- | --- |
 | ![The crew view: one geometric avatar per session](docs/screenshots/crew.png) | ![The trajectory view: a waterfall of one session's turns beside its steps](docs/screenshots/trajectory.png) |
 | **Crew** — one geometric avatar per session, its face and posture driven by what that session is doing. The same information as the scene at a tenth of the pixels. | **Trajectory** (⌘T) — one session opened out: a waterfall of its turns, every step it took, and an inspector on whichever one is selected. |
+
+## Two axes: what a session is doing, and whether it wants you
+
+**Activity** is inferred, always, for every session on the machine — working,
+idle, stale, ended. **Attention** is never inferred. A card is only counted as
+wanting a person, or as having finished, when something *said so*: an agent
+calling `auspex.notify`, a `PermissionRequest` hook, or a harness's own
+permission wait.
+
+The two are independent. An agent that reports finishing while a `swift build`
+is still running is working and done at once, and both are true.
+
+| | What puts a card here | Board | Scene | Menu bar | Notification |
+| --- | --- | --- | --- | --- | --- |
+| **Needs you** | `notify(needs_input\|needs_review\|blocked)`, a permission hook, a harness's own wait | red ring, breathing, sorted first | front row of the garden, red `!` | `! N` | always |
+| **Done** | `notify(done)`, `tasks.complete` | green ring, the agent's line | same front row, green `✓` | `✓ N` | on by default |
+| **Working** | thinking, a tool, a write, sub-agents | ordinary card | desk or meeting table | `▶ N` | none |
+| **Idle** | a turn closed, nothing outstanding | grey pill | garden bench, dozing if stale | — | none |
+| **Ended** | the process is gone | collapsed fold | walks out the gate | — | none |
+
+*Idle* and *ended* are the pair worth being exact about: **idle means you can
+keep talking in that terminal**, and **ended means the line is gone — only
+Resume brings the work back**.
+
+A turn simply ending is none of these. It is idle, and it puts a faint dot on
+the card and nothing else: on a machine that has been running agents all week
+that inference is true of hundreds of sessions at once, and a count nobody can
+act on takes the counts beside it down with it.
+
+Both loud buckets clear themselves. Opening the card, typing into that
+session's own terminal, the agent going back to work, "Dismiss", "Mark all as
+seen", or a day going by — whichever comes first.
 
 ## The board says what agents ask for, not only what they do
 
@@ -139,8 +170,10 @@ args = ["--mcp-stdio"]
 
 - **`auspex.notify(kind, message)`** — `needs_input`, `needs_review`,
   `blocked`, or `done`, with one sentence. It posts a macOS notification, moves
-  the card into that bucket, and puts the agent's own words on it. A
-  `needs_input` clears itself when the person next types into that session.
+  the card into that bucket, and puts the agent's own words on it. It clears
+  itself when the person next types into that session, opens the card, or a day
+  goes by. `tasks.complete` files a `done` on its own, so a worker never has to
+  say it twice.
 - **`auspex.report(focus, progress)`** — replaces Auspex's inference about what
   a session is doing with the session's own sentence.
 - **`plans.*` / `tasks.*`** — the shared task board. A supervisor registers the

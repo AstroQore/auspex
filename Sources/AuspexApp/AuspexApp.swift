@@ -112,24 +112,38 @@ struct MenuBarLabel: View {
             } else {
                 Image(systemName: "bird.fill")
             }
-            if summary.needsYou > 0 {
-                Image(systemName: "exclamationmark.triangle.fill")
-                Text("\(summary.needsYou)")
-            }
-            if summary.doneReported > 0 {
-                Image(systemName: "checkmark.circle")
-                Text("\(summary.doneReported)")
-            }
-            if summary.working > 0 {
-                Image(systemName: "play.fill")
-                Text("\(summary.working)")
-            }
-            if summary.idle > 0 {
-                Image(systemName: "hourglass")
-                Text("\(summary.idle)")
+            ForEach(Self.segments(summary), id: \.symbol) { segment in
+                Image(systemName: segment.symbol)
+                Text(verbatim: segment.count)
             }
         }
-        .accessibilityLabel(accessibilityLabel(summary))
+        .accessibilityLabel(Self.accessibilityLabel(summary))
+    }
+
+    /// The counts the status item actually shows, as values.
+    ///
+    /// A function rather than four `if`s in the body, so the one thing a person
+    /// sees of this app when they are looking at something else can be
+    /// asserted on without a menu bar. `idle` is last and `ended` is absent:
+    /// the status item answers *is anything stuck* and *did anything finish*,
+    /// and a number for history in the menu bar would be the smallest, most
+    /// permanent piece of chrome on the screen quoting the least urgent thing
+    /// on the board.
+    static func segments(_ summary: BoardSummary) -> [(symbol: String, count: String)] {
+        var segments: [(symbol: String, count: String)] = []
+        if summary.needsYou > 0 {
+            segments.append(("exclamationmark.triangle.fill", "\(summary.needsYou)"))
+        }
+        if summary.doneReported > 0 {
+            segments.append(("checkmark.circle", "\(summary.doneReported)"))
+        }
+        if summary.working > 0 {
+            segments.append(("play.fill", "\(summary.working)"))
+        }
+        if summary.idle > 0 {
+            segments.append(("hourglass", "\(summary.idle)"))
+        }
+        return segments
     }
 
     /// The menu bar glyph: the bird as a template image, so the system tints
@@ -143,7 +157,7 @@ struct MenuBarLabel: View {
         return image
     }()
 
-    private func accessibilityLabel(_ summary: BoardSummary) -> String {
+    static func accessibilityLabel(_ summary: BoardSummary) -> String {
         var parts = ["Auspex"]
         if summary.needsYou > 0 { parts.append("\(summary.needsYou) needs you") }
         if summary.doneReported > 0 { parts.append("\(summary.doneReported) done") }

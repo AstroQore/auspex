@@ -179,6 +179,43 @@ extension SessionState {
     }
 }
 
+/// What each state actually means for the person reading it.
+///
+/// Two of the seven are easy to confuse and expensive to get wrong, and this
+/// is the sentence that separates them wherever there is room for one — a
+/// tooltip on a pill, an entry in the scene's legend, a row in the README's
+/// table.
+///
+/// *Idle* is a live process with nothing outstanding: the terminal is still
+/// there and typing into it works. *Ended* is a process that is gone: nothing
+/// will happen in that window again, and only Resume — a new session seeded
+/// with the old one's transcript — brings the work back. A person who reads
+/// the first as the second abandons work they could have carried on; one who
+/// reads the second as the first types into a dead terminal.
+enum StateCopy {
+    /// The sentence, or `nil` for a state whose own word already says it.
+    static func explanation(for state: SessionState) -> String? {
+        switch state {
+        case .idle:
+            "Idle — nothing outstanding, and the process is still there. "
+                + "You can keep talking in that terminal."
+        case .ended:
+            "Ended — the process is gone. Nothing more will happen in that "
+                + "terminal; only Resume brings the work back."
+        case .waitingPermission:
+            "Needs you — it will make no further progress until somebody "
+                + "answers."
+        case .thinking, .toolCalling, .writingFile, .delegating:
+            nil
+        }
+    }
+
+    /// The tag beside a working session that has gone quiet.
+    static let stale =
+        "Stale — it says it is working and has said nothing for a while. "
+            + "A long build looks exactly like this, and so does a wedged one."
+}
+
 /// The state pill: a lit dot and one word.
 ///
 /// Tinted rather than filled — 10 % of the state colour behind it, a 25 %
@@ -230,6 +267,7 @@ struct StatePill: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.label)
+        .help(StateCopy.explanation(for: state) ?? state.label)
     }
 }
 
@@ -273,5 +311,6 @@ struct StaleTag: View {
                 )
             )
             .accessibilityLabel("Stale: no events recently")
+            .help(StateCopy.stale)
     }
 }

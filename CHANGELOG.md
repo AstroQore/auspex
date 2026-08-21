@@ -9,6 +9,41 @@ Auspex is pre-alpha; there are no released versions yet.
 
 ## [Unreleased]
 
+### Changed
+
+- **Attention is something said, not something inferred.** A card is counted as
+  wanting a person, or as having finished, only when something explicit said so
+  — an agent calling `auspex.notify`, a `PermissionRequest` hook, a harness's
+  own permission wait, or `tasks.complete`. The old `done unseen` bucket was
+  inferred from a closed turn, which on a machine that has been running agents
+  all week is true of several hundred sessions at once; a count nobody can act
+  on takes the counts beside it down with it. The inference survives as a faint
+  dot on a card, counted nowhere and notified never.
+
+  Activity and attention are now orthogonal: an agent that reports finishing
+  while a `swift build` is still running is `working` and `done` at once. The
+  buckets are `needsYou · doneReported · working · idle · ended`, and every
+  surface reads the one map the frame carries — the board's ring and banner, the
+  header's chips, the sidebar's dots and per-project counts, the menu bar, the
+  crew wall's badges, the Trajectory's banner and timeline marker, and which
+  column a task is drawn in.
+
+  Both loud buckets clear themselves: opening the card, typing into that
+  session's own terminal, the agent going back to work, "Dismiss", the header's
+  new **Mark all as seen**, or a day going by. `session_views` grows
+  `acknowledged_at` and `ack_reason` so the answer survives a relaunch.
+
+- **A session waiting on a person now walks to the garden's front row** instead
+  of keeping its desk, and shares that row with anything that reported
+  finishing — a red `!` and a green `✓` by the path. A raised hand among forty
+  desks is something you have to find. The back lawn keeps the resting and the
+  dozing, and is still the half that gives way when a busy repository fills the
+  map; nothing on the front row is ever bounded away.
+
+- **Settings → Agents** gains one switch: whether a reported finish raises a
+  macOS notification (on by default). A session blocked on a person always
+  raises one, and deliberately has no switch.
+
 ### Added
 
 - **The scene is a place, not a room: a meeting room and a garden, and people

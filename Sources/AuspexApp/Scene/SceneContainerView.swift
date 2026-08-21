@@ -175,8 +175,12 @@ struct SceneContainerView: View {
         .help("Older sessions are in the store, not on the map. Widen to draw them.")
     }
 
-    /// What the monitors mean. Five swatches, not seven: `idle` and `ended`
-    /// are the absence of light and need no entry.
+    /// What the monitors mean, and what the garden's two rows mean.
+    ///
+    /// The last two entries are the ones that earn their space: `Idle` and
+    /// `Ended` are both *unlit* on this map, and the difference between them is
+    /// whether the terminal a person is about to type into still exists. The
+    /// swatch cannot carry that, so the tooltip does — see ``StateCopy``.
     private var legend: some View {
         HStack(spacing: 10) {
             ForEach(Self.legendEntries, id: \.label) { entry in
@@ -188,6 +192,7 @@ struct SceneContainerView: View {
                         .auspexLabel(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.textTertiary)
                 }
+                .help(entry.help)
             }
         }
         .padding(.horizontal, 8)
@@ -203,12 +208,27 @@ struct SceneContainerView: View {
         .accessibilityHidden(true)
     }
 
-    private static let legendEntries: [(label: String, color: Color)] = [
-        ("Thinking", AuspexPalette.stateThinking),
-        ("Tool", AuspexPalette.stateTool),
-        ("Writing", AuspexPalette.stateWriting),
-        ("Delegating", AuspexPalette.stateDelegating),
-        ("Blocked", AuspexPalette.statePermission)
+    private static let legendEntries: [(label: String, color: Color, help: String)] = [
+        ("Thinking", AuspexPalette.stateThinking, "Reasoning, with no tool open."),
+        ("Tool", AuspexPalette.stateTool, "A tool call is running."),
+        ("Writing", AuspexPalette.stateWriting, "The working tree is being changed."),
+        (
+            "Delegating", AuspexPalette.stateDelegating,
+            "Waiting on the sub-agents it spawned, around a table."
+        ),
+        (
+            "Needs you", AuspexPalette.statePermission,
+            StateCopy.explanation(for: .waitingPermission(tool: nil))
+                ?? "Blocked on a person."
+        ),
+        (
+            "Idle", AuspexPalette.stateIdle,
+            StateCopy.explanation(for: .idle) ?? "Nothing outstanding."
+        ),
+        (
+            "Ended", AuspexPalette.stateEnded,
+            StateCopy.explanation(for: .ended(reason: .exited)) ?? "Over."
+        )
     ]
 
     private var emptyRoom: some View {
