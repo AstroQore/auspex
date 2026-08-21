@@ -139,10 +139,10 @@ page.
 **Settings → Appearance** overrides that with Light or Dark, switches the
 sidebar between the system's own material and the board's flat ground, and
 shows you which accent, background and foreground the choice resolved to.
-Nothing is relaunched: the window, the menu bar panel, the office and the Flock
-all repaint where they stand. `--appearance light|dark` does the same for one
-launch without writing it down, which is how the performance budget is measured
-against both.
+Nothing is relaunched: the window, the menu bar panel, the Aviary and the
+Flock all repaint where they stand. `--appearance light|dark` does the same
+for one launch without writing it down, which is how the performance budget is
+measured against both.
 
 Every screenshot below has a `-light` twin in `docs/screenshots/`, rendered by
 the same command with `appearance=light` on the end.
@@ -160,12 +160,12 @@ to do, what it last said.
 
 **Aviary** (was Scene) is the same board as a place. Every session is a
 person, every project is a room, and *where somebody is* is the first thing a
-glance reads: working sessions sit at their desks, a delegating session walks to the meeting
-room with the sub-agents it spawned around a long table, idle ones rest on a
-garden bench — the ones that finished something you have not looked at hold a
-note — and an ended session walks out through the gate. The loudest channel is
-light: a monitor's colour is its session's state and its rhythm is that
-state's motion.
+glance reads: working sessions sit at their desks, a delegating session walks
+to the meeting room with the sub-agents it spawned around a long table, idle
+ones rest on a garden bench — the ones that finished something you have not
+looked at hold a note — and an ended session walks out through the gate. The
+loudest channel is light: a monitor's colour is its session's state and its
+rhythm is that state's motion.
 
 ![The Aviary: a room per project, agents at desks, their monitors lit by what they are doing](docs/screenshots/scene.png)
 
@@ -464,8 +464,12 @@ Auspex is a **read-only observer of local files**.
   a `>>> auspex >>>` fence, one JSON member named `auspex`, or the hook entries
   whose command runs the Auspex binary — only after a backup into
   `~/.auspex/backups/`, is re-parsed afterwards, and can be undone exactly.
-- **No network.** No backend, no telemetry, no analytics, no update service.
-  Nothing leaves your machine.
+- **No network, with one exception you can see.** No backend, no telemetry,
+  no analytics, no accounts, no crash reporting. Nothing about your sessions
+  leaves your machine. The single outbound request Auspex makes is Sparkle
+  fetching a static appcast file from this repository to ask whether a newer
+  version exists — the same request you would make by opening the Releases
+  page, and it carries nothing but a version number.
 
 Auspex runs **without the macOS app sandbox**, because a sandboxed app cannot
 read across the harness directories it exists to observe, and cannot bind

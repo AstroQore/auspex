@@ -18,15 +18,15 @@ untagged default items. That asymmetry is what makes previews safe to offer: a
 security fix cut on stable reaches the preview builds without anything special
 being done for them.
 
-> **The feed URL does not work yet.** New builds read
-> `https://raw.githubusercontent.com/AstroQore/auspex/updates/appcast.xml`, and
-> `AstroQore/auspex` is a **private** repository. `raw.githubusercontent.com`
-> serves nothing from a private repo without a token, so in-app updates will
-> 404 for every user until either the repository is made public or the
-> `updates` branch is mirrored to a public repository and `SUFeedURL` in
-> `Resources/Info.plist` is pointed at the mirror. Everything else in this
-> document works today; this one line is the thing standing between a signed
-> release and a user actually getting it.
+> **The feed URL resolves now, and serves nothing yet.** New builds read
+> `https://raw.githubusercontent.com/AstroQore/auspex/updates/appcast.xml`.
+> `AstroQore/auspex` used to be private, which meant `raw.githubusercontent.com`
+> would 404 for every user without a token; the repository is public now, so
+> that blocker is gone and no mirror is needed. What is still missing is the
+> `updates` branch itself — nothing has been published to it, so the URL 404s
+> because the file is not there rather than because nobody may read it. The
+> first run of `.github/workflows/publish-update-feed.yml` creates it, and
+> in-app updates start working the moment it does.
 
 ## The versioning rule
 
