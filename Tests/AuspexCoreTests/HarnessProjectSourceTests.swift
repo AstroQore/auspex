@@ -13,9 +13,17 @@ import Testing
 /// are all under `/Users/example`.
 @Suite("Harness project registries")
 struct HarnessProjectSourceTests {
+    /// A home whose path Claude's transcript encoding can round-trip.
+    ///
+    /// `ClaudeProjectPath` spells `/` as `-` and settles the ambiguity against
+    /// the file system, so a fixture root that itself contains `-` or `_` —
+    /// as `FileManager.temporaryDirectory` does on a CI runner
+    /// (`…/djsxfhc17x95674wsm_g8s980000gn/T/`) — decodes to the wrong place.
+    /// `/tmp` plus hex only is the same trick the kit's own fixtures use.
     private func makeHome() throws -> URL {
-        let home = FileManager.default.temporaryDirectory
-            .appendingPathComponent("auspex-registry-\(UUID().uuidString)", isDirectory: true)
+        let token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let home = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("auspexregistry\(token)", isDirectory: true)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         return home
     }
