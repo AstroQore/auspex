@@ -42,22 +42,33 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// would have frozen them on the old one.
     public var crewLiveliness: CrewLiveliness?
 
+    /// How far back the board and the map reach.
+    ///
+    /// Here rather than in `@AppStorage` for the same reason the annexes are:
+    /// it changes what every surface is *of*, the header says how much it is
+    /// leaving out, and a person who set it to a week and found it back at
+    /// twelve hours has been told their setting did not take.
+    public var sessionWindow: SessionWindow
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
         didShowSetup: Bool = false,
         sceneZones: SceneZoneOptions = .all,
-        crewLiveliness: CrewLiveliness? = nil
+        crewLiveliness: CrewLiveliness? = nil,
+        sessionWindow: SessionWindow = .standard
     ) {
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
         self.didShowSetup = didShowSetup
         self.sceneZones = sceneZones
         self.crewLiveliness = crewLiveliness
+        self.sessionWindow = sessionWindow
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
+        case sessionWindow
     }
 
     public init(from decoder: any Decoder) throws {
@@ -74,11 +85,17 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         crewLiveliness = try? container.decodeIfPresent(
             CrewLiveliness.self, forKey: .crewLiveliness
         )
+        // An absent key is the default rather than "all", so a settings file
+        // written before the window existed opens on a working day rather than
+        // on the week of history that made the window necessary.
+        sessionWindow = try container.decodeIfPresent(
+            SessionWindow.self, forKey: .sessionWindow
+        ) ?? .standard
     }
 
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
-            && crewLiveliness == nil
+            && crewLiveliness == nil && sessionWindow == .standard
     }
 }
 

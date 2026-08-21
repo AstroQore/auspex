@@ -19,6 +19,9 @@ public struct BoardFrameInputs: Sendable, Equatable {
     public var claims: ProjectClaims
     /// What not to show.
     public var rules: IgnoreRules
+    /// How far back the board reaches. Older sessions stay in the store and
+    /// out of the picture — see ``SessionWindow``.
+    public var window: SessionWindow
     /// Whether the ignored sessions are drawn dimmed rather than removed.
     public var showsIgnored: Bool
     /// How the grid is divided.
@@ -43,6 +46,7 @@ public struct BoardFrameInputs: Sendable, Equatable {
     public init(
         claims: ProjectClaims = .empty,
         rules: IgnoreRules = .none,
+        window: SessionWindow = .standard,
         showsIgnored: Bool = false,
         groupBy: BoardGroupBy = .project,
         harnessFilter: Set<Harness> = [],
@@ -56,6 +60,7 @@ public struct BoardFrameInputs: Sendable, Equatable {
     ) {
         self.claims = claims
         self.rules = rules
+        self.window = window
         self.showsIgnored = showsIgnored
         self.groupBy = groupBy
         self.harnessFilter = harnessFilter
@@ -103,6 +108,13 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// scene's garden shows *which*, so the set travels with the frame.
     public let unseenDoneKeys: Set<SessionKey>
 
+    /// How many sessions the recency window left out of this frame.
+    ///
+    /// Carried rather than recomputed because the number is the only trace the
+    /// hidden sessions leave: the board they were removed from cannot be asked
+    /// how many it used to hold.
+    public let olderHidden: Int
+
     public init(
         sequence: UInt64,
         board: BoardSnapshot,
@@ -113,7 +125,8 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         endedRows: [BoardRow],
         summary: BoardSummary,
         tree: ProjectTree,
-        unseenDoneKeys: Set<SessionKey> = []
+        unseenDoneKeys: Set<SessionKey> = [],
+        olderHidden: Int = 0
     ) {
         self.sequence = sequence
         self.board = board
@@ -125,6 +138,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.summary = summary
         self.tree = tree
         self.unseenDoneKeys = unseenDoneKeys
+        self.olderHidden = olderHidden
     }
 }
 
@@ -215,11 +229,22 @@ public actor BoardFrameAssembler {
         inputs: BoardFrameInputs,
         sequence: UInt64 = 0
     ) -> AssembledBoardFrame {
-        // The user layer first: which sessions are on the board at all, and
+        // The window first, and for two reasons. It is the largest cut — a
+        // week of bootstrapped sessions against a working day of them — so
+        // everything below walks the smaller array; and it is measured from
+        // the frame's own `generatedAt`, which keeps the derivation a pure
+        // function of its arguments rather than of the clock.
+        let windowed = SessionRecency.apply(
+            to: raw,
+            window: inputs.window,
+            now: raw.generatedAt
+        )
+
+        // Then the user layer: which sessions are on the board at all, and
         // which project each of them is in, are questions everything below
         // asks and neither can be answered afterwards.
         let visible = BoardFilter.apply(
-            to: raw,
+            to: windowed.board,
             claims: inputs.claims,
             rules: inputs.rules,
             showsIgnored: inputs.showsIgnored
@@ -310,7 +335,8 @@ public actor BoardFrameAssembler {
             unseenDoneKeys: Set(kept.compactMap { session in
                 TaskLedger.isUnseenDone(session, lastSeenAt: inputs.seenAt[session.key])
                     ? session.key : nil
-            })
+            }),
+            olderHidden: windowed.hidden
         )
     }
 

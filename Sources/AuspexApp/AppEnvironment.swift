@@ -177,7 +177,8 @@ public final class AppEnvironment {
                 claims: claims,
                 rules: rules,
                 showsIgnored: showsIgnored,
-                sceneZones: catalog.sceneZones
+                sceneZones: catalog.sceneZones,
+                sessionWindow: catalog.sessionWindow
             )
         }
         catalog.load()

@@ -211,6 +211,22 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - How far back
+
+    /// How far back the board and the map reach.
+    var sessionWindow: SessionWindow { settings.sessionWindow }
+
+    /// Widens or narrows the window, and remembers it.
+    ///
+    /// Nothing is deleted and nothing is hidden that a person cannot get back
+    /// in one click — the store keeps its whole week either way, and the
+    /// header says how many sessions the current setting is leaving out.
+    func setSessionWindow(_ window: SessionWindow) {
+        guard settings.sessionWindow != window else { return }
+        settings.sessionWindow = window
+        persist()
+    }
+
     // MARK: - Importing
 
     /// Reads every harness registry, off the main actor.

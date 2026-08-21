@@ -127,6 +127,24 @@ final class LiveBoardModel {
     /// Which of the scene's annexes are drawn. Read only by the scene.
     private(set) var sceneZones = SceneZoneOptions.all
 
+    /// How far back the board and the map reach.
+    ///
+    /// The registry keeps a week; this is how much of it is drawn. See
+    /// ``SessionWindow`` for why the two are different numbers.
+    private(set) var sessionWindow = SessionWindow.standard
+
+    /// How many sessions the window is leaving out of the current frame.
+    ///
+    /// An `Int`, so the two places that show it — the collapsed `Ended`
+    /// header and the scene's garden nameplate — are invalidated when the
+    /// number moves and not once per frame.
+    private(set) var olderHidden = 0
+
+    /// The sentence the hints show, or `nil` when nothing is hidden.
+    var olderHiddenHint: String? {
+        SessionRecency.hint(hidden: olderHidden, window: sessionWindow)
+    }
+
     /// The sessions that finished something nobody has read.
     ///
     /// Derived here rather than in the scene because the answer needs
@@ -536,6 +554,7 @@ final class LiveBoardModel {
         BoardFrameInputs(
             claims: claims,
             rules: ignoreRules,
+            window: sessionWindow,
             showsIgnored: showsIgnored,
             groupBy: groupBy,
             harnessFilter: harnessFilter,
@@ -579,6 +598,7 @@ final class LiveBoardModel {
         summary = frame.summary
         sessionCount = frame.sessionCount
         unseenDoneKeys = frame.unseenDoneKeys
+        olderHidden = frame.olderHidden
         refreshSelection()
         onTree?(frame.tree)
         onFrame?(frame.board)
@@ -631,7 +651,12 @@ final class LiveBoardModel {
     /// `@Observable` macro before it notifies, so the pane is invalidated when
     /// *its* session moves and not when anything else does.
     private func refreshSelection() {
-        let session = selectedKey.flatMap { sessionIndex[$0] }
+        // The raw board as the fallback, and it is load-bearing: a session can
+        // be reached — from a search hit, from a notification, from the menu
+        // bar — while the recency window or an ignore rule keeps it off the
+        // wall. A trace pane that went blank because the *card* is not drawn
+        // would be answering "show me this session" with "no".
+        let session = selectedKey.flatMap { sessionIndex[$0] ?? rawBoard.session(for: $0) }
         selectedSession = session
         selectedParent = session?.identity.parent.flatMap { sessionIndex[$0] }
 
@@ -917,14 +942,20 @@ final class LiveBoardModel {
         claims: ProjectClaims,
         rules: IgnoreRules,
         showsIgnored: Bool,
-        sceneZones: SceneZoneOptions = .all
+        sceneZones: SceneZoneOptions = .all,
+        sessionWindow: SessionWindow = .standard
     ) {
         // Its own property and its own guard: switching an annex off is a
         // change to a picture, and putting the whole board back through the
         // filter for it would be a redraw of every card on the wall for
         // something no card shows.
         if self.sceneZones != sceneZones { self.sceneZones = sceneZones }
-        guard claims != self.claims || rules != ignoreRules || showsIgnored != self.showsIgnored
+        // The window is the opposite: it decides which sessions are on the
+        // board at all, so it goes through the derivation like the rules do.
+        let windowMoved = self.sessionWindow != sessionWindow
+        if windowMoved { self.sessionWindow = sessionWindow }
+        guard windowMoved || claims != self.claims || rules != ignoreRules
+            || showsIgnored != self.showsIgnored
         else { return }
         self.claims = claims
         ignoreRules = rules
