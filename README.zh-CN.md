@@ -504,9 +504,10 @@ Auspex 整天跟它观察的那些 harness 一起跑，所以它的开销是一�
 
 **以及怎么做的**
 
-Auspex 是用 **Claude Code**（主要是 Opus 和 Fable）在 git worktree 里照着书面 brief
-写出来的 —— 这也正是它存在的原因：当五个这样的东西同时在跑、而只有一个卡住时，你想要
-的就是这么一块看板。
+Auspex 是用 **Claude Code** 和 **Codex**，配合 **AntiGravity**、**Cursor** 和 **Grok Build**
+开发的 —— 模型以 Fable、Opus、Sol、Terra 为主，Gemini 和 Grok 为辅 —— 都在 git worktree
+里照着书面 brief 干活。这也正是它存在的原因：当五个这样的东西同时在跑、而只有一个卡住时，
+你想要的就是这么一块看板。
 
 列出某个项目或展示它的标识，不构成任何从属、赞助或背书关系。所有名称与商标归各自
 所有者。

@@ -587,9 +587,11 @@ in step with.
 
 **And how**
 
-Auspex was built with **Claude Code**, mostly Opus and Fable, working in git
-worktrees against written briefs — which is also why it exists: the board is
-what you want when five of them are running and only one of them is stuck.
+Auspex was built with **Claude Code** and **Codex**, with **AntiGravity**,
+**Cursor** and **Grok Build** alongside — mainly on Fable, Opus, Sol and Terra,
+with Gemini and Grok as supporting models — working in git worktrees against
+written briefs. Which is also why it exists: the board is what you want when
+five of them are running and only one of them is stuck.
 
 Listing a project or showing its mark is not a claim of affiliation,
 sponsorship or endorsement. All names and trademarks belong to their owners.
