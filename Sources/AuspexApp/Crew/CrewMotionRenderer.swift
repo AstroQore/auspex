@@ -215,6 +215,7 @@ enum CrewMotionRenderer {
         guard !board.sessions.isEmpty else { throw RenderError.emptyBoard }
 
         let roster = CrewRoster()
+        let unseen = SceneSnapshotRenderer.demoUnseenDone(board)
         let tick = 1.0 / 60.0
         // Two seconds of run-up, so the wall is past its own opening morphs.
         let lead = 2.0
@@ -235,7 +236,10 @@ enum CrewMotionRenderer {
                         session: session,
                         frame: instant?.frame ?? BloubEngine().sample(0),
                         descendants: board.tree.descendants(of: session.key).count,
-                        chrome: CrewCardChrome.of(session, at: Date()),
+                        chrome: CrewCardChrome.of(
+                            session,
+                            isUnseenDone: unseen.contains(session.key)
+                        ),
                         isOver: instant?.stance == .ended
                     )
                 }

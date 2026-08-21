@@ -119,10 +119,15 @@ struct CrewView: View {
     }
 
     /// Whether anything on the wall is waiting on the coarse clock.
+    ///
+    /// Only the fold is: the tick comes off the board's unseen-done set, which
+    /// arrives with a frame like everything else. So a wall with no recently
+    /// finished session leaves this loop immediately and costs nothing.
     private var needsClock: Bool {
-        model.board.sessions.contains { session in
-            if session.state.isEnded { return !CrewView.hasFolded(session, at: now) }
-            return CrewCardChrome.of(session, at: now) == .done
+        model.groups.contains { group in
+            group.sessions.contains {
+                $0.state.isEnded && !CrewView.hasFolded($0, at: now)
+            }
         }
     }
 
@@ -190,7 +195,10 @@ struct CrewView: View {
             session: session,
             isSelected: model.selectedKey == session.key,
             descendantCount: model.descendantCount(of: session.key),
-            chrome: CrewCardChrome.of(session, at: now)
+            chrome: CrewCardChrome.of(
+                session,
+                isUnseenDone: model.unseenDoneKeys.contains(session.key)
+            )
         ) {
             CrewLiveAvatar(
                 session: session,
@@ -556,19 +564,23 @@ enum CrewCardChrome: Sendable, Hashable {
         }
     }
 
-    /// What a session's card is saying at `now`.
+    /// What a session's card is saying.
     ///
-    /// Derived from the snapshot rather than read out of the avatar's driver,
-    /// so a renderer with no roster gets the same answer as the live wall.
-    static func of(_ session: SessionSnapshot, at now: Date) -> CrewCardChrome {
+    /// Derived from the snapshot and the board's own unseen-done set rather
+    /// than from the avatar's driver, so a renderer with no roster gets the
+    /// same answer as the live wall.
+    ///
+    /// The tick and the dance are deliberately **not** the same clock. The
+    /// avatar celebrates for twenty seconds because a celebration that went on
+    /// all afternoon would be a wall of permanent confetti; the tick stays
+    /// until the person has actually looked, because that is what it is for.
+    /// `isUnseenDone` is the board's own judgement — the same one the card list
+    /// draws its unseen dot from, so the two surfaces cannot disagree about
+    /// which sessions are waiting to be read.
+    static func of(_ session: SessionSnapshot, isUnseenDone: Bool) -> CrewCardChrome {
         if session.state.isEnded { return .over }
         if case .waitingPermission = session.state { return .blocked }
-        if case .idle = session.state, session.turnCount > 0,
-           let last = session.lastEventAt,
-           now.timeIntervalSince(last) < CrewMoodMap.notifyHold {
-            return .done
-        }
-        return .none
+        return isUnseenDone ? .done : .none
     }
 }
 
