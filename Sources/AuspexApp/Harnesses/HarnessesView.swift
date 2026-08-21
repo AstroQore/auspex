@@ -187,6 +187,23 @@ struct HarnessesPanel: View {
 /// is not detected*, *which one is busy*, *which one has been quiet all day*.
 /// A row whose fields moved with its content would make every one of those a
 /// left-to-right read instead.
+///
+/// ## Three zones, and why the row has to have them
+///
+/// The columns are grouped into *identity*, *status* — detection, the counts,
+/// the last event — and *reach*, which is the MCP configuration and the hook
+/// state. The grouping is what the row stacks along when it will not fit on
+/// one line, and the six columns keep their widths inside it.
+///
+/// It is a fix rather than a refinement. The reach zone used to declare an
+/// ideal width of zero so that the ladder chose on the fixed columns alone,
+/// which meant the one-line layout was picked at any width past about 800
+/// points — and then handed the chips whatever few points were left over.
+/// A ``FlowLayout`` given six points puts every chip on a line of its own and
+/// draws each one at the width it asked for, so eight MCP servers became eight
+/// lines running out over "hooks off". Now the zone declares the width it
+/// actually needs, so the row stacks *before* it is squeezed rather than
+/// overflowing after.
 private struct HarnessRackRow: View {
     let status: HarnessStatus
     /// The instant the countdown on the quota line is measured against.
@@ -197,54 +214,75 @@ private struct HarnessRackRow: View {
     /// seconds.
     private let now = Date()
 
-    /// The six columns, when there is room for six columns.
+    /// The three zones, when there is room for three zones.
     ///
-    /// `servers` is wrapped rather than framed directly: it draws nothing for a
-    /// harness whose MCP config Auspex cannot name, and a `frame(maxWidth:
-    /// .infinity)` on an `EmptyView` contributes no layout at all — so those
-    /// rows shrank to their content and put "hooks off" a hundred points left
-    /// of every other row's. A `Spacer` is a real view and always fills.
+    /// `reach` is wrapped rather than framed directly: `servers` draws nothing
+    /// for a harness whose MCP config Auspex cannot name, and a
+    /// `frame(maxWidth: .infinity)` on an `EmptyView` contributes no layout at
+    /// all — so those rows shrank to their content and put "hooks off" a
+    /// hundred points left of every other row's. A `Spacer` is a real view and
+    /// always fills.
     private var wide: some View {
-        HStack(alignment: .center, spacing: 16) {
-            identity.frame(width: 240, alignment: .leading)
-            detection.frame(width: 104, alignment: .leading)
-            counters.frame(width: 186, alignment: .leading)
-            work.frame(width: 176, alignment: .leading)
-            lastEvent.frame(width: 96, alignment: .leading)
+        HStack(alignment: .center, spacing: Self.zoneSpacing) {
+            identity.frame(width: Self.identityWidth, alignment: .leading)
+            statusZone
+            reachZone
+        }
+    }
+
+    /// The same facts on two lines, for a column too narrow for three zones.
+    ///
+    /// The zones stack whole: identity and the status columns — which are what
+    /// the page is scanned down — keep the first line, and the configuration
+    /// with the hook state goes under them, where the chips get the row's whole
+    /// width to wrap in instead of the remainder of somebody else's.
+    private var narrow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: Self.zoneSpacing) {
+                identity.frame(maxWidth: .infinity, alignment: .leading)
+                statusZone.fixedSize()
+            }
+            reachZone
+        }
+    }
+
+    /// Detection, the counts, what this harness has been doing on the task
+    /// board, and how long ago it last did anything.
+    private var statusZone: some View {
+        HStack(alignment: .center, spacing: Self.columnSpacing) {
+            detection.frame(width: Self.detectionWidth, alignment: .leading)
+            counters.frame(width: Self.countersWidth, alignment: .leading)
+            // Fixed even when it is empty, which it is for every harness
+            // nobody has adopted the task protocol on: a column that
+            // disappeared on eight rows and appeared on the ninth would put
+            // every column after it in a different place on that row.
+            work.frame(width: Self.workWidth, alignment: .leading)
+            lastEvent.frame(width: Self.lastEventWidth, alignment: .leading)
+        }
+    }
+
+    /// What this harness can reach, and whether it pushes events back.
+    ///
+    /// `.top` rather than `.center`: the chips wrap to two lines on a narrow
+    /// row and a centred "hooks off" would drift down the row with them.
+    private var reachZone: some View {
+        HStack(alignment: .top, spacing: Self.columnSpacing) {
             HStack(spacing: 0) {
                 servers
                 Spacer(minLength: 0)
             }
-            // An ideal width of zero, so the ladder below chooses between one
-            // line and two on the *fixed* columns rather than on how long one
-            // harness's config note happens to be. Otherwise a single row —
-            // "MCP managed by xAI, server-side" — drops to the two-line layout
-            // while the eight beside it stay on one, which looks like a bug in
-            // the row rather than a decision about width.
-            .frame(idealWidth: 0, maxWidth: .infinity, alignment: .leading)
+            // A real ideal width, which is the whole fix: it is what the
+            // ladder above measures, so the one-line layout is offered only
+            // where the chips have somewhere to go. Zero where this harness
+            // has no configuration to show — a row with nothing in the column
+            // does not need width for it, and stacking one of eight rows for a
+            // column that is empty looks like a bug in the row.
+            .frame(
+                idealWidth: hasReach ? Self.serversWidth : 0,
+                maxWidth: .infinity,
+                alignment: .leading
+            )
             hooks.frame(width: Self.hooksWidth, alignment: .trailing)
-        }
-    }
-
-    /// The same facts on two lines, for a column too narrow for one.
-    ///
-    /// Identity, detection and the counts are what the page is scanned for, so
-    /// they keep the first line; the configuration and the hook state — which
-    /// are read one row at a time rather than down a column — go under them.
-    private var narrow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 14) {
-                identity.frame(maxWidth: .infinity, alignment: .leading)
-                detection.fixedSize()
-                lastEvent.fixedSize()
-            }
-            HStack(alignment: .center, spacing: 14) {
-                counters.fixedSize()
-                work.fixedSize()
-                servers
-                Spacer(minLength: 0)
-                hooks.fixedSize()
-            }
         }
     }
 
@@ -288,6 +326,36 @@ private struct HarnessRackRow: View {
     /// Wide enough for "hooks off" and its ring, so the chip is in the same
     /// place on every row whatever is to its left.
     private static let hooksWidth: CGFloat = 88
+    /// The mark, the longest harness name, and a store path under it.
+    private static let identityWidth: CGFloat = 220
+    /// "not installed", which is longer than "detected".
+    private static let detectionWidth: CGFloat = 100
+    /// Three counts of up to three digits each.
+    private static let countersWidth: CGFloat = 160
+    /// Two counts and a median duration, when the harness has claimed
+    /// anything.
+    private static let workWidth: CGFloat = 176
+    /// "just now" and "137d ago" both fit.
+    private static let lastEventWidth: CGFloat = 86
+    /// The narrowest the MCP zone is any use at: the word, and the widest
+    /// single chip it can hold — `auspex — not registered`, which is the one
+    /// that has to fit or it would hang out over the hook state.
+    ///
+    /// It is the number that decides where the row stacks. Identity, status —
+    /// which carries the task-board column too — this, the gaps and the row's
+    /// own padding come to about 1,100 points, so the rack is one line per
+    /// harness in a wide window and two in a 1,280 pt one, where the board's
+    /// column is 1,007 points.
+    private static let serversWidth: CGFloat = 168
+    /// The air between two zones, and between two columns inside one.
+    private static let zoneSpacing: CGFloat = 16
+    private static let columnSpacing: CGFloat = 12
+
+    /// Whether this row has anything at all to say about MCP.
+    private var hasReach: Bool {
+        status.mcp != nil
+            || HarnessMCPConfigStore.externallyManagedNote(for: status.harness) != nil
+    }
 
     private var lastEvent: some View {
         Text(RelativeTimeText.since(status.lastEventAt))
@@ -365,7 +433,7 @@ private struct HarnessRackRow: View {
     /// Live, idle, total — in that order, because a reader scanning this column
     /// is looking for the first one.
     private var counters: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             CountBadge(value: status.liveCount, label: "live", tint: AuspexPalette.stateWriting)
             CountBadge(value: status.idleCount, label: "idle", tint: AuspexPalette.text)
             CountBadge(value: status.totalCount, label: "total", tint: AuspexPalette.text)
@@ -411,19 +479,27 @@ private struct HarnessRackRow: View {
     }
 
     /// What this harness has been told it can reach.
+    ///
+    /// Capped at ``RackChips/limit`` names with a `+N` after them. A machine
+    /// with two dozen MCP servers configured turns an eight-row rack into a
+    /// page, and the question this column answers — *can this harness reach
+    /// the board, and roughly what else* — is answered by the first six and
+    /// the number.
     @ViewBuilder
     private var servers: some View {
         if let mcp = status.mcp {
+            let chips = RackChips(config: mcp)
             FlowLayout(spacing: 6, lineSpacing: 6) {
                 Text("MCP")
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .padding(.vertical, 5)
-                ForEach(mcp.serverNames, id: \.self) { name in
-                    ServerChip(name: name, isScoped: false)
+                ForEach(chips.shown, id: \.self) { chip in
+                    ServerChip(name: chip.name, isScoped: chip.isScoped)
                 }
-                ForEach(mcp.scopedServerNames, id: \.self) { name in
-                    ServerChip(name: name, isScoped: true)
+                if chips.hidden > 0 {
+                    FactChip("+\(chips.hidden)")
+                        .help(chips.hiddenHelp)
                 }
                 AuspexSlot(isRegistered: mcp.registersAuspex)
             }
@@ -478,6 +554,72 @@ private struct HarnessRackRow: View {
 }
 
 // MARK: - Parts
+
+/// Which MCP servers a rack row draws, and how many it did not.
+///
+/// A value rather than a `ForEach` over two arrays, because the cap has to be
+/// applied to the two of them *together*: a harness with five global servers
+/// and five project-scoped ones must not draw ten chips because neither list
+/// on its own reached the limit.
+///
+/// Names are shortened here rather than by `truncationMode`, so the shortening
+/// is a property of the row that can be asserted rather than a function of how
+/// much space one chip happened to be given.
+struct RackChips {
+    /// One chip: the name as it will be drawn, and whether it is scoped.
+    struct Chip: Hashable {
+        let name: String
+        let isScoped: Bool
+    }
+
+    /// How many names are drawn before the rest become a number.
+    ///
+    /// Six is two lines of chips at the width the column has in a normal
+    /// window, which is as much as a status row can spend on a list nobody
+    /// came to this page to read in full.
+    static let limit = 6
+    /// How long a server name may be before its middle is taken out.
+    static let nameLimit = 18
+
+    let shown: [Chip]
+    let hidden: Int
+    /// The full names of the ones that were not drawn, for the tooltip.
+    private let hiddenNames: [String]
+
+    init(config: HarnessMCPConfig) {
+        self.init(names: config.serverNames, scoped: config.scopedServerNames)
+    }
+
+    init(names: [String], scoped: [String]) {
+        // Global first: "this server is available" outranks "this server is
+        // available in one directory", and a cap that dropped the stronger
+        // fact to keep the weaker one would misreport the harness.
+        let all = names.map { Chip(name: $0, isScoped: false) }
+            + scoped.map { Chip(name: $0, isScoped: true) }
+        shown = all.prefix(Self.limit).map {
+            Chip(name: Self.shorten($0.name), isScoped: $0.isScoped)
+        }
+        hiddenNames = all.dropFirst(Self.limit).map(\.name)
+        hidden = hiddenNames.count
+    }
+
+    /// What the `+N` chip says when it is pointed at.
+    var hiddenHelp: String {
+        "Also configured: " + hiddenNames.joined(separator: ", ")
+    }
+
+    /// A server name with its middle taken out.
+    ///
+    /// The middle, because the two ends are what tell `cloudflare-docs` from
+    /// `cloudflare-observability` and a name cut at the head reads as a
+    /// different server entirely.
+    static func shorten(_ name: String, limit: Int = RackChips.nameLimit) -> String {
+        guard name.count > limit else { return name }
+        let head = (limit - 1) - (limit - 1) / 2
+        let tail = (limit - 1) / 2
+        return name.prefix(head) + "…" + name.suffix(tail)
+    }
+}
 
 /// One configured MCP server.
 ///

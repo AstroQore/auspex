@@ -40,19 +40,68 @@ final class HarnessStatusModel {
     /// running.
     let harnesses = AuspexAdapters.featured
 
-    /// A demo's stand-in: every harness "detected", no config read.
+    /// A demo's stand-in: every harness "detected", and a fabricated MCP
+    /// table for each.
     ///
     /// The page (and any offscreen render of it) must never show this Mac's
     /// real MCP server names under a fabricated board, so a demo does not get
     /// the file-reading loop at all — it gets a plausible fiction with nothing
     /// in it that came off the machine.
+    ///
+    /// Fabricated rather than empty. The MCP column is the half of this page
+    /// that answers "what can this harness reach", and a demo that left it
+    /// blank could not show the page working — nor the thing that went wrong
+    /// with it, which only happens to a harness with a long list.
     func startFabricated() {
         refreshTask?.cancel()
         refreshTask = nil
         detected = Set(harnesses)
-        configs = [:]
+        configs = Dictionary(
+            uniqueKeysWithValues: harnesses.compactMap { harness in
+                Self.fabricatedConfig(for: harness).map { (harness, $0) }
+            }
+        )
         refreshedAt = Date()
         isLoading = false
+    }
+
+    /// The invented MCP table one harness gets in a demo.
+    ///
+    /// `nil` for the two harnesses that have no local config file at all, so
+    /// the demo shows the same "managed by Claude.app" note the real page
+    /// does. The names are made up and the list is deliberately long for the
+    /// first one: eight servers in a squeezed column is the case that broke.
+    private static func fabricatedConfig(for harness: Harness) -> HarnessMCPConfig? {
+        guard let location = HarnessMCPConfigStore.location(
+            for: harness, home: URL(fileURLWithPath: "/Users/example")
+        ) else { return nil }
+        let global: [String]
+        var scoped: [String] = []
+        switch harness {
+        case .claudeCode:
+            global = [
+                "auspex", "chrome-control", "filesystem", "ledger-observability",
+                "notes", "postgres", "sequential-thinking", "weather-desk"
+            ]
+            scoped = ["storefront-fixtures"]
+        case .codex:
+            global = ["auspex", "filesystem", "postgres"]
+        case .cursor:
+            global = ["filesystem", "notes"]
+            scoped = ["mobile-client-devtools"]
+        case .chatgptWork:
+            global = ["auspex", "filesystem", "postgres"]
+        default:
+            global = ["filesystem"]
+        }
+        return HarnessMCPConfig(
+            harness: harness,
+            location: location,
+            exists: true,
+            serverNames: global,
+            scopedServerNames: scoped,
+            didParse: true
+        )
     }
 
     /// Starts reading, and keeps re-reading until ``stop()``.
