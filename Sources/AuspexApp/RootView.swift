@@ -251,13 +251,16 @@ extension SidebarColumns {
 /// ## What it is standing on
 ///
 /// The rows are the app's; the ground under them is the system's, by default.
-/// `NSVisualEffectView`'s sidebar material is the most native thing a Mac
-/// sidebar can be — it picks up what is behind the window and drains when the
-/// window loses key, which is how a person tells at a glance which of two
-/// boards is in front — and everything drawn over it is opaque, so nothing
-/// that has to be read is being read through a blur. Somebody running a wall
-/// of these on a second display switches it off in Settings → Appearance and
-/// gets the board's own flat canvas instead.
+/// A split view already puts its sidebar column on the platform's sidebar
+/// material, and Auspex used to paint over it because there was one appearance
+/// and the ground had to be one colour everywhere. Letting it show is the most
+/// native thing a Mac sidebar can be — it picks up what is behind the window
+/// and drains when the window loses key, which is how a person tells at a
+/// glance which of two boards is in front — and everything drawn over it is
+/// opaque, so nothing that has to be read is read through a blur. Somebody
+/// running a wall of these on a second display switches it off in
+/// Settings → Appearance and gets the board's own flat canvas instead. See
+/// ``SidebarBackground``.
 struct SidebarView: View {
     @Binding var section: BoardSection?
     @Bindable var model: LiveBoardModel
