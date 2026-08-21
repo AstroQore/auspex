@@ -536,10 +536,14 @@ final class LiveBoardModel {
     /// The stamp of the newest frame that has been assigned.
     private var appliedSequence: UInt64 = 0
 
-    /// The last frame actually adopted, for the next one to be measured
-    /// against. Not observed: nothing draws it, and it is replaced whenever
-    /// anything does change.
+    /// The last frame actually adopted, so the crew wall can be handed the
+    /// snapshots it needs the moment it is switched to. Not observed: nothing
+    /// draws it, and it is replaced whenever anything does change.
     @ObservationIgnored private var previousFrame: AssembledBoardFrame?
+
+    /// Which version of the board is on screen — see
+    /// ``AssembledBoardFrame/boardRevision``.
+    @ObservationIgnored private var adoptedBoardRevision: UInt64 = 0
 
     /// `true` when something changed since the last request was sent.
     private var needsAssembly = false
@@ -628,25 +632,30 @@ final class LiveBoardModel {
         appliedSequence = frame.sequence
 
         // A frame that draws the window already on screen is not adopted at
-        // all. The assembler reconciled it against the one before it on its own
-        // executor — see `AssembledBoardFrame.sharing(_:)` — so this comparison
-        // is of the values this model is already holding and costs a handful of
-        // pointer checks, while what it skips is fourteen assignments, a
+        // all. The assembler worked that out on its own executor while it was
+        // reconciling this frame against the one before it — see
+        // `AssembledBoardFrame.sharing(_:boardRevision:)` — so what this costs
+        // is reading a `Bool`, and what it skips is fourteen assignments, a
         // selection refresh, and two callbacks into other models.
         //
         // It happens: a frame is published whenever *any* session changed, most
         // of what changes never reaches the wall, and the user layer schedules
         // an assembly of its own every time somebody clicks.
-        if let previousFrame, frame.drawsTheSameAs(previousFrame) { return }
+        if frame.isRepeat { return }
         previousFrame = frame
 
         // `generatedAt` moves on every frame and nothing draws it, so a board
         // whose sessions are the ones already on screen must not replace the
         // value — assigning it would invalidate the scene, the crew wall, the
         // Harnesses page and the menu bar's panel for a picture that did not
-        // change.
-        let boardMoved = !board.saysTheSameAs(frame.board)
-        if boardMoved { board = frame.board }
+        // change. A revision rather than a comparison: comparing two boards is
+        // comparing every session on the machine, and doing that here would put
+        // back on the main actor exactly what the assembler took off it.
+        let boardMoved = frame.boardRevision != adoptedBoardRevision
+        if boardMoved {
+            adoptedBoardRevision = frame.boardRevision
+            board = frame.board
+        }
         ignoredKeys = frame.ignoredKeys
         sessionIndex = frame.sessionIndex
         // Only the mode that reads it. `groups` carries whole

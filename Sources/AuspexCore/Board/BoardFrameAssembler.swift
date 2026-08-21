@@ -132,6 +132,26 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// how many it used to hold.
     public let olderHidden: Int
 
+    /// Which version of ``board`` this frame carries. Bumped only when the
+    /// board said something new.
+    ///
+    /// A number rather than a comparison, because the comparison is the thing
+    /// being avoided: `BoardSnapshot` carries every `SessionSnapshot` on the
+    /// machine, and a consumer that asked "did the board move" by comparing
+    /// two of them would be doing several hundred deep struct comparisons on
+    /// the main actor once a frame — which is the profile this whole
+    /// arrangement exists to keep off it. The assembler answers on its own
+    /// executor and stamps the answer here.
+    public let boardRevision: UInt64
+
+    /// `true` when this frame draws exactly what the one before it drew.
+    ///
+    /// Also an answer rather than a question, and for the same reason: a
+    /// consumer that worked it out itself would compare every row, every
+    /// group, and the whole session index on the main actor before deciding
+    /// it had nothing to do.
+    public let isRepeat: Bool
+
     public init(
         sequence: UInt64,
         board: BoardSnapshot,
@@ -143,7 +163,9 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         summary: BoardSummary,
         tree: ProjectTree,
         attention: [SessionKey: AttentionState] = [:],
-        olderHidden: Int = 0
+        olderHidden: Int = 0,
+        boardRevision: UInt64 = 1,
+        isRepeat: Bool = false
     ) {
         self.sequence = sequence
         self.board = board
@@ -156,6 +178,8 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.tree = tree
         self.attention = attention
         self.olderHidden = olderHidden
+        self.boardRevision = boardRevision
+        self.isRepeat = isRepeat
     }
 
     /// The same frame, holding `previous`'s value for everything the two have
@@ -178,12 +202,26 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// hits the identity fast path and answers in a few instructions.
     ///
     /// It costs one deep comparison per frame off the main thread to save one
-    /// on it, which is the whole trade this type was built to make.
-    public func sharing(_ previous: AssembledBoardFrame) -> AssembledBoardFrame {
-        func kept<T: Equatable>(_ new: T, _ old: T) -> T { new == old ? old : new }
-        return AssembledBoardFrame(
+    /// on it, which is the whole trade this type was built to make. Every
+    /// comparison it does is done *once*: the two answers a consumer would
+    /// otherwise have to work out for itself — did the board move, and is this
+    /// frame a repeat — fall out of the same pass and are stamped on the
+    /// result.
+    public func sharing(
+        _ previous: AssembledBoardFrame,
+        boardRevision: UInt64
+    ) -> AssembledBoardFrame {
+        var isRepeat = true
+        func kept<T: Equatable>(_ new: T, _ old: T) -> T {
+            if new == old { return old }
+            isRepeat = false
+            return new
+        }
+        let boardMoved = !board.saysTheSameAs(previous.board)
+        if boardMoved { isRepeat = false }
+        let shared = AssembledBoardFrame(
             sequence: sequence,
-            board: board.saysTheSameAs(previous.board) ? previous.board : board,
+            board: boardMoved ? board : previous.board,
             ignoredKeys: kept(ignoredKeys, previous.ignoredKeys),
             sessionIndex: kept(sessionIndex, previous.sessionIndex),
             groups: kept(groups, previous.groups),
@@ -192,25 +230,11 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             summary: kept(summary, previous.summary),
             tree: kept(tree, previous.tree),
             attention: kept(attention, previous.attention),
-            olderHidden: olderHidden
+            olderHidden: olderHidden,
+            boardRevision: boardMoved ? boardRevision &+ 1 : previous.boardRevision,
+            isRepeat: isRepeat && olderHidden == previous.olderHidden
         )
-    }
-
-    /// Whether this frame draws the same window as `previous`.
-    ///
-    /// Everything except ``sequence``. Cheap once ``sharing(_:)`` has run,
-    /// because the values being compared are then the same instances.
-    public func drawsTheSameAs(_ previous: AssembledBoardFrame) -> Bool {
-        board.saysTheSameAs(previous.board)
-            && ignoredKeys == previous.ignoredKeys
-            && groups == previous.groups
-            && rowGroups == previous.rowGroups
-            && endedRows == previous.endedRows
-            && summary == previous.summary
-            && tree == previous.tree
-            && attention == previous.attention
-            && olderHidden == previous.olderHidden
-            && sessionIndex == previous.sessionIndex
+        return shared
     }
 }
 
@@ -295,7 +319,9 @@ public actor BoardFrameAssembler {
     ) -> AssembledBoardFrame {
         assembledCount += 1
         var frame = Self.frame(board: board, inputs: inputs, sequence: sequence)
-        if let previous { frame = frame.sharing(previous) }
+        if let previous {
+            frame = frame.sharing(previous, boardRevision: previous.boardRevision)
+        }
         previous = frame
         return frame
     }
