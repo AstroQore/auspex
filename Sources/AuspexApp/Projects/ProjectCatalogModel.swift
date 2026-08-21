@@ -227,6 +227,22 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - Notifications
+
+    /// Whether a reported finish raises a macOS notification.
+    var notifiesOnDone: Bool { settings.notifiesOnDone }
+
+    /// Switches the receipts' banners on or off, and remembers it.
+    ///
+    /// Only the receipts. A session blocked on a person always notifies, and
+    /// there is deliberately no switch for that: it is the one thing on this
+    /// board that will not resolve itself.
+    func setNotifiesOnDone(_ notifies: Bool) {
+        guard settings.notifiesOnDone != notifies else { return }
+        settings.notifiesOnDone = notifies
+        persist()
+    }
+
     // MARK: - Importing
 
     /// Reads every harness registry, off the main actor.

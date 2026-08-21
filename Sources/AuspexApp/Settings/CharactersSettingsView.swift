@@ -24,6 +24,7 @@ struct AuspexSettingsView: View {
             if let setup {
                 AgentsSettingsView(
                     model: setup,
+                    catalog: catalog,
                     detected: detected,
                     socketPath: socketPath,
                     onOpenSetup: { setup.present() }

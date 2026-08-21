@@ -185,7 +185,7 @@ struct AuspexMCPServerTests {
             "session_id": .string(Self.sessionKey.sessionID)
         ])))
         #expect(structured["session"]?.stringValue == Self.sessionKey.description)
-        #expect(structured["bucket"]?.stringValue == "done unseen")
+        #expect(structured["bucket"]?.stringValue == "done")
 
         let refusal = try RPC.failureText(await server.answer(line: RPC.call("auspex.notify", [
             "kind": "done", "message": "x", "session_id": "claudeCode:nobody"
@@ -243,7 +243,7 @@ struct AuspexMCPServerTests {
 
     @Test("the supervisor's round trip: register, file, claim, complete")
     func orchestrationRoundTrip() async throws {
-        let (server, host, _) = try makeServer()
+        let (server, host, store) = try makeServer()
 
         let plan = try RPC.structured(await server.answer(line: RPC.call("plans.create", [
             "title": "Ship the MCP surface", "summary": "notify first, tasks second"
@@ -271,6 +271,14 @@ struct AuspexMCPServerTests {
         #expect(done["status"]?.stringValue == "done")
         #expect(done["result"]?.stringValue == "fenced writer plus 9 tests")
         #expect(await host.ledgerChanges == 4)
+
+        // Finishing a task *is* reporting done. The board's `done` bucket
+        // counts explicit signals only, so a worker that completed its task
+        // and never called `auspex.notify` must not be the one whose work
+        // disappears off the header.
+        let receipt = try #require(try TaskRepository(store: store).liveNotices()[Self.sessionKey])
+        #expect(receipt.kind == .done)
+        #expect(receipt.message == "fenced writer plus 9 tests")
 
         let detail = try RPC.structured(await server.answer(line: RPC.call("plans.get", [
             "plan": "ship-the-mcp-surface"

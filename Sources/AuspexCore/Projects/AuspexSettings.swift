@@ -50,13 +50,26 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// twelve hours has been told their setting did not take.
     public var sessionWindow: SessionWindow
 
+    /// Whether an agent reporting that it finished raises a macOS
+    /// notification.
+    ///
+    /// On, and it is the only one of the two attention buckets that has a
+    /// switch. A session blocked on a person always notifies: it will make no
+    /// further progress until somebody looks, and the whole reason this app
+    /// serves an MCP surface is to close the gap between an agent stopping to
+    /// ask and a person finding out. A receipt is different — it is good news
+    /// that keeps — and somebody running a dozen agents may well want to read
+    /// those on the board in their own time rather than one banner at a time.
+    public var notifiesOnDone: Bool
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
         didShowSetup: Bool = false,
         sceneZones: SceneZoneOptions = .all,
         crewLiveliness: CrewLiveliness? = nil,
-        sessionWindow: SessionWindow = .standard
+        sessionWindow: SessionWindow = .standard,
+        notifiesOnDone: Bool = true
     ) {
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
@@ -64,11 +77,12 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         self.sceneZones = sceneZones
         self.crewLiveliness = crewLiveliness
         self.sessionWindow = sessionWindow
+        self.notifiesOnDone = notifiesOnDone
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
-        case sessionWindow
+        case sessionWindow, notifiesOnDone
     }
 
     public init(from decoder: any Decoder) throws {
@@ -91,11 +105,16 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         sessionWindow = try container.decodeIfPresent(
             SessionWindow.self, forKey: .sessionWindow
         ) ?? .standard
+        // Absent means on, so a settings file written before the switch
+        // existed keeps the behaviour it already had.
+        notifiesOnDone = try container.decodeIfPresent(
+            Bool.self, forKey: .notifiesOnDone
+        ) ?? true
     }
 
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
-            && crewLiveliness == nil && sessionWindow == .standard
+            && crewLiveliness == nil && sessionWindow == .standard && notifiesOnDone
     }
 }
 

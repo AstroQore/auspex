@@ -70,6 +70,10 @@ final class TasksModel {
         let state: SessionState
         let isAlive: Bool
         let notice: AgentNotice?
+        /// What the board says this session is signalling. Passed in rather
+        /// than re-derived, so a task row and the card behind it cannot
+        /// disagree about whether its worker is stuck.
+        let attention: AttentionState
     }
 
     /// One plan and everything under it.
@@ -85,8 +89,11 @@ final class TasksModel {
         var isArchived: Bool { plan?.status == .archived }
 
         /// The tasks in one column, in board order.
+        ///
+        /// By what the task is *doing* rather than by what somebody last
+        /// dragged it to — see ``TaskRow/displayStatus``.
         func column(_ status: AuspexTaskStatus) -> [TaskRow] {
-            tasks.filter { $0.task.status == status }
+            tasks.filter { $0.displayStatus == status }
         }
 
         var openCount: Int { tasks.count { $0.task.status != .done } }
@@ -110,6 +117,25 @@ final class TasksModel {
         /// A session on this task that is calling for a person.
         var callingNotice: AgentNotice? {
             sessions.compactMap(\.notice).first { $0.kind.wantsPerson }
+        }
+
+        /// Whether a worker on this task is asking for a person.
+        var wantsPerson: Bool { sessions.contains { $0.attention.wantsPerson } }
+
+        /// Which column this row is drawn in.
+        ///
+        /// A task whose worker is stuck is a blocked task, whatever column it
+        /// was last dragged into. The column and the card have to agree,
+        /// because the board is read to find out where the work is — and a
+        /// task sitting in `Doing` with a red card on it is the board telling
+        /// two different stories about one thing.
+        ///
+        /// A finished task stays in `Done` rather than leaving the board:
+        /// something a person still has to read is exactly what this app
+        /// exists to surface, and `done` is a column rather than a closure.
+        var displayStatus: AuspexTaskStatus {
+            guard task.status != .done, wantsPerson else { return task.status }
+            return .blocked
         }
     }
 
@@ -141,7 +167,11 @@ final class TasksModel {
 
     /// Hands the page the frame the board is drawing, so a task row's dot is
     /// the same fact as its card's pill.
-    func apply(board: BoardSnapshot, notices: [SessionKey: AgentNotice]) {
+    func apply(
+        board: BoardSnapshot,
+        notices: [SessionKey: AgentNotice],
+        attention: [SessionKey: AttentionState] = [:]
+    ) {
         guard !linkedKeys.isEmpty else {
             if !live.isEmpty { live = [:]; rebuild() }
             return
@@ -158,7 +188,8 @@ final class TasksModel {
                 ),
                 state: session.state,
                 isAlive: session.isAlive,
-                notice: notices[session.key]
+                notice: notices[session.key],
+                attention: attention[session.key] ?? .none
             )
         }
         guard next != live else { return }
@@ -185,6 +216,7 @@ final class TasksModel {
         guard let latest else { return }
         isEmpty = latest.plans.isEmpty && latest.tasks.isEmpty
         openCount = latest.tasks.count { $0.status != .done }
+
 
         let linksByTask = Dictionary(grouping: latest.links) { $0.taskID }
         linkedKeys = Set(latest.links.map(\.session))

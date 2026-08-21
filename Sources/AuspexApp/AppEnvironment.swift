@@ -308,6 +308,15 @@ public final class AppEnvironment {
             onNotice: { [weak self] notice in
                 await MainActor.run { self?.board.apply(notice: notice) }
                 guard !isDemo else { return }
+                // A call always gets a banner: it will not resolve itself, and
+                // the gap between an agent stopping to ask and a person finding
+                // out is the gap this whole surface exists to close. A receipt
+                // is good news that keeps, so it has a switch — see
+                // ``AuspexSettings/notifiesOnDone``.
+                let wanted = await MainActor.run {
+                    notice.kind.wantsPerson || self?.catalog.notifiesOnDone ?? true
+                }
+                guard wanted else { return }
                 await AgentNotifier.shared.post(notice)
             },
             onReport: { [weak self] report in
@@ -337,7 +346,7 @@ public final class AppEnvironment {
         // the frame when an agent asks, which is rarer than a frame by three
         // orders of magnitude.
         board.onFrame = { [tasks, board] frame in
-            tasks.apply(board: frame, notices: board.notices)
+            tasks.apply(board: frame, notices: board.notices, attention: board.attention)
         }
     }
 

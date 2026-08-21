@@ -272,12 +272,11 @@ public actor AuspexMCPServer {
             message: message,
             urgency: urgency.rawValue,
             at: notice.createdAt,
-            bucket: kind.wantsPerson ? "needs you" : "done unseen",
+            bucket: kind.wantsPerson ? "needs you" : "done",
             resolved: true,
             evidence: caller.evidence,
-            clearsWhen: kind == .needsInput
-                ? "the person next talks to this session, or dismisses it from the card"
-                : "the person dismisses it from the card"
+            clearsWhen: "the person opens or dismisses the card, talks to this session "
+                + "again, or a day goes by"
         ))
     }
 
@@ -496,6 +495,20 @@ public actor AuspexMCPServer {
         let task = try ledger.completeTask(
             id: id, result: result, by: caller.session, now: now()
         )
+        // Finishing a task *is* reporting done, and a worker that has to say so
+        // twice is a worker that says it once. The board's `done` bucket counts
+        // explicit signals only, so the one an agent already made by completing
+        // its task has to be one of them — otherwise the most disciplined
+        // callers are the ones whose work disappears.
+        if let session = caller.session {
+            let notice = try ledger.recordNotice(
+                session: session,
+                kind: .done,
+                message: result ?? "Finished: \(task.title)",
+                now: now()
+            )
+            await host.didRecordNotice(notice)
+        }
         await host.didChangeLedger()
         return Self.success(TaskPayload(task))
     }

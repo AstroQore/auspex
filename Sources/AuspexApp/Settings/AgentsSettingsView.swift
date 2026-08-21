@@ -11,6 +11,9 @@ import SwiftUI
 /// is an install they should not have been offered.
 struct AgentsSettingsView: View {
     @Bindable var model: SetupModel
+    /// The user layer, for the one preference on this pane that is about what
+    /// agents *say* rather than about what is installed.
+    @Bindable var catalog: ProjectCatalogModel
     let detected: Set<Harness>
     let socketPath: String?
     let onOpenSetup: () -> Void
@@ -19,6 +22,7 @@ struct AgentsSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                notifications
                 ForEach(model.groups) { group in
                     AgentsSettingsGroup(group: group, model: model, detected: detected)
                 }
@@ -55,6 +59,53 @@ struct AgentsSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// The one switch, and the one that is deliberately not there.
+    ///
+    /// A person running a dozen agents gets two kinds of interruption from
+    /// this app, and they are worth very different amounts. *Somebody is stuck
+    /// on you* is worth a banner every time — it will not resolve itself, and
+    /// closing the gap between an agent stopping to ask and a person finding
+    /// out is why the MCP surface exists at all. *Somebody finished* is good
+    /// news that keeps, and twelve of those in an afternoon is twelve banners
+    /// for things that could all have been read at once on the board.
+    ///
+    /// So the receipts get a switch and the calls do not. A settings pane with
+    /// a switch for everything is a settings pane that has declined to have an
+    /// opinion.
+    private var notifications: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { catalog.notifiesOnDone },
+                set: { catalog.setNotifiesOnDone($0) }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Notify when an agent reports finishing")
+                        .font(AuspexType.body)
+                        .foregroundStyle(AuspexPalette.text)
+                    Text(
+                        "A session that is blocked on you always raises one. "
+                            + "It will not get unstuck on its own."
+                    )
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(AuspexPalette.stateWriting)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(AuspexPalette.panel)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                )
+        )
     }
 
     private var note: some View {
