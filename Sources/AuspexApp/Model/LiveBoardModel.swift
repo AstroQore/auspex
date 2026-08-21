@@ -49,6 +49,15 @@ import Observation
 /// ``scheduleAssembly()``. There is no second derivation to keep in step with
 /// the first, and none of them touches the main thread with more than a
 /// handful of `==` comparisons.
+///
+/// Those comparisons are the last thing to have needed a second look. A
+/// setter's `==` runs on the main actor, and comparing two arrays of a few
+/// hundred `SessionSnapshot`s there is the profile ``BoardRow`` exists to have
+/// got rid of. The assembler now reconciles each frame against the one before
+/// it on its own executor and hands back the values this model already holds,
+/// so those comparisons hit the identity fast path — and a frame that draws
+/// the same window is not adopted at all. See
+/// ``AssembledBoardFrame/sharing(_:)``.
 @MainActor
 @Observable
 final class LiveBoardModel {
@@ -67,27 +76,24 @@ final class LiveBoardModel {
     ///
     /// ## Who may read it, and who may not
     ///
-    /// Every other observable property here is published only when it moves,
-    /// because the `@Observable` macro compares an `Equatable` value against
-    /// the one it is replacing and stays quiet when they match. This one can
-    /// never match: a frame carries a fresh `generatedAt` and a fresh array of
-    /// snapshots every time, so **every applied frame invalidates every view
-    /// that read `board`** — eight times a second on a busy machine, whether
-    /// or not anything those views draw has changed.
+    /// Every observable property here is published only when it moves, because
+    /// the `@Observable` macro compares an `Equatable` value against the one it
+    /// is replacing and stays quiet when they match. This one used to be
+    /// exempt: a frame carries a fresh `generatedAt` every time, so `board`
+    /// could never compare equal to the value it replaced and **every applied
+    /// frame invalidated every view that read it** — eight times a second on a
+    /// busy machine, whether or not a session had moved. It is now assigned
+    /// only when the frame says something new; see `adopt(_:)` and
+    /// ``BoardSnapshot/saysTheSameAs(_:)``.
     ///
-    /// That is affordable for the surfaces that are on screen one at a time —
-    /// the scene, the crew wall, the Harnesses page — and ruinous for the ones
-    /// that are always on screen. A `sample` of the live board with ~700
-    /// sessions had the main thread busy 100 % of a three-second window, and
-    /// 57.7 % of it inside `NSHostingView.minSize()`: AppKit re-asking the
-    /// SwiftUI root for its minimum size, which is a `sizeThatFits` over the
-    /// whole window, on every display cycle in which the graph was dirty.
-    ///
-    /// So the always-visible surfaces — the sidebar, the header, the trace
-    /// pane — read the narrow values derived below instead: ``sessionCount``,
-    /// ``selectedSession``, ``selectedParent``, ``selectedChildren``,
-    /// ``selectedProjectName``. Reading `board` from one of them puts the
-    /// whole window back on that treadmill.
+    /// That was affordable for the surfaces on screen one at a time — the
+    /// scene, the crew wall, the Harnesses page — and ruinous for the ones that
+    /// are always on screen. So the always-visible surfaces — the sidebar, the
+    /// header, the trace pane — read the narrow values derived below instead:
+    /// ``sessionCount``, ``selectedSession``, ``selectedParent``,
+    /// ``selectedChildren``, ``selectedProjectName``. That rule stands whatever
+    /// the guard does, because a view reading the whole board is a view
+    /// invalidated by every session on the machine rather than by its own.
     private(set) var board: BoardSnapshot = .empty
 
     /// How many sessions the current frame holds.
