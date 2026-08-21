@@ -237,11 +237,24 @@ private struct ProjectRow: View {
                 HarnessDots(harnesses: project.harnesses)
             }
             Spacer(minLength: 4)
-            if project.liveCount > 0 {
+            // Red first, and it replaces the live count rather than sitting
+            // beside it. At 180 points there is room for one number, and *how
+            // many of these want me* is a different question from *how many are
+            // running* — the first is the one somebody scans a sidebar for.
+            if project.needsYouCount > 0 {
+                AttentionPill(count: project.needsYouCount, attention: Self.calling)
+            } else if project.doneReportedCount > 0 {
+                AttentionPill(count: project.doneReportedCount, attention: Self.reported)
+            } else if project.liveCount > 0 {
                 LivePill(count: project.liveCount)
             }
         }
     }
+
+    /// The two shapes a project row can wear, as values rather than as colours
+    /// picked in a body — see ``AttentionStyle``.
+    static let calling = AttentionState.needsYou(reason: "", source: .harness)
+    static let reported = AttentionState.doneReported(summary: "", source: .agent)
 }
 
 /// A checkout: the agent worktree's task, or the branch, or the directory.
@@ -263,7 +276,9 @@ private struct CheckoutRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            if checkout.liveCount > 0 {
+            if checkout.needsYouCount > 0 {
+                AttentionPill(count: checkout.needsYouCount, attention: ProjectRow.calling)
+            } else if checkout.liveCount > 0 {
                 LivePill(count: checkout.liveCount)
             } else if !checkout.sessions.isEmpty {
                 Text("\(checkout.sessions.count)")
@@ -305,13 +320,22 @@ private struct SessionRow: View, Equatable {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
-            StateDot(color: style.color, glows: style.motion.isAnimated)
+            // What is being *said* about this session outranks what it is
+            // doing. A row that is asking for a person and a row that happens
+            // to be thinking are the same colour otherwise, and only one of
+            // them is somebody's errand.
+            if let colour = AttentionStyle.colour(row.attention) {
+                StateDot(color: colour, glows: row.needsPerson)
+            } else {
+                StateDot(color: style.color, glows: style.motion.isAnimated)
+            }
         }
         .opacity(isIgnored ? 0.45 : 1)
         .help(
             isIgnored
                 ? "\(row.title) — \(row.state.label) · ignored by a rule"
-                : "\(row.title) — \(row.state.label)"
+                : AttentionStyle.label(row.attention).map { "\(row.title) — \($0)" }
+                    ?? "\(row.title) — \(row.state.label)"
         )
     }
 }
@@ -410,6 +434,41 @@ private struct HarnessDots: View {
 /// Green, because on this board green means *something is being made* — and a
 /// project with nothing running shows nothing at all rather than a grey zero,
 /// which would make a quiet repository look like a broken one.
+/// A count in an attention colour, in place of the live count.
+///
+/// The same two colours and the same two marks the header's chips and the
+/// scene's bubbles use, at the one size a 180-point column has room for.
+private struct AttentionPill: View {
+    let count: Int
+    let attention: AttentionState
+
+    var body: some View {
+        let colour = AttentionStyle.colour(attention) ?? AuspexPalette.text3
+        HStack(spacing: 3) {
+            Text(AttentionStyle.mark(attention) ?? "")
+                .font(.system(size: 9, weight: .black))
+            Text("\(count)")
+                .font(.system(size: 10, weight: .semibold))
+                .auspexTabularDigits()
+        }
+        .foregroundStyle(colour)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(colour.opacity(0.12))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(colour.opacity(0.3), lineWidth: 1)
+        )
+        .fixedSize()
+        .accessibilityLabel(
+            attention.wantsPerson ? "\(count) need you" : "\(count) finished"
+        )
+    }
+}
+
 private struct LivePill: View {
     let count: Int
 

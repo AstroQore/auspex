@@ -34,9 +34,24 @@ struct TrajectoryView: View {
     }
 
     private func content(for session: SessionSnapshot) -> some View {
-        VStack(spacing: 0) {
+        let attention = model.attention[session.key] ?? .none
+        return VStack(spacing: 0) {
             TrajectoryBar(board: model, trajectory: model.trajectory, session: session)
-            TrajectoryTimelineView(model: model.trajectory)
+            // Above the waterfall, because the reason a session is in front of
+            // somebody is more urgent than the shape of how it got here.
+            if attention.isSignalling {
+                AttentionBanner(
+                    attention: attention,
+                    onDismiss: { model.dismissNotice(session.key) }
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+            }
+            TrajectoryTimelineView(
+                model: model.trajectory,
+                attention: attention,
+                attentionAt: model.notices[session.key]?.createdAt ?? session.lastEventAt
+            )
             TrajectoryFactsBar(model: model.trajectory)
             HStack(spacing: 0) {
                 TrajectoryStepList(model: model.trajectory)

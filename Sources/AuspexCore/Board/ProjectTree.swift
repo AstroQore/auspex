@@ -51,6 +51,15 @@ public struct ProjectTree: Sendable, Equatable {
         public let liveCount: Int
         /// Every session under this project, ended ones included.
         public let sessionCount: Int
+        /// How many of its sessions are asking for a person.
+        ///
+        /// Carried on the row rather than counted in the sidebar's body,
+        /// because a body runs many times for one change and this one is what
+        /// decides whether a project is drawn in red — the one thing in a
+        /// column of a dozen project names that has to be true at a glance.
+        public let needsYouCount: Int
+        /// How many have reported finishing.
+        public let doneReportedCount: Int
         /// The distinct harnesses at work here, in catalog order — the row's
         /// harness dots.
         public let harnesses: [Harness]
@@ -85,6 +94,8 @@ public struct ProjectTree: Sendable, Equatable {
             self.isPinned = isPinned
             self.liveCount = checkouts.reduce(0) { $0 + $1.liveCount }
             self.sessionCount = checkouts.reduce(0) { $0 + $1.sessions.count }
+            self.needsYouCount = checkouts.reduce(0) { $0 + $1.needsYouCount }
+            self.doneReportedCount = checkouts.reduce(0) { $0 + $1.doneReportedCount }
         }
     }
 
@@ -108,6 +119,10 @@ public struct ProjectTree: Sendable, Equatable {
         public let sessions: [BoardRow]
         /// How many of them are believed to be running.
         public let liveCount: Int
+        /// How many are asking for a person.
+        public let needsYouCount: Int
+        /// How many have reported finishing.
+        public let doneReportedCount: Int
 
         public init(
             id: String,
@@ -124,6 +139,8 @@ public struct ProjectTree: Sendable, Equatable {
             self.isWorktree = isWorktree
             self.sessions = sessions
             self.liveCount = sessions.count { !$0.isEnded }
+            self.needsYouCount = sessions.count { $0.needsPerson }
+            self.doneReportedCount = sessions.count { $0.isDoneReported }
         }
 
         /// The row's headline: the agent worktree's task, the branch, or the

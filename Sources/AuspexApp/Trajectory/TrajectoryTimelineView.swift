@@ -24,6 +24,14 @@ import SwiftUI
 /// than as noise.
 struct TrajectoryTimelineView: View {
     @Bindable var model: TrajectoryModel
+    /// What the session is signalling, if anything, and when it said so.
+    ///
+    /// Drawn as one vertical rule in the attention's colour. A trajectory is
+    /// read to answer *how did it get here*, and "here" is the moment it asked
+    /// for you — a waterfall that shows every tool call and not that moment is
+    /// missing the one instant the reader came for.
+    var attention: AttentionState = .none
+    var attentionAt: Date?
 
     /// Where a drag started, in unit coordinates. `nil` when nothing is being
     /// dragged.
@@ -138,6 +146,17 @@ struct TrajectoryTimelineView: View {
             )
         }
 
+        if let x = attentionX(in: size), let colour = AttentionStyle.colour(attention) {
+            context.stroke(
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: Self.plotHeight))
+                },
+                with: .color(colour),
+                lineWidth: 1.5
+            )
+        }
+
         for run in runs(in: size) {
             let path = Path(roundedRect: run.rect, cornerRadius: 1.5, style: .continuous)
             context.fill(path, with: .color(run.color))
@@ -152,6 +171,26 @@ struct TrajectoryTimelineView: View {
                 )
             }
         }
+    }
+
+    /// Where the marker goes, in points across the plot.
+    ///
+    /// Placed by *time* when the waterfall is measured in time, and at the
+    /// newest step otherwise. Under the step and turn scales the x axis is a
+    /// count rather than a clock, and interpolating a wall-clock instant onto
+    /// it would put the rule somewhere that means nothing — whereas "the most
+    /// recent thing this session did" is exactly where a call for a person
+    /// sits.
+    private func attentionX(in size: CGSize) -> CGFloat? {
+        guard attention.isSignalling, !model.spans.isEmpty else { return nil }
+        guard model.scale == .duration,
+              let at = attentionAt,
+              let first = model.steps.first?.start,
+              let last = model.steps.map({ $0.end ?? $0.start }).max(),
+              last > first
+        else { return (model.spans.last?.end).map { CGFloat($0) * size.width } }
+        let fraction = at.timeIntervalSince(first) / last.timeIntervalSince(first)
+        return CGFloat(min(max(fraction, 0), 1)) * size.width
     }
 
     /// One drawable run per group of bars that would land on the same pixels.

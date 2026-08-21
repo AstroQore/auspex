@@ -39,6 +39,9 @@ struct SessionTraceView: View {
                 projectName: model.selectedProjectName,
                 control: environment.control,
                 notice: model.notices[session.key].map(BoardRow.RowNotice.init),
+                // The board's own answer, not a second derivation: the banner
+                // here and the ring on the card are one claim.
+                attention: model.attention[session.key] ?? .none,
                 reportedFocus: model.reports[session.key]
                     .flatMap { $0.isSuperseded(byAssistantAt: session.brief.lastAssistantAt) ? nil : $0 }?
                     .line,
@@ -284,6 +287,8 @@ struct SessionHeaderView: View {
     /// opens *because* of an alert has to show the alert's own words at the
     /// top; making them go back to the card for it would be absurd.
     var notice: BoardRow.RowNotice?
+    /// Whether a person has something to do about this session, and why.
+    var attention: AttentionState = .none
     /// The line the agent wrote about what it is doing, while it is current.
     var reportedFocus: String?
     let onSelect: (SessionKey) -> Void
@@ -301,9 +306,7 @@ struct SessionHeaderView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             identity
-            if let notice {
-                NoticeBanner(notice: notice, onDismiss: onDismissNotice)
-            }
+            AttentionBanner(attention: attention, onDismiss: onDismissNotice)
             if let reportedFocus {
                 // Marked with the same caret the card uses, so a reader learns
                 // once that this line has an author.
@@ -345,7 +348,7 @@ struct SessionHeaderView: View {
             }
             Spacer(minLength: 6)
             if session.isStale, notice == nil { StaleTag() }
-            if let notice {
+            if let notice, attention.source == .agent {
                 NoticePill(kind: notice.kind)
             } else {
                 StatePill(state: session.state, isStale: session.isStale)

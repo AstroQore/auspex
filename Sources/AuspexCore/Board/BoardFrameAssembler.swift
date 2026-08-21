@@ -352,17 +352,21 @@ public actor BoardFrameAssembler {
             // Counted before the bucket filter, on purpose: a chip that zeroed
             // the others when clicked would leave no way back to them.
             summary: BoardSummary(sessions: kept, attention: attention),
-            // A builder of its own, deliberately. The sidebar's rows have never
-            // carried the seen-at map or the backfilled briefs, so sharing the
-            // one above would quietly change what the tree's rows are titled on
-            // a live machine. Unifying them is a decision about what the
-            // sidebar says, not about where the derivation runs, and it belongs
-            // to whoever makes it — the second index costs one hash per session
-            // and is no longer on the main thread either way.
             tree: ProjectTree.build(
                 board: board,
                 names: inputs.projectNames,
-                builder: BoardRowBuilder(board: board)
+                // Its own builder, deliberately, and told only about what the
+                // sidebar draws. The seen-at map and the backfilled briefs are
+                // withheld because they change what a tree row is *titled*, and
+                // unifying that is a decision about what the sidebar says. The
+                // notices are not: a project drawn in red because one of its
+                // sessions is asking is the sidebar's whole job at that width.
+                builder: BoardRowBuilder(
+                    board: board,
+                    notices: inputs.notices,
+                    acknowledgedAt: inputs.acknowledgedAt,
+                    now: raw.generatedAt
+                )
             ),
             attention: attention,
             olderHidden: windowed.hidden
