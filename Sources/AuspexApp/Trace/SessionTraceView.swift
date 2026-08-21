@@ -141,6 +141,9 @@ struct SessionTraceView: View {
     /// The laziness that matters is the `LazyVStack`'s, and that is kept.
     private var traceList: some View {
         ScrollViewReader { proxy in
+            // `BoardScroll` and not a bare `ScrollView`: it carries the sizing
+            // gate that keeps the pane's own height question from measuring
+            // every row in the waterfall — see ``ScrollSizeGate``.
             BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(model.traceItems) { item in

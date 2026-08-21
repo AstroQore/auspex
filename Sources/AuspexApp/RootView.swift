@@ -65,6 +65,10 @@ struct RootView: View {
         }
         .auspexAppearance(environment.appearance)
         .environment(clock)
+        // Zero-sized, hidden, and in the background so it cannot take a click:
+        // it is in the tree only so that the window can be found from inside
+        // it. See ``WindowSizingProbe``.
+        .background(WindowSizingProbe().frame(width: 0, height: 0))
         .sheet(item: $environment.ignoreDraft) { draft in
             IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
                 environment.ignoreDraft = nil
@@ -85,6 +89,10 @@ struct RootView: View {
         .task { environment.start() }
         .task { await clock.run() }
         .task { routeNotifications() }
+        // Nothing at all unless `AUSPEX_STALL_LOG=1` asked for it — see
+        // ``MainThreadMeter``, which is how this branch's before and after are
+        // measured on a machine that is never quiet.
+        .task { MainThreadMeter.shared?.start() }
         .onReceive(
             NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
         ) { _ in
@@ -308,6 +316,9 @@ struct SidebarView: View {
 
             projectsHeader
 
+            // `BoardScroll` and not a bare `ScrollView`: it carries the sizing
+            // gate that keeps the column's own height question from measuring
+            // every row in this tree — see ``ScrollSizeGate``.
             BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ProjectsSidebar(

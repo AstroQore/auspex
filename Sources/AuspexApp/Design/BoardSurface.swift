@@ -224,10 +224,17 @@ struct BoardScroll<Content: View>: View {
                 }
                 .clipped()
         } else {
-            ScrollView {
-                content
+            // Gated, and every scroll view in this app goes through here for
+            // that reason: without it, a parent dividing space between its
+            // children asks the scroll view how tall it would be, the scroll
+            // view asks its lazy stack, and the lazy stack measures every row
+            // it has — on every graph update. See ``ScrollSizeGate``.
+            ScrollSizeGate {
+                ScrollView {
+                    content
+                }
+                .scrollContentBackground(.hidden)
             }
-            .scrollContentBackground(.hidden)
         }
     }
 }
