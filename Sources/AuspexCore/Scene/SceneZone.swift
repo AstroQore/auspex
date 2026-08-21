@@ -79,7 +79,7 @@ public enum SceneBreakStyle: String, Sendable, Hashable, CaseIterable, Codable {
 ///
 /// Both default to on. Off is not "hide those sessions" — it is "those
 /// sessions stay at their desks", which is exactly the office that shipped
-/// before the annexes existed, and is why the setting is safe to leave to
+/// before the other rooms existed, and is why the setting is safe to leave to
 /// taste rather than being a mode with its own behaviour to learn.
 public struct SceneZoneOptions: Sendable, Equatable, Hashable, Codable {
     /// Whether a delegating family walks to a table.

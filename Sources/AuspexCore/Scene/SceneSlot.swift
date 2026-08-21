@@ -39,7 +39,7 @@ public struct SceneMetrics: Sendable, Equatable {
     /// in it still has to be wide enough to write the project's name across.
     public var minimumFloorUnits: CGFloat
 
-    // MARK: The annexes
+    // MARK: The rest of the suite
 
     /// How fast somebody walks, in layout points a second.
     ///
@@ -62,9 +62,9 @@ public struct SceneMetrics: Sendable, Equatable {
     /// The air between two tables.
     public var tableGap: CGFloat
     /// The distance between two seats in a break room.
-    public var gardenSeatSpacing: CGFloat
+    public var breakSeatSpacing: CGFloat
     /// The height of one row of break-room seats.
-    public var gardenRowHeight: CGFloat
+    public var breakRowHeight: CGFloat
     /// How much of a break room's right-hand end is kept clear for the suite's
     /// door and the few sessions walking out through it.
     public var gateReserve: CGFloat
@@ -100,7 +100,7 @@ public struct SceneMetrics: Sendable, Equatable {
     /// Per project rather than in total, so a busy repository cannot push a
     /// quiet one's single bench off the map — the same rule the office follows
     /// by giving every project a room of its own.
-    public var gardenSeatsPerProject: Int
+    public var breakSeatsPerProject: Int
 
     public init(
         cellWidth: CGFloat = 104,
@@ -118,13 +118,13 @@ public struct SceneMetrics: Sendable, Equatable {
         tableTailWidth: CGFloat = 64,
         tableHeight: CGFloat = 150,
         tableGap: CGFloat = 26,
-        gardenSeatSpacing: CGFloat = 72,
-        gardenRowHeight: CGFloat = 96,
+        breakSeatSpacing: CGFloat = 72,
+        breakRowHeight: CGFloat = 96,
         gateReserve: CGFloat = 84,
         suiteGap: CGFloat = 8,
         suiteRoomThreshold: Int = 3,
         gateQueueLimit: Int = 3,
-        gardenSeatsPerProject: Int = 8
+        breakSeatsPerProject: Int = 8
     ) {
         self.cellWidth = cellWidth
         self.rowHeight = rowHeight
@@ -141,13 +141,13 @@ public struct SceneMetrics: Sendable, Equatable {
         self.tableTailWidth = tableTailWidth
         self.tableHeight = tableHeight
         self.tableGap = tableGap
-        self.gardenSeatSpacing = gardenSeatSpacing
-        self.gardenRowHeight = gardenRowHeight
+        self.breakSeatSpacing = breakSeatSpacing
+        self.breakRowHeight = breakRowHeight
         self.gateReserve = gateReserve
         self.suiteGap = suiteGap
         self.suiteRoomThreshold = suiteRoomThreshold
         self.gateQueueLimit = gateQueueLimit
-        self.gardenSeatsPerProject = gardenSeatsPerProject
+        self.breakSeatsPerProject = breakSeatsPerProject
     }
 
     /// How wide a table with `children` seats along it is.
@@ -655,7 +655,7 @@ public struct SceneFrame: Sendable, Equatable {
         slots.first { $0.session == key }
     }
 
-    /// The annex seat `key` is in, when it is not at its desk.
+    /// The seat `key` is in, when it is not at its desk.
     public func seat(for key: SessionKey) -> SceneSeat? {
         seats.first { $0.session == key }
     }

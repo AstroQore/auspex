@@ -158,11 +158,11 @@ struct SceneTheme: Equatable {
             face: furniture(dark: 0xD3C3B4, light: 0xC7B49F),
             ink: furniture(dark: 0x0A0B10, light: 0x2A2724),
             screenOff: furniture(dark: 0x11141D, light: 0x74736E),
-            // The annexes are the same room seen from another chair, so their
-            // tones are the furniture palette pushed a step warmer and a step
-            // greener rather than a second colour scheme. A garden that
-            // arrived in daylight green would be the one thing on a dark
-            // board loud enough to read as an alert.
+            // The other rooms are the same room seen from another chair, so
+            // their tones are the furniture palette pushed a step warmer and a
+            // step greener rather than a second colour scheme. A garden that
+            // arrived in daylight green would be the one thing on a dark board
+            // loud enough to read as an alert.
             carpet: furniture(dark: 0x2A2434, light: 0xC2B9C6),
             grass: furniture(dark: 0x23342A, light: 0xBFCDB8),
             leaf: furniture(dark: 0x3C5D43, light: 0x8AA884),
@@ -560,7 +560,7 @@ final class PlaceholderArt {
         }
     }
 
-    // MARK: - The annexes
+    // MARK: - The meeting rooms
 
     /// A long table, seen from three quarters on.
     ///
@@ -608,7 +608,7 @@ final class PlaceholderArt {
     /// read by its lighting with no light in it.
     ///
     /// A display on a stand rather than a projector screen on a wall: the
-    /// annexes have no walls, and a rectangle hanging in the air over a table
+    /// meeting rooms have no walls, and a rectangle hanging in the air over a table
     /// reads as a bug in the renderer rather than as a screen.
     func projectorScreen() -> SKTexture {
         cached("projectorScreen") { theme in

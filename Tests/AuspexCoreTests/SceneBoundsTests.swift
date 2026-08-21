@@ -102,7 +102,7 @@ struct SceneBoundsTests {
     @Test("the garden seats a bounded number per project and counts the rest")
     func theGardenOverflows() {
         var layout = SceneLayout()
-        let limit = SceneMetrics.standard.gardenSeatsPerProject
+        let limit = SceneMetrics.standard.breakSeatsPerProject
         let idle = (0..<(limit + 28)).map { index in
             Self.session(
                 "idle-\(index)",
@@ -127,7 +127,7 @@ struct SceneBoundsTests {
     @Test("a busy project cannot push a quiet one's bench off the map")
     func theCapIsPerProject() {
         var layout = SceneLayout()
-        let limit = SceneMetrics.standard.gardenSeatsPerProject
+        let limit = SceneMetrics.standard.breakSeatsPerProject
         var sessions = (0..<(limit * 3)).map { index in
             Self.session(
                 "busy-\(index)",
@@ -162,7 +162,7 @@ struct SceneBoundsTests {
     @Test("an unread note keeps its bench when a plain one gives it up")
     func notesOutrankBenches() {
         var layout = SceneLayout()
-        let limit = SceneMetrics.standard.gardenSeatsPerProject
+        let limit = SceneMetrics.standard.breakSeatsPerProject
         // Enough idle sessions to fill the garden twice over, plus one that
         // finished something nobody has read — the errand the whole app is
         // about, and the last thing a cap may drop.

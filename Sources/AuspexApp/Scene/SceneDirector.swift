@@ -42,7 +42,7 @@ final class SceneDirector {
     private var layout = SceneLayout()
     private(set) var frame: SceneFrame = .empty
 
-    /// Every place somebody can be, office desks and annex seats alike, keyed
+    /// Every place somebody can be, desks and the seats next door alike, keyed
     /// by the layout's own id. One table because everything a place does —
     /// hover, selection, culling, the state light — it does the same way
     /// wherever it is.
@@ -108,7 +108,7 @@ final class SceneDirector {
     /// The last board, kept so a walk that finishes between frames can put the
     /// person it delivered into their seat without waiting for the next one.
     private var sessions: [SessionKey: SessionSnapshot] = [:]
-    /// Which annexes are switched on.
+    /// Which of a suite's rooms are switched on.
     private var options = SceneZoneOptions.all
 
     init(world: SKNode, theme: SceneTheme) {
@@ -155,7 +155,7 @@ final class SceneDirector {
         frame = .empty
     }
 
-    /// Adopts a new set of annexes.
+    /// Adopts a new set of rooms.
     ///
     /// Switching one off has to take its walkers with it: a walk in flight is
     /// heading for a bench that is about to stop existing, and letting it
@@ -783,7 +783,7 @@ final class SceneDirector {
                 node.isPaused = !onScreen
             }
         }
-        // The annexes are culled by the same rule as the rooms: an off-screen
+        // The other rooms are culled by the same rule as the desks: an off-screen
         // garden is a strip of scenery and a pulsing projector, and a scene
         // that kept stepping them would be a scene whose cost was the size of
         // the map rather than the size of the window.
@@ -901,7 +901,7 @@ final class SceneDirector {
         for node in tethers.values { node.setCameraScale(scale) }
     }
 
-    /// The room or annex `key` is in, when the map has put it in one.
+    /// The room `key` is in, when the map has put it in one.
     func area(for key: SessionKey) -> SceneZoneArea? {
         guard let seat = frame.seat(for: key) else { return nil }
         return frame.zones.last { $0.zone == seat.zone }

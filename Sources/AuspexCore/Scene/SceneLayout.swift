@@ -465,7 +465,7 @@ public struct SceneLayout: Sendable, Equatable {
                 // A doze is a session that may be wrong about claiming to
                 // work. A bench is the one with nothing outstanding, so it is
                 // the one that gives way.
-                let seated = keep(keys, limit: max(0, metrics.gardenSeatsPerProject)) { key in
+                let seated = keep(keys, limit: max(0, metrics.breakSeatsPerProject)) { key in
                     placement[key]?.kind == .doze ? 0 : 1
                 }
                 for key in keys where !seated.contains(key) {
@@ -821,7 +821,7 @@ public struct SceneLayout: Sendable, Equatable {
         // Two seats and a door is the least a break room can be and still be
         // one.
         let breakNeed = drawsBreak
-            ? Self.stripPadding * 2 + metrics.gateReserve + metrics.gardenSeatSpacing * 2
+            ? Self.stripPadding * 2 + metrics.gateReserve + metrics.breakSeatSpacing * 2
             : 0
 
         let units = max(deskUnits, max(meetingNeed, breakNeed) / metrics.cellWidth)
@@ -866,7 +866,7 @@ public struct SceneLayout: Sendable, Equatable {
         var breakHeight: CGFloat = 0
         if drawsBreak {
             let usable = width - Self.stripPadding * 2 - metrics.gateReserve
-            breakColumns = max(1, Int((usable / metrics.gardenSeatSpacing).rounded(.down)))
+            breakColumns = max(1, Int((usable / metrics.breakSeatSpacing).rounded(.down)))
             restRows = floor.resting.isEmpty
                 ? 0 : max(1, (floor.resting.count + breakColumns - 1) / breakColumns)
             // The waiting bench wraps like the rest of the room does. It is
@@ -878,7 +878,7 @@ public struct SceneLayout: Sendable, Equatable {
             // because the door stands in it and the overflow count is written
             // on it.
             let rows = max(1, restRows + waitingRows)
-            breakHeight = metrics.floorHeaderHeight + CGFloat(rows) * metrics.gardenRowHeight
+            breakHeight = metrics.floorHeaderHeight + CGFloat(rows) * metrics.breakRowHeight
         }
 
         var height = deskHeight
@@ -1267,14 +1267,14 @@ public struct SceneLayout: Sendable, Equatable {
         /// The floor line of one row, counting from the top of the room.
         func rowY(_ row: Int) -> CGFloat {
             rect.minY + metrics.floorHeaderHeight
-                + CGFloat(row + 1) * metrics.gardenRowHeight - Self.seatLift
+                + CGFloat(row + 1) * metrics.breakRowHeight - Self.seatLift
         }
 
         /// Where the `index`th person in a band stands.
         func anchor(index: Int, firstRow: Int) -> CGPoint {
             CGPoint(
                 x: rect.minX + Self.stripPadding
-                    + (CGFloat(index % columns) + 0.5) * metrics.gardenSeatSpacing,
+                    + (CGFloat(index % columns) + 0.5) * metrics.breakSeatSpacing,
                 y: rowY(firstRow + index / columns)
             )
         }

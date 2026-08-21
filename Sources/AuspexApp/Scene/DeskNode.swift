@@ -479,7 +479,7 @@ final class DeskNode: SKNode {
         // process behind them has exited. Half the sessions on this bench are
         // `ended`, and the ended pose fades them out — which would leave the
         // garden holding a note with nobody under it, and lose the one thing
-        // the annex was built to show.
+        // the break room was built to show.
         case .note:
             sprite.apply(pose: .idle, reduceMotion: look.reduceMotion)
         // And somebody waiting on a person has their hand up, wherever the

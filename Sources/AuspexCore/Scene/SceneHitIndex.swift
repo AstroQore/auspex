@@ -42,11 +42,11 @@ public struct SceneHitIndex: Sendable, Equatable {
 
     /// The rooms, in drawing order.
     public let floors: [SceneFloor]
-    /// The annexes, in drawing order.
+    /// The suites' other rooms, in drawing order.
     public let zones: [SceneZoneArea]
     /// Each room's desks, by the room's allocation index.
     private let desks: [Int: [Desk]]
-    /// Each annex's chairs and benches, by the annex's id.
+    /// Each room's chairs and benches, by the room's id.
     private let seats: [String: [Desk]]
     /// How far outside its room a desk is allowed to reach. Half a desk, which
     /// is exactly how far the outermost one in a row can overhang.
@@ -131,8 +131,8 @@ public struct SceneHitIndex: Sendable, Equatable {
         switch kind {
         case .desk: metrics.cellWidth
         case .tableHead, .tableNorth, .tableSouth: metrics.tableSeatSpacing
-        case .call, .note, .bench, .doze: metrics.gardenSeatSpacing
-        case .gate: metrics.gardenSeatSpacing * 0.4
+        case .call, .note, .bench, .doze: metrics.breakSeatSpacing
+        case .gate: metrics.breakSeatSpacing * 0.4
         }
     }
 
@@ -189,7 +189,7 @@ public struct SceneHitIndex: Sendable, Equatable {
         return nil
     }
 
-    /// The annex a layout point is in.
+    /// The room a layout point is in.
     public func zone(at point: CGPoint) -> SceneZoneArea? {
         zones.last { $0.frame.contains(point) }
     }
@@ -197,6 +197,6 @@ public struct SceneHitIndex: Sendable, Equatable {
     /// How many desks the index holds. For tests, and for nothing else.
     public var deskCount: Int { desks.values.reduce(0) { $0 + $1.count } }
 
-    /// How many annex seats it holds. Likewise.
+    /// How many break-room and meeting-room seats it holds. Likewise.
     public var seatCount: Int { seats.values.reduce(0) { $0 + $1.count } }
 }

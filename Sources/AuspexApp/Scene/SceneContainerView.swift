@@ -49,7 +49,7 @@ struct SceneContainerView: View {
         // One property for every surface: the sidebar sets it, the wall keeps
         // that project's sections, and the camera flies to that room.
         let focused = model.focusedProjectKey
-        // Which annexes are drawn, and who is sitting in the garden holding a
+        // Which of a suite's rooms are drawn, and who is sitting there holding a
         // note. Both are read here rather than inside `updateNSView` for the
         // same reason `board` is: observation is tracked in a `body`.
         let zones = model.sceneZones

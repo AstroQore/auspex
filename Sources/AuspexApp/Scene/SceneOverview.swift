@@ -89,7 +89,7 @@ struct SceneOverview: Equatable {
                 needsYou: tally.waitingPermission > 0
             )
         }
-        // The annexes are rectangles on the map like any other, and leaving
+        // A suite's other rooms are rectangles like any other, and leaving
         // them off would be a minimap that answers "how much is there" with
         // less than there is — which is the one question it exists for. They
         // are drawn in the quiet colours on purpose: nothing down there is
