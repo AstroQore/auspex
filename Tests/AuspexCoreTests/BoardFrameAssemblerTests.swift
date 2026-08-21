@@ -174,6 +174,68 @@ struct BoardFrameAssemblerTests {
         #expect(frame.tree.projects.map(\.name) == ["Everything"])
     }
 
+    // MARK: What the assembler says about the frame before
+
+    @Test("a repeat is stamped as one, and shares the values it repeats")
+    func repeatedFrameIsStampedAndShared() async {
+        let assembler = BoardFrameAssembler()
+        let board = fixture
+        let first = await assembler.assemble(
+            board: board, inputs: BoardFrameInputs(), sequence: 1
+        )
+        #expect(!first.isRepeat)
+
+        // The same sessions in a frame generated a moment later — exactly what
+        // the registry publishes when one session gained an event that changed
+        // nothing the window draws.
+        let again = BoardSnapshot(
+            generatedAt: Fixtures.date(200),
+            sessions: board.sessions
+        )
+        let second = await assembler.assemble(
+            board: again, inputs: BoardFrameInputs(), sequence: 2
+        )
+        #expect(second.isRepeat)
+        #expect(second.boardRevision == first.boardRevision)
+        // Shared, not merely equal: what the consumer holds is what it already
+        // held, so the `==` in an `@Observable` setter is a pointer check.
+        #expect(second.rowGroups == first.rowGroups)
+        #expect(second.board.generatedAt == first.board.generatedAt)
+    }
+
+    @Test("a frame that moves a session says so, and bumps the board")
+    func changedFrameIsNotARepeat() async {
+        let assembler = BoardFrameAssembler()
+        let first = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(), sequence: 1
+        )
+
+        var sessions = fixture.sessions
+        sessions[0].toolCallCount = 9
+        let moved = BoardSnapshot(generatedAt: Fixtures.date(200), sessions: sessions)
+        let second = await assembler.assemble(
+            board: moved, inputs: BoardFrameInputs(), sequence: 2
+        )
+
+        #expect(!second.isRepeat)
+        #expect(second.boardRevision > first.boardRevision)
+    }
+
+    @Test("a filter clicked over an unchanged board is not a repeat")
+    func changedInputsAreNotARepeat() async {
+        let assembler = BoardFrameAssembler()
+        _ = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(groupBy: .project), sequence: 1
+        )
+        let regrouped = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(groupBy: .harness), sequence: 2
+        )
+
+        // The board said nothing new — the person did.
+        #expect(!regrouped.isRepeat)
+        #expect(regrouped.boardRevision == 1)
+    }
+
     // MARK: The actor around it
 
     @Test("the actor stamps what it built and counts it")
