@@ -252,10 +252,15 @@ private struct MilestoneGroupView: View {
             if group.tasks.isEmpty {
                 // One quiet line rather than four boxes with a dash in each:
                 // an empty project says one thing, and it should say it once.
-                Text("Nothing to do")
-                    .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.text3)
-                    .padding(.vertical, 8)
+                // No symbol — the lane's own header already says what kind of
+                // thing is missing — and no box, per `EmptyStateView`.
+                EmptyStateView(
+                    title: "Nothing to do",
+                    detail: group.plan == nil
+                        ? "Nothing is filed in this project yet."
+                        : "This milestone has no tasks under it."
+                )
+                .frame(maxWidth: .infinity)
             } else {
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
@@ -398,10 +403,13 @@ private struct TaskColumnView: View {
                 TaskCardView(row: row, model: model, board: board)
             }
             if rows.isEmpty {
-                // Empty, and quiet about it: the column keeps its height so it
-                // is still somewhere a task can be dropped, and says nothing.
+                // Empty, and quiet about it: the column keeps enough height to
+                // be somewhere a task can be dropped, and says nothing at all.
                 // A dash in every empty column is four pieces of punctuation
-                // where the honest answer is one absence.
+                // where the honest answer is one absence — and the frame goes
+                // with it, because a border around nothing is how a
+                // placeholder ends up looking like a control that failed to
+                // draw. See `EmptyStateView`.
                 Color.clear.frame(height: 28)
             }
         }
@@ -409,15 +417,16 @@ private struct TaskColumnView: View {
         .padding(6)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isTargeted ? AuspexPalette.selection : AuspexPalette.bg1.opacity(0.6))
+                .fill(fill)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    isTargeted ? AuspexPalette.stateThinking.opacity(0.6) : AuspexPalette.line,
-                    lineWidth: 1
-                )
+                .strokeBorder(stroke, lineWidth: 1)
         )
+        // The chrome is gone when the column is empty, so the area a drag can
+        // be dropped on has to be declared rather than inherited from a shape
+        // that is no longer painted.
+        .contentShape(Rectangle())
         // A column takes tasks. Sessions are dropped on *tasks*, not on
         // columns: "this session is working on that piece of work" is a fact
         // about one task, and a column has no id to attach it to.
@@ -426,6 +435,19 @@ private struct TaskColumnView: View {
             model.move(taskID: id, to: status)
             return true
         })
+    }
+
+    /// A container has a background when it contains something — or when a
+    /// task is being dragged over it, which is the one moment an empty column
+    /// has to show where it is.
+    private var fill: Color {
+        if isTargeted { return AuspexPalette.selection }
+        return rows.isEmpty ? .clear : AuspexPalette.bg1.opacity(0.6)
+    }
+
+    private var stroke: Color {
+        if isTargeted { return AuspexPalette.stateThinking.opacity(0.6) }
+        return rows.isEmpty ? .clear : AuspexPalette.line
     }
 }
 
@@ -680,28 +702,13 @@ private struct UnregisteredSessionChip: View {
 
 private struct TasksEmptyState: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Nothing is filed yet.")
-                .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.text)
-            Text(
-                "Work is filed in projects — the same projects the board groups "
-                    + "sessions into. An agent with Auspex's MCP server installed calls "
-                    + "tasks.create and its task lands in the project it is working in, "
-                    + "with no path to type; a supervisor handing work out files one per "
-                    + "worker and puts the task id in each brief, and the worker makes "
-                    + "one tasks.claim call so its session appears on the row."
-            )
-            .font(AuspexType.body)
-            .foregroundStyle(AuspexPalette.text2)
-            .fixedSize(horizontal: false, vertical: true)
-            Text("Install the server from the Harnesses page.")
-                .font(AuspexType.caption)
-                .foregroundStyle(AuspexPalette.text3)
-        }
-        .frame(maxWidth: 520, alignment: .leading)
-        .padding(20)
-        .panelChrome()
+        EmptyStateView(
+            symbol: "checklist",
+            title: "Nothing is filed yet.",
+            detail: "An agent with Auspex's MCP server installed files a task in whatever "
+                + "project it is working in — install it from the Harnesses page."
+        )
+        .centredInPane()
     }
 }
 
