@@ -35,6 +35,14 @@ struct ProjectsSidebar: View {
 
     @Environment(AppEnvironment.self) private var environment
 
+    /// The branches a person has asked to see the whole of.
+    ///
+    /// Local to the column and deliberately not persisted: "show me all
+    /// nineteen of these" is a thing somebody wants for the next thirty
+    /// seconds, and a sidebar that reopened tomorrow with nineteen rows in it
+    /// would have quietly undone the cap that keeps the window responsive.
+    @State private var openedInFull: Set<String> = []
+
     var body: some View {
         if tree.isEmpty {
             emptyNote
@@ -58,13 +66,63 @@ struct ProjectsSidebar: View {
                 }
             }
             if !tree.ungrouped.isEmpty {
-                UngroupedRow(count: tree.ungrouped.count)
-                ForEach(tree.ungrouped) { row in
-                    sessionRow(row, depth: 1 + row.depth)
+                UngroupedRow(count: tree.ungrouped.count + tree.ungroupedHidden)
+                sessionRows(
+                    tree.ungrouped,
+                    id: Self.ungroupedID,
+                    depth: 1,
+                    finished: tree.ungroupedHidden
+                )
+            }
+        }
+    }
+
+    /// The rows a branch draws: the first ``ProjectTree/listLimit`` of them,
+    /// and one row offering the rest.
+    ///
+    /// The cap is the sidebar's whole performance story. Every row here is a
+    /// view SwiftUI builds and compares on every graph update, whether or not
+    /// it is scrolled into sight — a `LazyVStack` is lazy about *drawing* —
+    /// and a machine with a dozen agents in one checkout used to put every one
+    /// of them in this column permanently.
+    ///
+    /// - Parameters:
+    ///   - id: what the fold is remembered under. A checkout's own id, so two
+    ///     checkouts opened out do not share one switch.
+    ///   - finished: how many sessions of this branch have ended. They are
+    ///     never listed here; the row says where they went.
+    @ViewBuilder
+    private func sessionRows(
+        _ rows: [BoardRow],
+        id: String,
+        depth: Int,
+        finished: Int
+    ) -> some View {
+        let isOpen = openedInFull.contains(id)
+        let shown = isOpen ? rows : Array(rows.prefix(ProjectTree.listLimit))
+        ForEach(shown) { row in
+            sessionRow(row, depth: depth + row.depth)
+        }
+        let capped = rows.count - shown.count
+        if capped > 0 || finished > 0 {
+            MoreRow(
+                depth: depth,
+                running: capped,
+                finished: finished,
+                isOpen: isOpen
+            ) {
+                if isOpen {
+                    openedInFull.remove(id)
+                } else if capped > 0 {
+                    openedInFull.insert(id)
                 }
             }
         }
     }
+
+    /// What the fold under "No project" is remembered as. A fixed string
+    /// rather than a checkout id, because that branch has no checkout.
+    private static let ungroupedID = "auspex.sidebar.ungrouped"
 
     private func sessionRow(_ row: BoardRow, depth: Int) -> some View {
         SessionRow(
@@ -135,9 +193,12 @@ struct ProjectsSidebar: View {
             )
         }
         if isImplied || model.isExpanded(checkout: checkout) {
-            ForEach(checkout.sessions) { row in
-                sessionRow(row, depth: (isImplied ? 1 : 2) + row.depth)
-            }
+            sessionRows(
+                checkout.sessions,
+                id: checkout.id,
+                depth: isImplied ? 1 : 2,
+                finished: checkout.hiddenCount
+            )
         }
     }
 
@@ -280,8 +341,11 @@ private struct CheckoutRow: View {
                 AttentionPill(count: checkout.needsYouCount, attention: ProjectRow.calling)
             } else if checkout.liveCount > 0 {
                 LivePill(count: checkout.liveCount)
-            } else if !checkout.sessions.isEmpty {
-                Text("\(checkout.sessions.count)")
+            } else if checkout.sessionCount > 0 {
+                // Every session in the checkout, not only the ones the tree
+                // lists: a checkout of finished work still says how much of it
+                // there was.
+                Text("\(checkout.sessionCount)")
                     .font(AuspexType.monoCount)
                     .auspexTabularDigits()
                     .foregroundStyle(AuspexPalette.text3)
@@ -367,6 +431,68 @@ enum ProjectColour {
             blue: Double(value & 0xFF) / 255,
             opacity: 1
         )
+    }
+}
+
+/// The row at the end of a capped branch: what is not drawn, and where it is.
+///
+/// One row for two different absences, because they read as one question —
+/// *is this everything?* — and two rows answering it would be two rows of
+/// chrome under every busy checkout in the column:
+///
+/// - **running** sessions past ``ProjectTree/listLimit``, which this row opens
+///   out and folds back;
+/// - **finished** ones, which it never opens, because they are on the board in
+///   the Ended section and a second copy of them in a 180-point column would
+///   be the cheapest possible way to make the sidebar useless again.
+///
+/// Drawn as a tree row so it indents with the branch it belongs to, and in the
+/// tertiary text colour so it never competes with a session for attention.
+private struct MoreRow: View {
+    let depth: Int
+    /// How many live sessions are not drawn. `0` when the branch is open, or
+    /// when it was never capped.
+    let running: Int
+    /// How many of the branch's sessions have finished.
+    let finished: Int
+    let isOpen: Bool
+    let action: () -> Void
+
+    var body: some View {
+        TreeRow(depth: depth, isEnabled: running > 0 || isOpen, action: action) {
+            Text(title)
+                .font(AuspexType.row)
+                .foregroundStyle(AuspexPalette.text3)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            if isOpen {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+        }
+        .help(help)
+    }
+
+    private var title: String {
+        if isOpen { return "Show fewer" }
+        if running > 0, finished > 0 { return "+\(running) more · \(finished) finished" }
+        if running > 0 { return "+\(running) more" }
+        return finished == 1 ? "1 finished" : "\(finished) finished"
+    }
+
+    private var help: String {
+        if isOpen { return "List only the first \(ProjectTree.listLimit) again" }
+        var parts: [String] = []
+        if running > 0 { parts.append("List all of this checkout's running sessions") }
+        if finished > 0 {
+            parts.append(
+                finished == 1
+                    ? "1 finished session is in the board's Ended section"
+                    : "\(finished) finished sessions are in the board's Ended section"
+            )
+        }
+        return parts.joined(separator: ". ")
     }
 }
 

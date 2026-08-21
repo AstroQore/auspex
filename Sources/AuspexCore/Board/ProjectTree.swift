@@ -23,15 +23,40 @@ public struct ProjectTree: Sendable, Equatable {
     ///
     /// Kept rather than hidden: a subagent whose parent has aged off the board
     /// is still running, and a sidebar that silently dropped it would be
-    /// lying about what the machine is doing.
+    /// lying about what the machine is doing. The finished ones are dropped
+    /// all the same — see ``listable(_:)`` and ``ungroupedHidden``.
     public let ungrouped: [BoardRow]
+
+    /// How many sessions under no project have finished, and are in the
+    /// board's Ended section rather than in this column.
+    public let ungroupedHidden: Int
+
+    /// How many sessions the sidebar draws under one checkout, and under
+    /// "No project", before it offers the rest behind a row.
+    ///
+    /// ## Why the tree has a cap at all
+    ///
+    /// The sidebar is one of two surfaces that never leave the window, and
+    /// every row in it is a view SwiftUI compares on every graph update — the
+    /// report this was measured against had 143 of them, and a `sample` of
+    /// that window was `AG::LayoutDescriptor::compare` most of the way down.
+    /// A tree is a way of *finding* a session, and a column that lists eighty
+    /// of them under one heading has stopped being one; eight is where a
+    /// checkout still reads as a list rather than as a wall, and the rest are
+    /// one click away.
+    ///
+    /// It caps what is *drawn*, not what is known: the rows are all here, and
+    /// every count on every row above is tallied over all of them, so a
+    /// checkout whose one red session is past the cap is still drawn red.
+    public static let listLimit = 8
 
     /// An empty tree, for a view's initial state.
     public static let empty = ProjectTree(projects: [], ungrouped: [])
 
-    public init(projects: [Project], ungrouped: [BoardRow]) {
+    public init(projects: [Project], ungrouped: [BoardRow], ungroupedHidden: Int = 0) {
         self.projects = projects
         self.ungrouped = ungrouped
+        self.ungroupedHidden = max(0, ungroupedHidden)
     }
 
     /// `true` when there is nothing to draw at all.
@@ -93,7 +118,9 @@ public struct ProjectTree: Sendable, Equatable {
             self.colorHex = colorHex
             self.isPinned = isPinned
             self.liveCount = checkouts.reduce(0) { $0 + $1.liveCount }
-            self.sessionCount = checkouts.reduce(0) { $0 + $1.sessions.count }
+            // Every session under the project, including the ones the tree
+            // does not list — see ``Checkout/hiddenCount``.
+            self.sessionCount = checkouts.reduce(0) { $0 + $1.sessionCount }
             self.needsYouCount = checkouts.reduce(0) { $0 + $1.needsYouCount }
             self.doneReportedCount = checkouts.reduce(0) { $0 + $1.doneReportedCount }
         }
@@ -114,9 +141,19 @@ public struct ProjectTree: Sendable, Equatable {
         public let agentWorktreeTask: String?
         /// `true` when this is a linked worktree rather than the main checkout.
         public let isWorktree: Bool
-        /// The sessions in it, in board order with delegated ones nested
-        /// under whoever spawned them — see ``BoardRow/depth``.
+        /// The sessions still running in it, in board order with delegated
+        /// ones nested under whoever spawned them — see ``BoardRow/depth``.
+        ///
+        /// Not every session in the checkout: the finished ones are not in the
+        /// tree at all. See ``ProjectTree/listable(_:)`` and ``hiddenCount``.
         public let sessions: [BoardRow]
+        /// How many of this checkout's sessions have finished, and are
+        /// therefore in the board's Ended section rather than here.
+        ///
+        /// Carried rather than recomputed because it is the only trace they
+        /// leave in this column, and a sidebar that quietly dropped rows would
+        /// be lying about what the machine is doing.
+        public let hiddenCount: Int
         /// How many of them are believed to be running.
         public let liveCount: Int
         /// How many are asking for a person.
@@ -124,13 +161,24 @@ public struct ProjectTree: Sendable, Equatable {
         /// How many have reported finishing.
         public let doneReportedCount: Int
 
+        /// Every session in the checkout, listed or not.
+        public var sessionCount: Int { sessions.count + hiddenCount }
+
+        /// - Parameters:
+        ///   - sessions: the rows to list.
+        ///   - hiddenCount: how many more the checkout holds.
+        ///   - counts: the tallies, over *all* of them. A checkout whose one
+        ///     red session is past the cap still has to be drawn red, or the
+        ///     cap would hide the thing the sidebar exists to point at.
         public init(
             id: String,
             path: String?,
             branch: String?,
             agentWorktreeTask: String?,
             isWorktree: Bool,
-            sessions: [BoardRow]
+            sessions: [BoardRow],
+            hiddenCount: Int = 0,
+            counts: Counts? = nil
         ) {
             self.id = id
             self.path = path
@@ -138,9 +186,33 @@ public struct ProjectTree: Sendable, Equatable {
             self.agentWorktreeTask = agentWorktreeTask
             self.isWorktree = isWorktree
             self.sessions = sessions
-            self.liveCount = sessions.count { !$0.isEnded }
-            self.needsYouCount = sessions.count { $0.needsPerson }
-            self.doneReportedCount = sessions.count { $0.isDoneReported }
+            self.hiddenCount = max(0, hiddenCount)
+            let tallies = counts ?? Counts(rows: sessions)
+            self.liveCount = tallies.live
+            self.needsYouCount = tallies.needsYou
+            self.doneReportedCount = tallies.doneReported
+        }
+
+        /// What a checkout's badge says, tallied over every session in it
+        /// rather than over the ones that fitted.
+        public struct Counts: Sendable, Equatable {
+            public var live: Int
+            public var needsYou: Int
+            public var doneReported: Int
+
+            public init(live: Int = 0, needsYou: Int = 0, doneReported: Int = 0) {
+                self.live = live
+                self.needsYou = needsYou
+                self.doneReported = doneReported
+            }
+
+            public init(rows: [BoardRow]) {
+                self.init(
+                    live: rows.count { !$0.isEnded },
+                    needsYou: rows.count { $0.needsPerson },
+                    doneReported: rows.count { $0.isDoneReported }
+                )
+            }
         }
 
         /// The row's headline: the agent worktree's task, the branch, or the
@@ -228,7 +300,49 @@ public struct ProjectTree: Sendable, Equatable {
                 isPinned: board.claims.isPinned(key)
             )
         }
-        return ProjectTree(projects: projects, ungrouped: nested(ungrouped, builder: builder))
+        let listedUngrouped = listable(ungrouped)
+        return ProjectTree(
+            projects: projects,
+            ungrouped: nested(listedUngrouped, builder: builder),
+            ungroupedHidden: ungrouped.count - listedUngrouped.count
+        )
+    }
+
+    /// What a checkout's badges say, tallied straight off the snapshots.
+    ///
+    /// Over every session in it, listed or not — a badge that only counted the
+    /// listed rows would go quiet exactly when a checkout got busy enough to be
+    /// worth looking at. From snapshots and not from rows, because building a
+    /// row per unlisted session is the work the cut exists to stop doing.
+    static func counts(
+        of sessions: [SessionSnapshot],
+        builder: BoardRowBuilder
+    ) -> Checkout.Counts {
+        var counts = Checkout.Counts()
+        for session in sessions {
+            if !session.state.isEnded { counts.live += 1 }
+            let attention = builder.attention(for: session)
+            if attention.wantsPerson { counts.needsYou += 1 }
+            if attention.isDoneReported { counts.doneReported += 1 }
+        }
+        return counts
+    }
+
+    /// The sessions a branch of the tree can list: the ones that are not over.
+    ///
+    /// A finished session has no state to watch and nothing anybody has to act
+    /// on, and the board already keeps every one of them — in the collapsed
+    /// section at the bottom, which exists for exactly this. Listing them in
+    /// the tree as well is what turns a sidebar of a dozen live sessions into a
+    /// column of 143 rows, and every one of those rows is a view SwiftUI
+    /// compares on every graph update.
+    ///
+    /// How many of what is left gets *drawn* is the sidebar's decision rather
+    /// than this type's — see ``listLimit``. The difference is real: a person
+    /// can ask the sidebar for the rest of the live ones, and nobody needs to
+    /// ask it for the finished ones, because they are somewhere better.
+    static func listable(_ sessions: [SessionSnapshot]) -> [SessionSnapshot] {
+        sessions.filter { !$0.state.isEnded }
     }
 
     /// A run of sessions as rows, with delegated ones placed under whoever
@@ -308,6 +422,8 @@ public struct ProjectTree: Sendable, Equatable {
 
         return order.map { id in
             let attribute = attributes[id] ?? (nil, nil)
+            let all = byCheckout[id] ?? []
+            let listed = listable(all)
             return Checkout(
                 id: "\(projectKey)#\(id)",
                 path: attribute.path,
@@ -322,7 +438,15 @@ public struct ProjectTree: Sendable, Equatable {
                     && attribute.path.map { $0 != projectKey } ?? false,
                 // Already in board order: the sessions were appended in the
                 // order the frame listed them.
-                sessions: nested(byCheckout[id] ?? [], builder: builder)
+                sessions: nested(listed, builder: builder),
+                hiddenCount: all.count - listed.count,
+                // Over every session in the checkout rather than over the
+                // eight that fitted: a badge that only counted the listed rows
+                // would go quiet exactly when a checkout got busy enough to be
+                // worth looking at. From the snapshots and not from rows,
+                // because a row per hidden session is the work the cap exists
+                // to stop doing.
+                counts: counts(of: all, builder: builder)
             )
         }
     }

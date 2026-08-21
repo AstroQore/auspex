@@ -190,6 +190,88 @@ struct ProjectTreeTests {
         #expect(project.checkouts.first?.liveCount == 1)
     }
 
+    // MARK: - What the tree does not list
+
+    @Test("finished sessions leave the tree, and the checkout says how many")
+    func finishedSessionsLeaveTheTree() throws {
+        let root = "/Users/example/Code/auspex"
+        let tree = ProjectTree.build(board: board([
+            session(.claudeCode, "live", cwd: root, gitRoot: root, at: 40),
+            session(
+                .codex, "over-1", cwd: root, gitRoot: root,
+                state: .ended(reason: .exited), isAlive: false, at: 20
+            ),
+            session(
+                .cursor, "over-2", cwd: root, gitRoot: root,
+                state: .ended(reason: .exited), isAlive: false, at: 10
+            )
+        ]))
+
+        let checkout = try #require(tree.projects.first?.checkouts.first)
+        #expect(checkout.sessions.map(\.key.sessionID) == ["live"])
+        #expect(checkout.hiddenCount == 2)
+        // Still counted: the column has to say how much work there was here,
+        // and the board's Ended section is where the rows themselves went.
+        #expect(checkout.sessionCount == 3)
+        #expect(tree.projects.first?.sessionCount == 3)
+    }
+
+    @Test("a checkout of nothing but finished work still appears, and says so")
+    func aFinishedCheckoutStillAppears() throws {
+        let root = "/Users/example/Code/auspex"
+        let tree = ProjectTree.build(board: board([
+            session(
+                .claudeCode, "over", cwd: root, gitRoot: root,
+                state: .ended(reason: .exited), isAlive: false, at: 20
+            )
+        ]))
+
+        let checkout = try #require(tree.projects.first?.checkouts.first)
+        #expect(checkout.sessions.isEmpty)
+        #expect(checkout.hiddenCount == 1)
+        #expect(checkout.liveCount == 0)
+    }
+
+    @Test("sessions under no project lose their finished ones the same way")
+    func ungroupedLosesItsFinishedSessions() {
+        let tree = ProjectTree.build(board: board([
+            session(.antigravity, "live", at: 40),
+            session(.antigravity, "over", state: .ended(reason: .exited), isAlive: false, at: 10)
+        ]))
+
+        #expect(tree.ungrouped.map(\.key.sessionID) == ["live"])
+        #expect(tree.ungroupedHidden == 1)
+    }
+
+    @Test("a checkout's badge counts every session in it, listed or not")
+    func badgesCountTheUnlistedSessions() throws {
+        let root = "/Users/example/Code/auspex"
+        var reported = session(
+            .codex, "done", cwd: root, gitRoot: root,
+            state: .ended(reason: .exited), isAlive: false, at: 10
+        )
+        reported.brief.lastAssistantAt = Fixtures.date(10)
+        let builder = BoardRowBuilder(
+            board: board([reported]),
+            notices: [
+                reported.key: AgentNotice(
+                    session: reported.key,
+                    kind: .done,
+                    message: "Split the remainder rather than truncating it.",
+                    createdAt: Fixtures.date(10)
+                )
+            ],
+            now: Fixtures.date(1_000)
+        )
+        let tree = ProjectTree.build(board: board([reported]), builder: builder)
+
+        let checkout = try #require(tree.projects.first?.checkouts.first)
+        // The one session that reported finishing is not listed — it is over —
+        // and the badge that would send somebody to it still lights up.
+        #expect(checkout.sessions.isEmpty)
+        #expect(checkout.doneReportedCount == 1)
+    }
+
     @Test("an empty board makes an empty tree")
     func anEmptyBoardMakesAnEmptyTree() {
         let tree = ProjectTree.build(board: .empty)
