@@ -55,6 +55,9 @@ struct TaskDetailView: View {
             }
         }
         .background(BoardSurfaceBackground())
+        // The page has a fact on it that copies, so it has to be able to say
+        // so — see ``CopyToast``.
+        .auspexCopyToast()
         .task(id: unit.origin.taskID) { tasks.loadLog(taskID: unit.origin.taskID) }
     }
 
@@ -80,9 +83,15 @@ struct TaskDetailView: View {
             Text("›")
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
-            Text(unit.shortID)
-                .font(AuspexType.monoCount)
-                .foregroundStyle(AuspexPalette.text3)
+            // The handle a person pastes into a message, a `tasks.get`, or a
+            // brief for the next agent. It is the one fact on this page whose
+            // whole purpose is to be taken somewhere else, so it copies when
+            // it is clicked — the same rule the trace header follows.
+            CopyFact(
+                text: unit.shortID,
+                what: "the task's handle",
+                font: AuspexType.monoCount
+            )
             Spacer(minLength: 8)
             actions
         }
