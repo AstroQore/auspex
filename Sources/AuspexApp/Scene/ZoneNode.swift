@@ -137,7 +137,12 @@ final class ZoneNode: SKNode {
             rebuildScenery(rect: rect, headerY: headerY, theme: theme)
 
             if let door, zone == .breakArea {
-                gateSprite.texture = PlaceholderArt.shared.doorInner()
+                // A garden goes out through a gate and a room goes out through
+                // a door. Same job, and the difference is one more thing that
+                // says which company this is without anybody reading a word.
+                gateSprite.texture = breakKind == .garden
+                    ? PlaceholderArt.shared.gate()
+                    : PlaceholderArt.shared.doorInner()
                 gateSprite.position = SceneGeometry.scene(from: door)
                 gateSprite.isHidden = false
             } else {
