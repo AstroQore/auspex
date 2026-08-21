@@ -778,6 +778,50 @@ enum SceneSnapshotRenderer {
         return BoardSnapshot(generatedAt: now, sessions: Array(snapshots.values))
     }
 
+    /// The demo board with one very large company added to it.
+    ///
+    /// The suite layout only has a decision to make once a company is big
+    /// enough to wrap its desks onto several rows, and the demo's cast is
+    /// twelve sessions across five projects — so the case that a person on a
+    /// monorepo hits every day cannot be looked at without this. Every session
+    /// in it is fabricated under `/Users/example`, like the rest of the demo,
+    /// and nothing about it is read off the machine.
+    @MainActor
+    static func crowdedBoard(
+        elapsed: TimeInterval,
+        crowd: Int,
+        project: String = "/Users/example/Code/monorepo"
+    ) -> BoardSnapshot {
+        let board = demoBoard(elapsed: elapsed)
+        guard crowd > 0 else { return board }
+        let states: [SessionState] = [
+            .thinking, .writingFile(path: "Sources/Fleet/Worker.swift"),
+            .toolCalling(name: "shell"), .thinking, .idle
+        ]
+        let extra: [SessionSnapshot] = (0..<crowd).map { index in
+            var snapshot = SessionSnapshot(
+                identity: SessionIdentity(
+                    key: SessionKey(
+                        harness: Harness.boardOrder[index % Harness.boardOrder.count],
+                        sessionID: String(format: "fleet-%03d", index)
+                    ),
+                    sourcePath: "/Users/example/.claude/projects/monorepo/fleet-\(index).jsonl",
+                    cwd: project,
+                    gitRoot: project,
+                    title: "Fleet worker \(index + 1)"
+                ),
+                state: states[index % states.count],
+                isAlive: index % 5 != 4
+            )
+            snapshot.lastEventAt = board.generatedAt
+            snapshot.startedAt = board.generatedAt.addingTimeInterval(-TimeInterval(index))
+            return snapshot
+        }
+        return BoardSnapshot(
+            generatedAt: board.generatedAt, sessions: board.sessions + extra
+        )
+    }
+
     /// What the demo board's sessions are signalling.
     ///
     /// The waiting bench's whole point is that this is visible, and it is the

@@ -339,6 +339,108 @@ struct SceneBoundsTests {
         #expect(one == two)
     }
 
+    // MARK: One busy company
+
+    /// A company of sixty-four, which is what a monorepo with a fleet on it
+    /// looks like on a Tuesday.
+    private static func crowd(_ count: Int, project: String) -> [SessionSnapshot] {
+        (0..<count).map { index in
+            var snapshot = session(
+                "busy-\(index)",
+                project: project,
+                state: index.isMultiple(of: 8) ? .idle : .thinking
+            )
+            snapshot.lastEventAt = epoch
+            snapshot.isAlive = !index.isMultiple(of: 8)
+            return snapshot
+        }
+    }
+
+    @Test("a sixty-four session company is a block, not a ribbon")
+    func aBigSuiteIsABlock() {
+        var layout = SceneLayout()
+        let frame = layout.update(
+            with: Self.board(Self.crowd(64, project: "/Users/example/Code/monorepo"))
+        )
+        let suite = try? #require(frame.floors.first)
+        guard let suite else { return }
+
+        // Eight desks to a row is the wrap rule, so sixty-four desks are eight
+        // rows — and the meeting room and the break room are *beside* them
+        // rather than under, which is what keeps the company as wide as it is
+        // tall. Under them it was 832 × 1200: a ribbon that "fit all" can only
+        // frame by retreating.
+        #expect(suite.rowCount == 8)
+        #expect(suite.suite.width > suite.suite.height)
+        // The rooms cost the suite no height at all: they stand in the space
+        // eight rows of desks already occupy.
+        #expect(suite.suite.height == suite.frame.height)
+
+        let rooms = frame.zones.filter { $0.floorIndex == suite.index }
+        #expect(rooms.count == 2)
+        for room in rooms {
+            // Beside the desks, inside the suite, and touching neither.
+            #expect(room.frame.minX >= suite.frame.maxX)
+            #expect(suite.suite.contains(room.frame))
+        }
+        // The break room is the one on the corridor, because the door is in
+        // it and a door opens onto a corridor.
+        let breakRoom = rooms.first { $0.zone == .breakArea }
+        #expect(breakRoom.map { abs($0.frame.maxY - suite.suite.maxY) < 1 } == true)
+    }
+
+    @Test("a small company keeps the rooms under its desks")
+    func aSmallSuiteIsUnchanged() {
+        // The side-by-side layout is for suites whose desks are the taller
+        // half. A company of four is one row of desks and a room column twice
+        // its height, and putting the rooms beside it would move the empty
+        // corner rather than remove it.
+        var layout = SceneLayout()
+        let frame = layout.update(
+            with: Self.board(Self.crowd(4, project: "/Users/example/Code/small"))
+        )
+        let suite = try? #require(frame.floors.first)
+        guard let suite else { return }
+        #expect(suite.rowCount == 1)
+        for room in frame.zones where room.floorIndex == suite.index {
+            #expect(room.frame.minY >= suite.frame.maxY)
+            #expect(abs(room.frame.minX - suite.frame.minX) < 1)
+        }
+    }
+
+    @Test("a floor of busy companies is still framable")
+    func aBusyCampusStaysFramable() {
+        var layout = SceneLayout()
+        var sessions: [SessionSnapshot] = []
+        for project in ["monorepo", "storefront-web", "ingest-pipeline", "mobile-client"] {
+            sessions += Self.crowd(64, project: "/Users/example/Code/\(project)")
+                .map { snapshot in
+                    var copy = snapshot
+                    copy.identity = SessionIdentity(
+                        key: SessionKey(
+                            harness: snapshot.key.harness,
+                            sessionID: "\(project)-\(snapshot.key.sessionID)"
+                        ),
+                        sourcePath: snapshot.identity.sourcePath,
+                        cwd: snapshot.identity.cwd,
+                        gitRoot: snapshot.identity.gitRoot
+                    )
+                    return copy
+                }
+        }
+        let frame = layout.update(with: Self.board(sessions))
+        #expect(frame.floors.count == 4)
+        // Four blocks of 1,100 × 862 shelve two by two into 2,278 × 1,802.
+        // The same board under the old layout was four ribbons of 832 × 1,200
+        // and 1,742 × 2,478 — a world a third taller than it was wide, in a
+        // viewport that is wider than it is tall.
+        #expect(frame.contentRect.width > frame.contentRect.height)
+        // 256 live sessions across four repositories is past anything this
+        // app has to draw well, and the camera still frames it a little
+        // closer than it used to.
+        #expect(Self.fitZoom(frame) >= 0.24)
+    }
+
     @Test("switching the annexes off is still the office it always was")
     func officeOnlyIsUntouched() {
         // `officeOnly` means "everybody stays at their desk", which is a

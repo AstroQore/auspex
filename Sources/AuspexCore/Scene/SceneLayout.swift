@@ -738,6 +738,8 @@ public struct SceneLayout: Sendable, Equatable {
         let rowCount: Int
         /// The desks, in points.
         let deskHeight: CGFloat
+        /// How wide the desk block is, in points.
+        let deskWidth: CGFloat
         /// The meeting rooms, in the order they are drawn, with the row and
         /// offset each landed at. `table` is `nil` for a room the company has
         /// but nobody is in.
@@ -745,12 +747,19 @@ public struct SceneLayout: Sendable, Equatable {
         let meetingRows: Int
         /// `0` when the suite has no meeting rooms drawn.
         let meetingHeight: CGFloat
-        /// How many break-room seats fit across the suite.
+        /// How many break-room seats fit across the break room.
         let breakColumns: Int
         let restRows: Int
         let waitingRows: Int
         /// `0` when the suite has no break room drawn.
         let breakHeight: CGFloat
+        /// How wide the other rooms are. The suite's own width when they are
+        /// stacked under the desks, and a column of their own when they stand
+        /// beside them.
+        let roomsWidth: CGFloat
+        /// Whether the meeting rooms and the break room stand beside the desk
+        /// block rather than under it.
+        let isBeside: Bool
         /// How wide the suite is, in units.
         let units: CGFloat
         /// How tall the whole suite is, gaps included.
@@ -795,8 +804,11 @@ public struct SceneLayout: Sendable, Equatable {
         while roomWidths.count < roomCount { roomWidths.append(metrics.tableWidth(children: 0)) }
 
         // Wide enough for the two widest side by side, so a company with two
-        // meetings reads as two rooms rather than as a column.
+        // meetings reads as two rooms rather than as a column — when the
+        // rooms are under the desks and have the whole suite's width to use.
+        // A room *column* beside the desks is one table wide and stacks them.
         let sortedWidths = roomWidths.sorted(by: >)
+        let widestRoom = sortedWidths.first ?? 0
         let meetingNeed: CGFloat
         switch sortedWidths.count {
         case 0: meetingNeed = 0
@@ -824,66 +836,78 @@ public struct SceneLayout: Sendable, Equatable {
             ? Self.stripPadding * 2 + metrics.gateReserve + metrics.breakSeatSpacing * 2
             : 0
 
-        let units = max(deskUnits, max(meetingNeed, breakNeed) / metrics.cellWidth)
-        let width = units * metrics.cellWidth
+        let deskWidth = deskUnits * metrics.cellWidth
 
-        var rooms: [(id: Int, table: TableState?, row: Int, x: CGFloat, width: CGFloat)] = []
-        var meetingRows = 0
-        if roomCount > 0 {
-            let inner = Self.stripPadding
-            let limit = width - Self.stripPadding
-            var cursorX = inner
-            var meetingRow = 0
-            for slot in 0..<roomCount {
-                let roomWidth = roomWidths[slot]
-                if cursorX > inner, cursorX + roomWidth > limit + 0.0001 {
-                    meetingRow += 1
-                    cursorX = inner
-                }
-                let id = slot < live.count ? live[slot].id : floor.tables.count + slot
-                rooms.append(
-                    (
-                        id: id,
-                        table: slot < live.count ? live[slot].table : nil,
-                        row: meetingRow,
-                        x: cursorX,
-                        width: roomWidth
-                    )
-                )
-                cursorX += roomWidth + metrics.tableGap
-            }
-            meetingRows = meetingRow + 1
+        // ## Beside the desks, or under them
+        //
+        // A company of sixty-four is eight rows of desks, and the meeting room
+        // and the break room used to go *under* that — eight hundred points
+        // wide and twelve hundred tall, a ribbon nothing can frame. Standing
+        // them in a column beside the desks makes the same company a block:
+        // the desks on the left, the meeting room at the top right, the break
+        // room at the bottom right on the corridor everything opens onto.
+        //
+        // The column is packed first, at its own narrow width, because that
+        // is what decides whether it fits: a suite only stands its rooms
+        // beside the desks when the desks are the taller of the two, or the
+        // dead corner simply moves from one side to the other. Small
+        // companies — one row of desks, or a room column taller than the desk
+        // block — keep the layout they have always had, down to the
+        // coordinates.
+        let columnRooms = packMeetingRooms(
+            roomCount: roomCount, widths: roomWidths, live: live, floor: floor,
+            in: max(widestRoom + Self.stripPadding * 2, breakNeed)
+        )
+        let columnBreak = breakMetrics(
+            floor: floor, draws: drawsBreak,
+            in: max(widestRoom + Self.stripPadding * 2, breakNeed)
+        )
+        let columnHeight = stackedHeight(
+            meeting: columnRooms.height, breakRoom: columnBreak.height
+        )
+        let isBeside = rowCount >= 2 && columnHeight > 0 && deskHeight >= columnHeight
+
+        let roomsWidth: CGFloat
+        let width: CGFloat
+        let rooms: [(id: Int, table: TableState?, row: Int, x: CGFloat, width: CGFloat)]
+        let meetingRows: Int
+        let meetingHeight: CGFloat
+        let breakColumns: Int
+        let restRows: Int
+        let waitingRows: Int
+        let breakHeight: CGFloat
+        let height: CGFloat
+
+        if isBeside {
+            roomsWidth = max(widestRoom + Self.stripPadding * 2, breakNeed)
+            width = deskWidth + metrics.suiteGap + roomsWidth
+            rooms = columnRooms.rooms
+            meetingRows = columnRooms.rows
+            meetingHeight = columnRooms.height
+            breakColumns = columnBreak.columns
+            restRows = columnBreak.restRows
+            waitingRows = columnBreak.waitingRows
+            breakHeight = columnBreak.height
+            height = deskHeight
+        } else {
+            width = max(deskWidth, max(meetingNeed, breakNeed))
+            roomsWidth = width
+            let packed = packMeetingRooms(
+                roomCount: roomCount, widths: roomWidths, live: live, floor: floor, in: width
+            )
+            let room = breakMetrics(floor: floor, draws: drawsBreak, in: width)
+            rooms = packed.rooms
+            meetingRows = packed.rows
+            meetingHeight = packed.height
+            breakColumns = room.columns
+            restRows = room.restRows
+            waitingRows = room.waitingRows
+            breakHeight = room.height
+            height = deskHeight
+                + (meetingHeight > 0 ? metrics.suiteGap + meetingHeight : 0)
+                + (breakHeight > 0 ? metrics.suiteGap + breakHeight : 0)
         }
-        let meetingHeight = meetingRows == 0
-            ? 0
-            : metrics.floorHeaderHeight
-                + CGFloat(meetingRows) * (metrics.tableHeight + metrics.tableGap)
-                - metrics.tableGap + Self.stripPadding
-
-        var breakColumns = 0
-        var restRows = 0
-        var waitingRows = 0
-        var breakHeight: CGFloat = 0
-        if drawsBreak {
-            let usable = width - Self.stripPadding * 2 - metrics.gateReserve
-            breakColumns = max(1, Int((usable / metrics.breakSeatSpacing).rounded(.down)))
-            restRows = floor.resting.isEmpty
-                ? 0 : max(1, (floor.resting.count + breakColumns - 1) / breakColumns)
-            // The waiting bench wraps like the rest of the room does. It is
-            // normally one row and it has to survive the afternoon where it
-            // is not.
-            waitingRows = floor.waiting.isEmpty
-                ? 0 : max(1, (floor.waiting.count + breakColumns - 1) / breakColumns)
-            // At least one row of break room even when nobody is in it,
-            // because the door stands in it and the overflow count is written
-            // on it.
-            let rows = max(1, restRows + waitingRows)
-            breakHeight = metrics.floorHeaderHeight + CGFloat(rows) * metrics.breakRowHeight
-        }
-
-        var height = deskHeight
-        if meetingHeight > 0 { height += metrics.suiteGap + meetingHeight }
-        if breakHeight > 0 { height += metrics.suiteGap + breakHeight }
+        let units = width / metrics.cellWidth
 
         return SuiteMeasurement(
             index: index,
@@ -891,6 +915,7 @@ public struct SceneLayout: Sendable, Equatable {
             placed: placed,
             rowCount: rowCount,
             deskHeight: deskHeight,
+            deskWidth: deskWidth,
             rooms: rooms,
             meetingRows: meetingRows,
             meetingHeight: meetingHeight,
@@ -898,9 +923,90 @@ public struct SceneLayout: Sendable, Equatable {
             restRows: restRows,
             waitingRows: waitingRows,
             breakHeight: breakHeight,
+            roomsWidth: roomsWidth,
+            isBeside: isBeside,
             units: units,
             height: height
         )
+    }
+
+    /// Packs the meeting rooms into a strip `width` points wide.
+    ///
+    /// Rooms run left to right and wrap, exactly as bays do. Given a column
+    /// one table wide — which is what a suite standing its rooms beside the
+    /// desks passes — every room wraps, and the strip becomes a column.
+    private func packMeetingRooms(
+        roomCount: Int,
+        widths: [CGFloat],
+        live: [(id: Int, table: TableState)],
+        floor: FloorState,
+        in width: CGFloat
+    ) -> (
+        rooms: [(id: Int, table: TableState?, row: Int, x: CGFloat, width: CGFloat)],
+        rows: Int,
+        height: CGFloat
+    ) {
+        guard roomCount > 0 else { return ([], 0, 0) }
+        var rooms: [(id: Int, table: TableState?, row: Int, x: CGFloat, width: CGFloat)] = []
+        let inner = Self.stripPadding
+        let limit = width - Self.stripPadding
+        var cursorX = inner
+        var meetingRow = 0
+        for slot in 0..<roomCount {
+            let roomWidth = widths[slot]
+            if cursorX > inner, cursorX + roomWidth > limit + 0.0001 {
+                meetingRow += 1
+                cursorX = inner
+            }
+            let id = slot < live.count ? live[slot].id : floor.tables.count + slot
+            rooms.append(
+                (
+                    id: id,
+                    table: slot < live.count ? live[slot].table : nil,
+                    row: meetingRow,
+                    x: cursorX,
+                    width: roomWidth
+                )
+            )
+            cursorX += roomWidth + metrics.tableGap
+        }
+        let rows = meetingRow + 1
+        let height = metrics.floorHeaderHeight
+            + CGFloat(rows) * (metrics.tableHeight + metrics.tableGap)
+            - metrics.tableGap + Self.stripPadding
+        return (rooms, rows, height)
+    }
+
+    /// How many seats fit across a break room `width` points wide, and how
+    /// many rows that makes.
+    private func breakMetrics(
+        floor: FloorState,
+        draws: Bool,
+        in width: CGFloat
+    ) -> (columns: Int, restRows: Int, waitingRows: Int, height: CGFloat) {
+        guard draws else { return (0, 0, 0, 0) }
+        let usable = width - Self.stripPadding * 2 - metrics.gateReserve
+        let columns = max(1, Int((usable / metrics.breakSeatSpacing).rounded(.down)))
+        let restRows = floor.resting.isEmpty
+            ? 0 : max(1, (floor.resting.count + columns - 1) / columns)
+        // The waiting bench wraps like the rest of the room does. It is
+        // normally one row and it has to survive the afternoon where it is
+        // not.
+        let waitingRows = floor.waiting.isEmpty
+            ? 0 : max(1, (floor.waiting.count + columns - 1) / columns)
+        // At least one row of break room even when nobody is in it, because
+        // the door stands in it and the overflow count is written on it.
+        let rows = max(1, restRows + waitingRows)
+        let height = metrics.floorHeaderHeight + CGFloat(rows) * metrics.breakRowHeight
+        return (columns, restRows, waitingRows, height)
+    }
+
+    /// How tall the two other rooms are together, gap included, when they are
+    /// stacked.
+    private func stackedHeight(meeting: CGFloat, breakRoom: CGFloat) -> CGFloat {
+        guard meeting > 0 || breakRoom > 0 else { return 0 }
+        guard meeting > 0, breakRoom > 0 else { return max(meeting, breakRoom) }
+        return meeting + metrics.suiteGap + breakRoom
     }
 
     /// Turns the allocation table into coordinates.
@@ -949,7 +1055,9 @@ public struct SceneLayout: Sendable, Equatable {
             }
             let left = cursorX
             let top = shelfTop
-            let deskRect = CGRect(x: left, y: top, width: width, height: measurement.deskHeight)
+            let deskRect = CGRect(
+                x: left, y: top, width: measurement.deskWidth, height: measurement.deskHeight
+            )
             let suiteRect = CGRect(x: left, y: top, width: width, height: measurement.height)
             let projectKey = floor.key.projectKey
             let breakKind = plan.zones.breakKind(forProject: projectKey)
@@ -1034,12 +1142,20 @@ public struct SceneLayout: Sendable, Equatable {
                 )
             )
 
-            var roomsBottom = deskRect.maxY
+            // Where the other rooms go. Under the desks in a small suite, and
+            // in a column to their right in a large one — the meeting room at
+            // the top of that column and the break room at its foot, on the
+            // corridor, which is where a door belongs and what keeps the two
+            // ends of the company's day at the two ends of its premises.
+            let roomsLeft = measurement.isBeside
+                ? left + measurement.deskWidth + metrics.suiteGap
+                : left
+            var roomsBottom = measurement.isBeside ? top : deskRect.maxY
             if measurement.meetingHeight > 0 {
                 let rect = CGRect(
-                    x: left,
-                    y: roomsBottom + metrics.suiteGap,
-                    width: width,
+                    x: roomsLeft,
+                    y: measurement.isBeside ? top : roomsBottom + metrics.suiteGap,
+                    width: measurement.roomsWidth,
                     height: measurement.meetingHeight
                 )
                 let counted = layOutMeeting(
@@ -1069,10 +1185,19 @@ public struct SceneLayout: Sendable, Equatable {
             }
 
             if measurement.breakHeight > 0 {
+                // Bottom-aligned when it stands beside the desks: the door is
+                // on the corridor, and the corridor runs along the bottom of
+                // the suite whatever is above it.
+                let breakTop = measurement.isBeside
+                    ? max(
+                        roomsBottom + metrics.suiteGap,
+                        suiteRect.maxY - measurement.breakHeight
+                    )
+                    : roomsBottom + metrics.suiteGap
                 let rect = CGRect(
-                    x: left,
-                    y: roomsBottom + metrics.suiteGap,
-                    width: width,
+                    x: roomsLeft,
+                    y: breakTop,
+                    width: measurement.roomsWidth,
                     height: measurement.breakHeight
                 )
                 let door = CGPoint(x: rect.maxX - metrics.gateReserve / 2, y: lane)

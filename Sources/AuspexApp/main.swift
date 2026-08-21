@@ -77,7 +77,13 @@ if let flag = arguments.firstIndex(of: "--render-scene") {
     let elapsed = positional.first.flatMap(TimeInterval.init) ?? 16
     let focus = positional.dropFirst().first
     do {
-        let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
+        // `crowd=N` adds one very large company to the demo's five, which is
+        // the only way to look at a suite whose desks wrap onto several rows —
+        // the case a person on a monorepo has open all day, and the one the
+        // suite layout has a decision to make about.
+        let crowd = rest.first { $0.hasPrefix("crowd=") }
+            .flatMap { Int($0.dropFirst(6)) } ?? 0
+        let board = SceneSnapshotRenderer.crowdedBoard(elapsed: elapsed, crowd: crowd)
         let project = focus.flatMap { SceneSnapshotRenderer.projectKey(named: $0, in: board) }
         if let focus, project == nil {
             FileHandle.standardError.write(
@@ -425,14 +431,17 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         `AUSPEX_APPEARANCE` does the same. Auspex follows the
                         system by default; the persistent choice lives in
                         Settings → Appearance.
-          --render-scene <path> [seconds] [project] [appearance=…]
+          --render-scene <path> [seconds] [project] [crowd=N] [appearance=…]
                         Render the scene view's office to a PNG, offscreen,
                         from the demo board at `seconds` into its loop
                         (default 16). Used to build the README screenshot.
                         With `project` — a project's short name — the camera
                         is bound to that room instead of framing the whole
                         map, which is what the scene does when a project is
-                        picked in the sidebar.
+                        picked in the sidebar. `crowd=N` adds one fabricated
+                        company of N sessions under
+                        /Users/example/Code/monorepo, which is how a suite
+                        whose desks wrap onto several rows gets looked at.
           --render-crew <path> [seconds] [animation seconds] [appearance=…]
                         Render the crew view's avatars to a PNG, offscreen,
                         from the demo board at `seconds` into its loop

@@ -30,6 +30,7 @@ import SpriteKit
 @MainActor
 final class ZoneNode: SKNode {
     private let ground = SKShapeNode()
+    private let border = SKShapeNode()
     private let headerRule = SKShapeNode()
     private let title = SKLabelNode()
     private let counts = SKLabelNode()
@@ -54,6 +55,14 @@ final class ZoneNode: SKNode {
         ground.strokeColor = theme.hairline
         ground.lineWidth = 1
         ground.zPosition = 0
+
+        // Four points inside the ground, so the two lines read as an edge and
+        // a margin rather than as one thick border.
+        let dashed = SceneRoomChrome.borderNode(theme: theme)
+        border.strokeColor = dashed.strokeColor
+        border.lineWidth = dashed.lineWidth
+        border.fillColor = .clear
+        border.zPosition = dashed.zPosition
 
         headerRule.strokeColor = theme.hairlineStrong
         headerRule.lineWidth = 1
@@ -81,6 +90,7 @@ final class ZoneNode: SKNode {
         gateSprite.isHidden = true
 
         addChild(ground)
+        addChild(border)
         addChild(path)
         addChild(headerRule)
         addChild(scenery)
@@ -107,6 +117,7 @@ final class ZoneNode: SKNode {
             ground.path = CGPath(
                 roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil
             )
+            border.path = SceneRoomChrome.border(in: rect)
 
             let headerY = rect.maxY - metrics.floorHeaderHeight
             let rule = CGMutablePath()
@@ -586,4 +597,52 @@ final class WalkerNode: SKNode {
     var layoutPosition: CGPoint { SceneGeometry.layout(from: position) }
 
     func retarget(to destination: String) { self.destination = destination }
+}
+
+
+/// The lines that tell one room of a suite from the next.
+///
+/// ## Why a suite needed drawing at all
+///
+/// A company's premises are three rooms in one outline, and until now the only
+/// thing that said so was that they were near each other. On a map of forty
+/// companies that is not enough: the reader's question is *which of these
+/// rectangles belong together*, and the answer was "the ones that happen to be
+/// stacked", which stopped being true the moment a big suite started standing
+/// its rooms beside its desks.
+///
+/// So every room draws its own ground, a dashed hairline four points inside
+/// its edge, and the suite draws one faint solid outline around the lot. The
+/// dash is deliberate: a dashed line reads as a *division within* something and
+/// a solid one as the edge *of* something, which is exactly the difference
+/// between a room and a company.
+///
+/// It is all procedural — one `SKShapeNode` per line, no textures. When the
+/// `partition`, `partitionGlass` and `floor*` tiles arrive (see
+/// `ART-HANDOFF.md` § 5.2) the tints become real walls and floors and these
+/// lines go away.
+@MainActor
+enum SceneRoomChrome {
+    /// How far inside a room's edge its dashed border runs.
+    static let inset: CGFloat = 4
+    /// The dash, in points: mark, gap.
+    static let dash: [CGFloat] = [5, 4]
+
+    /// The dashed border for a room's rectangle, in scene space.
+    static func border(in rect: CGRect) -> CGPath {
+        let inner = rect.insetBy(dx: inset, dy: inset)
+        guard inner.width > 0, inner.height > 0 else { return CGMutablePath() }
+        return CGPath(roundedRect: inner, cornerWidth: 3, cornerHeight: 3, transform: nil)
+            .copy(dashingWithPhase: 0, lengths: dash)
+    }
+
+    /// A room's dashed border node, ready to be given a path.
+    static func borderNode(theme: SceneTheme) -> SKShapeNode {
+        let node = SKShapeNode()
+        node.strokeColor = theme.hairlineStrong.withAlphaComponent(0.55)
+        node.lineWidth = 1
+        node.fillColor = .clear
+        node.zPosition = 0.4
+        return node
+    }
 }

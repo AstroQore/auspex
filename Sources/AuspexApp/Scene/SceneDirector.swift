@@ -48,6 +48,8 @@ final class SceneDirector {
     /// wherever it is.
     private var desks: [String: DeskNode] = [:]
     private var floors: [String: FloorNode] = [:]
+    /// One outline per company, under its rooms.
+    private var suites: [String: SuiteNode] = [:]
     private var zones: [String: ZoneNode] = [:]
     private var tables: [String: TableNode] = [:]
     private var tethers: [String: TetherNode] = [:]
@@ -333,6 +335,17 @@ final class SceneDirector {
         var tallies: [Int: BoardSnapshot.Counts] = [:]
         for floor in frame.floors {
             live.insert(floor.id)
+            let suite = suites[floor.id] ?? {
+                let created = SuiteNode(theme: theme)
+                suites[floor.id] = created
+                floorLayer.addChild(created)
+                return created
+            }()
+            suite.update(
+                suite: floor.suite,
+                lane: frame.walkways.lane(floor: floor.index),
+                theme: theme
+            )
             let node = floors[floor.id] ?? {
                 let created = FloorNode(theme: theme)
                 floors[floor.id] = created
@@ -354,6 +367,10 @@ final class SceneDirector {
         for (id, node) in floors where !live.contains(id) {
             node.removeFromParent()
             floors.removeValue(forKey: id)
+        }
+        for (id, node) in suites where !live.contains(id) {
+            node.removeFromParent()
+            suites.removeValue(forKey: id)
         }
     }
 
@@ -910,6 +927,87 @@ final class SceneDirector {
     private var lastCameraScale: CGFloat = 1
 }
 
+/// One company's premises, under everything in them.
+///
+/// It draws two things and no more: a faint solid outline around the whole
+/// suite, and the corridor along its foot.
+///
+/// The outline is what says *these rooms belong to each other*. It used to be
+/// implied by the rooms being stacked in a column, which stopped being true
+/// when a big company started standing its meeting room and its break room
+/// beside its desks — and was never true on a campus of forty companies, where
+/// the question a reader actually has is which rectangles are one repository.
+/// Solid, because it is the edge *of* a thing; the dashed lines inside it are
+/// divisions *within* one. See ``SceneRoomChrome``.
+///
+/// The corridor is a strip rather than the line it used to be. Every room in
+/// the company opens onto it, everybody who walks anywhere walks along it, and
+/// a floor a person can see is what makes a walk read as a walk rather than as
+/// a card sliding.
+@MainActor
+private final class SuiteNode: SKNode {
+    private let outline = SKShapeNode()
+    private let corridor = SKShapeNode()
+    private var lastSuite: CGRect = .null
+    private var lastLane: CGFloat = .nan
+
+    /// How tall the corridor strip is.
+    private static let corridorHeight: CGFloat = 16
+
+    init(theme: SceneTheme) {
+        super.init()
+        outline.fillColor = .clear
+        outline.strokeColor = theme.hairlineStrong.withAlphaComponent(0.7)
+        outline.lineWidth = 1
+        // Under the rooms, so their grounds paint over it and only the ring
+        // outside them is seen.
+        outline.zPosition = -1
+        // Darker than the rooms either side of it, which is what a corridor
+        // is: the floor nobody works on. *Over* the room grounds rather than
+        // under them, because it runs along the foot of the desks and through
+        // the break room — a strip drawn underneath would be a strip nobody
+        // ever sees.
+        corridor.fillColor = NSColor.black.withAlphaComponent(theme.isDark ? 0.30 : 0.10)
+        corridor.strokeColor = .clear
+        corridor.zPosition = 0.45
+        addChild(outline)
+        addChild(corridor)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("SuiteNode is not archived") }
+
+    func update(suite: CGRect, lane: CGFloat, theme: SceneTheme) {
+        guard suite != lastSuite || lane != lastLane else { return }
+        lastSuite = suite
+        lastLane = lane
+
+        // Layout space is y-down; the scene is y-up.
+        let rect = SceneGeometry.scene(from: suite).insetBy(dx: -6, dy: -6)
+        outline.path = CGPath(
+            roundedRect: rect, cornerWidth: 8, cornerHeight: 8, transform: nil
+        )
+
+        // Only when the corridor is inside the suite. A company with nothing
+        // but desks has its lane in the gap below itself, where a strip would
+        // be a floor drawn on the campus rather than in the building.
+        if lane <= suite.maxY {
+            let strip = CGRect(
+                x: suite.minX + 4,
+                y: -lane - Self.corridorHeight / 2,
+                width: suite.width - 8,
+                height: Self.corridorHeight
+            )
+            corridor.path = CGPath(
+                roundedRect: strip, cornerWidth: 3, cornerHeight: 3, transform: nil
+            )
+            corridor.isHidden = false
+        } else {
+            corridor.isHidden = true
+        }
+    }
+}
+
 /// One project's room: a panel, a nameplate, and a floor line under each row.
 ///
 /// The floor lines are what make a wrapped row read as another row of desks
@@ -919,6 +1017,7 @@ final class SceneDirector {
 @MainActor
 private final class FloorNode: SKNode {
     private let panel = SKShapeNode()
+    private let border = SKShapeNode()
     private let headerRule = SKShapeNode()
     private let title = SKLabelNode()
     private let counts = SKLabelNode()
@@ -933,6 +1032,14 @@ private final class FloorNode: SKNode {
         panel.lineWidth = 1
         panel.zPosition = 0
 
+        // The desks are a room like the other two, and they say so the same
+        // way — see ``SceneRoomChrome``.
+        let dashed = SceneRoomChrome.borderNode(theme: theme)
+        border.strokeColor = dashed.strokeColor
+        border.lineWidth = dashed.lineWidth
+        border.fillColor = .clear
+        border.zPosition = dashed.zPosition
+
         headerRule.strokeColor = theme.hairlineStrong
         headerRule.lineWidth = 1
         headerRule.zPosition = 1
@@ -945,6 +1052,7 @@ private final class FloorNode: SKNode {
         counts.zPosition = 2
 
         addChild(panel)
+        addChild(border)
         addChild(headerRule)
         addChild(title)
         addChild(counts)
@@ -972,6 +1080,7 @@ private final class FloorNode: SKNode {
             panel.path = CGPath(
                 roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil
             )
+            border.path = SceneRoomChrome.border(in: rect)
 
             let headerY = rect.maxY - metrics.floorHeaderHeight
             let rule = CGMutablePath()
