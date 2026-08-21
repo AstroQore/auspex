@@ -416,6 +416,37 @@ struct TaskUnitTests {
         #expect(groups.first?.title == "auspex")
     }
 
+    // MARK: - Filters
+
+    @Test("the filter bar offers only what the wall can answer")
+    func filterOptionsComeFromTheFrame() {
+        let ledger = TaskLedgerFrame(tasks: [
+            Self.task(id: 1, title: "Tailer", priority: 4),
+            Self.task(id: 2, title: "Retention", dependsOn: [1]),
+        ])
+        let units = Self.units(Self.board([]), ledger: ledger)
+        let options = TaskFilters.options(for: units)
+        #expect(options.importances == [.urgent])
+        #expect(options.hasDependencies)
+        #expect(!options.hasOrphans)
+    }
+
+    @Test("filters compose by conjunction, and an empty one keeps everything")
+    func filtersCompose() {
+        let ledger = TaskLedgerFrame(tasks: [
+            Self.task(id: 1, title: "Tailer", priority: 4),
+            Self.task(id: 2, title: "Retention", dependsOn: [1]),
+        ])
+        let units = Self.units(Self.board([]), ledger: ledger)
+        #expect(TaskFilters.none.apply(to: units).count == 2)
+        #expect(TaskFilters(importance: .urgent).apply(to: units).map(\.title) == ["Tailer"])
+        // The one that waits is not ready; the one that waits on nothing is.
+        #expect(TaskFilters(readyOnly: true).apply(to: units).map(\.title) == ["Tailer"])
+        #expect(
+            TaskFilters(importance: .normal, readyOnly: true).apply(to: units).isEmpty
+        )
+    }
+
     // MARK: - Handles
 
     @Test("a handle is stable, readable, and never says i, l, o or u")

@@ -59,6 +59,31 @@ struct AuspexApp: App {
                     .disabled(!environment.updates.canCheckForUpdates)
             }
             CommandGroup(after: .toolbar) {
+                // The one shortcut this window did not have and every board of
+                // this shape eventually grows: a field that reaches anything on
+                // the frame by name, and does the two or three things that
+                // otherwise need a right-click on a card you have to find
+                // first. See ``CommandPalette``.
+                Button("Go to Task\u{2026}") {
+                    environment.board.isPaletteOpen.toggle()
+                }
+                .keyboardShortcut("k", modifiers: .command)
+                Button("Open Task") {
+                    guard let unit = environment.board.selectedUnit else { return }
+                    environment.board.openUnitID = unit.id
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(environment.board.selectedUnit == nil)
+                // ⇧⌘K is already Mark All as Seen, which is the attention
+                // model's escape hatch and cannot move. Closing pairs with
+                // opening instead, which is the more useful adjacency anyway.
+                Button("Close Task") {
+                    guard let unit = environment.board.selectedUnit, unit.isInReview else { return }
+                    environment.tasks.close(unit: unit)
+                }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .disabled(environment.board.selectedUnit?.isInReview != true)
+                Divider()
                 Button(trajectoryCommandTitle) {
                     if environment.board.viewMode == .trajectory {
                         environment.board.closeTrajectory()

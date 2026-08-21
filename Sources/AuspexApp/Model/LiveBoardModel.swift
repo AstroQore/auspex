@@ -552,6 +552,9 @@ final class LiveBoardModel {
     /// The unit whose detail page is open, if any.
     var openUnitID: String?
 
+    /// Whether the command palette is on screen. ⌘K.
+    var isPaletteOpen = false
+
     /// The row for one session, for a menu that was handed only a key.
     ///
     /// Built on demand from the frame's index rather than carried: this is a

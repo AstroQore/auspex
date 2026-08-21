@@ -565,6 +565,47 @@ final class TasksModel {
         reload()
     }
 
+    // MARK: - One task's history
+
+    /// The task the detail page is reading, and its log.
+    ///
+    /// Loaded on demand and cached by id. The log is the one part of a task
+    /// that is not on the frame — it is rows in SQLite, and there is no reason
+    /// for the board to carry every note of every task it can see on the off
+    /// chance somebody opens one.
+    private(set) var openLog: [AuspexTaskLogEntry] = []
+    private var openLogTaskID: Int64?
+    private var logTask: Task<Void, Never>?
+
+    /// Reads one task's history, if it is not already the one in hand.
+    func loadLog(taskID: Int64?) {
+        guard let taskID, taskID > 0 else {
+            openLogTaskID = nil
+            openLog = []
+            return
+        }
+        guard openLogTaskID != taskID else { return }
+        openLogTaskID = taskID
+        openLog = []
+        refreshLog()
+    }
+
+    /// Re-reads the history of whatever the detail page is showing.
+    func refreshLog() {
+        guard let repository, let taskID = openLogTaskID else { return }
+        logTask?.cancel()
+        logTask = Task { [weak self] in
+            let entries = await Task.detached(priority: .userInitiated) {
+                (try? repository.log(taskID: taskID)) ?? []
+            }.value
+            guard !Task.isCancelled, self?.openLogTaskID == taskID else { return }
+            self?.openLog = entries
+        }
+    }
+
+    /// Every task in the ledger, for a dependency picker.
+    var allTasks: [AuspexTask] { latest?.tasks ?? [] }
+
     /// Writes one line into a task's history.
     func log(taskID: Int64, kind: TaskNoteKind, message: String, ref: String?) {
         guard let repository, !message.trimmingCharacters(in: .whitespaces).isEmpty else { return }
@@ -574,6 +615,11 @@ final class TasksModel {
             )
         }
         reload()
+        // The page the person is looking at, not only the board behind it.
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            self?.refreshLog()
+        }
     }
 
     /// Sets what a task waits on.

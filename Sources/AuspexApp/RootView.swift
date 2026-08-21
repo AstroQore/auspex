@@ -75,6 +75,24 @@ struct RootView: View {
             }
         }
         .modifier(KillConfirmation(control: environment.control))
+        // Over everything, and dismissed by clicking anywhere else. A palette
+        // in a sheet would take the window's key focus and animate; this is a
+        // panel that appears where a person is already looking.
+        .overlay(alignment: .top) {
+            if environment.board.isPaletteOpen {
+                ZStack(alignment: .top) {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea()
+                        .onTapGesture { environment.board.isPaletteOpen = false }
+                    CommandPalette(
+                        board: environment.board,
+                        tasks: environment.tasks,
+                        catalog: environment.catalog
+                    )
+                    .padding(.top, 96)
+                }
+            }
+        }
         .sheet(isPresented: Binding(
             get: { environment.setup.shouldPresent },
             set: { if !$0 { environment.setup.markShown() } }
@@ -146,6 +164,60 @@ struct RootView: View {
         @Bindable var model = model
 
         VStack(spacing: 0) {
+            // A task's page replaces the column, header and all: the crumb it
+            // draws is the way back, and a board header over a page about one
+            // task would be counting a wall nobody is looking at.
+            if let unit = model.openUnit {
+                TaskDetailView(unit: unit, board: model, tasks: environment.tasks)
+            } else {
+                boardBody(model: model)
+            }
+        }
+        .background(AuspexPalette.canvas)
+        // Every control in this column is drawn by hand, so none of them wants
+        // AppKit's blue ring around it. The board's own hairline goes on
+        // instead — see `AuspexButtonStyle`.
+        .auspexControlFocus()
+        .navigationSplitViewColumnWidth(min: 460, ideal: 788)
+        // Below the header, not over it. The panel is anchored under the
+        // search field it came out of, which is in that bar — hanging it at
+        // the column's top edge put it across the heading and the state chips,
+        // so the one row that says what is being searched disappeared the
+        // moment somebody searched.
+        .overlay(alignment: .top) {
+            if model.openUnitID == nil, model.searchDidRun || !model.searchHits.isEmpty {
+                SearchResultsView(model: model)
+                    .padding(.horizontal, 20)
+                    .padding(.top, BoardHeader.height + 8)
+            }
+        }
+        // Escape is the way back out of a task, and then out of a project,
+        // wherever the pointer is. One key, the nearest thing first: both are
+        // "I am done looking at this".
+        .onExitCommand {
+            if model.openUnitID != nil {
+                model.openUnitID = nil
+            } else {
+                model.focusedProjectKey = nil
+            }
+        }
+        .onChange(of: section) { _, new in
+            // "All sessions" is the same board with its history opened out, so
+            // selecting it is what opens the collapsed section rather than a
+            // separate screen that would show the same cards twice.
+            if new == .allSessions { model.showsAllEnded = true }
+            if new == .live { model.showsAllEnded = false }
+            // A task's page belongs to the board. Going anywhere else closes
+            // it rather than leaving it underneath, ready to reappear.
+            if new != .live, new != .allSessions { model.openUnitID = nil }
+        }
+    }
+
+    @ViewBuilder
+    private func boardBody(model: LiveBoardModel) -> some View {
+        @Bindable var model = model
+
+        VStack(spacing: 0) {
             BoardHeader(model: model, section: section ?? .live)
             Group {
                 if section == .harnesses {
@@ -189,35 +261,6 @@ struct RootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .background(AuspexPalette.canvas)
-        // Every control in this column is drawn by hand, so none of them wants
-        // AppKit's blue ring around it. The board's own hairline goes on
-        // instead — see `AuspexButtonStyle`.
-        .auspexControlFocus()
-        .navigationSplitViewColumnWidth(min: 460, ideal: 788)
-        // Below the header, not over it. The panel is anchored under the
-        // search field it came out of, which is in that bar — hanging it at
-        // the column's top edge put it across the heading and the state chips,
-        // so the one row that says what is being searched disappeared the
-        // moment somebody searched.
-        .overlay(alignment: .top) {
-            if model.searchDidRun || !model.searchHits.isEmpty {
-                SearchResultsView(model: model)
-                    .padding(.horizontal, 20)
-                    .padding(.top, BoardHeader.height + 8)
-            }
-        }
-        // Escape is the way back out of a project, wherever the pointer is.
-        // The same key that closes a sheet unbinds the window from one
-        // project, because both are "I am done looking at this".
-        .onExitCommand { model.focusedProjectKey = nil }
-        .onChange(of: section) { _, new in
-            // "All sessions" is the same board with its history opened out, so
-            // selecting it is what opens the collapsed section rather than a
-            // separate screen that would show the same cards twice.
-            if new == .allSessions { model.showsAllEnded = true }
-            if new == .live { model.showsAllEnded = false }
         }
     }
 }
