@@ -62,6 +62,31 @@ struct FlockShapesTests {
         #expect(shapes != FlockShapes.family)
     }
 
+    @Test("the demo's own scaled wall spreads across the family")
+    func demoWallSpreads() {
+        // The keys a `--demo-scale 12` wall actually holds, which differ from
+        // each other in ways a weaker hash would collapse: the scale copies a
+        // cast and gives each copy a suffix, so a hash that leaked its low bits
+        // would give every copy of one session the same body and the wall would
+        // read as twelve rows of the same two birds.
+        let board = DemoScript.make(
+            seed: DemoScript.defaultSeed, startedAt: Fixtures.epoch, scale: 12
+        )
+        var keys: Set<SessionKey> = []
+        for step in board.steps { keys.insert(step.event.session) }
+        var tally: [BloubShapeID: Int] = [:]
+        for key in keys { tally[FlockShapes.shape(for: key), default: 0] += 1 }
+        #expect(keys.count > 100)
+        #expect(tally.keys.count == FlockShapes.family.count)
+        let fair = Double(keys.count) / Double(FlockShapes.family.count)
+        for (id, seen) in tally {
+            #expect(
+                Double(seen) < fair * 2,
+                "\(id.rawValue) took \(seen) of \(keys.count), fair share is \(fair)"
+            )
+        }
+    }
+
     @Test("over a wall's worth of sessions every body is used, and none twice over")
     func assignmentSpreadsAcrossTheFamily() {
         var tally: [BloubShapeID: Int] = [:]
