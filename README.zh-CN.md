@@ -1,14 +1,26 @@
-# Auspex
+<p align="center">
+  <img src="docs/brand/auspex-logo.png" alt="Auspex" width="160">
+</p>
+
+<h1 align="center">Auspex</h1>
 
 <p align="center">
   <strong>把 Mac 上所有 AI 编程 agent 汇总到同一块实时看板。</strong>
 </p>
 
 <p align="center">
+  <a href="https://github.com/AstroQore/auspex/actions/workflows/ci.yml"><img src="https://github.com/AstroQore/auspex/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/AstroQore/auspex/releases/latest"><img src="https://img.shields.io/github/v/release/AstroQore/auspex?display_name=tag&sort=semver" alt="最新发布"></a>
   <img src="https://img.shields.io/badge/status-pre--alpha-orange" alt="状态：pre-alpha">
   <img src="https://img.shields.io/badge/macOS-26%2B-000000?logo=apple" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white" alt="Swift 6.2">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="AGPL-3.0-only"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/AstroQore/auspex/releases"><strong>下载</strong></a>
+  · <a href="#构建与运行">从源码构建</a>
+  · <a href="#致谢">致谢</a>
   · <a href="README.md">English</a>
 </p>
 
@@ -21,8 +33,21 @@ Codex、ChatGPT Work、Cursor、Grok Build、Grok Bot、AntiGravity —— 并�
 > **状态：pre-alpha。** 它能跑，它在 tail 真实的存储，作者每天在用。但还没有正式
 > 发布过版本，没有公证过的构建，版本之间也没有升级路径 —— 数据库 schema 还在变。
 > 发布流程和应用内更新的机制已经就位（见 `RELEASING.md`），只是还没有真正走过一次。
+> 所以上面那个「下载」链接目前是一句承诺，今天的答案是两条命令：
+>
+> ```sh
+> git clone https://github.com/AstroQore/auspex.git && cd auspex
+> ./Scripts/build_app.sh release && open .build/Auspex.app
+> ```
 
-![Auspex 看板：按项目分组的会话卡片，右侧是某个会话的轨迹](docs/screenshots/board.png)
+![Auspex Ledger：按项目分组的会话卡片，右侧是某个会话的轨迹](docs/screenshots/board.png)
+
+<details>
+<summary>同一块 Ledger 的浅色外观</summary>
+
+![浅色外观下的 Ledger：同一堵卡片墙，落在温暖的米白底色上](docs/screenshots/board-light.png)
+
+</details>
 
 ## 为什么
 
@@ -94,13 +119,12 @@ ad-hoc 签名的阶段这一点尤其重要，Gatekeeper 会让你手动放行�
 
 每一个颜色都有两套取值——同样的四级表面、同样的三级文字、每种状态一个颜色、每个
 harness 一个颜色，变的只是明度——所以浅色和深色是同一块看板，不是两套设计。Auspex
-默认跟随 Mac 的外观设置，包括日落时的自动切换。
-
-![浅色外观下的看板：同一堵卡片墙，落在温暖的米白底色上](docs/screenshots/board-light.png)
+默认跟随 Mac 的外观设置，包括日落时的自动切换。上面那张看板的浅色版折在本页开头的
+折叠块里。
 
 **设置 → Appearance** 可以强制浅色或深色，可以让侧栏在系统材质和看板自己的纯色底
 之间切换，并且会把当前生效的强调色、背景色、前景色三块色板显示出来。切换不需要重
-启：窗口、菜单栏面板、办公室场景和 Crew 都会就地重绘。`--appearance light|dark`
+启：窗口、菜单栏面板、Aviary 和 Flock 都会就地重绘。`--appearance light|dark`
 对单次启动做同样的事而不写入设置，性能预算就是这样对两套外观分别测量的。
 
 下面每一张截图在 `docs/screenshots/` 下都有一张 `-light` 的同名版本，由同一条命令
@@ -108,23 +132,24 @@ harness 一个颜色，变的只是明度——所以浅色和深色是同一块
 
 ## 同一块看板的四种读法
 
-顶部的分段控件切换实时会话的画法。它是"模式"而不是"页面"：选中项、分组、过滤器，
+顶部的分段控件切换实时会话的画法。它是「模式」而不是「页面」：选中项、分组、过滤器，
 以及旁边的轨迹面板，都会跨切换保留。
 
-**Board** 是卡片墙 —— 唯一能一次显示全部会话的视图，也是把*这个会话正在干什么*讲
-得最精确的那个：状态、工具名、目标文件、耗时、token、它被要求做什么、它最后说了
-什么。
+**Ledger**（原 Board）是卡片墙 —— 唯一能一次显示全部会话的视图，也是把*这个会话
+正在干什么*讲得最精确的那个：状态、工具名、目标文件、耗时、token、它被要求做什么、
+它最后说了什么。
 
-**Scene** 把同一块看板画成一间办公室。每个会话是一个坐在工位上的人，每个项目是他们
-共用的一个房间，子 agent 坐在派生它的 agent 旁边的小工位上。最响的通道是光：显示器
-的颜色就是会话的状态，它的节奏就是那个状态的动作。六个房间的灯光会在任何形状被辨认
-出来之前先形成图案。
+**Aviary**（原 Scene）把同一块看板画成一个地方。每个会话是一个人，每个项目是一个
+房间，而*人在哪里*是一眼最先读到的东西：干活的会话坐在自己工位上；正在派发的会话走进会议室，它
+派生的子 agent 围着长桌坐一圈；空闲的会话在花园长椅上歇着 —— 其中做完了某件事、而
+你还没看的那些手里捏着一张纸条 —— 结束的会话从门口走出去。最响的通道是光：显示器
+的颜色就是会话的状态，它的节奏就是那个状态的动作。
 
-![场景视图：一个项目一个房间，agent 坐在工位上，显示器被它们正在做的事点亮](docs/screenshots/scene.png)
+![Aviary：一个项目一个房间，agent 坐在工位上，显示器被它们正在做的事点亮](docs/screenshots/scene.png)
 
-画布是真正的 `NSScrollView`，所以两指可以像在"预览"里那样同时平移和捏合，带同样的
+画布是真正的 `NSScrollView`，所以两指可以像在「预览」里那样同时平移和捏合，带同样的
 惯性和同样的弹性边缘；⌘-滚动缩放，两指双击框住指针下的房间，**Fit**（⌘0）框住全部。
-点击工位会填充轨迹面板 —— 和点击卡片是同一个选中。开启"减弱动态效果"后，所有节奏都
+点击工位会填充轨迹面板 —— 和点击卡片是同一个选中。开启「减弱动态效果」后，所有节奏都
 塌缩成静态姿势。
 
 | 状态 | 工位 | Agent |
@@ -133,20 +158,48 @@ harness 一个颜色，变的只是明度——所以浅色和深色是同一块
 | 调用工具 | 屏幕闪烁，琥珀色 | 双手快速交替 |
 | 写文件 | 稳定绿色，桌上有纸 | 双手交替，半速 |
 | 派发子 agent | 稳定紫色，连线脉动 | 站起来递出一张纸条 |
-| 等待授权 | 红色频闪 | 举手，红色 `!` 气泡 |
-| 空闲 · 沉默 · 结束 | 暗 · 暗 · 黑 | 瘫着 · `zzz` · 人走了 |
+| 空闲 · 沉默 · 结束 | 暗 · 暗 · 黑 | 瘫着 · `zzz` · 从门口走出去 |
 
-其中只有一个被允许大喊大叫，而它恰好是没有人就永远不会自己解决的那个。
+只有一样东西被允许大喊大叫，而它恰好是没有人就永远不会自己解决的那个 —— 但它不是
+一种状态。见下一节。
 
 | | |
 | --- | --- |
-| ![Crew 视图：一个会话一个几何头像](docs/screenshots/crew.png) | ![Trajectory 视图：一个会话的轮次瀑布流与步骤列表](docs/screenshots/trajectory.png) |
-| **Crew** —— 一个会话一个几何头像，表情和姿态由这个会话正在做的事驱动。信息量和场景相同，像素只用十分之一。 | **Trajectory**（⌘T）—— 把单个会话摊开：轮次瀑布流、它走过的每一步，以及选中那一步的检视器。 |
+| ![Flock：一个会话一个几何头像](docs/screenshots/crew.png) | ![Flight：一个会话的轮次瀑布流与步骤列表](docs/screenshots/trajectory.png) |
+| **Flock**（原 Crew）—— 一个会话一个几何头像，表情和姿态由这个会话正在做的事驱动。信息量和 Aviary 相同，像素只用十分之一。 | **Flight**（原 Trajectory，⌘T）—— 把单个会话摊开：轮次瀑布流、它走过的每一步，以及选中那一步的检视器。 |
+
+## 两个轴：会话在做什么，以及它要不要你
+
+**活动（Activity）** 永远是推断出来的，对机器上的每个会话都推断 —— 干活、空闲、
+沉默、结束。**注意力（Attention）** 从不推断。只有当某样东西*明确说了*，一张卡片
+才会被算作在等人或者已经做完：agent 调用 `auspex.notify`、一次 `PermissionRequest`
+hook，或者 harness 自己的授权等待。
+
+两者互相独立。一个 agent 在 `swift build` 还没跑完时报告自己完成了，那它同时是「在
+干活」和「已完成」，而且两件事都为真。
+
+| | 什么会把卡片放进来 | Ledger | Aviary | 菜单栏 | 通知 |
+| --- | --- | --- | --- | --- | --- |
+| **需要你** | `notify(needs_input\|needs_review\|blocked)`、授权 hook、harness 自己的等待 | 红环、呼吸、排在最前 | 花园第一排，红色 `!` | `! N` | 总是 |
+| **已完成** | `notify(done)`、`tasks.complete` | 绿环，附上 agent 自己那句话 | 同一排，绿色 `✓` | `✓ N` | 默认开 |
+| **干活中** | 思考、工具、写文件、子 agent | 普通卡片 | 工位或会议桌 | `▶ N` | 无 |
+| **空闲** | 一轮结束，没有未了事项 | 灰色胶囊 | 花园长椅，太久就打盹 | — | 无 |
+| **已结束** | 进程没了 | 折叠起来 | 从门口走出去 | — | 无 |
+
+*空闲*和*结束*这一对值得说准：**空闲意味着你还能在那个终端里继续说话**，而**结束
+意味着那条线没了 —— 只有 Resume 能把活儿接回来**。
+
+一轮单纯地结束，不属于以上任何一种。它就是空闲，只在卡片上留一个很淡的点，别的什么
+都不做：在一台跑了一整周 agent 的机器上，这个推断同时对几百个会话成立，而一个没人能
+处理的计数会把它旁边那些计数一起拖下水。
+
+两个「响」的分桶都会自己清掉。打开卡片、在那个会话自己的终端里敲字、agent 重新开始
+干活、点「Dismiss」、点「Mark all as seen」，或者过了一天 —— 以先发生的为准。
 
 ## 看板不只显示 agent 在做什么，也显示它要什么
 
 被动观察回答不了*这个会话是不是在等我*。Claude Code 和 Cursor 不会把授权状态写到
-磁盘上，"我问了你一个问题，我在等"在任何 harness 的文件里都是不可见的。所以 Auspex
+磁盘上，「我问了你一个问题，我在等」在任何 harness 的文件里都是不可见的。所以 Auspex
 在 `~/.auspex/mcp.sock` 上跑一个 MCP server，让会话自己说。
 
 ```jsonc
@@ -166,7 +219,8 @@ args = ["--mcp-stdio"]
 
 - **`auspex.notify(kind, message)`** —— `needs_input`、`needs_review`、
   `blocked` 或 `done`，附一句话。它会发一条 macOS 通知，把卡片移进对应的分桶，并把
-  agent 自己的话写在上面。`needs_input` 会在真人下次对那个会话说话时自动清除。
+  agent 自己的话写在上面。它会在真人下次对那个会话说话、打开卡片，或者过了一天之后
+  自动清除。`tasks.complete` 自己就会记一条 `done`，所以 worker 不用说两遍。
 - **`auspex.report(focus, progress)`** —— 用会话自己的一句话替换 Auspex 对它在做
   什么的推断。
 - **`tasks.*`** —— 共享任务看板。**每条任务都属于某个项目**，项目由调用方所在的
@@ -186,7 +240,10 @@ args = ["--mcp-stdio"]
 在 200 ms 内以 0 退出 —— 因为 hook 是正在干活的 agent 的同步子进程，绝不能卡住它，
 更不能否决它。
 
-![Tasks 页：每个项目一条泳道，里程碑在项目内部，以及每条任务被谁认领](docs/screenshots/tasks.png)
+**Roost**（原 Tasks）是把这块任务看板读回来的地方：每个项目一条泳道、
+里程碑在项目内部，每条任务按状态排列，卡片上写着是谁认领的。
+
+![Roost：每个项目一条泳道，里程碑在项目内部，以及每条任务被谁认领](docs/screenshots/tasks.png)
 
 ## 项目、委派树，以及你不想看到的会话
 
@@ -197,13 +254,13 @@ args = ["--mcp-stdio"]
 
 - **侧栏**列出看板上的每个项目，并给出正在其中运行的数量。同一仓库的三个 worktree
   是一个项目下的三个 checkout；agent worktree 用任务名而不是路径来标注。点击一个项目
-  会把所有界面都绑到它上面 —— 卡片墙、树，以及场景的镜头。
+  会把所有界面都绑到它上面 —— 卡片墙、树，以及 Aviary 的镜头。
 - **Group by: Tree** 把卡片墙变成委派森林。轨迹头部会说明这条父子关系是*怎么*确定
   的 —— 父会话自己的日志记录了这次派生、子进程继承了环境变量、进程树上的祖先关系，
   还是人手动连的 —— 因为这几种证据的强度完全不同。
 - **你自己的项目**可以认领文件夹，于是属于同一件事的六个目录会被读成一个项目，不管
   git 怎么说。**忽略规则**可以隐藏一个文件夹、一个项目、一个 prompt 前缀、一整个
-  harness，或标题里的一个子串。被忽略不等于被删除：头部会给出"N ignored"，点开就把
+  harness，或标题里的一个子串。被忽略不等于被删除：头部会给出「N ignored」，点开就把
   它们以变暗的样子放回来。
 
 ## Harness
@@ -226,6 +283,52 @@ args = ["--mcp-stdio"]
 Claude Cowork，Codex 与 ChatGPT Work。区分它们靠主色和全名，而不是改动 logo。
 Gemini CLI 能被识别但不进这八个：它已被弃用，Auspex 也没有对应的实时 adapter。
 
+### 每个 harness 到底能被看到多少
+
+一等公民不等于一样多。Auspex 只能读到 harness 自己写下来的东西，而它们写下来的东西
+差别很大。下面这张表是 adapter 今天真正做到的，不是它们本可以做到的。
+
+| | 实时状态 | 工具 | 子 agent | 等待授权 | 上下文窗口 | 配额 | Resume |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| **Claude Code** | ✓ | ✓ | ✓ | hook | 推导 | — | ✓ |
+| **Claude Cowork** | ✓ | ✓ | ✓ | MCP | 推导 | — | — |
+| **Codex** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **ChatGPT Work** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Cursor** | ✓ | ✓ | hook | MCP | — | — | — |
+| **Grok Build** | ✓ | ✓ | 推导 | ✓ | ✓ | — | ✓ |
+| **Grok Bot** | 推导 | — | — | ✓ | — | — | — |
+| **AntiGravity** | ✓ | ✓ | ✓ | ✓ | — | — | 仅 CLI |
+
+**✓** harness 自己的存储里就写了 · **推导** Auspex 自己算出来 ·
+**hook** 只有装上可选的 hook 才知道（Settings → Harnesses）·
+**MCP** 只有 agent 自己通过 `auspex.notify` 说了才知道 ·
+**—** 磁盘上没有任何东西能回答它。
+
+`auspex.notify` 对八个 harness 都有效；标 **MCP** 的格子表示它是*唯一*的答案。
+
+按列读比按行读有用，每一列都是一种不同的缺口：
+
+- **实时状态 · 工具。** 除 Grok Bot 外，每个 harness 都会写一份带工具调用的转录。
+  Grok Bot 的存储只记一个 streaming 标志和文本，没有工具名、没有模型、没有 token
+  计数，所以它的卡片只说「思考中」或「空闲」，然后诚实地打住。
+- **子 agent。** Claude Code、Claude Cowork、Codex 和 AntiGravity 都会记录一条从子
+  会话回指父会话的链接，所以委派树是读出来的而不是猜出来的。Grok Build 把
+  `spawn_subagent` 记成一个工具名，却从不写它创建的那个会话是谁，所以 Auspex 知道
+  发生了一次派发，但不知道派给了谁。Cursor 的父子关系只从 hook 来。这些都没有的时候
+  还有进程表兜底，而且轨迹头部永远会说明这条父子关系是哪一类证据 —— 记录在案的派生、
+  继承的环境变量、进程祖先，还是人自己连的。
+- **等待授权。** Codex、Grok Build、Grok Bot 和 AntiGravity 会写下来。Claude Code
+  和 Cursor 在自己的界面里决定这件事，在答案回来之前转录里什么都没有 —— 这正是 MCP
+  server 和 hook 存在的全部理由。
+- **上下文窗口 · 配额。** Codex 两样都报，实测值，来自它自己的 rollout。Grok Build
+  报上下文，实测值。Claude Code 和 Claude Cowork 报 token 用量，Auspex 拿它对一张
+  模型窗口大小表算出百分比，所以这两格写「推导」。**这两列目前在 app 里哪儿都没有
+  画出来** —— 流水线算了，卡片显示的是累计 token，仪表还没做。之所以列在这里，是因为
+  数据是真的，缺的是那一半界面。
+- **Resume。** `claude --resume`、`codex resume`、`grok --resume`，以及从 CLI 而不是
+  IDE 启动的 AntiGravity 会话的 `agy --conversation`。其余几个没有可以 resume *回去*
+  的地方：Cursor 和 Claude Cowork 自己管着窗口，而 Grok Bot 的会话跑在服务端。
+
 Harnesses 页回答两个问题：*为什么这个 harness 没出现在看板上*，以及*它能够到什么*。
 页面给出它的存储在本机是否存在、有多少会话正在运行、最后一次活动是什么时候，以及它
 配置了哪些 MCP server 和 hook。这一页背后的每个文件都只读不写。
@@ -235,11 +338,52 @@ MCP server —— 所以它的截图就是某个人的环境快照，而这个�
 
 ## 角色包
 
-场景里的人在美术资源到位之前都是代码画的占位图形。真正的角色是一个文件夹 —— 一份
+Aviary 里的人在美术资源到位之前都是代码画的占位图形。真正的角色是一个文件夹 —— 一份
 manifest 加上每个姿势一条帧带 —— 放进 `~/.auspex/characters/` 就会被拾取，不需要重新
 构建也不需要重启，可以一个姿势一个姿势地补。
 [`docs/CHARACTERS.md`](docs/CHARACTERS.md) 是规格；Settings → Characters 是按 harness
 选择角色的地方。
+
+## 设置
+
+五个面板，每一个都只写 `~/.auspex/settings.json`，不写别处，所以凡是能设的都能不开
+app 直接读、改、撤销。
+
+- **Appearance** —— 浅色、深色，或跟随系统；侧栏用哪种材质；以及这个选择最终解析出的
+  三个颜色。切换不重启。
+- **Characters** —— Aviary 和 Flock 里每个 harness 穿哪个角色包。
+- **Harnesses** —— 把 Auspex 的 MCP server（以及有 hook 机制的 harness 的 hook）注册
+  进那个 harness 自己的配置。可选、带围栏、先备份、可撤销；这是 Auspex 唯一一处写到
+  自己目录之外的地方。
+- **Projects** —— 你自己的项目认领，让本属同一件事的目录被读成一个项目；以及把其余
+  会话挡在看板外的忽略规则。
+- **Updates** —— Stable 还是 Dev，以及这份拷贝上次检查是什么时候。
+
+## 它是怎么工作的
+
+八行，然后是长版本。
+
+1. 每个 harness 本来就会把会话写在用户目录下的某个地方 —— JSONL 转录、SQLite 存储、
+   protobuf 记录行。
+2. 每个 harness 一个 **source adapter**，就地 tail 这些文件、从当前末尾开始读，并且
+   从不往回写一个字节。
+3. 每个 adapter 把读到的东西翻译成同一套很小的**事件**词汇 —— 一次提问、一次工具
+   调用、一次写文件、一个子 agent、一次结束。
+4. 一个 **reducer** 把这些事件折叠成单个会话的状态；一个**注册表**持有每个活着的
+   会话、它的项目和它的父亲。
+5. 一个 **frame assembler** 在主 actor 之外推导出整扇窗口要画的那一帧，所以 UI 永远
+   只比较扁平的值。
+6. 所有要落盘的东西都经由 `AuspexPaths` 进入 **`~/.auspex/` 下唯一一个存储**
+   （权限 0700）—— SQLite 数据库、设置、备份。
+7. `~/.auspex/mcp.sock` 上的一个 **MCP server** 让会话说出推断看不见的事：它卡住了、
+   它做完了、它正在做什么。
+8. **Hook 是可选的，而且带围栏。** 只有你点了 Auspex 才写，只写在它自己拥有的区域
+   里，写之前先备份，并且可以精确撤销。
+
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 是长版本：adapter、事件流与 reducer、
+注册表、frame assembler、GRDB 存储，以及 MCP 接口。[`RELEASING.md`](RELEASING.md) 讲
+一次构建是怎么切出来、签名并发布的。[`CONTRIBUTING.md`](CONTRIBUTING.md) 讲怎么参与
+开发。
 
 ## 数据从哪来
 
@@ -273,7 +417,7 @@ prompt 的任何内容。Auspex 按这个标准对待它们。
   （`cursor-agent --api-key …`）。
 - agent 通过 MCP 写进来的文本，会在进入存储或屏幕之前被剥掉控制字符、双向覆写字符和
   零宽格式字符。
-- 不上传任何东西；也没有"关闭遥测"的开关，因为根本没有遥测。
+- 不上传任何东西；也没有「关闭遥测」的开关，因为根本没有遥测。
 - 仓库是公开的：真实 token、组织 ID、账号 ID、邮箱地址，以及 `/Users/<name>` 路径，
   都不允许出现在源码、fixture 或日志中。
 
@@ -290,21 +434,80 @@ Auspex 整天跟它观察的那些 harness 一起跑，所以它的开销是一�
 | ------ | ---- | ---- |
 | **M0** | 仓库骨架，以及共享包 `agent-session-kit`：会话模型、事件流、source adapter 协议。 | 已完成 |
 | **M1** | Claude Code 与 Codex 的实时看板、会话轨迹与菜单栏，实时更新。 | 已完成 |
-| **M2** | 全部八个 harness，项目与任务分组，用户自己的项目与忽略规则，场景视图与 Crew 视图。 | 已完成 |
+| **M2** | 全部八个 harness，项目与任务分组，用户自己的项目与忽略规则，Aviary 与 Flock 视图。 | 已完成 |
 | **M3** | 基于 `~/.auspex/mcp.sock` 的 MCP 任务看板、`--mcp-stdio` 桥接、可选的 harness hook（`--hook`），以及一键写入各 harness 配置。 | 已完成 |
 | **M4** | 保留策略的定时执行，以及控制能力 —— 不只是观察，还能直接对会话执行操作。 | 下一步 |
-
-## 架构
-
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 描述它是怎么拼起来的：source adapter、
-事件流与状态 reducer、会话注册表、board frame assembler、GRDB 存储，以及 MCP 接口。
 
 ## 参与贡献
 
 分支与 PR 流程、隐私规则见 [`CONTRIBUTING.md`](CONTRIBUTING.md)；完整的操作手册
 （包括 AI agent 在本仓库工作时必须遵守的约定）见 [`AGENTS.md`](AGENTS.md)。
+行为准则见 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)；安全问题报告见
+[`SECURITY.md`](SECURITY.md)。
 
-安全问题报告见 [`SECURITY.md`](SECURITY.md)。
+## 致谢
+
+这里几乎没有什么是第一次被想出来的。下面按它们出现在屏幕上的顺序，写清楚拿了什么、
+从谁那里拿的。许可证和版权行在
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)，两份文件保持同步。
+
+**思路与前作**
+
+- **[Carbon](https://github.com/chunkburst/Carbon)**（MIT）—— Auspex 里任务管理的
+  那一半。Carbon 是给 agent 项目做的集成式任务管理器，任务行的结构、「关闭前必须先
+  评审」这条坚持、任务之间的依赖、以及记录谁做了什么的 provenance 备注，都是从它那里
+  读来的。Auspex 的任务看板就是它的想法加上一块实时会话看板。
+- **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**（MIT）——
+  Flight 视图。把一次运行按来源摊成轮次瀑布流、旁边跟一个选中步骤的检视器，是
+  dsh 展示一次 run 的方式，而它恰好也是展示一个会话的正确方式。
+- **[Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)**（MIT）——
+  像素办公室。「agent 是房间里的人」「人站在哪里本身就是信息」「气泡是程序求助的
+  方式」这三件事是他们的。Auspex 的 Aviary 是它的原生 macOS 版本，覆盖八个 harness
+  而不是一个 VS Code 扩展。
+- **Anthropic 的 Agent View** —— 那套词汇。*needs input · working · done · idle*
+  是一组经得起「一眼扫过」的小词，Auspex 直接用它，而不是给同样四个状态再发明第五套
+  说法。
+
+**移植的代码与数据**
+
+- **[bloub](https://github.com/jeremy-prt/bloub)**（MIT，© 2026 Jérémy Perret）——
+  Flock 头像引擎是它的 Swift 移植：剪影、剪影之间的缓动形变、坐在球面上带真实头部朝向
+  的双胶囊眼睛模型，以及静息时的生命感（视线漂移、呼吸、眼睑曲线、形变中点处的眨眼）。
+  它的数字是量出来的而不是调出来的，移植保留了它们；偏离的地方，有一个文件专门说明
+  偏离在哪里、为什么。
+- **[bible-strong-avatar-lab](https://github.com/smontlouis/bible-strong-avatar-lab)**
+  （AGPL-3.0，© Stéphane Montlouis-Calixte）—— Flock 的表情和编排是移植过来的数据：
+  25 组标定过的表情预设、按状态分的表情池与眨眼配置，以及从它们派生出来的 23 段内置
+  动画序列。Auspex 同样是 AGPL-3.0，所以这些数据和推导以同一份许可证流转。有一个脚本
+  能从上游 checkout 重跑这次移植，所以上游重新标定之后是重跑一次，而不是重抄一遍。
+- **[agent-session-kit](https://github.com/AstroQore/agent-session-kit)** 与
+  **[Vibe Bar](https://github.com/AstroQore/vibe-bar)**（AstroQore）—— harness
+  adapter、实时 tail 流水线、MCP 传输和发布机制，都是先为 Vibe Bar 写的，之后抽成
+  kit，也正因如此 Auspex 一上来就能支持八个 harness 而不是一个。`ProviderIcons/`
+  里的厂商 logo 也是先在那边收齐的。
+
+**外观**
+
+- **Grok Bot**（xAI）—— Flock 的长相源自这一族头像，中间经过 bloub：它是逐帧从 xAI
+  自己的视频里量出来的。
+- **像素美术和整套图标**由 **OpenAI Codex** 根据
+  [`docs/ART-HANDOFF.md`](docs/ART-HANDOFF.md) 生成，那份 brief 就在仓库里，所以
+  prompt 和产出一样可以被review。
+
+**依赖**
+
+- **[GRDB.swift](https://github.com/groue/GRDB.swift)**（MIT）—— 本地存储。
+- **[Sparkle](https://github.com/sparkle-project/Sparkle)**（MIT）—— 应用内更新，
+  EdDSA 签名，在解包前先验。
+
+**以及怎么做的**
+
+Auspex 是用 **Claude Code**（主要是 Opus 和 Fable）在 git worktree 里照着书面 brief
+写出来的 —— 这也正是它存在的原因：当五个这样的东西同时在跑、而只有一个卡住时，你想要
+的就是这么一块看板。
+
+列出某个项目或展示它的标识，不构成任何从属、赞助或背书关系。所有名称与商标归各自
+所有者。
 
 ## 许可证
 

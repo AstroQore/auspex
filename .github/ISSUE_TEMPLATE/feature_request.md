@@ -21,11 +21,11 @@ assignees: ''
 
 ## Which surface
 
-- [ ] Board (the wall of cards)
-- [ ] Scene (the office)
-- [ ] Crew (the avatars)
-- [ ] Trajectory (one session opened out)
-- [ ] Tasks / plans
+- [ ] Ledger (the wall of cards, was Board)
+- [ ] Aviary (the office, was Scene)
+- [ ] Flock (the avatars, was Crew)
+- [ ] Flight (one session opened out, was Trajectory)
+- [ ] Roost (tasks and plans, was Tasks)
 - [ ] Projects and ignore rules
 - [ ] Harnesses page
 - [ ] Menu bar / notifications

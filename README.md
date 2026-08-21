@@ -43,12 +43,12 @@ agents themselves can say what they need.
 > ./Scripts/build_app.sh release && open .build/Auspex.app
 > ```
 
-![The Auspex board: session cards grouped by project, with one session's trace beside them](docs/screenshots/board.png)
+![The Auspex Ledger: session cards grouped by project, with one session's trace beside them](docs/screenshots/board.png)
 
 <details>
-<summary>The same board in the light appearance</summary>
+<summary>The same Ledger in the light appearance</summary>
 
-![The board in the light appearance: the same wall of cards on a warm off-white ground](docs/screenshots/board-light.png)
+![The Ledger in the light appearance: the same wall of cards on a warm off-white ground](docs/screenshots/board-light.png)
 
 </details>
 
@@ -139,7 +139,7 @@ page.
 **Settings → Appearance** overrides that with Light or Dark, switches the
 sidebar between the system's own material and the board's flat ground, and
 shows you which accent, background and foreground the choice resolved to.
-Nothing is relaunched: the window, the menu bar panel, the office and the crew
+Nothing is relaunched: the window, the menu bar panel, the office and the Flock
 all repaint where they stand. `--appearance light|dark` does the same for one
 launch without writing it down, which is how the performance budget is measured
 against both.
@@ -153,20 +153,21 @@ The picker in the header switches how the live sessions are drawn. It is a mode
 rather than a destination: the selection, the grouping, the filters and the
 trace beside them all survive a switch.
 
-**Board** is the wall of cards — the only view that shows everything at once,
-and the one that answers *what is this session doing* precisely: state, tool
-name, target file, elapsed, tokens, what it was asked to do, what it last said.
+**Ledger** (was Board) is the wall of cards — the only view that shows
+everything at once, and the one that answers *what is this session doing*
+precisely: state, tool name, target file, elapsed, tokens, what it was asked
+to do, what it last said.
 
-**Scene** is the same board as a place. Every session is a person, every
-project is a room, and *where somebody is* is the first thing a glance reads:
-working sessions sit at their desks, a delegating session walks to the meeting
+**Aviary** (was Scene) is the same board as a place. Every session is a
+person, every project is a room, and *where somebody is* is the first thing a
+glance reads: working sessions sit at their desks, a delegating session walks to the meeting
 room with the sub-agents it spawned around a long table, idle ones rest on a
 garden bench — the ones that finished something you have not looked at hold a
 note — and an ended session walks out through the gate. The loudest channel is
 light: a monitor's colour is its session's state and its rhythm is that
 state's motion.
 
-![The scene view: a room per project, agents at desks, their monitors lit by what they are doing](docs/screenshots/scene.png)
+![The Aviary: a room per project, agents at desks, their monitors lit by what they are doing](docs/screenshots/scene.png)
 
 The canvas is a real `NSScrollView`, so two fingers pan and pinch at once the
 way they do in Preview, with the same momentum and the same elastic edges;
@@ -188,8 +189,8 @@ resolve itself without a person — but it is not a state. See below.
 
 | | |
 | --- | --- |
-| ![The crew view: one geometric avatar per session](docs/screenshots/crew.png) | ![The trajectory view: a waterfall of one session's turns beside its steps](docs/screenshots/trajectory.png) |
-| **Crew** — one geometric avatar per session, its face and posture driven by what that session is doing. The same information as the scene at a tenth of the pixels. | **Trajectory** (⌘T) — one session opened out: a waterfall of its turns, every step it took, and an inspector on whichever one is selected. |
+| ![The Flock: one geometric avatar per session](docs/screenshots/crew.png) | ![The Flight view: a waterfall of one session's turns beside its steps](docs/screenshots/trajectory.png) |
+| **Flock** (was Crew) — one geometric avatar per session, its face and posture driven by what that session is doing. The same information as the Aviary at a tenth of the pixels. | **Flight** (was Trajectory, ⌘T) — one session opened out: a waterfall of its turns, every step it took, and an inspector on whichever one is selected. |
 
 ## Two axes: what a session is doing, and whether it wants you
 
@@ -202,7 +203,7 @@ permission wait.
 The two are independent. An agent that reports finishing while a `swift build`
 is still running is working and done at once, and both are true.
 
-| | What puts a card here | Board | Scene | Menu bar | Notification |
+| | What puts a card here | Ledger | Aviary | Menu bar | Notification |
 | --- | --- | --- | --- | --- | --- |
 | **Needs you** | `notify(needs_input\|needs_review\|blocked)`, a permission hook, a harness's own wait | red ring, breathing, sorted first | front row of the garden, red `!` | `! N` | always |
 | **Done** | `notify(done)`, `tasks.complete` | green ring, the agent's line | same front row, green `✓` | `✓ N` | on by default |
@@ -275,7 +276,11 @@ dependency. The same registration installs **hooks** where a harness has them:
 exits 0 within 200 ms whatever happens, because a hook is a synchronous child
 of a working agent and must never be able to block or veto it.
 
-![The Tasks page: one lane per project, milestones inside them, and who claimed each task](docs/screenshots/tasks.png)
+**Roost** (was Tasks) is where that board is read back: one lane per project,
+the milestones inside it, and every task sorted by status with whoever claimed
+it named on the card.
+
+![The Roost: one lane per project, milestones inside them, and who claimed each task](docs/screenshots/tasks.png)
 
 ## Projects, trees, and the sessions you do not want to see
 
@@ -289,7 +294,7 @@ machine — git's own files for the first, the process table for the second.
   running in it. Three worktrees of one repository are one project with three
   checkouts, and an agent worktree is labelled with its task rather than its
   path. Clicking a project binds every surface to it — the wall, the tree, and
-  the scene's camera.
+  the Aviary's camera.
 - **Group by: Tree** turns the wall into the delegation forest. The trace
   header says *how* a parent link was established — a spawn the parent's own
   log recorded, an inherited environment variable, a process ancestry, or a
@@ -389,7 +394,7 @@ Run it and look.
 
 ## Characters
 
-The people in the scene are placeholders drawn in code until art exists for
+The people in the Aviary are placeholders drawn in code until art exists for
 them. Real characters are folders — a manifest and one frame strip per pose —
 dropped into `~/.auspex/characters/` and picked up without a rebuild or a
 relaunch, one pose at a time. [`docs/CHARACTERS.md`](docs/CHARACTERS.md) is the
@@ -403,8 +408,8 @@ opening the app.
 
 - **Appearance** — Light, Dark, or follow the Mac; the sidebar's material; and
   the three resolved colours the choice produced. Nothing relaunches.
-- **Characters** — which character folder each harness wears in the scene and
-  the crew.
+- **Characters** — which character folder each harness wears in the Aviary and
+  the Flock.
 - **Harnesses** — registers Auspex's MCP server, and its hooks where a harness
   has them, into that harness's own config. Opt-in, fenced, backed up, and
   reversible; it is the one place Auspex writes outside its own directory.
@@ -499,7 +504,7 @@ animates in a view that is not on screen.
 | --------- | ----- | ----- |
 | **M0** | Repository skeleton and the shared `agent-session-kit` package: session model, event stream, source-adapter protocol. | done |
 | **M1** | Live board for Claude Code and Codex, updating in real time, with the session trace and the menu bar. | done |
-| **M2** | All eight harnesses, project and task grouping, the user's own projects and ignore rules, the scene and crew views. | done |
+| **M2** | All eight harnesses, project and task grouping, the user's own projects and ignore rules, the Aviary and Flock views. | done |
 | **M3** | MCP task board over `~/.auspex/mcp.sock`, the `--mcp-stdio` bridge, opt-in harness hooks (`--hook`), and one-click registration with each harness. | done |
 | **M4** | Retention scheduling, and control — acting on a session from Auspex rather than only watching it. | next |
 
@@ -527,13 +532,13 @@ in step with.
   all read off it. Auspex's task board is its idea with a live session board
   attached.
 - **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** (MIT)
-  — the Trajectory view. A waterfall of one session's turns laid out by source
+  — the Flight view. A waterfall of one session's turns laid out by source
   with an inspector on the selected step is dsh's way of showing a run, and it
   turned out to be the right way to show a session too.
 - **[Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents)** (MIT) —
   the pixel office. The idea that agents are people in a room, that where
   somebody is standing is information, and that a speech bubble is how a
-  program asks for help, is theirs. Auspex's scene is a native macOS take on
+  program asks for help, is theirs. Auspex's Aviary is a native macOS take on
   it across eight harnesses instead of a VS Code extension around one.
 - **Anthropic's Agent View** — the vocabulary. *Needs input · working · done ·
   idle* is a small set of words that survives being glanced at, and Auspex uses
@@ -542,13 +547,13 @@ in step with.
 **Ported code and data**
 
 - **[bloub](https://github.com/jeremy-prt/bloub)** (MIT, © 2026 Jérémy Perret)
-  — the crew avatar engine is a Swift port: the silhouettes, the eased morphs
+  — the Flock avatar engine is a Swift port: the silhouettes, the eased morphs
   between them, the two-capsule eye model on a real head orientation, and the
   resting life (gaze drift, breath, lid curve, the blink at a transition's
   midpoint). Its numbers are measurements, not settings, and the port keeps
   them; where it deviates, one file says so and why.
 - **[bible-strong-avatar-lab](https://github.com/smontlouis/bible-strong-avatar-lab)**
-  (AGPL-3.0, © Stéphane Montlouis-Calixte) — the crew's expressions and
+  (AGPL-3.0, © Stéphane Montlouis-Calixte) — the Flock's expressions and
   choreography are ported data: 25 calibrated expression presets, the
   per-state expression pools and blink profiles, and the 23 built-in animation
   sequences derived from them. Auspex is AGPL-3.0 as well, so the data and the
@@ -563,7 +568,7 @@ in step with.
 
 **Look**
 
-- **Grok Bot** (xAI) — the avatar family the crew's look descends from, via
+- **Grok Bot** (xAI) — the avatar family the Flock's look descends from, via
   bloub, which measured it frame by frame off xAI's own video.
 - The **pixel art and the icon set** were generated with **OpenAI Codex** from
   [`docs/ART-HANDOFF.md`](docs/ART-HANDOFF.md), which is in the repository so
