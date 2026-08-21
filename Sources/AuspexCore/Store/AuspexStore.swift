@@ -101,6 +101,10 @@ public final class AuspexStore: Sendable {
             try createNoticeTables(db)
         }
 
+        migrator.registerMigration("v4_acknowledgement") { db in
+            try addAcknowledgementColumns(db)
+        }
+
         return migrator
     }
 
@@ -426,6 +430,31 @@ public final class AuspexStore: Sendable {
         try db.create(table: "session_views") { table in
             table.primaryKey("session_key", .text)
             table.column("last_seen_at", .double).notNull()
+        }
+    }
+
+    /// When the person last *dealt with* a session, as opposed to having
+    /// looked at it.
+    ///
+    /// Two columns on `session_views` rather than a table of their own,
+    /// because they answer a question about the same thing the table already
+    /// holds: what has passed between this person and this session.
+    ///
+    /// They are not the same fact as `last_seen_at` and the difference is the
+    /// whole reason for the columns. *Seen* is "the transcript was on screen",
+    /// which is what puts the faint reply dot away. *Acknowledged* is "the
+    /// signal has been dealt with", which a dismissal performs without anybody
+    /// reading a word, and which the header's "Mark all as seen" performs for
+    /// a whole board at once.
+    ///
+    /// `ack_reason` records which of those it was. Nothing renders it today;
+    /// it is here because an acknowledgement with no provenance is impossible
+    /// to reason about later — "why is this card quiet" has three answers and
+    /// a boolean can hold none of them.
+    private static func addAcknowledgementColumns(_ db: Database) throws {
+        try db.alter(table: "session_views") { table in
+            table.add(column: "acknowledged_at", .double)
+            table.add(column: "ack_reason", .text)
         }
     }
 

@@ -228,6 +228,82 @@ public struct SessionRepository: Sendable {
         }
     }
 
+    // MARK: - What the person has dealt with
+
+    /// Records that the person cleared a session's attention.
+    ///
+    /// Not the same as ``markSeen(key:at:)`` and deliberately kept apart: a
+    /// dismissal clears the signal without the transcript ever being on
+    /// screen, and "Mark all as seen" clears a whole board at once. Monotonic
+    /// for the same reason seeing is — a replayed frame must not un-clear
+    /// something — and it seeds `last_seen_at` only when there is no row yet,
+    /// because a person who dismissed a card has engaged with it and one who
+    /// had already read it should keep the earlier, truer stamp.
+    public func acknowledge(
+        key: SessionKey,
+        at date: Date = Date(),
+        reason: SessionAckReason
+    ) throws {
+        try dbWriter.write { db in
+            try acknowledge(key: key, at: date, reason: reason, in: db)
+        }
+    }
+
+    /// Acknowledgement inside a caller-owned transaction.
+    public func acknowledge(
+        key: SessionKey,
+        at date: Date,
+        reason: SessionAckReason,
+        in db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+                INSERT INTO session_views (session_key, last_seen_at, acknowledged_at, ack_reason)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(session_key) DO UPDATE SET
+                    acknowledged_at = MAX(
+                        COALESCE(session_views.acknowledged_at, 0), excluded.acknowledged_at
+                    ),
+                    ack_reason = excluded.ack_reason
+                """,
+            arguments: [
+                key.description,
+                date.timeIntervalSince1970,
+                date.timeIntervalSince1970,
+                reason.rawValue
+            ]
+        )
+    }
+
+    /// Every acknowledgement on record, keyed by session.
+    ///
+    /// Read once at bootstrap and held in memory by the board model, exactly
+    /// as ``allLastSeen()`` is: a card must not go to SQLite to find out
+    /// whether its call has already been dealt with.
+    public func allAcknowledgements() throws -> [SessionKey: SessionAcknowledgement] {
+        try dbWriter.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT session_key, acknowledged_at, ack_reason FROM session_views
+                     WHERE acknowledged_at IS NOT NULL
+                    """
+            )
+            var result: [SessionKey: SessionAcknowledgement] = [:]
+            result.reserveCapacity(rows.count)
+            for row in rows {
+                guard let key = SessionKey(string: row["session_key"]),
+                      let at = row["acknowledged_at"] as Double?
+                else { continue }
+                result[key] = SessionAcknowledgement(
+                    at: Date(timeIntervalSince1970: at),
+                    reason: (row["ack_reason"] as String?).flatMap(SessionAckReason.init(rawValue:))
+                )
+            }
+            return result
+        }
+    }
+
     /// The snapshot for one session, or `nil` when it has never been stored.
     public func fetch(key: SessionKey) throws -> SessionSnapshot? {
         try dbWriter.read { db in
@@ -856,5 +932,30 @@ public struct SearchHit: Hashable, Sendable, Identifiable {
         self.timestamp = Date(timeIntervalSince1970: ts)
         self.snippet = snippet
         self.rank = row["rank"] as Double? ?? 0
+    }
+}
+
+/// Why a session's attention was cleared.
+///
+/// Recorded rather than inferred, because "this card is quiet" has three
+/// different explanations and a person debugging a board that looks wrong
+/// needs to know which of them applies. Nothing renders it today.
+public enum SessionAckReason: String, Codable, Sendable, CaseIterable, Hashable {
+    /// The card was selected, or its trajectory opened.
+    case opened
+    /// The card's "Dismiss" — the person dealt with it elsewhere.
+    case dismissed
+    /// The header's "Mark all as seen".
+    case markedAll
+}
+
+/// One session's acknowledgement, as the store holds it.
+public struct SessionAcknowledgement: Sendable, Equatable, Hashable {
+    public let at: Date
+    public let reason: SessionAckReason?
+
+    public init(at: Date, reason: SessionAckReason?) {
+        self.at = at
+        self.reason = reason
     }
 }
