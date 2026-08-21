@@ -34,20 +34,30 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// nothing at all.
     public var sceneZones: SceneZoneOptions
 
+    /// How often the crew's avatars react.
+    ///
+    /// Optional, and absent means "whatever the default is today". A person who
+    /// never opened the pane has no opinion recorded, so a later change to what
+    /// `normal` means reaches them — where a value written on first launch
+    /// would have frozen them on the old one.
+    public var crewLiveliness: CrewLiveliness?
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
         didShowSetup: Bool = false,
-        sceneZones: SceneZoneOptions = .all
+        sceneZones: SceneZoneOptions = .all,
+        crewLiveliness: CrewLiveliness? = nil
     ) {
         self.ignoreRules = ignoreRules
         self.showsIgnored = showsIgnored
         self.didShowSetup = didShowSetup
         self.sceneZones = sceneZones
+        self.crewLiveliness = crewLiveliness
     }
 
     private enum CodingKeys: String, CodingKey {
-        case ignoreRules, showsIgnored, didShowSetup, sceneZones
+        case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
     }
 
     public init(from decoder: any Decoder) throws {
@@ -61,10 +71,14 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         sceneZones = try container.decodeIfPresent(
             SceneZoneOptions.self, forKey: .sceneZones
         ) ?? .all
+        crewLiveliness = try? container.decodeIfPresent(
+            CrewLiveliness.self, forKey: .crewLiveliness
+        )
     }
 
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
+            && crewLiveliness == nil
     }
 }
 

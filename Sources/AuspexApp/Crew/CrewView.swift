@@ -18,6 +18,9 @@ import SwiftUI
 /// does.
 struct CrewView: View {
     let model: LiveBoardModel
+    /// How often the avatars react. Read from `settings.json` through the
+    /// catalog, so the pane and the wall cannot disagree.
+    var liveliness: CrewLiveliness = .default
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The engines, one per session. A plain reference type rather than an
@@ -103,6 +106,7 @@ struct CrewView: View {
         .onChange(of: model.sessionCount) {
             roster.prune(keeping: Set(model.board.sessions.map(\.key)))
         }
+        .onChange(of: liveliness, initial: true) { roster.liveliness = liveliness }
         .task(id: model.sessionCount) {
             // Runs only while a card is counting down to something. A wall of
             // settled sessions leaves this loop immediately and costs nothing.
@@ -684,6 +688,10 @@ struct CrewInstant {
 @MainActor
 final class CrewRoster {
     private var drivers: [SessionKey: CrewAvatarDriver] = [:]
+    /// How often the avatars react. Handed to each driver on the next frame
+    /// rather than pushed: a reaction already in flight finishes, because the
+    /// setting is about the *next* one.
+    var liveliness: CrewLiveliness = .default
     /// The instant the wall started, so the clock is a small number of seconds
     /// rather than the seconds since 2001 — the engine's noise periods are a
     /// few seconds long, and a `Double` that large loses the resolution they
@@ -721,8 +729,10 @@ final class CrewRoster {
             // the phase spreads the blink schedule, the seed gives each avatar
             // its own resting gaze. Two avatars would otherwise still trace the
             // same drift, one merely a couple of seconds behind the other.
-            seed: UInt32(truncatingIfNeeded: Self.hash(of: key.sessionID) >> 32)
+            seed: UInt32(truncatingIfNeeded: Self.hash(of: key.sessionID) >> 32),
+            liveliness: liveliness
         )
+        driver.setLiveliness(liveliness)
         driver.update(state: session.state, isStale: session.isStale, at: clock)
         drivers[key] = driver
 

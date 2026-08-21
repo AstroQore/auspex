@@ -145,7 +145,7 @@ struct RootView: View {
                     switch model.viewMode {
                     case .board: BoardView(model: model)
                     case .scene: SceneContainerView(model: model)
-                    case .crew: CrewView(model: model)
+                    case .crew: CrewView(model: model, liveliness: environment.catalog.crewLiveliness)
                     case .trajectory: TrajectoryView(model: model)
                     }
                 } else {

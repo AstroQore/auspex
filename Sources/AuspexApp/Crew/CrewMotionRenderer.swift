@@ -35,59 +35,64 @@ enum CrewMotionRenderer {
     /// enough that consecutive tiles differ visibly.
     static let stripFrames = 16
 
-    /// Renders one state → state transition as a filmstrip.
+    /// Renders one reaction as a filmstrip.
     ///
-    /// - Parameter cadence: seconds between frames. `nil` spreads the sixteen
-    ///   frames evenly across the morph, which is what shows the easing. Given
-    ///   a value — and `from == to`, so there is no morph — it instead samples
-    ///   a **settled** state at exactly that interval, which is how a frame
-    ///   rate is judged: the question "does the orbit step at 30 fps" is
-    ///   answered by looking at consecutive 33 ms frames of it, and by nothing
-    ///   else.
+    /// - Parameters:
+    ///   - stance: the loop the avatar is living in, so the strip shows the
+    ///     reaction arriving out of something and going back into it.
+    ///   - reaction: the one-shot to play.
+    ///   - cadence: seconds between frames. `nil` spreads the sixteen frames
+    ///     across the whole reaction, hand-overs included, which is what shows
+    ///     the easing. Given a value it instead samples the **settled** base
+    ///     loop at exactly that interval, which is how a frame rate is judged:
+    ///     the question "does a step morph step at 30 fps" is answered by
+    ///     looking at consecutive 33 ms frames of one, and by nothing else.
     @MainActor
     static func renderStrip(
-        from: BloubStateID,
-        to: BloubStateID,
+        stance: CrewStance,
+        reaction: AvatarSequenceID,
         to url: URL,
         cadence: Double? = nil,
         scale: CGFloat = 2
     ) throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
 
-        // A settled `from` state, so the strip shows a transition and not an
-        // avatar being born. Two seconds is past every entry morph in the
-        // catalogue and past the first scheduled blink.
-        let change = 2.0
+        // A settled loop, so the strip shows a reaction and not an avatar being
+        // born. Twelve seconds is past every hand-over and several blinks.
+        let seed: UInt32 = 0x51E4
+        let change = 12.0
         var engine = BloubEngine(
-            state: from,
+            scale: BloubFrameOfReference.radius,
+            state: .idle,
             shape: .circle,
             expression: .neutral,
-            drift: .wander(seed: 0x51e4)
+            drift: .wander(seed: seed)
         )
-        engine.reset(to: from, at: 0)
-        engine.setState(to, at: change)
+        engine.reset(to: .idle, at: 0)
+        var chorus = CrewChoreographer(seed: seed, stance: stance, at: 0)
+        chorus.accent(reaction, at: change)
 
-        let span = BloubTransition.span(BloubStates.state(to).morph)
-        // A frame before the change and a few after it, so the strip shows the
-        // morph leaving rest and arriving at rest rather than only the middle.
+        let length = CrewChoreography.accentCap
         let first: Double
         let step: Double
         if let cadence {
-            // Settled, sampled at the rate under test.
-            first = change + span + 0.4
+            first = change + length + 1.5
             step = cadence
         } else {
-            first = change - 0.05
-            let last = change + span + 0.15
-            step = (last - first) / Double(stripFrames - 1)
+            first = change - 0.1
+            step = (length + 0.35) / Double(stripFrames - 1)
         }
 
         var tiles: [CrewFilmstripTile] = []
         var previousReach: Double?
         for index in 0..<stripFrames {
             let at = first + Double(index) * step
-            let frame = engine.sample(at)
-            let reach = meanReach(of: frame)
+            let face = chorus.sample(at: at)
+            let frame = engine.sample(
+                at,
+                face: BloubFaceOverride(expression: face.face, lid: face.lid)
+            )
+            let reach = faceReach(of: frame)
             tiles.append(
                 CrewFilmstripTile(
                     index: index,
@@ -101,9 +106,9 @@ enum CrewMotionRenderer {
 
         let renderer = ImageRenderer(
             content: CrewFilmstripSheet(
-                from: from,
-                to: to,
-                duration: BloubTransition.duration(BloubStates.state(to).morph),
+                stance: stance,
+                reaction: reaction,
+                handover: CrewChoreography.handover(for: length),
                 cadence: cadence,
                 tiles: tiles
             )
@@ -114,15 +119,19 @@ enum CrewMotionRenderer {
         try CrewSnapshotRenderer.writePNG(image, to: url)
     }
 
-    /// How far the silhouette reaches, averaged over the outline.
+    /// How far the face has travelled, as one number per frame.
     ///
-    /// One number per frame, in viewBox units. Its frame-to-frame difference is
-    /// the speed the body is morphing at, which is the whole thing under test:
-    /// a linear morph gives a flat row of bars, an eased one gives a hump.
-    static func meanReach(of frame: BloubFrame) -> Double {
-        guard !frame.body.curves.isEmpty else { return 0 }
-        let total = frame.body.curves.reduce(0.0) { $0 + hypot($1.end.x, $1.end.y) }
-        return total / Double(frame.body.curves.count)
+    /// Where the silhouette used to be measured, because the silhouette used to
+    /// be what moved. It no longer does — the body is the harness and holds
+    /// still — so what a strip has to show is the eyes: where they sit, how big
+    /// they are, and how far open. Its frame-to-frame difference is the speed
+    /// the face is morphing at, which is the whole thing under test: a linear
+    /// morph gives a flat row of bars, an eased one gives a hump.
+    static func faceReach(of frame: BloubFrame) -> Double {
+        frame.eyes.reduce(0.0) { total, eye in
+            total + hypot(eye.e, eye.f) + eye.width + eye.height
+                + hypot(eye.b, eye.d) * 40
+        }
     }
 
     // MARK: The wall, over time
@@ -315,9 +324,9 @@ struct CrewFilmstripTile: Identifiable {
 /// morph that accelerates and decelerates, and a row of equal bars is the
 /// straight line this branch was asked to remove.
 private struct CrewFilmstripSheet: View {
-    let from: BloubStateID
-    let to: BloubStateID
-    let duration: Double
+    let stance: CrewStance
+    let reaction: AvatarSequenceID
+    let handover: Double
     /// Set when the strip is a steady state sampled at a fixed rate rather than
     /// a morph spread across its own length.
     let cadence: Double?
@@ -351,7 +360,11 @@ private struct CrewFilmstripSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(cadence == nil ? "\(from.rawValue)  →  \(to.rawValue)" : from.rawValue)
+            Text(
+                cadence == nil
+                    ? "\(stance.rawValue)  →  \(reaction.rawValue)  →  \(stance.rawValue)"
+                    : stance.rawValue
+            )
                 .font(.system(size: 17, weight: .semibold, design: .monospaced))
                 .foregroundStyle(AuspexPalette.textPrimary)
             Text(subtitle)
@@ -363,17 +376,17 @@ private struct CrewFilmstripSheet: View {
     private var subtitle: String {
         if let cadence {
             return String(
-                format: "settled, sampled every %.1f ms — %.0f fps · bars = silhouette "
-                    + "travelled since the previous frame",
+                format: "the base loop, settled, sampled every %.1f ms — %.0f fps · "
+                    + "bars = how far the face moved since the previous frame",
                 cadence * 1000,
                 1 / cadence
             )
         }
         return String(
-            format: "morph %.0f ms · ease-in-out · eyes %.0f ms behind · bars = "
-                + "silhouette travelled since the previous frame",
-            duration * 1000,
-            BloubTransition.eyeLag * 1000
+            format: "one reaction · %.0f ms · handed over on a %.0f ms smoothstep at "
+                + "each end · bars = how far the face moved since the previous frame",
+            CrewChoreography.accentCap * 1000,
+            handover * 1000
         )
     }
 

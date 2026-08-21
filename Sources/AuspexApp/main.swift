@@ -119,46 +119,48 @@ if let flag = arguments.firstIndex(of: "--render-crew") {
     }
 }
 
-// Renders one avatar's transition as a filmstrip. A still of the crew wall
-// cannot show whether a morph is eased or linear — every individual frame looks
-// the same either way — so this lays sixteen of them out in reading order with
-// the per-frame travel drawn under each. An eased morph is a row of bars that
-// rises and falls; a linear one is a row of equal bars.
+// Renders one reaction as a filmstrip. A still of the crew wall cannot show
+// whether a morph is eased or cut — every individual frame looks the same
+// either way — so this lays sixteen of them out in reading order with the
+// per-frame face travel drawn under each. An eased hand-over is a row of bars
+// that rises and falls; a cut is one tall bar with nothing either side.
 if let flag = arguments.firstIndex(of: "--render-crew-strip") {
     let rest = arguments[arguments.index(after: flag)...]
     let names = Array(rest.prefix(3))
     guard names.count == 3, !names[0].hasPrefix("-"),
-          let from = BloubStateID(rawValue: names[1]),
-          let to = BloubStateID(rawValue: names[2])
+          let stance = CrewStance(rawValue: names[1]),
+          let reaction = AvatarSequenceID(rawValue: names[2])
     else {
-        let known = BloubStateID.allCases.map(\.rawValue).joined(separator: ", ")
-        let usage = "auspex: --render-crew-strip needs <path> <from-state> <to-state> "
-            + "[fps].\n        states: \(known)\n"
+        let stances = CrewStance.allCases.map(\.rawValue).joined(separator: ", ")
+        let reactions = AvatarSequenceID.allCases.map(\.rawValue).joined(separator: ", ")
+        let usage = "auspex: --render-crew-strip needs <path> <stance> <reaction> [fps].\n"
+            + "        stances: \(stances)\n"
+            + "        reactions: \(reactions)\n"
         FileHandle.standardError.write(Data(usage.utf8))
         exit(2)
     }
-    // A frame rate turns the strip into a steady-state sample at that rate,
-    // which is the only way to judge whether a cadence steps.
+    // A frame rate turns the strip into a steady-state sample of the base loop
+    // at that rate, which is the only way to judge whether a cadence steps.
     let fps = rest.dropFirst(3).first.flatMap(Double.init)
     do {
         try CrewMotionRenderer.renderStrip(
-            from: from,
-            to: to,
+            stance: stance,
+            reaction: reaction,
             to: URL(fileURLWithPath: names[0]),
             cadence: fps.map { 1 / $0 }
         )
         let frames = CrewMotionRenderer.stripFrames
         let summary: String
         if let fps {
-            summary = "auspex: \(frames) settled frames of \(from.rawValue) "
+            summary = "auspex: \(frames) settled frames of \(stance.rawValue) "
                 + "at \(Int(fps.rounded())) fps\n"
         } else {
-            let morph = Int(
-                (BloubTransition.duration(BloubStates.state(to).morph) * 1000).rounded()
+            let length = Int((CrewChoreography.accentCap * 1000).rounded())
+            let handover = Int(
+                (CrewChoreography.handover(for: CrewChoreography.accentCap) * 1000).rounded()
             )
-            let lag = Int((BloubTransition.eyeLag * 1000).rounded())
-            summary = "auspex: \(frames) frames of \(from.rawValue) → \(to.rawValue), "
-                + "morph \(morph) ms, eyes \(lag) ms behind\n"
+            summary = "auspex: \(frames) frames of \(stance.rawValue) → "
+                + "\(reaction.rawValue), \(length) ms, \(handover) ms hand-over\n"
         }
         FileHandle.standardOutput.write(Data(summary.utf8))
         exit(0)
@@ -180,7 +182,11 @@ if let flag = arguments.firstIndex(of: "--render-crew-motion") {
         )
         exit(2)
     }
-    let seconds = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 2
+    // Twenty seconds by default. Two was enough when the question was "does a
+    // morph ease"; the question now is "do twelve avatars do twelve different
+    // things", and the reaction schedule runs on gaps of eight to thirty
+    // seconds, so a two-second clip could show none of it.
+    let seconds = rest.dropFirst().first.flatMap(TimeInterval.init) ?? 20
     let elapsed = rest.dropFirst(2).first.flatMap(TimeInterval.init) ?? 16
     do {
         let board = SceneSnapshotRenderer.demoBoard(elapsed: elapsed)
@@ -321,20 +327,21 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         from the demo board at `seconds` into its loop
                         (default 16), with every avatar frozen `animation
                         seconds` into its own animation (default 1.4).
-          --render-crew-strip <path> <from-state> <to-state> [fps]
-                        Render one avatar's state → state transition as a
-                        16-frame filmstrip, with the distance the silhouette
-                        travelled between frames drawn as a bar under each.
-                        That row of bars is what tells an eased morph from a
-                        linear one; a single frame cannot. Given `fps` (and the
-                        same state twice) it instead samples that state once
-                        settled, at exactly that rate — which is how a frame
-                        rate is judged before it is chosen.
+          --render-crew-strip <path> <stance> <reaction> [fps]
+                        Render one reaction as a 16-frame filmstrip: the
+                        avatar living in `stance`'s loop, the reaction arriving
+                        and handing back, with the distance the face travelled
+                        between frames drawn as a bar under each. That row of
+                        bars is what tells an eased hand-over from a cut; a
+                        single frame cannot. Given `fps` it instead samples the
+                        settled base loop at exactly that rate — which is how a
+                        frame rate is judged before it is chosen.
           --render-crew-motion <path> [seconds] [board seconds]
                         Render the whole demo wall in motion over `seconds`
-                        (default 2). A `.gif` destination writes an animated
-                        GIF at 20 fps; anything else writes a 4×4 contact
-                        sheet of 16 frames.
+                        (default 20 — long enough for the reaction schedule,
+                        whose gaps are eight to thirty seconds, to show). A
+                        `.gif` destination writes an animated GIF at 20 fps;
+                        anything else writes a 4×4 contact sheet of 16 frames.
           --render-board <path> [seconds] [height] [section]
                         [focus=<project>] [ignore=<kind>:<value>]
                         [group=<none|harness|project|tree>]

@@ -194,6 +194,23 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - The crew's liveliness
+
+    /// How often the crew's avatars react. The default until somebody says
+    /// otherwise.
+    var crewLiveliness: CrewLiveliness { settings.crewLiveliness ?? .default }
+
+    /// Sets it, and remembers it.
+    ///
+    /// Nothing on screen has to be rebuilt: the roster hands the new value to
+    /// each driver on the next frame, and a reaction already in flight finishes
+    /// — the setting is about the *next* one.
+    func setCrewLiveliness(_ value: CrewLiveliness) {
+        guard settings.crewLiveliness != value else { return }
+        settings.crewLiveliness = value
+        persist()
+    }
+
     // MARK: - Importing
 
     /// Reads every harness registry, off the main actor.
