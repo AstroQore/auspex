@@ -23,10 +23,10 @@ public enum AuspexVersion {
     ///
     /// Rewritten by `Scripts/release_app.sh`, which matches this exact line —
     /// keep the shape.
-    static let fallbackMarketingVersion = "0.0.1"
+    static let fallbackMarketingVersion = "0.1.0"
 
     /// What `CFBundleVersion` says, for a build with no bundle. Same deal.
-    static let fallbackBuildNumber = "1"
+    static let fallbackBuildNumber = "2"
 
     /// Semantic version shown in the UI and reported over MCP.
     public static let marketingVersion = string(

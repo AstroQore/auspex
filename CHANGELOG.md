@@ -10,6 +10,8 @@ describes how one is cut when there is.
 
 ## [Unreleased]
 
+## [0.1.0-dev.2] - 2026-08-21
+
 ### Changed
 
 - **The board's unit is the task, not the session.** A session is a process,
