@@ -93,9 +93,6 @@ struct AgentsSettingsView: View {
             }
             .toggleStyle(.switch)
             .tint(AuspexPalette.stateWriting)
-            // Full width, so the switch sits on the card's trailing edge
-            // rather than wherever the sentence beside it happened to stop.
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
