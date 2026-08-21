@@ -18,6 +18,9 @@ struct SceneContainerView: View {
     let model: LiveBoardModel
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// For the window hint's menu, which is the one control here that changes
+    /// a stored setting rather than the camera.
+    @Environment(AppEnvironment.self) private var environment
     @State private var commands = SceneCommands()
     /// Where the scene leaves its picture of the map.
     ///
@@ -71,7 +74,16 @@ struct SceneContainerView: View {
                 .padding(12)
         }
         .overlay(alignment: .bottomLeading) {
-            legend.padding(12)
+            VStack(alignment: .leading, spacing: 6) {
+                // Above the legend rather than on the garden's nameplate: the
+                // sessions the window is holding back have no bench and no
+                // gate — they are not on this map at all — so the place to say
+                // so is the map's own chrome, next to the garden it would
+                // otherwise have filled.
+                if let hint = model.olderHiddenHint { windowHint(hint) }
+                legend
+            }
+            .padding(12)
         }
         .overlay(alignment: .bottomTrailing) {
             SceneMinimapView(overview: overview) { commands.jump($0) }
@@ -132,6 +144,35 @@ struct SceneContainerView: View {
         .foregroundStyle(AuspexPalette.textSecondary)
         .help(title)
         .accessibilityLabel(title)
+    }
+
+    /// What the recency window is keeping off the map, and the menu that
+    /// widens it.
+    private func windowHint(_ hint: String) -> some View {
+        SessionWindowMenu(
+            window: model.sessionWindow,
+            hint: nil,
+            onSelect: { environment.catalog.setSessionWindow($0) }
+        ) {
+            HStack(spacing: 5) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(hint).auspexLabel(AuspexType.labelSmall)
+            }
+            .foregroundStyle(AuspexPalette.textTertiary)
+            .fixedSize()
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(AuspexPalette.panel.opacity(0.85))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
+        )
+        .help("Older sessions are in the store, not on the map. Widen to draw them.")
     }
 
     /// What the monitors mean. Five swatches, not seven: `idle` and `ended`

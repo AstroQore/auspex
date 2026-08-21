@@ -56,6 +56,7 @@ struct BoardHeader: View {
                         + "or one session as its trajectory"
                 )
                 groupMenu.fixedSize()
+                windowMenu.fixedSize()
                 searchField
             } else {
                 Text(subtitle)
@@ -192,6 +193,27 @@ struct BoardHeader: View {
         .frame(height: 28)
         .background(fieldBackground)
         .help("Divide the board into sections")
+    }
+
+    /// How far back the board reaches, beside the axis it is divided along.
+    ///
+    /// Next to "By Project" because the two questions are the same shape —
+    /// *how is this board cut* — and because the header is where somebody
+    /// notices that an afternoon's sessions are missing.
+    private var windowMenu: some View {
+        SessionWindowMenu(
+            window: model.sessionWindow,
+            hint: model.olderHiddenHint,
+            onSelect: { environment.catalog.setSessionWindow($0) }
+        )
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(fieldBackground)
+        .help(
+            model.olderHiddenHint.map { "\($0). Widen to see them." }
+                ?? "How far back the board and the map reach. "
+                    + "Older sessions stay in the store."
+        )
     }
 
     private var searchField: some View {

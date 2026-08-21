@@ -167,10 +167,43 @@ struct BoardView: View {
                 }
             }
             .panelChrome()
-            if model.hiddenEndedCount > 0 || model.showsAllEnded {
-                showAllToggle
+            HStack(spacing: 10) {
+                if model.hiddenEndedCount > 0 || model.showsAllEnded {
+                    showAllToggle
+                }
+                // What the *window* is holding back, which "show all" cannot
+                // reach: those sessions are not on the board at all. Under the
+                // finished rows because that is where a person goes looking
+                // for the afternoon they cannot find.
+                if let hint = model.olderHiddenHint {
+                    olderHiddenToggle(hint)
+                }
             }
         }
+    }
+
+    /// The window's own hint, and the menu that widens it.
+    private func olderHiddenToggle(_ hint: String) -> some View {
+        SessionWindowMenu(
+            window: model.sessionWindow,
+            hint: nil,
+            onSelect: { environment.catalog.setSessionWindow($0) }
+        ) {
+            HStack(spacing: 5) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(hint).font(AuspexType.caption)
+            }
+            .foregroundStyle(AuspexPalette.text3)
+            .fixedSize()
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(AuspexPalette.line, lineWidth: 1)
+        )
+        .help("Older sessions are in the store, not on the board. Widen to draw them.")
     }
 
     private var showAllToggle: some View {

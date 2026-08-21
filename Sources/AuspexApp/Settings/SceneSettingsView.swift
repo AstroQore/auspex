@@ -24,6 +24,7 @@ struct SceneSettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 switches
+                reach
                 note
             }
             .padding(20)
@@ -83,6 +84,55 @@ struct SceneSettingsView: View {
             }
         }
         .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(AuspexPalette.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
+        )
+    }
+
+    /// How far back the board and the map reach.
+    ///
+    /// Here as well as in the board's header because the two are the same
+    /// setting seen from two places a person can be standing: at the board,
+    /// where they notice an afternoon missing, or in Settings, where they came
+    /// looking for the knob. One store behind both — see
+    /// ``AuspexSettings/sessionWindow``.
+    private var reach: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("How far back")
+                .auspexLabel(AuspexType.label)
+                .foregroundStyle(AuspexPalette.textTertiary)
+
+            Picker(
+                "Show sessions active in the last",
+                selection: Binding(
+                    get: { catalog.sessionWindow },
+                    set: { catalog.setSessionWindow($0) }
+                )
+            ) {
+                ForEach(SessionWindow.allCases) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: 260, alignment: .leading)
+
+            Text(
+                "Auspex keeps a week of sessions and draws the recent ones. Anything "
+                    + "alive, working, or waiting on you is drawn whatever its age — the "
+                    + "window only decides how much history stands behind it. Nothing is "
+                    + "deleted: widen it and the rest come back."
+            )
+            .font(AuspexType.caption)
+            .foregroundStyle(AuspexPalette.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(AuspexPalette.panel)
