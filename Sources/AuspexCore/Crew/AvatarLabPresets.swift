@@ -47,6 +47,37 @@ public struct AvatarLabExpression: Sendable, Hashable, Identifiable {
     /// is why this port has nothing to apply it to: bloub already narrows the
     /// far eye through the sphere's own depth factor.
     public let perspective: Double
+
+    public init(
+        id: String,
+        semanticKey: String,
+        headX: Double, headY: Double, headZ: Double,
+        widthLeft: Double, widthRight: Double,
+        heightLeft: Double, heightRight: Double,
+        spacing: Double,
+        positionXLeft: Double, positionXRight: Double,
+        positionYLeft: Double, positionYRight: Double,
+        leftAngle: Double, rightAngle: Double,
+        perspective: Double
+    ) {
+        self.id = id
+        self.semanticKey = semanticKey
+        self.headX = headX
+        self.headY = headY
+        self.headZ = headZ
+        self.widthLeft = widthLeft
+        self.widthRight = widthRight
+        self.heightLeft = heightLeft
+        self.heightRight = heightRight
+        self.spacing = spacing
+        self.positionXLeft = positionXLeft
+        self.positionXRight = positionXRight
+        self.positionYLeft = positionYLeft
+        self.positionYRight = positionYRight
+        self.leftAngle = leftAngle
+        self.rightAngle = rightAngle
+        self.perspective = perspective
+    }
 }
 
 /// Which family a sequence belongs to.
@@ -85,6 +116,18 @@ public struct AvatarSequenceStep: Sendable, Hashable {
     /// How long the morph into it takes, seconds.
     public let transition: Double
     public let curve: AvatarSequenceCurve
+
+    public init(
+        expressionID: String,
+        hold: Double,
+        transition: Double,
+        curve: AvatarSequenceCurve
+    ) {
+        self.expressionID = expressionID
+        self.hold = hold
+        self.transition = transition
+        self.curve = curve
+    }
 }
 
 /// A sequence's own blink rhythm. Seconds, not milliseconds.
@@ -94,6 +137,20 @@ public struct AvatarBlinkRhythm: Sendable, Hashable {
     public let minInterval: Double
     public let maxInterval: Double
     public let duration: Double
+
+    public init(
+        isEnabled: Bool,
+        initialDelay: Double,
+        minInterval: Double,
+        maxInterval: Double,
+        duration: Double
+    ) {
+        self.isEnabled = isEnabled
+        self.initialDelay = initialDelay
+        self.minInterval = minInterval
+        self.maxInterval = maxInterval
+        self.duration = duration
+    }
 }
 
 /// One of avatar-lab's built-in animations.
@@ -103,6 +160,28 @@ public struct AvatarSequence: Sendable, Hashable, Identifiable {
     public let playback: AvatarSequencePlayback
     public let steps: [AvatarSequenceStep]
     public let blink: AvatarBlinkRhythm
+
+    public init(
+        id: AvatarSequenceID,
+        group: AvatarSequenceGroup,
+        playback: AvatarSequencePlayback,
+        steps: [AvatarSequenceStep],
+        blink: AvatarBlinkRhythm
+    ) {
+        self.id = id
+        self.group = group
+        self.playback = playback
+        self.steps = steps
+        self.blink = blink
+    }
+
+    /// The same sequence, played a different way.
+    ///
+    /// A life-cycle sequence loops; the choreographer plays some of them once
+    /// as a reaction and needs to say so without a second copy of the data.
+    public func played(_ mode: AvatarSequencePlayback) -> AvatarSequence {
+        AvatarSequence(id: id, group: group, playback: mode, steps: steps, blink: blink)
+    }
 }
 
 /// The built-in animations' ids, in avatar-lab's declaration order.
