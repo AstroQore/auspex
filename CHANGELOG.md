@@ -70,6 +70,79 @@ describes how one is cut when there is.
 
 ### Added
 
+- **Every card says how full its session's context window is.** The `/context`
+  gauge, for the three harnesses whose stores record it: a thin bar and
+  `898.8k / 1M · 90 %` under the counters, coloured by the board's own state
+  language — quiet ink under 70 %, tool-amber to 90 %, needs-you red above it,
+  because a session about to compact is closer to "somebody should look" than
+  to anything new. A tiny `⟲ 2` after it counts the compactions it has already
+  been through.
+
+  One definition of "used" on every row, so the gauge means the same thing
+  wherever it appears: **the tokens that were in the model's context when it
+  was last called** — the whole prompt, cached prefix included, and the reply
+  just generated excluded, because that lands in the next call's input. Claude
+  Code's `input_tokens` plus both cache counters; Codex's
+  `last_token_usage.input_tokens`; Grok Build's `contextTokensUsed`. Cursor,
+  AntiGravity, Grok Bot, Claude Cowork and Gemini CLI record nothing that
+  answers it and get no gauge at all — a bar at zero would say something none
+  of them said.
+
+  The dotted half is the part worth knowing about. Codex and Grok write their
+  window size into their own logs; Claude Code computes it in-process and never
+  writes it down, so Auspex looks it up from the model id. What is uncertain is
+  therefore the *denominator*, never the fill — so the fill stays solid and the
+  unfilled remainder goes dotted, which says "this is roughly where the wall is"
+  rather than "this measurement is soft". A model the lookup table has never
+  heard of still reports a fill, with no bar: `421k` is worth showing, and a
+  guessed denominator is not.
+
+- **The trace header opens what is actually in the window.** `context 96.4k /
+  200k (48 %)` beside the token totals it is most often confused with, and a
+  popover behind it with the exact counts, the cached share, the compaction
+  count, and an estimated composition — messages, tool results, everything
+  else, free.
+
+  The composition is Auspex's own estimate and every line of the panel says so.
+  Claude Code's `/context` is exact because Claude Code is the thing holding
+  the window; it knows its system prompt, its tool schemas and the skills it
+  loaded, and none of that reaches disk. What does reach disk is the
+  conversation, which Auspex already indexes, so messages and tool results are
+  estimated at four characters to the token and the rest is inferred by
+  subtraction. Four bands rather than Claude's seven: fabricating "System tools
+  1.9 %" out of a number nobody wrote down would be a worse answer than one
+  band honestly labelled *everything else*. When almost nothing could be
+  attributed — a session Auspex met after it started — the panel says that too,
+  rather than letting the remainder read as a claim about a system prompt.
+
+  The scan runs when the panel opens, never on a frame: two index seeks from
+  the newest compaction forward, capped, off the main actor.
+
+- **A Context lane on the trajectory.** A fourth row under Input, Model and
+  Tools: a step line of how full the window was, with a rule wherever the
+  harness threw the window away. Readings are anchored to a step index rather
+  than to a timestamp, so they land in the right place under all three scales —
+  the x axis is a clock under Duration and a count under Turns and Calls. A
+  step line rather than a smooth one, because nothing was measured between two
+  readings, and each run is coloured by the level it is *at* rather than the
+  one it ends in, so a session that sat at 48 % for a minute is drawn calm for
+  that minute. The lane appears only for a session that has readings; five of
+  the nine harnesses record none, and a lane that is empty on most of the board
+  is a lane a reader learns to ignore.
+
+- **The Codex row on the Harnesses page names its plan window.** `used 43 % ·
+  resets in 2 h 10 m · plan pro`, read out of a rollout that was already being
+  tailed. Codex writes a `rate_limits` block beside its token counters and no
+  other store on this Mac writes one at all, so this is one line on one row.
+  Nothing here asks a network what anybody's quota is; the tooltip says so, and
+  says how old the claim is.
+
+- **`--render-context`**, which draws that popover on its own.
+  `ImageRenderer` has no window and therefore no popover, so `--render-board`
+  can draw the header control and never what is behind it. The renderer runs
+  the real demo pipeline and the real estimate query, because a picture of an
+  estimate that skipped the query proves nothing.
+
 - **Auspex updates itself, on a stable channel or a dev one.** Tagged builds go
   out as GitHub Releases and an installed copy keeps itself current: Settings →
   Updates, or Auspex → Check for Updates…. One signed feed serves both streams,
