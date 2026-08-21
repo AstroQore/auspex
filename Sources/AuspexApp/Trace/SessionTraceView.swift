@@ -58,13 +58,29 @@ struct SessionTraceView: View {
                 onExpandInBoard: {
                     model.groupBy = .tree
                     model.viewMode = .board
-                }
+                },
+                family: family(besides: session),
+                isTaskFamily: model.selectedUnit != nil
             )
             tabBar
             traceList
         }
         // The pane the copies happen in is the pane that says so.
         .auspexCopyToast()
+    }
+
+    /// Everybody else on the same piece of work.
+    ///
+    /// The board folds a delegation family into one *unit* now, so the honest
+    /// answer to "what else is on this" is the unit's other members — which
+    /// includes the lead when a subagent is selected, and is the same set as
+    /// this session's children when the lead is. A session the board could not
+    /// fold into a unit falls back to its own children.
+    private func family(besides session: SessionSnapshot) -> [SessionSnapshot] {
+        guard let unit = model.selectedUnit else { return model.selectedChildren }
+        return unit.members
+            .filter { $0.key != session.key }
+            .compactMap { model.session(for: $0.key) }
     }
 
     // MARK: Tabs
@@ -372,6 +388,12 @@ struct SessionHeaderView: View {
     /// Divides the board along the delegation tree, so a family that is
     /// scattered across the wall reads as one. `nil` in a render.
     var onExpandInBoard: (() -> Void)?
+    /// Everybody else on the same piece of work — the task unit's other
+    /// members, or this session's children where the board has no unit.
+    var family: [SessionSnapshot] = []
+    /// Whether ``family`` came from a task unit. It is what the chip says:
+    /// "in this task" is a different claim from "children".
+    var isTaskFamily = false
 
     /// Whether the reader has opened the assignment out past its fold.
     @State private var showsWholeTask = false
@@ -709,13 +731,14 @@ struct SessionHeaderView: View {
                         ?? "Open the session that spawned this one"
                 )
             }
-            if !children.isEmpty {
+            if !family.isEmpty {
                 // A count that could not be opened was the loudest dead thing
-                // in this header: sixty-six children is exactly the number a
+                // in this header: sixty-six sessions is exactly the number a
                 // person wants to look *into*, and the chip answered by
                 // sitting there.
-                ChildrenChip(
-                    children: children,
+                FamilyChip(
+                    family: family,
+                    isTask: isTaskFamily,
                     onSelect: onSelect,
                     onExpandInBoard: onExpandInBoard
                 )
@@ -825,22 +848,30 @@ struct PillButton: View {
     }
 }
 
-/// The `↳ N children` chip, and what is behind it.
+/// The `↳ N` chip, and what is behind it.
 ///
 /// ## Why a popover and not a link
 ///
-/// The number is the answer to "how much did this delegate", and the next
-/// question is always "to what". Sixty-six children is a family a person
-/// cannot hold in their head and cannot find on the wall — the board sorts by
-/// urgency, so a family is scattered across it — and the only two useful
-/// answers are *show me the list* and *put them together on the board*. This
-/// is both, in the place the number already is.
+/// The number is the answer to "who else is on this", and the next question is
+/// always "who". Sixty-six sessions is a family a person cannot hold in their
+/// head and cannot find on the wall — the board sorts by urgency, so a family
+/// is scattered across it — and the only two useful answers are *show me the
+/// list* and *put them together on the board*. This is both, in the place the
+/// number already is.
+///
+/// It counts the *task unit's* other members where the board folded this
+/// session into one, and this session's own children where it did not. The two
+/// are the same set for a lead with subagents and different for a subagent,
+/// which is why the chip says which it is showing rather than calling both
+/// "children".
 ///
 /// The list is capped. A popover is a thing you glance at; past two dozen rows
 /// it is a window, and the board's tree grouping is the right surface for that
 /// — which is what the link at the bottom switches to.
-private struct ChildrenChip: View {
-    let children: [SessionSnapshot]
+private struct FamilyChip: View {
+    let family: [SessionSnapshot]
+    /// Whether these are a task's members rather than this session's children.
+    var isTask = false
     let onSelect: (SessionKey) -> Void
     var onExpandInBoard: (() -> Void)?
 
@@ -849,11 +880,18 @@ private struct ChildrenChip: View {
     /// How many rows the popover draws before it says how many more there are.
     private static let limit = 24
 
+    private var noun: String {
+        if isTask { return family.count == 1 ? "1 more session" : "\(family.count) sessions" }
+        return family.count == 1 ? "1 child" : "\(family.count) children"
+    }
+
     var body: some View {
         ActionChip(
-            title: children.count == 1 ? "↳ 1 child" : "↳ \(children.count) children",
+            title: "↳ \(noun)",
             tint: AuspexPalette.stateDelegating,
-            help: "What this session delegated to",
+            help: isTask
+                ? "Everybody else working on this task"
+                : "What this session delegated to",
             action: { isOpen.toggle() }
         )
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
@@ -864,7 +902,7 @@ private struct ChildrenChip: View {
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Text(children.count == 1 ? "1 child" : "\(children.count) children")
+                Text(isTask ? "\(noun) on this task" : noun)
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                 Spacer(minLength: 8)
@@ -886,7 +924,7 @@ private struct ChildrenChip: View {
 
             BoardScroll {
                 LazyVStack(spacing: 0) {
-                    ForEach(children.prefix(Self.limit), id: \.key) { child in
+                    ForEach(family.prefix(Self.limit), id: \.key) { child in
                         Button {
                             isOpen = false
                             onSelect(child.key)
@@ -896,8 +934,8 @@ private struct ChildrenChip: View {
                         .buttonStyle(.auspex)
                         Divider().overlay(AuspexPalette.line)
                     }
-                    if children.count > Self.limit {
-                        Text("and \(children.count - Self.limit) more")
+                    if family.count > Self.limit {
+                        Text("and \(family.count - Self.limit) more")
                             .font(AuspexType.caption)
                             .foregroundStyle(AuspexPalette.text3)
                             .padding(.horizontal, 12)
