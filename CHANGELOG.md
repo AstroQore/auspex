@@ -46,6 +46,42 @@ Auspex is pre-alpha; there are no released versions yet.
 
 ### Added
 
+- **Light and dark, and the Mac decides.** Auspex forced dark for as long as it
+  had one palette. Every token is a pair now — declared in one total `switch`,
+  so a colour cannot exist in one appearance and not the other — and the window
+  follows the appearance the Mac is set to, including a scheduled switch at
+  sunset. **Settings → Appearance** overrides that with System · Light · Dark,
+  switches the sidebar between the system's own material and the board's flat
+  ground, and shows which accent, background and foreground the choice resolved
+  to. Both are persisted in `~/.auspex/settings.json`; an absent key means
+  "follow", so nobody has to go and ask for the behaviour the setting exists to
+  give them.
+
+  Both columns are retuned around one anchor pair — `#2D2D2B` ground, `#F9F9F7`
+  paper — so the dark side moves off near-black onto a warm charcoal and the
+  two are the same room lit differently. A single app accent, terracotta
+  `#CC7D5E`, arrives for selection, keyboard focus and every system control's
+  tint, and "this control is on" stops being a surface step, because on a white
+  panel there is nowhere lighter to go. State colours keep their hue and clear
+  3:1 on their own pill in both; harness accents keep their hue *exactly* and
+  only lose brightness, by the least that brings each to 3:1 on a white ground.
+  `AuspexPaletteTests` computes every WCAG ratio from the table on each build,
+  so the numbers in the palette's documentation cannot rot.
+
+  Nothing has to be relaunched. The three surfaces that hold bytes rather than a
+  dynamic colour — the board's tiled grid, the activity strips' `CALayer`s, and
+  the office's textures — each rebake on an appearance change, and the tests
+  drive them through a real one and check what they are holding afterwards. The
+  office gets a daylit column of its own rather than the dark one inverted, and
+  its glows change how they *meet* the floor: additive light on a white floor
+  can only make white, so in light a glow paints the state's hue instead.
+
+  `--appearance system|light|dark` draws one launch in an appearance without
+  writing it down, which is how the performance budget is measured against
+  both; `appearance=light` on `--render-board`, `--render-scene`,
+  `--render-crew` and `--render-trajectory` gives every screenshot in
+  `docs/screenshots/` a `-light` twin.
+
 - **The scene is a place, not a room: a meeting room and a garden, and people
   who walk to them.** The map is one continuous plan — the office as it was,
   with two annexes under it — and a session's *position* is now the first thing
