@@ -93,6 +93,9 @@ struct AgentsSettingsView: View {
             }
             .toggleStyle(.switch)
             .tint(AuspexPalette.stateWriting)
+            // Full width, so the switch sits on the card's trailing edge
+            // rather than wherever the sentence beside it happened to stop.
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -148,36 +151,39 @@ private struct AgentsSettingsGroup: View {
                 Spacer(minLength: 0)
             }
             ForEach(group.rows) { row in
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(row.piece.title)
-                            .font(AuspexType.body)
-                            .foregroundStyle(AuspexPalette.text)
-                        if let path = row.displayPath {
-                            Text(path)
-                                .font(AuspexType.monoSmall)
-                                .foregroundStyle(AuspexPalette.text3)
-                                .textSelection(.enabled)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        if let detail = row.detail {
-                            Text(detail)
-                                .font(AuspexType.monoSmall)
-                                .foregroundStyle(AuspexPalette.text3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if let note = row.note {
-                            Text(note)
-                                .font(AuspexType.caption)
-                                .foregroundStyle(AuspexPalette.text3)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                SettingsRow(title: row.piece.title) {
+                    if let path = row.displayPath {
+                        Text(path)
+                            .font(AuspexType.monoSmall)
+                            .foregroundStyle(AuspexPalette.text3)
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    Spacer(minLength: 8)
+                    if let detail = row.detail {
+                        Text(detail)
+                            .font(AuspexType.monoSmall)
+                            .foregroundStyle(AuspexPalette.text3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let note = row.note {
+                        Text(note)
+                            .font(AuspexType.caption)
+                            .foregroundStyle(AuspexPalette.text3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // A reason is a fact about the row, not a control, so it
+                    // reads here rather than pushing the button column two
+                    // hundred points left on the one row that has one.
+                    if let reason = blockedReason(for: row) {
+                        Text(reason)
+                            .font(AuspexType.caption)
+                            .foregroundStyle(AuspexPalette.stateStale)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } action: {
                     action(for: row)
                 }
-                .padding(.vertical, 2)
             }
         }
         .padding(14)
@@ -186,22 +192,31 @@ private struct AgentsSettingsGroup: View {
         .opacity(group.isDetected ? 1 : 0.72)
     }
 
+    /// Why a row cannot be acted on, if it cannot. Read on the left, with the
+    /// rest of what is true about the row — see ``SettingsRow``.
+    private func blockedReason(for row: SetupModel.Row) -> String? {
+        switch row.state {
+        case let .unavailable(reason), let .unreadable(reason): reason
+        case .installed, .installedElsewhere, .absent: nil
+        }
+    }
+
     @ViewBuilder
     private func action(for row: SetupModel.Row) -> some View {
         switch row.state {
         case .installed:
-            HStack(spacing: 8) {
-                Text("installed")
-                    .font(AuspexType.pill)
-                    .foregroundStyle(AuspexPalette.stateWriting)
-                Button("Remove") {
-                    Task { await model.uninstall(row, detected: detected) }
-                }
-                .buttonStyle(.auspex)
+            Text("installed")
                 .font(AuspexType.pill)
-                .foregroundStyle(AuspexPalette.text3)
-                .disabled(model.isWorking)
+                .foregroundStyle(AuspexPalette.stateWriting)
+                .fixedSize()
+            Button("Remove") {
+                Task { await model.uninstall(row, detected: detected) }
             }
+            .buttonStyle(.auspex)
+            .font(AuspexType.pill)
+            .foregroundStyle(AuspexPalette.text3)
+            .disabled(model.isWorking)
+            .fixedSize()
         case .installedElsewhere:
             Button("Replace") {
                 Task { await model.install(row, detected: detected) }
@@ -210,6 +225,7 @@ private struct AgentsSettingsGroup: View {
             .font(AuspexType.pill)
             .foregroundStyle(AuspexPalette.stateStale)
             .disabled(model.isWorking)
+            .fixedSize()
         case .absent:
             Button("Install") {
                 Task { await model.install(row, detected: detected) }
@@ -218,12 +234,12 @@ private struct AgentsSettingsGroup: View {
             .font(AuspexType.pill)
             .foregroundStyle(AuspexPalette.stateThinking)
             .disabled(model.isWorking)
-        case let .unavailable(reason), let .unreadable(reason):
-            Text(reason)
-                .font(AuspexType.caption)
-                .foregroundStyle(AuspexPalette.text3)
-                .frame(maxWidth: 240, alignment: .trailing)
-                .multilineTextAlignment(.trailing)
+            .fixedSize()
+        case .unavailable, .unreadable:
+            // Nothing. The reason is on the left, and a column that is empty
+            // where there is nothing to press is what keeps the buttons in a
+            // line down the page.
+            EmptyView()
         }
     }
 }

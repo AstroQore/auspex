@@ -217,11 +217,16 @@ struct CharactersSettingsView: View {
 
     private var harnessDefaults: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sectionHeader(
-                "Default per harness",
+            SettingsSectionHeader(
+                title: "Default per harness",
                 detail: "Automatic uses whichever package names the harness, "
                     + "and the built-in figures while none does."
             )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(AuspexPalette.hairline).frame(height: 1)
+            }
             ForEach(Harness.boardOrder, id: \.self) { harness in
                 HarnessCharacterRow(harness: harness, library: library)
                 if harness != Harness.boardOrder.last {
@@ -229,8 +234,7 @@ struct CharactersSettingsView: View {
                 }
             }
         }
-        .background(AuspexPalette.well)
-        .overlay(Rectangle().strokeBorder(AuspexPalette.hairline, lineWidth: 1))
+        .modifier(SettingsCard())
     }
 
     // MARK: The packages
@@ -238,13 +242,17 @@ struct CharactersSettingsView: View {
     @ViewBuilder
     private var packageGrid: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Installed", detail: nil, inset: false)
+            SettingsSectionHeader(title: "Installed")
             // The built-in figures come first and are always here. They are a
             // character one can choose, not a footnote about what happens when
             // a character is missing, so they are shown as a card among the
             // packages rather than as a sentence underneath them.
+            // 340, not 288. A card is a tile plus a column of text, and at 288
+            // the column was 124 points — narrow enough to wrap "Person" into
+            // "PERS / ON" and to break the pills. See
+            // ``CharacterPreview/cardSize``.
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 288), spacing: 12, alignment: .top)],
+                columns: [GridItem(.adaptive(minimum: 340), spacing: 12, alignment: .top)],
                 alignment: .leading,
                 spacing: 12
             ) {
@@ -254,18 +262,13 @@ struct CharactersSettingsView: View {
                 }
             }
             if packages.isEmpty {
-                Text(
-                    "No packages yet. One is a folder holding character.json and idle.png, "
-                        + "thinking.png, typing.png, writing.png, delegating.png, blocked.png, "
-                        + "stale.png and ended.png — any of which may be missing, because a "
-                        + "pose nobody has drawn falls back to the figures above."
+                EmptyStateView(
+                    title: "No packages yet.",
+                    detail: "A package is a folder holding character.json and one frame "
+                        + "strip per pose. Any pose you have not drawn falls back to the "
+                        + "figures above."
                 )
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .panelChrome()
+                .frame(maxWidth: .infinity)
             }
         }
     }
@@ -286,30 +289,6 @@ struct CharactersSettingsView: View {
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func sectionHeader(
-        _ title: String,
-        detail: String?,
-        inset: Bool = true
-    ) -> some View {
-        HStack(spacing: 8) {
-            Text(title).auspexLabel(AuspexType.labelSmall)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundStyle(AuspexPalette.textTertiary)
-            }
-            Spacer(minLength: 4)
-        }
-        .foregroundStyle(AuspexPalette.textTertiary)
-        .padding(.horizontal, inset ? 12 : 0)
-        .padding(.vertical, inset ? 6 : 0)
-        .overlay(alignment: .bottom) {
-            if inset {
-                Rectangle().fill(AuspexPalette.hairline).frame(height: 1)
-            }
         }
     }
 
@@ -341,19 +320,21 @@ private struct HarnessCharacterRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            HarnessBadge(harness: harness, size: 20)
-            VStack(alignment: .leading, spacing: 1) {
+        SettingsRow(labelWidth: 176, actionWidth: SettingsLayout.pickerWidth) {
+            HStack(spacing: 8) {
+                HarnessBadge(harness: harness, size: 20)
                 // Always the full name. Auspex never abbreviates a harness.
                 Text(harness.displayName)
                     .font(AuspexType.rowTitle)
                     .foregroundStyle(AuspexPalette.textPrimary)
-                Text(subtitle)
-                    .font(.system(size: 10))
-                    .foregroundStyle(AuspexPalette.textTertiary)
                     .lineLimit(1)
             }
-            Spacer(minLength: 8)
+        } detail: {
+            Text(subtitle)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.textTertiary)
+                .lineLimit(2)
+        } action: {
             Picker("", selection: binding) {
                 Text("Automatic (recommended)").tag(CharacterChoice.automatic)
                 Text(CharacterChoice.builtInDisplayName).tag(CharacterChoice.builtIn)
@@ -365,10 +346,10 @@ private struct HarnessCharacterRow: View {
                 }
             }
             .labelsHidden()
-            .frame(width: 210)
+            .frame(width: SettingsLayout.pickerWidth)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.vertical, 4)
     }
 
     private var subtitle: String {
@@ -405,11 +386,12 @@ private struct HarnessCharacterRow: View {
 private struct BuiltInCharacterCard: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            BuiltInPreviewTile()
+            BuiltInPreviewTile(size: CharacterPreview.cardSize)
             VStack(alignment: .leading, spacing: 6) {
                 Text(CharacterChoice.builtInDisplayName)
                     .font(AuspexType.cardTitle)
                     .foregroundStyle(AuspexPalette.textPrimary)
+                    .lineLimit(2)
                 // Where a package shows its id. The rig has none: it is not a
                 // folder, and saying so is more use than an invented one.
                 Text("Built-in · drawn in code")
@@ -417,7 +399,7 @@ private struct BuiltInCharacterCard: View {
                     .foregroundStyle(AuspexPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 5) {
+                FlowLayout(spacing: 5, lineSpacing: 5) {
                     CharacterChip("Person", tint: AuspexPalette.stateDelegating)
                     CharacterChip("32 px", tint: AuspexPalette.textSecondary)
                 }
@@ -448,18 +430,22 @@ private struct CharacterCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            CharacterPreviewTile(package: package)
+            CharacterPreviewTile(package: package, size: CharacterPreview.cardSize)
             VStack(alignment: .leading, spacing: 6) {
                 Text(package.displayName)
                     .font(AuspexType.cardTitle)
                     .foregroundStyle(AuspexPalette.textPrimary)
+                    .lineLimit(2)
                 Text(package.id)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.textTertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                HStack(spacing: 5) {
+                // A flow rather than a stack: three pills in a 200 pt column can
+                // need a second line, and a pill that broke its own word into
+                // "BUILT- / IN" is what an `HStack` does instead.
+                FlowLayout(spacing: 5, lineSpacing: 5) {
                     CharacterChip(package.manifest.kind.displayName, tint: accent)
                     CharacterChip(package.source.displayName, tint: AuspexPalette.textSecondary)
                     CharacterChip("\(package.cell) px", tint: AuspexPalette.textSecondary)
@@ -521,6 +507,8 @@ private struct CharacterChip: View {
         Text(text)
             .auspexLabel(AuspexType.labelSmall)
             .foregroundStyle(tint)
+            .lineLimit(1)
+            .fixedSize()
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))

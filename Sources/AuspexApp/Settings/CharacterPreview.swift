@@ -23,6 +23,15 @@ enum CharacterPreview {
     /// is the rule the scene follows too.
     static let boxSize: CGFloat = 128
 
+    /// The box on a card in the grid.
+    ///
+    /// Smaller than ``boxSize`` because a card is a fixed width and the tile
+    /// takes its share off the front: at 128 the column beside it was 124
+    /// points, which is where "Person" wrapped to "PERS / ON" and the pills
+    /// came apart. 104 is a clean 3.25× of a 32-pixel cell — still exact
+    /// pixels, still no filtering — and hands the text 24 points back.
+    static let cardSize: CGFloat = 104
+
     /// Frame 0 of `package`, or `nil` when it has no strips at all.
     ///
     /// Cached on the strip's own identity — path, size, and modification date —
