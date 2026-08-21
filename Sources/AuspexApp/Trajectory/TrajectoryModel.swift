@@ -71,6 +71,10 @@ final class TrajectoryModel {
     /// One bar per step, in step order.
     private(set) var spans: [TrajectorySpan] = []
     private(set) var ticks: [TrajectoryTick] = []
+    /// How full the window was, over the same axis the bars are laid out on.
+    /// ``TrajectoryContextLine/empty`` for the harnesses that record nothing,
+    /// and the timeline draws no lane at all when it is.
+    private(set) var contextLine: TrajectoryContextLine = .empty
     /// The rows the list draws: the steps the brush and the query kept.
     private(set) var rows: [TrajectoryStep] = []
     /// What the gutter draws beside each row, by step id.
@@ -206,6 +210,7 @@ final class TrajectoryModel {
         rawTask = nil
         builder = TrajectoryBuilder()
         steps = []
+        contextLine = .empty
         turns = []
         requests = []
         spans = []
@@ -297,6 +302,14 @@ final class TrajectoryModel {
         spans = TrajectoryLayout.spans(for: steps, scale: scale, now: now)
         ticks = TrajectoryLayout.ticks(for: steps, scale: scale, now: now)
         cursor = TrajectoryLayout.cursor(for: steps, scale: scale, now: now)
+        // Against the spans, not against the clock: the readings are anchored
+        // to step indices precisely so they land in the right place under all
+        // three scales, and re-laying them out is the same pass.
+        contextLine = TrajectoryLayout.contextLine(
+            readings: builder.contextReadings,
+            compactionSteps: builder.compactionSteps,
+            spans: spans
+        )
         refilter()
     }
 

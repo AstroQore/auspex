@@ -47,8 +47,10 @@ struct TrajectoryTimelineView: View {
 
     @Environment(\.isSnapshotRender) private var isSnapshotRender
 
-    /// The width of the lane-name column. Wide enough for "Model" at 9.5 pt.
-    private static let gutter: CGFloat = 52
+    /// The width of the lane-name column. Wide enough for "Context" at
+    /// 9.5 pt with the label tracking on it — the longest of the four, and the
+    /// one the column was too narrow for when there were only three.
+    private static let gutter: CGFloat = 64
     private static let laneHeight: CGFloat = 22
     private static let laneGap: CGFloat = 5
     private static let axisHeight: CGFloat = 16
@@ -59,16 +61,33 @@ struct TrajectoryTimelineView: View {
     /// event that took a millisecond still happened.
     private static let minimumBar: CGFloat = 2
 
-    private static var plotHeight: CGFloat {
-        CGFloat(TrajectoryLane.allCases.count) * laneHeight
-            + CGFloat(TrajectoryLane.allCases.count - 1) * laneGap
+    /// Whether the fourth lane is drawn at all.
+    ///
+    /// Five of the nine harnesses record nothing about a context window, and a
+    /// lane that is empty for most of the board is a lane a reader learns to
+    /// ignore — which is the reason ``TrajectoryLane`` has three cases and not
+    /// six. So this row is not a lane: it appears only for a session that has
+    /// readings, and takes no height when it does not.
+    private var hasContextLane: Bool { !model.contextLine.isEmpty }
+
+    private var laneCount: Int {
+        TrajectoryLane.allCases.count + (hasContextLane ? 1 : 0)
+    }
+
+    private var plotHeight: CGFloat {
+        CGFloat(laneCount) * Self.laneHeight + CGFloat(laneCount - 1) * Self.laneGap
+    }
+
+    /// The top of the context row, when there is one.
+    private var contextLaneTop: CGFloat {
+        CGFloat(TrajectoryLane.allCases.count) * (Self.laneHeight + Self.laneGap)
     }
 
     /// How far below the plot's top this view still owns pixels: the lanes and
     /// the axis under them. The hover tooltip is clamped into it, so nothing
     /// below the timeline — the facts strip, the step list, the inspector's
     /// header — is ever drawn over. See ``TrajectoryLayout/tooltipOrigin``.
-    private static var tooltipBand: CGFloat { plotHeight + axisHeight }
+    private var tooltipBand: CGFloat { plotHeight + Self.axisHeight }
 
     /// The widest the tooltip is allowed to get, and the narrowest it may be
     /// squeezed to before it stops shrinking and starts hanging over an edge.
@@ -81,7 +100,7 @@ struct TrajectoryTimelineView: View {
                 laneLabels
                 plot
             }
-            .frame(height: Self.plotHeight)
+            .frame(height: plotHeight)
             HStack(spacing: 0) {
                 Color.clear.frame(width: Self.gutter, height: Self.axisHeight)
                 axis
@@ -102,6 +121,12 @@ struct TrajectoryTimelineView: View {
         VStack(alignment: .leading, spacing: Self.laneGap) {
             ForEach(TrajectoryLane.allCases) { lane in
                 Text(lane.title)
+                    .auspexLabel(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .frame(height: Self.laneHeight, alignment: .leading)
+            }
+            if hasContextLane {
+                Text("Context")
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                     .frame(height: Self.laneHeight, alignment: .leading)
@@ -137,7 +162,7 @@ struct TrajectoryTimelineView: View {
 
     /// One pass over the spans: lane beds, then merged runs of bars.
     private func draw(in context: inout GraphicsContext, size: CGSize) {
-        for (index, _) in TrajectoryLane.allCases.enumerated() {
+        for index in 0..<laneCount {
             let rect = CGRect(
                 x: 0,
                 y: CGFloat(index) * (Self.laneHeight + Self.laneGap),
@@ -155,7 +180,7 @@ struct TrajectoryTimelineView: View {
             context.stroke(
                 Path { path in
                     path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: Self.plotHeight))
+                    path.addLine(to: CGPoint(x: x, y: plotHeight))
                 },
                 with: .color(AuspexPalette.line),
                 lineWidth: 1
@@ -166,12 +191,14 @@ struct TrajectoryTimelineView: View {
             context.stroke(
                 Path { path in
                     path.move(to: CGPoint(x: x, y: 0))
-                    path.addLine(to: CGPoint(x: x, y: Self.plotHeight))
+                    path.addLine(to: CGPoint(x: x, y: plotHeight))
                 },
                 with: .color(colour),
                 lineWidth: 1.5
             )
         }
+
+        if hasContextLane { drawContext(in: &context, size: size) }
 
         for run in runs(in: size) {
             let path = Path(roundedRect: run.rect, cornerRadius: 1.5, style: .continuous)
@@ -187,6 +214,108 @@ struct TrajectoryTimelineView: View {
                 )
             }
         }
+    }
+
+    /// The context lane: a step line of how full the window was, and a rule
+    /// wherever the harness threw the window away.
+    ///
+    /// A *step* line rather than a smooth one, because nothing was measured
+    /// between two readings. The window did not creep from 40 % to 62 %; it
+    /// sat at 40 % until the model was called again and then it was 62 %, and
+    /// a diagonal would draw a measurement nobody took.
+    ///
+    /// Segments are coloured by the band they end in, so the moment a session
+    /// crosses into amber and then into red is visible on the timeline rather
+    /// than only in the number at the end of it. The line is dashed when the
+    /// window was looked up from the model rather than recorded — the same
+    /// thing the card's dotted remainder says, in the one place there is no
+    /// remainder to dot.
+    private func drawContext(in context: inout GraphicsContext, size: CGSize) {
+        let line = model.contextLine
+        let top = contextLaneTop + 3
+        let height = Self.laneHeight - 6
+        let bottom = top + height
+
+        // Compactions first, under the line: a drop beside one of these is the
+        // harness forgetting, not the model spending less.
+        for cut in line.compactions {
+            let x = cut * size.width
+            context.stroke(
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: contextLaneTop))
+                    path.addLine(to: CGPoint(x: x, y: contextLaneTop + Self.laneHeight))
+                },
+                with: .color(AuspexPalette.stateStale),
+                lineWidth: 1
+            )
+        }
+
+        guard let first = line.points.first else { return }
+        let style = StrokeStyle(
+            lineWidth: 1.5,
+            lineCap: .butt,
+            lineJoin: .miter,
+            dash: line.isDerived ? [2.5, 2] : []
+        )
+
+        func y(_ fill: Double) -> CGFloat { bottom - height * fill }
+        func colour(_ fill: Double) -> Color {
+            ContextGaugeStyle.colour(
+                fill >= ContextGauge.criticalThreshold
+                    ? .critical
+                    : (fill >= ContextGauge.warmThreshold ? .warm : .calm)
+            )
+        }
+
+        // From the first reading, not from the left edge: before it, nothing
+        // was known about the window, and a line there would be a measurement
+        // nobody took.
+        var previous = CGPoint(x: first.x * size.width, y: y(first.fill))
+        var previousFill = first.fill
+
+        for point in line.points.dropFirst() {
+            let x = point.x * size.width
+            let level = y(point.fill)
+            // The run and the riser are stroked separately, and that is not
+            // fussiness. A session that sat at 48 % for a minute and then
+            // jumped to 92 % must be drawn grey for that minute: colouring the
+            // whole segment by where it ended would paint a red lane over the
+            // hour it was fine.
+            context.stroke(
+                Path { path in
+                    path.move(to: previous)
+                    path.addLine(to: CGPoint(x: x, y: previous.y))
+                },
+                with: .color(colour(previousFill)),
+                style: style
+            )
+            context.stroke(
+                Path { path in
+                    path.move(to: CGPoint(x: x, y: previous.y))
+                    path.addLine(to: CGPoint(x: x, y: level))
+                },
+                // The riser takes the louder of the two: a jump *into* red is
+                // the moment worth seeing, and a drop out of it is a
+                // compaction, which has its own rule beside it.
+                with: .color(colour(max(previousFill, point.fill))),
+                style: style
+            )
+            previous = CGPoint(x: x, y: level)
+            previousFill = point.fill
+        }
+
+        // And out to the right edge at the newest level, so the lane reads as
+        // "this is where it is now" rather than stopping mid-air. This is also
+        // the whole of the line for a session with one reading — which is
+        // still a measurement, and still where the window is.
+        context.stroke(
+            Path { path in
+                path.move(to: previous)
+                path.addLine(to: CGPoint(x: size.width, y: previous.y))
+            },
+            with: .color(colour(previousFill)),
+            style: style
+        )
     }
 
     /// Where the marker goes, in points across the plot.
@@ -280,14 +409,14 @@ struct TrajectoryTimelineView: View {
             ZStack(alignment: .topLeading) {
                 Rectangle()
                     .fill(AuspexPalette.bg0.opacity(0.62))
-                    .frame(width: max(0, left), height: Self.plotHeight)
+                    .frame(width: max(0, left), height: plotHeight)
                 Rectangle()
                     .fill(AuspexPalette.bg0.opacity(0.62))
-                    .frame(width: max(0, size.width - right), height: Self.plotHeight)
+                    .frame(width: max(0, size.width - right), height: plotHeight)
                     .offset(x: right)
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .strokeBorder(AuspexPalette.text.opacity(0.35), lineWidth: 1)
-                    .frame(width: max(1, right - left), height: Self.plotHeight)
+                    .frame(width: max(1, right - left), height: plotHeight)
                     .offset(x: left)
             }
             .allowsHitTesting(false)
@@ -305,7 +434,7 @@ struct TrajectoryTimelineView: View {
         if let cursor = model.cursor {
             Rectangle()
                 .fill(AuspexPalette.stateWriting.opacity(0.75))
-                .frame(width: 1, height: Self.plotHeight)
+                .frame(width: 1, height: plotHeight)
                 .offset(x: min(size.width - 1, cursor * size.width))
                 .allowsHitTesting(false)
         }
@@ -383,8 +512,8 @@ struct TrajectoryTimelineView: View {
         let origin = TrajectoryLayout.tooltipOrigin(
             pointer: hoverPoint.x,
             tooltip: tooltipSize,
-            plot: CGSize(width: size.width, height: Self.plotHeight),
-            band: Self.tooltipBand,
+            plot: CGSize(width: size.width, height: plotHeight),
+            band: tooltipBand,
             lane: band(of: step)
         )
         return VStack(alignment: .leading, spacing: 2) {

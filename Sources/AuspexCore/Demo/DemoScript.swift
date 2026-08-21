@@ -482,6 +482,11 @@ extension DemoScript.Blueprint {
                     22.0
                 ),
                 .say("The inspector needs the tool-call ledger to pair starts with finishes."),
+                // Two thirds of the way up, before the last long turn. Three
+                // readings rather than two is what makes the trajectory's
+                // context lane a staircase — calm, then amber, then red —
+                // instead of a flat line with a jump at the end.
+                .context(used: 141_200, window: 200_000, cached: 118_400, derived: true),
                 .permission("Bash", 26.0, true),
                 .tool("Bash", .shell, "swift build 2>&1 | tail -20", 9.0),
                 .usage(62_900, 5_480, 44_100),
