@@ -118,17 +118,15 @@ struct IgnoreSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             SectionRule("Rules", detail: "Switch one off to try the board without it.")
             if rules.isEmpty {
-                Text(
-                    "No rules yet. Right-click a card or a project in the sidebar to ignore "
-                        + "the folder it is in, the project it belongs to, or every session "
-                        + "whose prompt starts the same way."
+                // No box: a border drawn around the sentence "there are no
+                // rules" is a control that looks like it failed to load. See
+                // ``EmptyStateView``.
+                EmptyStateView(
+                    title: "No rules yet.",
+                    detail: "Right-click a card, or a project in the sidebar, to hide the "
+                        + "folder it is in."
                 )
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.text3)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .panelChrome()
+                .frame(maxWidth: .infinity)
             } else {
                 VStack(spacing: 0) {
                     ForEach(rules) { rule in

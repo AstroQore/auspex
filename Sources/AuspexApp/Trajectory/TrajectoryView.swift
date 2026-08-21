@@ -69,20 +69,12 @@ struct TrajectoryView: View {
     }
 
     private var noSelection: some View {
-        VStack(spacing: 10) {
-            Image(systemName: BoardViewMode.trajectory.systemImage)
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(AuspexPalette.text3)
-            Text("Select a session")
-                .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.text2)
-            Text("A trajectory is one session opened out. Pick a card to see its turns.")
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.text3)
-                .multilineTextAlignment(.center)
-        }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        EmptyStateView(
+            symbol: BoardViewMode.trajectory.systemImage,
+            title: "Select a session",
+            detail: "A trajectory is one session opened out. Pick a card to see its turns."
+        )
+        .centredInPane()
     }
 }
 
@@ -347,21 +339,19 @@ private struct TrajectoryStepList: View {
         }
     }
 
+    @ViewBuilder
     private var emptyList: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(model.isLoading ? "Reading the event log…" : "Nothing in this range.")
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.text2)
+        EmptyStateView(
+            title: model.isLoading ? "Reading the event log…" : "Nothing in this range."
+        ) {
             if !model.isLoading, model.isFiltered {
                 Button("Show the whole session") {
                     model.brush = nil
                     model.query = ""
                 }
                 .buttonStyle(.link)
-                .font(AuspexType.body)
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
 }

@@ -314,17 +314,11 @@ struct TrajectoryInspector: View {
     }
 
     private var empty: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Nothing selected")
-                .font(AuspexType.cardTitle)
-                .foregroundStyle(AuspexPalette.text2)
-            Text("Click a row, or a bar on the timeline, to take a step apart.")
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.text3)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        EmptyStateView(
+            title: "Nothing selected",
+            detail: "Click a row, or a bar on the timeline, to take a step apart."
+        )
+        .centredInPane()
     }
 
     private static let clock: DateFormatter = {

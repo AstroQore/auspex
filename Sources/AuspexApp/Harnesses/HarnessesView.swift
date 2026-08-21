@@ -133,6 +133,15 @@ struct HarnessesPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if rows.isEmpty {
+                EmptyStateView(
+                    symbol: "square.stack.3d.up.slash",
+                    title: "No harness to report on.",
+                    detail: "Auspex names a harness here as soon as an adapter watches a "
+                        + "store for it."
+                )
+                .frame(maxWidth: .infinity)
+            }
             ForEach(rows) { row in
                 HarnessRackRow(status: row)
             }

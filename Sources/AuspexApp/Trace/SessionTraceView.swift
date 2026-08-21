@@ -183,40 +183,31 @@ struct SessionTraceView: View {
         }
     }
 
+    @ViewBuilder
     private var emptyTrace: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(model.isLoadingTrace ? "Loading the event log…" : "Nothing in this view.")
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.text2)
-            if !model.isLoadingTrace, model.traceFilter.count < TraceEntry.Category.allCases.count {
+        EmptyStateView(
+            title: model.isLoadingTrace ? "Loading the event log…" : "Nothing in this view."
+        ) {
+            if !model.isLoadingTrace,
+               model.traceFilter.count < TraceEntry.Category.allCases.count {
                 Button("Show everything") {
                     model.traceFilter = Set(TraceEntry.Category.allCases)
                 }
                 .buttonStyle(.link)
-                .font(AuspexType.body)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: Empty
 
     private var noSelection: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "list.bullet.indent")
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(AuspexPalette.text3)
-            Text("Select a session")
-                .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.text2)
-            Text("Its prompts, tool calls, and turns appear here as they happen.")
-                .font(AuspexType.body)
-                .foregroundStyle(AuspexPalette.text3)
-                .multilineTextAlignment(.center)
-        }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        EmptyStateView(
+            symbol: "list.bullet.indent",
+            title: "Select a session",
+            detail: "Its prompts, tool calls, and turns appear here as they happen."
+        )
+        .centredInPane()
     }
 }
 

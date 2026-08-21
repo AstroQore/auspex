@@ -54,6 +54,11 @@ enum AuspexType {
     static let pill = Font.system(size: 11, weight: .semibold)
     /// Body copy — the empty state's paragraph, an expanded assistant message.
     static let body = Font.system(size: 12)
+    /// The one line an empty area says for itself. A step above body and a long
+    /// way below ``display``: an empty column is a fact, not an announcement,
+    /// and it is set in the third text step so it never competes with the rows
+    /// that are about to replace it. See ``EmptyStateView``.
+    static let emptyTitle = Font.system(size: 13)
     /// A card's footer keys and the counts beside them.
     static let caption = Font.system(size: 11)
 
