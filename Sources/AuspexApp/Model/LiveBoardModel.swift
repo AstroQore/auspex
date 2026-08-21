@@ -238,6 +238,11 @@ final class LiveBoardModel {
     private func loadTrajectory() {
         trajectory.open(
             key: selectedKey,
+            // The family, so the Task scope has something to merge. Handed
+            // over rather than looked up: the unit was derived with the frame,
+            // and a trajectory that went hunting for a delegation forest of
+            // its own would be a second answer to a question already asked.
+            members: selectedUnit.map { $0.members.map(\.key) } ?? [],
             repository: repository,
             isAlive: selectedSession?.isAlive ?? false
         )

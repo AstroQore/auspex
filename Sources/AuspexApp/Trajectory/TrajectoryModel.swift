@@ -64,6 +64,71 @@ final class TrajectoryModel {
 
     /// The session this is about.
     private(set) var key: SessionKey?
+
+    /// How much of the work a flight is about.
+    ///
+    /// A flight is one session opened out, and that is still the default — it
+    /// is what somebody clicked a card to see. The other scope is the whole
+    /// *piece of work*: the lead's lane and its members' merged into one
+    /// waterfall, in the order things actually happened, with a colour per
+    /// session and a legend.
+    ///
+    /// The merged view is not the same picture twice. A delegation reads as a
+    /// parent that goes quiet for ninety seconds and three children that do
+    /// not, and no per-session flight can show that — each of them shows a
+    /// gap, and the thing in the gap is the other lanes.
+    enum Scope: String, CaseIterable, Hashable {
+        case session
+        case task
+
+        var title: String {
+            switch self {
+            case .session: "Session"
+            case .task: "Task"
+            }
+        }
+    }
+
+    var scope: Scope = .session {
+        didSet {
+            guard oldValue != scope else { return }
+            reopen()
+        }
+    }
+
+    /// The sessions a `task`-scoped flight reads, lead first.
+    ///
+    /// Handed in by the board, which already derived the unit; the trajectory
+    /// must not go looking for a delegation forest of its own.
+    private(set) var members: [SessionKey] = []
+
+    /// Which sessions the current fold actually covers, in the order the
+    /// legend draws them.
+    private(set) var lanes: [SessionKey] = []
+
+    /// Which lane a step belongs to, or `nil` on a flight about one session.
+    ///
+    /// A dictionary rather than a search of ``lanes``: a merged flight can be
+    /// five thousand steps and the list asks this of every row it draws.
+    func lane(of step: TrajectoryStep) -> Int? {
+        guard scope == .task, lanes.count > 1, let session = step.session else { return nil }
+        return laneIndex[session]
+    }
+
+    private var laneIndex: [SessionKey: Int] = [:]
+
+    /// Whether there is a family to merge at all.
+    ///
+    /// One session on its own has no other lanes, so the control that offers to
+    /// show them is not drawn — a switch that does nothing is worse than no
+    /// switch on the busiest row in the window.
+    var canScopeToTask: Bool { members.count > 1 }
+
+    /// The keys the loader asks the store for.
+    private var readKeys: [SessionKey] {
+        guard scope == .task, !members.isEmpty else { return key.map { [$0] } ?? [] }
+        return members
+    }
     /// Every step, oldest first.
     private(set) var steps: [TrajectoryStep] = []
     private(set) var turns: [TrajectoryTurn] = []
@@ -196,13 +261,25 @@ final class TrajectoryModel {
 
     /// Points the trajectory at a session, throwing away everything about the
     /// previous one.
-    func open(key: SessionKey?, repository: SessionRepository?, isAlive: Bool) {
+    func open(
+        key: SessionKey?,
+        members: [SessionKey] = [],
+        repository: SessionRepository?,
+        isAlive: Bool
+    ) {
         self.repository = repository
         self.isAlive = isAlive
+        let membersMoved = members != self.members
+        self.members = members
         // Re-opening the same session is what entering the mode a second time
         // looks like: keep the fold, and ask only for whatever arrived while
-        // the mode was off screen.
-        guard key != self.key else { load(); return }
+        // the mode was off screen. Unless the *family* changed under a merged
+        // flight — a new subagent is a new lane, and the fold has no way to
+        // splice one in halfway.
+        if key == self.key {
+            if membersMoved, scope == .task { reopen() } else { load() }
+            return
+        }
         self.key = key
         loadTask?.cancel()
         loadTask = nil
@@ -230,7 +307,20 @@ final class TrajectoryModel {
         loadedEventCount = 0
         followsTail = true
         isLoading = key != nil
+        lanes = []
         load()
+    }
+
+    /// Throws the fold away and reads again, at whatever scope is set now.
+    ///
+    /// A merged flight and a single one are different *sets of events*, not
+    /// two views of one set: the turn numbering, the request numbering and the
+    /// step indices all come out of the fold, and a builder cannot be told to
+    /// take three more sessions' events into account retrospectively.
+    private func reopen() {
+        let key = self.key
+        self.key = nil
+        open(key: key, members: members, repository: repository, isAlive: isAlive)
     }
 
     /// Folds whatever has been written since the last read.
@@ -244,10 +334,12 @@ final class TrajectoryModel {
     }
 
     private func load() {
-        guard let key, let repository, !isTruncated else {
+        let keys = readKeys
+        guard let repository, !keys.isEmpty, !isTruncated else {
             if key == nil { isLoading = false }
             return
         }
+        let key = keys[0]
         guard loadTask == nil else { return }
 
         let after = builder.lastEventID ?? 0
@@ -265,7 +357,7 @@ final class TrajectoryModel {
             guard !Task.isCancelled else { return }
 
             let events = await Task.detached(priority: .userInitiated) { () -> [StoredEvent] in
-                (try? repository.events(key: key, after: after, limit: limit)) ?? []
+                (try? repository.events(keys: keys, after: after, limit: limit)) ?? []
             }.value
 
             guard !Task.isCancelled else { return }
@@ -285,6 +377,19 @@ final class TrajectoryModel {
     /// Takes the fold's current answer and re-derives everything downstream.
     private func adopt() {
         steps = builder.steps
+        // In the order the lanes first appear, which is the order the merge
+        // reads in: the lead's own banner is step zero, and a subagent's lane
+        // starts where it was spawned.
+        var seen: Set<SessionKey> = []
+        var order: [SessionKey] = []
+        for step in steps {
+            guard let session = step.session, seen.insert(session).inserted else { continue }
+            order.append(session)
+        }
+        lanes = order
+        laneIndex = Dictionary(
+            uniqueKeysWithValues: order.enumerated().map { ($0.element, $0.offset) }
+        )
         turns = builder.turns
         requests = builder.requests
         indexByID = Dictionary(

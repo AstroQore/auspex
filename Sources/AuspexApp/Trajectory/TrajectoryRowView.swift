@@ -69,6 +69,9 @@ struct TrajectoryRowView: View, Equatable {
     let marker: TrajectoryRowMarker
     let isSelected: Bool
     let isDimmed: Bool
+    /// Which lane of a merged flight this row belongs to, or `nil` when the
+    /// flight is about one session and every row is the same lane.
+    var lane: Int?
     let onSelect: () -> Void
 
     /// The gutter's width. Wide enough for "Turn 12".
@@ -83,11 +86,23 @@ struct TrajectoryRowView: View, Equatable {
             && lhs.marker == rhs.marker
             && lhs.isSelected == rhs.isSelected
             && lhs.isDimmed == rhs.isDimmed
+            && lhs.lane == rhs.lane
     }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             gutter
+            // Which bird flew this step, on a merged flight. A rule and not a
+            // label: the reader is following a colour down the column, and a
+            // name on every row would be the same nine strings a hundred
+            // times. The legend above says which is which.
+            if let lane {
+                Capsule()
+                    .fill(TrajectoryLaneColour.colour(lane))
+                    .frame(width: 2.5)
+                    .frame(maxHeight: .infinity)
+                    .padding(.vertical, 1)
+            }
             TrajectoryRoleChip(role: step.role, isError: step.isError)
                 .frame(width: Self.chipWidth, alignment: .leading)
             content

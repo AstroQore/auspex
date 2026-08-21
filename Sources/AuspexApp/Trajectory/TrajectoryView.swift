@@ -37,6 +37,7 @@ struct TrajectoryView: View {
         let attention = model.attention[session.key] ?? .none
         return VStack(spacing: 0) {
             TrajectoryBar(board: model, trajectory: model.trajectory, session: session)
+            TrajectoryLanesLegend(board: model, trajectory: model.trajectory)
             // Above the waterfall, because the reason a session is in front of
             // somebody is more urgent than the shape of how it got here.
             if attention.isSignalling {
@@ -80,6 +81,68 @@ struct TrajectoryView: View {
             detail: "A flight is one session opened out. Pick a card to see its turns."
         )
         .centredInPane()
+    }
+}
+
+
+/// Which session each colour on a merged flight belongs to.
+///
+/// A legend and not a label per row: at a hundred steps a name on every one is
+/// a column of the same nine strings, and the thing the reader is following is
+/// the *colour*.
+private struct TrajectoryLanesLegend: View {
+    @Bindable var board: LiveBoardModel
+    @Bindable var trajectory: TrajectoryModel
+
+    var body: some View {
+        if trajectory.scope == .task, trajectory.lanes.count > 1 {
+            HStack(spacing: 12) {
+                ForEach(Array(trajectory.lanes.enumerated()), id: \.element) { index, key in
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(TrajectoryLaneColour.colour(index))
+                            .frame(width: 7, height: 7)
+                        Text(board.row(for: key)?.title ?? key.sessionID)
+                            .font(AuspexType.caption)
+                            .foregroundStyle(
+                                key == trajectory.key
+                                    ? AuspexPalette.text : AuspexPalette.text3
+                            )
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .frame(maxWidth: 180, alignment: .leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 26)
+            .background(AuspexPalette.bg1)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(AuspexPalette.line).frame(height: 1)
+            }
+        }
+    }
+}
+
+/// One colour per lane on a merged flight.
+///
+/// The board's state palette, taken in an order that stays legible next to
+/// itself: nothing here means a *state*, so the colours are being used as
+/// labels and the only property that matters is that adjacent ones differ.
+/// The lead is always lane zero and always the board's own accent.
+enum TrajectoryLaneColour {
+    static let all: [Color] = [
+        AuspexPalette.accent,
+        AuspexPalette.stateDelegating,
+        AuspexPalette.stateTool,
+        AuspexPalette.stateThinking,
+        AuspexPalette.stateWriting,
+        AuspexPalette.stateStale,
+    ]
+
+    static func colour(_ index: Int) -> Color {
+        all[((index % all.count) + all.count) % all.count]
     }
 }
 
@@ -143,6 +206,20 @@ private struct TrajectoryBar: View {
             StatePill(state: session.state, isStale: session.isStale, showsChildCount: false)
                 .fixedSize()
             Spacer(minLength: 8)
+            // Only when there is a family to merge. A control offering to show
+            // one session's lane merged with nothing is a control that does
+            // nothing, and this bar is already the busiest row in the window.
+            if trajectory.canScopeToTask {
+                SegmentedPicker(
+                    selection: $trajectory.scope,
+                    options: TrajectoryModel.Scope.allCases.map { ($0, $0.title) }
+                )
+                .fixedSize()
+                .help(
+                    "One session's flight, or the whole task's — every session "
+                        + "on it in one waterfall, in the order things happened"
+                )
+            }
             SegmentedPicker(
                 selection: $trajectory.scale,
                 options: TrajectoryScale.allCases.map { ($0, $0.title) }
@@ -347,6 +424,7 @@ private struct TrajectoryStepList: View {
                             marker: model.markers[step.id] ?? .none,
                             isSelected: model.selectedID == step.id,
                             isDimmed: false,
+                            lane: model.lane(of: step),
                             onSelect: {
                                 model.selectedID = step.id
                                 model.showsInspector = true

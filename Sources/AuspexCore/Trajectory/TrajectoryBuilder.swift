@@ -288,6 +288,7 @@ public struct TrajectoryBuilder: Sendable {
             TrajectoryStep(
                 id: event.id,
                 index: index,
+                session: event.session,
                 turn: turn?.index ?? 0,
                 request: request?.index ?? 0,
                 role: role,
@@ -524,6 +525,7 @@ extension TrajectoryStep {
         TrajectoryStep(
             id: id,
             index: index,
+            session: session,
             turn: turn,
             request: request,
             role: role,

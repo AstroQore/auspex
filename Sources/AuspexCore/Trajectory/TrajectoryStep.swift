@@ -127,6 +127,17 @@ public struct TrajectoryStep: Identifiable, Hashable, Sendable {
     public let id: Int64
     /// Position in the whole trajectory, from zero.
     public let index: Int
+    /// Which session this step belongs to.
+    ///
+    /// One session's flight is one session's, and this says the same thing on
+    /// every row of it. It earns its place in the *task* scope, where the lanes
+    /// of a whole delegation are merged: the point of merging them is to see
+    /// the order things actually happened in, and a row that could not say
+    /// which bird flew it would make the merge unreadable.
+    ///
+    /// `nil` only for a step built before there was such a thing — which is to
+    /// say, in a test that did not care.
+    public let session: SessionKey?
     /// Which turn this belongs to. `0` for everything before the first turn
     /// opened.
     public let turn: Int
@@ -174,6 +185,7 @@ public struct TrajectoryStep: Identifiable, Hashable, Sendable {
     public init(
         id: Int64,
         index: Int,
+        session: SessionKey? = nil,
         turn: Int,
         request: Int,
         role: TrajectoryRole,
@@ -190,6 +202,7 @@ public struct TrajectoryStep: Identifiable, Hashable, Sendable {
     ) {
         self.id = id
         self.index = index
+        self.session = session
         self.turn = turn
         self.request = request
         self.role = role

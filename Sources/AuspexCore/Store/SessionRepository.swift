@@ -425,6 +425,41 @@ public struct SessionRepository: Sendable {
         }
     }
 
+    /// The next `limit` events across a set of sessions, oldest first.
+    ///
+    /// What the flight's Task scope reads: a piece of work is a family of
+    /// sessions, and the point of merging their lanes is to see the order they
+    /// actually happened in — a subagent's tool call between two of its
+    /// parent's, rather than in a second waterfall beside it.
+    ///
+    /// One query and one cursor rather than one per session, because `id` is
+    /// monotonic per database: the rows come back interleaved and already in
+    /// the order the events were written, so the fold downstream needs no
+    /// change and the caller keeps a single `after`.
+    public func events(
+        keys: [SessionKey],
+        after id: Int64,
+        limit: Int = 2_000
+    ) throws -> [StoredEvent] {
+        guard limit > 0, !keys.isEmpty else { return [] }
+        guard keys.count > 1 else { return try events(key: keys[0], after: id, limit: limit) }
+        return try dbWriter.read { db in
+            let placeholders = Array(repeating: "?", count: keys.count).joined(separator: ", ")
+            var arguments = StatementArguments(keys.map(\.description))
+            arguments += [id, limit]
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, session_key, ts, observed_at, seq, kind,
+                       tool_call_id, tool_name, detail_json, raw_path, raw_offset
+                FROM events
+                WHERE session_key IN (\(placeholders)) AND id > ?
+                ORDER BY id ASC
+                LIMIT ?
+                """, arguments: arguments)
+            let decoder = StoreJSON.makeDecoder()
+            return rows.compactMap { StoredEvent(row: $0, decoder: decoder) }
+        }
+    }
+
     /// The first `limit` events of a session, oldest first.
     ///
     /// A trajectory reads *forwards* — it is the record of how a session got
