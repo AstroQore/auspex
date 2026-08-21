@@ -21,6 +21,9 @@ actor DemoEventSource {
     private let continuation: AsyncStream<AgentEvent>.Continuation
     private let seed: UInt64
 
+    /// How many times over to run the cast — see ``DemoScript/make(seed:startedAt:generation:scale:)``.
+    private let scale: Int
+
     /// The real `/bin/sleep` one demo session borrows a pid from, so that
     /// Interrupt and Kill can be tried by hand. See ``DemoSignalTarget``.
     private let signalTarget = DemoSignalTarget()
@@ -45,11 +48,13 @@ actor DemoEventSource {
     init(
         continuation: AsyncStream<AgentEvent>.Continuation,
         seed: UInt64 = DemoScript.defaultSeed,
+        scale: Int = 1,
         lendsProcess: Bool = true,
         onLoop: (@Sendable () async -> Void)? = nil
     ) {
         self.continuation = continuation
         self.seed = seed
+        self.scale = scale
         self.lendsProcess = lendsProcess
         self.onLoop = onLoop
     }
@@ -72,7 +77,12 @@ actor DemoEventSource {
     }
 
     private func replay(generation: Int) async {
-        let script = DemoScript.make(seed: seed, startedAt: Date(), generation: generation)
+        let script = DemoScript.make(
+            seed: seed,
+            startedAt: Date(),
+            generation: generation,
+            scale: scale
+        )
         let start = ContinuousClock.now
         var lentPID = false
         var didCall = false

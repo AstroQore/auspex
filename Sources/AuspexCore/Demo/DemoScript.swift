@@ -72,14 +72,18 @@ public struct DemoScript: Sendable, Equatable {
     ///     keys across generations — a loop restarts the same eight sessions
     ///     rather than piling up new ones — so the board stays a fixed size no
     ///     matter how long the demo runs.
+    ///   - scale: how many times to run the cast. `1` is the demo as written;
+    ///     `12` is roughly the size a busy machine reaches. See
+    ///     ``scaledBlueprints(_:)``.
     public static func make(
         seed: UInt64 = DemoScript.defaultSeed,
         startedAt: Date,
-        generation: Int = 0
+        generation: Int = 0,
+        scale: Int = 1
     ) -> DemoScript {
         var rng = SeededRandom(seed: seed &+ UInt64(bitPattern: Int64(generation)))
         var steps: [Step] = []
-        for blueprint in Blueprint.all {
+        for blueprint in scaledBlueprints(scale) {
             var writer = Writer(
                 blueprint: blueprint,
                 startedAt: startedAt,
@@ -102,6 +106,28 @@ public struct DemoScript: Sendable, Equatable {
         self.steps = steps
         self.duration = duration
         self.seed = seed
+    }
+
+    /// The cast, run `scale` times over.
+    ///
+    /// The demo is twelve sessions in five projects, which is a good board and
+    /// a small one. The pathology this exists for only shows at the size a real
+    /// machine reaches — the report that prompted it had eighty-one live
+    /// sessions and a hundred and forty-three rows in the sidebar — and the one
+    /// place that size can be reached without reading somebody's store is here.
+    ///
+    /// Every copy is *distinct* in the three ways that matter, or it would not
+    /// reproduce anything: a repeated session id folds back into one card in
+    /// the registry, a shared directory piles twelve copies under one project
+    /// row, and a repeated pid makes twelve sessions look like one process.
+    ///
+    /// Copy zero is the script as written, so `--demo-scale 1` and no flag at
+    /// all are the same board — which is what keeps every screenshot, every
+    /// offscreen render and every test that asserts on the demo unaffected by
+    /// this existing.
+    static func scaledBlueprints(_ scale: Int) -> [Blueprint] {
+        guard scale > 1 else { return Blueprint.all }
+        return (0..<scale).flatMap { copy in Blueprint.all.map { $0.copy(copy) } }
     }
 
     /// The session keys the script uses, for a host that wants to pre-select
@@ -307,6 +333,61 @@ extension DemoScript {
         private var projectSlug: String {
             guard let path = gitRoot ?? cwd else { return sessionID }
             return BoardGrouping.projectName(forPath: path)
+        }
+
+        /// The same session again, as somebody else — see
+        /// ``DemoScript/scaledBlueprints(_:)``.
+        ///
+        /// Copy `0` is the blueprint itself, unchanged. Every other copy gets a
+        /// session id, a directory and a pid of its own, and its children get
+        /// ids of their own too — a delegation whose child kept the original's
+        /// id would put one subagent under twelve different parents.
+        ///
+        /// The id keeps its *shape*: only the last three characters are
+        /// replaced, so a UUID stays a UUID and `conv:2026-08-19:4d81a0` stays
+        /// a conversation id. A scaled board has to look like a board, because
+        /// the whole point of it is to be looked at.
+        func copy(_ index: Int) -> DemoScript.Blueprint {
+            guard index > 0 else { return self }
+            let tag = String(format: "%03x", index & 0xFFF)
+            func distinct(_ id: String) -> String {
+                guard id.count > 3 else { return id + tag }
+                return String(id.dropLast(3)) + tag
+            }
+            func elsewhere(_ path: String?) -> String? {
+                path.map { $0 + "-" + tag }
+            }
+            func rewritten(_ beats: [DemoScript.Beat]) -> [DemoScript.Beat] {
+                beats.map { beat in
+                    switch beat {
+                    case .delegate(let child, let agentType, let seconds):
+                        .delegate(distinct(child), agentType, seconds)
+                    case .delegateMany(let children, let agentType, let seconds):
+                        .delegateMany(children.map(distinct), agentType, seconds)
+                    default:
+                        beat
+                    }
+                }
+            }
+            return DemoScript.Blueprint(
+                harness: harness,
+                sessionID: distinct(sessionID),
+                cwd: elsewhere(cwd),
+                gitRoot: elsewhere(gitRoot),
+                branch: branch,
+                title: "\(title) \(index + 1)",
+                model: model,
+                pid: pid.map { $0 &+ pid_t(index &* 100) },
+                entrypoint: entrypoint,
+                variant: variant,
+                prologue: rewritten(prologue),
+                live: rewritten(live),
+                // Spread over the same second the original starts in. Twelve
+                // copies opening in lockstep would produce a board that
+                // changes state all at once, which is an animation rather than
+                // the readout the load is supposed to be measured against.
+                startDelay: startDelay + Double(index % 16) * 0.11
+            )
         }
     }
 }

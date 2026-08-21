@@ -169,3 +169,61 @@ struct AppearanceLaunchOptionTests {
         #expect(options.appearance == .dark)
     }
 }
+
+/// The command line's demo scale.
+///
+/// It exists so the performance budget can be measured at the size a real
+/// machine reaches without opening a real machine's store — see
+/// ``AppLaunchOptions/demoScale``.
+@Suite("Demo scale launch option")
+struct DemoScaleLaunchOptionTests {
+    @Test("--demo-scale is read, and asks for a demo on its own")
+    func flagIsRead() {
+        let options = AppLaunchOptions.current(
+            arguments: ["Auspex", "--demo-scale", "12"], environment: [:]
+        )
+        #expect(options.demoScale == 12)
+        #expect(options.isDemo)
+        #expect(options.mode == .demo)
+    }
+
+    @Test("The environment variable does the same, for launchers that own argv")
+    func environmentIsRead() {
+        let options = AppLaunchOptions.current(
+            arguments: ["Auspex"], environment: ["AUSPEX_DEMO_SCALE": "8"]
+        )
+        #expect(options.demoScale == 8)
+        #expect(options.isDemo)
+    }
+
+    @Test("Nothing said is the demo as written, and a live run is still live")
+    func absentMeansOne() {
+        let options = AppLaunchOptions.current(arguments: ["Auspex"], environment: [:])
+        #expect(options.demoScale == 1)
+        #expect(!options.isDemo)
+    }
+
+    @Test("Nonsense and extremes are clamped rather than obeyed")
+    func scaleIsClamped() {
+        #expect(AppLaunchOptions.current(
+            arguments: ["Auspex", "--demo-scale", "0"], environment: [:]
+        ).demoScale == 1)
+        #expect(AppLaunchOptions.current(
+            arguments: ["Auspex", "--demo-scale", "-4"], environment: [:]
+        ).demoScale == 1)
+        #expect(AppLaunchOptions.current(
+            arguments: ["Auspex", "--demo-scale", "banana"], environment: [:]
+        ).demoScale == 1)
+        #expect(AppLaunchOptions.current(
+            arguments: ["Auspex", "--demo-scale", "5000"], environment: [:]
+        ).demoScale == 64)
+    }
+
+    @Test("A scale of one does not turn a live launch into a demo")
+    func oneDoesNotImplyDemo() {
+        let options = AppLaunchOptions.current(
+            arguments: ["Auspex", "--demo-scale", "1"], environment: [:]
+        )
+        #expect(!options.isDemo)
+    }
+}

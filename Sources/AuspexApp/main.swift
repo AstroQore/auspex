@@ -352,6 +352,14 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         store is read and nothing is written to ~/.auspex/.
                         `AUSPEX_DEMO=1` does the same, for launchers such as
                         `open -a` that cannot pass arguments through.
+          --demo-scale <N>
+                        Run the demo's cast N times over, each copy with its
+                        own session ids, directories and pids: 12 is about 170
+                        sessions across 60 projects, which is the size a busy
+                        machine reaches. Implies --demo, and is how the
+                        performance budget is measured without opening
+                        anybody's real store. `AUSPEX_DEMO_SCALE` does the
+                        same. Capped at 64.
           --view <board|scene|crew>
                         Open the live section in this view instead of the
                         board. `AUSPEX_VIEW` does the same. What the

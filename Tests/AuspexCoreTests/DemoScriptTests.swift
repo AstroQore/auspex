@@ -512,6 +512,65 @@ struct DemoScriptTests {
             #expect(step.event.raw?.path.hasPrefix("/Users/example") == true)
         }
     }
+
+    // MARK: - Scale
+
+    @Test("scale 1 and no scale at all are the same script")
+    func scaleOneIsTheScriptAsWritten() {
+        let plain = DemoScript.make(startedAt: epoch)
+        let scaled = DemoScript.make(startedAt: epoch, scale: 1)
+        #expect(plain.steps == scaled.steps)
+    }
+
+    @Test("scale multiplies the cast, and every copy is its own session")
+    func scaleMultipliesTheCast() {
+        let plain = DemoScript.make(startedAt: epoch)
+        let scaled = DemoScript.make(startedAt: epoch, scale: 4)
+
+        let plainKeys = Set(plain.steps.map(\.event.session))
+        let scaledKeys = Set(scaled.steps.map(\.event.session))
+        // Four times the sessions, subagents included, and the original cast
+        // is still in there — copy zero is the script as written.
+        #expect(scaledKeys.count == plainKeys.count * 4)
+        #expect(plainKeys.isSubset(of: scaledKeys))
+    }
+
+    @Test("copies work in directories of their own, so they are separate projects")
+    func copiesAreSeparateProjects() {
+        let plain = Set(directories(in: DemoScript.make(startedAt: epoch)))
+        let scaled = Set(directories(in: DemoScript.make(startedAt: epoch, scale: 6)))
+
+        #expect(scaled.count == plain.count * 6)
+        #expect(plain.isSubset(of: scaled))
+        // Still fabricated, whatever the scale. A copy that reached outside
+        // `/Users/example` would be a demo naming somebody's real machine.
+        for directory in scaled {
+            #expect(directory.hasPrefix("/Users/example"))
+        }
+    }
+
+    @Test("copies keep their pids apart, so one process is not twelve sessions")
+    func copiesHaveTheirOwnPids() {
+        let scaled = DemoScript.make(startedAt: epoch, scale: 5)
+        var pidsByKey: [SessionKey: pid_t] = [:]
+        for step in scaled.steps {
+            guard case let .sessionStarted(identity) = step.event.kind,
+                  let pid = identity.pid
+            else { continue }
+            pidsByKey[identity.key] = pid
+        }
+        let pids = Array(pidsByKey.values)
+        #expect(!pids.isEmpty)
+        #expect(Set(pids).count == pids.count)
+    }
+
+    /// Every working directory a script's `sessionStarted` events name.
+    private func directories(in script: DemoScript) -> [String] {
+        script.steps.compactMap { step in
+            guard case let .sessionStarted(identity) = step.event.kind else { return nil }
+            return identity.gitRoot ?? identity.cwd
+        }
+    }
 }
 
 @Suite("SeededRandom")

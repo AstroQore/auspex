@@ -131,6 +131,11 @@ public final class AppEnvironment {
     /// every time a screenshot was taken.
     private let offersSignalTarget: Bool
 
+    /// How many times over the demo runs its cast — see
+    /// ``AppLaunchOptions/demoScale``. Ignored in a live run, which gets its
+    /// size from the machine.
+    private let demoScale: Int
+
     /// An appearance the command line asked for, which is not written down.
     ///
     /// It exists for the same reason ``AppLaunchOptions/viewMode`` does: the
@@ -148,11 +153,13 @@ public final class AppEnvironment {
     public init(
         paths: AuspexPaths = .default,
         mode: Mode = .live,
-        offersSignalTarget: Bool = true
+        offersSignalTarget: Bool = true,
+        demoScale: Int = 1
     ) {
         self.paths = paths
         self.mode = mode
         self.offersSignalTarget = offersSignalTarget
+        self.demoScale = AppLaunchOptions.clampedScale(demoScale)
         // The demo may not read or write `~/.auspex/`, so its catalog has no
         // stores behind it: whatever it is given lives in memory for as long
         // as the process does.
@@ -541,6 +548,7 @@ public final class AppEnvironment {
         let board = board
         let source = DemoEventSource(
             continuation: continuation,
+            scale: demoScale,
             lendsProcess: offersSignalTarget,
             onLoop: { [weak board] in
                 let now = Date()
@@ -634,6 +642,16 @@ public struct AppLaunchOptions: Sendable {
     /// Replay a fabricated board instead of tailing real stores.
     public var isDemo: Bool
 
+    /// How many times over to run the demo's cast — `--demo-scale N`.
+    ///
+    /// The performance budget in `AGENTS.md` § 4.1 is written against a real
+    /// machine's store, and a real machine's store is the one thing an agent
+    /// working on this repository must not open. This is the way to the same
+    /// size without it: `12` is about a hundred and seventy sessions across
+    /// sixty projects, which is the shape the report that prompted the work
+    /// had. `1` is the demo exactly as written.
+    public var demoScale: Int = 1
+
     /// Which way to look at the board on launch, when the command line said.
     ///
     /// It exists because the performance budget is a gate: "scene on screen,
@@ -666,11 +684,30 @@ public struct AppLaunchOptions: Sendable {
         }
         let named = value(after: "--view")
         let appearance = value(after: "--appearance") ?? environment["AUSPEX_APPEARANCE"]
+        let scale = (value(after: "--demo-scale") ?? environment["AUSPEX_DEMO_SCALE"])
+            .flatMap(Int.init)
         return AppLaunchOptions(
-            isDemo: rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1",
+            // A scale asks for a demo. Nobody types `--demo-scale 12` meaning
+            // "and also tail my real stores", and a flag that silently did
+            // nothing without a second flag beside it is a flag that gets
+            // reported as broken.
+            isDemo: rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
+                || (scale ?? 1) > 1,
+            demoScale: Self.clampedScale(scale),
             viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(rawValue:)),
             appearance: appearance.flatMap(AppearanceMode.init(rawValue:))
         )
+    }
+
+    /// A scale that cannot make the app unusable by accident.
+    ///
+    /// Below one is the demo as written. The ceiling is a real limit rather
+    /// than a tidy round number: the script is a couple of thousand events per
+    /// pass of the cast, and a scale of a hundred would spend the first minute
+    /// of the launch writing them into SQLite instead of drawing anything.
+    static func clampedScale(_ value: Int?) -> Int {
+        guard let value else { return 1 }
+        return min(max(value, 1), 64)
     }
 
     /// The mode these options select.
@@ -682,7 +719,7 @@ extension AppEnvironment {
     /// asked for.
     @MainActor
     public static func launched(_ options: AppLaunchOptions = .current()) -> AppEnvironment {
-        let environment = AppEnvironment(mode: options.mode)
+        let environment = AppEnvironment(mode: options.mode, demoScale: options.demoScale)
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
         environment.appearanceOverride = options.appearance
         return environment
