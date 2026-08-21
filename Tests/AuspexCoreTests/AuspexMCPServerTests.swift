@@ -268,7 +268,8 @@ struct AuspexMCPServerTests {
         let done = try RPC.structured(await server.answer(line: RPC.call("tasks.complete", [
             "task_id": .int(Int64(taskID)), "result": "fenced writer plus 9 tests"
         ])))
-        #expect(done["status"]?.stringValue == "done")
+        // Finishing asks for a review; it does not close anything.
+        #expect(done["status"]?.stringValue == "review")
         #expect(done["result"]?.stringValue == "fenced writer plus 9 tests")
         #expect(await host.ledgerChanges == 4)
 
@@ -284,7 +285,9 @@ struct AuspexMCPServerTests {
             "plan": "ship-the-mcp-surface"
         ])))
         #expect(detail["plan"]?["taskCount"]?.intValue == 1)
-        #expect(detail["plan"]?["openTaskCount"]?.intValue == 0)
+        // Still open: a task nobody has read is a task nobody has finished
+        // with, whatever the agent that did the work believes.
+        #expect(detail["plan"]?["openTaskCount"]?.intValue == 1)
     }
 
     // MARK: - Projects contain tasks

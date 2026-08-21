@@ -143,6 +143,9 @@ public struct TaskRepository: Sendable {
         projectKey: String? = nil,
         createdBy: SessionKey? = nil,
         source: String? = nil,
+        kind: TaskKind? = nil,
+        labels: [String] = [],
+        dependsOn: [Int64] = [],
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
@@ -152,19 +155,22 @@ public struct TaskRepository: Sendable {
                 sql: """
                     INSERT INTO tasks
                         (title, body, status, priority, project_id, project_key,
-                         created_by_key, source, created_at, updated_at, plan_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         created_by_key, source, created_at, updated_at, plan_id,
+                         kind, labels)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 arguments: [
                     title, body, status.rawValue, priority, projectID, key,
                     createdBy?.description, source,
-                    now.timeIntervalSince1970, now.timeIntervalSince1970, planID
+                    now.timeIntervalSince1970, now.timeIntervalSince1970, planID,
+                    kind?.rawValue, TaskLabels.encode(labels)
                 ]
             )
             let id = db.lastInsertedRowID
             try Self.appendLog(
                 taskID: id, actor: createdBy, kind: "created", message: title, at: now, in: db
             )
+            try Self.setDependencies(dependsOn, of: id, at: now, in: db)
             try Self.adoptProject(key, forPlan: planID, in: db)
             try Self.touchPlan(planID, at: now, in: db)
             guard let task = try Self.task(id: id, in: db) else {
@@ -181,6 +187,7 @@ public struct TaskRepository: Sendable {
         projectKey: String? = nil,
         statuses: [AuspexTaskStatus] = [],
         claimedBy: SessionKey? = nil,
+        readyOnly: Bool = false,
         limit: Int = 500
     ) throws -> [AuspexTask] {
         try dbWriter.read { db in
@@ -208,18 +215,126 @@ public struct TaskRepository: Sendable {
             sql += """
                  ORDER BY CASE status
                             WHEN 'todo' THEN 0 WHEN 'doing' THEN 1
-                            WHEN 'blocked' THEN 2 ELSE 3 END,
+                            WHEN 'blocked' THEN 2 WHEN 'review' THEN 3 ELSE 4 END,
                           priority DESC, updated_at DESC, id DESC
                  LIMIT ?
                 """
             arguments += [limit]
-            return try Row.fetchAll(db, sql: sql, arguments: arguments).compactMap(AuspexTask.init(row:))
+            let page = try Row.fetchAll(db, sql: sql, arguments: arguments)
+                .compactMap(AuspexTask.init(row:))
+            let withDeps = try Self.attachDependencies(to: page, in: db)
+            guard readyOnly else { return withDeps }
+            // Readiness is answered against the *whole* ledger, not against
+            // the page: a task filtered to one project can perfectly well wait
+            // on one in another, and a filter that could not see it would call
+            // the task ready and hand a worker something that cannot start.
+            let closed = try Self.closedTaskIDs(in: db)
+            let known = try Self.allTaskIDs(in: db)
+            return withDeps.filter { $0.isReady(closed: closed, known: known) }
         }
     }
 
-    /// One task by id.
+    /// The ids of every task the ledger holds, and of the ones that are closed.
+    ///
+    /// Two `SELECT`s of one column each rather than a join per row: readiness
+    /// is a set membership question asked of a whole page at once.
+    private static func closedTaskIDs(in db: Database) throws -> Set<Int64> {
+        Set(try Int64.fetchAll(db, sql: "SELECT id FROM tasks WHERE status = 'done'"))
+    }
+
+    private static func allTaskIDs(in db: Database) throws -> Set<Int64> {
+        Set(try Int64.fetchAll(db, sql: "SELECT id FROM tasks"))
+    }
+
+    /// Fills in the `depends_on` edges for a page of tasks, in one query.
+    private static func attachDependencies(
+        to tasks: [AuspexTask],
+        in db: Database
+    ) throws -> [AuspexTask] {
+        guard !tasks.isEmpty else { return tasks }
+        let placeholders = Array(repeating: "?", count: tasks.count).joined(separator: ", ")
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT task_id, depends_on_id FROM task_deps
+                 WHERE task_id IN (\(placeholders))
+                 ORDER BY created_at ASC, depends_on_id ASC
+                """,
+            arguments: StatementArguments(tasks.map(\.id))
+        )
+        guard !rows.isEmpty else { return tasks }
+        var byTask: [Int64: [Int64]] = [:]
+        for row in rows {
+            guard let task = row["task_id"] as Int64?,
+                  let dependency = row["depends_on_id"] as Int64? else { continue }
+            byTask[task, default: []].append(dependency)
+        }
+        return tasks.map { byTask[$0.id].map($0.withDependencies) ?? $0 }
+    }
+
+    /// Replaces a task's dependencies. A self-edge is dropped rather than
+    /// stored: a task that waits on itself is never ready, and nothing good
+    /// comes of letting a caller say so.
+    private static func setDependencies(
+        _ ids: [Int64],
+        of taskID: Int64,
+        at date: Date,
+        in db: Database
+    ) throws {
+        try db.execute(sql: "DELETE FROM task_deps WHERE task_id = ?", arguments: [taskID])
+        var seen: Set<Int64> = [taskID]
+        for id in ids where seen.insert(id).inserted {
+            // Only edges to rows that exist. A dependency on a task nobody
+            // filed would be a permanent block with no way to see what it is.
+            guard try Bool.fetchOne(
+                db, sql: "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?)", arguments: [id]
+            ) == true else { continue }
+            try db.execute(
+                sql: """
+                    INSERT OR IGNORE INTO task_deps (task_id, depends_on_id, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                arguments: [taskID, id, date.timeIntervalSince1970]
+            )
+        }
+    }
+
+    /// Sets what a task waits on, from outside a transaction.
+    public func setDependencies(_ ids: [Int64], of taskID: Int64, now: Date = Date()) throws {
+        try dbWriter.write { db in
+            try Self.setDependencies(ids, of: taskID, at: now, in: db)
+            try db.execute(
+                sql: "UPDATE tasks SET updated_at = ? WHERE id = ?",
+                arguments: [now.timeIntervalSince1970, taskID]
+            )
+        }
+    }
+
+    /// Every dependency edge in the ledger, as `task → what it waits on`.
+    ///
+    /// Read whole by the board, which holds a frame's worth of tasks already
+    /// and would otherwise ask one query per row.
+    public func allDependencies() throws -> [Int64: [Int64]] {
+        try dbWriter.read { db in
+            var byTask: [Int64: [Int64]] = [:]
+            for row in try Row.fetchAll(
+                db,
+                sql: "SELECT task_id, depends_on_id FROM task_deps ORDER BY created_at ASC"
+            ) {
+                guard let task = row["task_id"] as Int64?,
+                      let dependency = row["depends_on_id"] as Int64? else { continue }
+                byTask[task, default: []].append(dependency)
+            }
+            return byTask
+        }
+    }
+
+    /// One task by id, with its dependencies.
     public func task(id: Int64) throws -> AuspexTask? {
-        try dbWriter.read { db in try Self.task(id: id, in: db) }
+        try dbWriter.read { db in
+            guard let task = try Self.task(id: id, in: db) else { return nil }
+            return try Self.attachDependencies(to: [task], in: db).first
+        }
     }
 
     /// How many tasks each project holds, and how many of them are still open.
@@ -389,6 +504,9 @@ public struct TaskRepository: Sendable {
         status: AuspexTaskStatus? = nil,
         priority: Int? = nil,
         planID: Int64?? = nil,
+        kind: TaskKind?? = nil,
+        labels: [String]? = nil,
+        dependsOn: [Int64]? = nil,
         actor: SessionKey? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
@@ -409,14 +527,25 @@ public struct TaskRepository: Sendable {
             if let status {
                 assignments.append("status = ?")
                 arguments += [status.rawValue]
-                // Moving a task out of `done` by hand un-finishes it. Leaving
-                // `completed_at` behind would make the row read as finished on
-                // one column and open on another.
-                if status != .done { assignments.append("completed_at = NULL") }
+                // Moving a task back before Review by hand un-finishes it.
+                // Leaving `completed_at` behind would make the row read as
+                // finished on one column and open on another. `review` keeps
+                // it: the work *was* finished, and the stamp is when.
+                if status != .done, status != .review {
+                    assignments.append("completed_at = NULL")
+                }
             }
             if let priority {
                 assignments.append("priority = ?")
                 arguments += [priority]
+            }
+            if let kind {
+                assignments.append("kind = ?")
+                arguments += [kind?.rawValue]
+            }
+            if let labels {
+                assignments.append("labels = ?")
+                arguments += [TaskLabels.encode(labels)]
             }
             if let planID {
                 assignments.append("plan_id = ?")
@@ -435,6 +564,9 @@ public struct TaskRepository: Sendable {
                 sql: "UPDATE tasks SET \(assignments.joined(separator: ", ")) WHERE id = ?",
                 arguments: arguments
             )
+            if let dependsOn {
+                try Self.setDependencies(dependsOn, of: id, at: now, in: db)
+            }
             if let status, status != existing.status {
                 try Self.appendLog(
                     taskID: id, actor: actor, kind: "status",
@@ -445,11 +577,19 @@ public struct TaskRepository: Sendable {
             guard let task = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
-            return task
+            return try Self.attachDependencies(to: [task], in: db)[0]
         }
     }
 
-    /// Closes a task and records what was finished.
+    /// Records that whoever was doing this task has finished it, and asks for
+    /// it to be looked at.
+    ///
+    /// **It does not close the task.** An agent saying it is done is a claim
+    /// about its own work, and the one thing a board full of agents must not
+    /// let any of them do is mark their own homework. So the task lands in
+    /// ``AuspexTaskStatus/review``, where it is still counted as open, still
+    /// on the wall, and still wearing the sentence the worker wrote — until a
+    /// person closes it with ``closeTask(id:by:now:)``.
     @discardableResult
     public func completeTask(
         id: Int64,
@@ -464,20 +604,57 @@ public struct TaskRepository: Sendable {
             try db.execute(
                 sql: """
                     UPDATE tasks
-                       SET status = 'done', completed_at = ?, updated_at = ?,
+                       SET status = 'review', completed_at = ?, updated_at = ?,
                            result = COALESCE(?, result)
                      WHERE id = ?
                     """,
                 arguments: [now.timeIntervalSince1970, now.timeIntervalSince1970, result, id]
             )
             try Self.appendLog(
-                taskID: id, actor: session, kind: "completed", message: result, at: now, in: db
+                taskID: id, actor: session, kind: "finished", message: result, at: now, in: db
             )
             try Self.touchPlan(existing.planID, at: now, in: db)
             guard let task = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
-            return task
+            return try Self.attachDependencies(to: [task], in: db)[0]
+        }
+    }
+
+    /// Closes a task. The gesture only a person makes.
+    ///
+    /// `actor` is `nil` for the ordinary case — somebody clicked — and is only
+    /// ever a session when a later ingress needs to say who. Separate from
+    /// ``updateTask(id:status:)`` so the log line says *closed* rather than
+    /// `review → done`, which is the same fact in a worse sentence.
+    @discardableResult
+    public func closeTask(
+        id: Int64,
+        by session: SessionKey? = nil,
+        now: Date = Date()
+    ) throws -> AuspexTask {
+        try dbWriter.write { db in
+            guard let existing = try Self.task(id: id, in: db) else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            try db.execute(
+                sql: """
+                    UPDATE tasks
+                       SET status = 'done',
+                           completed_at = COALESCE(completed_at, ?),
+                           updated_at = ?
+                     WHERE id = ?
+                    """,
+                arguments: [now.timeIntervalSince1970, now.timeIntervalSince1970, id]
+            )
+            try Self.appendLog(
+                taskID: id, actor: session, kind: "closed", message: nil, at: now, in: db
+            )
+            try Self.touchPlan(existing.planID, at: now, in: db)
+            guard let task = try Self.task(id: id, in: db) else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            return try Self.attachDependencies(to: [task], in: db)[0]
         }
     }
 
@@ -553,10 +730,14 @@ public struct TaskRepository: Sendable {
         actor: SessionKey?,
         kind: String,
         message: String?,
+        ref: String? = nil,
         now: Date = Date()
     ) throws {
         try dbWriter.write { db in
-            try Self.appendLog(taskID: taskID, actor: actor, kind: kind, message: message, at: now, in: db)
+            try Self.appendLog(
+                taskID: taskID, actor: actor, kind: kind, message: message,
+                ref: ref, at: now, in: db
+            )
             try db.execute(
                 sql: "UPDATE tasks SET updated_at = ? WHERE id = ?",
                 arguments: [now.timeIntervalSince1970, taskID]
@@ -569,7 +750,7 @@ public struct TaskRepository: Sendable {
         try dbWriter.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT * FROM (
-                    SELECT id, task_id, ts, actor_key, kind, detail_json
+                    SELECT id, task_id, ts, actor_key, kind, detail_json, ref
                       FROM task_log WHERE task_id = ?
                      ORDER BY id DESC LIMIT ?
                 ) ORDER BY id ASC
@@ -767,19 +948,70 @@ public struct TaskRepository: Sendable {
         actor: SessionKey?,
         kind: String,
         message: String?,
+        ref: String? = nil,
         at date: Date,
         in db: Database
     ) throws {
         try db.execute(
             sql: """
-                INSERT INTO task_log (task_id, ts, actor_key, kind, detail_json)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO task_log (task_id, ts, actor_key, kind, detail_json, ref)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
             arguments: [
                 taskID, date.timeIntervalSince1970, actor?.description, kind,
-                (message?.isEmpty ?? true) ? nil : message
+                (message?.isEmpty ?? true) ? nil : message,
+                (ref?.isEmpty ?? true) ? nil : ref
             ]
         )
+    }
+}
+
+// MARK: - Labels
+
+/// A task's labels, on their way in and out of the one column that holds them.
+///
+/// A JSON array of strings, and total in both directions: a column holding
+/// something else — written by an older build, or by a person with `sqlite3`
+/// open — decodes as no labels rather than sinking the query that read it.
+public enum TaskLabels {
+    /// How many labels one task may carry, and how long each may be.
+    ///
+    /// A cap rather than a validation error, for the reason every other
+    /// agent-supplied string here is capped: an agent that gets an error back
+    /// retries, and an agent that gets its list trimmed carries on.
+    public static let limit = 12
+    public static let lengthLimit = 40
+
+    /// Trimmed, lowercased, deduplicated, capped — in the order given.
+    public static func normalize(_ raw: [String]) -> [String] {
+        var seen: Set<String> = []
+        var kept: [String] = []
+        for label in raw {
+            let trimmed = label
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !trimmed.isEmpty else { continue }
+            let capped = String(trimmed.prefix(lengthLimit))
+            guard seen.insert(capped).inserted else { continue }
+            kept.append(capped)
+            if kept.count == limit { break }
+        }
+        return kept
+    }
+
+    /// The column value, or `nil` when there is nothing to store.
+    static func encode(_ labels: [String]) -> String? {
+        let normalized = normalize(labels)
+        guard !normalized.isEmpty else { return nil }
+        guard let data = try? JSONEncoder().encode(normalized) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// What a column holds, read back.
+    static func decode(_ raw: String?) -> [String] {
+        guard let raw, !raw.isEmpty, let data = raw.data(using: .utf8) else { return [] }
+        guard let decoded = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return normalize(decoded)
     }
 }
 
@@ -912,6 +1144,8 @@ extension AuspexTask {
             completedAt: (row["completed_at"] as Double?).map(Date.init(timeIntervalSince1970:)),
             result: row["result"],
             source: row["source"],
+            kind: (row["kind"] as String?).flatMap(TaskKind.init(rawValue:)),
+            labels: TaskLabels.decode(row["labels"]),
             createdAt: Date(timeIntervalSince1970: createdAt),
             updatedAt: Date(timeIntervalSince1970: updatedAt)
         )
@@ -949,7 +1183,8 @@ extension AuspexTaskLogEntry {
             timestamp: Date(timeIntervalSince1970: ts),
             actor: (row["actor_key"] as String?).flatMap(SessionKey.init(string:)),
             kind: kind,
-            message: row["detail_json"]
+            message: row["detail_json"],
+            ref: row["ref"]
         )
     }
 }

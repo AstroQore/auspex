@@ -56,6 +56,9 @@ struct TaskRepositoryTests {
         let storefront = "/Users/example/Code/storefront-web"
         let done = try repository.createTask(title: "Adapter", projectKey: auspex)
         try repository.completeTask(id: done.id, result: "shipped")
+        // A finished task is only closed once a person has closed it — see
+        // `completeTask`. Counting it as open until then is the point.
+        try repository.closeTask(id: done.id)
         _ = try repository.createTask(title: "Tailer", projectKey: auspex)
         _ = try repository.createTask(title: "Cart", projectKey: storefront)
 
@@ -215,16 +218,36 @@ struct TaskRepositoryTests {
         let done = try repository.completeTask(
             id: task.id, result: "v3 migration and 12 tests", by: worker
         )
-        #expect(done.status == .done)
+        // Finished, not closed. An agent that says it is done has asked to be
+        // checked; nobody has checked it yet.
+        #expect(done.status == .review)
+        #expect(done.status.isOpen)
         #expect(done.completedAt != nil)
         #expect(done.result == "v3 migration and 12 tests")
 
         let log = try repository.log(taskID: task.id)
-        #expect(log.map(\.kind) == ["created", "claimed", "completed"])
+        #expect(log.map(\.kind) == ["created", "claimed", "finished"])
         #expect(log.last?.message == "v3 migration and 12 tests")
     }
 
-    @Test("moving a done task back out clears the finish stamp")
+    @Test("closing is the person's gesture, and it is what ends the task")
+    func closingIsWhatCloses() throws {
+        let repository = try makeRepository()
+        let worker = Fixtures.key(.codex, "worker-1")
+        let task = try repository.createTask(title: "Land the migration")
+        let finished = try repository.completeTask(id: task.id, result: "shipped", by: worker)
+        #expect(finished.status == .review)
+
+        let closed = try repository.closeTask(id: task.id)
+        #expect(closed.status == .done)
+        #expect(!closed.status.isOpen)
+        // The stamp is when the *work* finished, not when somebody got round
+        // to reading it.
+        #expect(closed.completedAt == finished.completedAt)
+        #expect(try repository.log(taskID: task.id).map(\.kind).last == "closed")
+    }
+
+    @Test("moving a finished task back out clears the finish stamp")
     func reopeningClearsCompletion() throws {
         let repository = try makeRepository()
         let task = try repository.createTask(title: "Premature")
@@ -232,6 +255,76 @@ struct TaskRepositoryTests {
         let reopened = try repository.updateTask(id: task.id, status: .doing)
         #expect(reopened.status == .doing)
         #expect(reopened.completedAt == nil)
+    }
+
+    // MARK: - Dependencies
+
+    @Test("a task whose dependency is open is not ready")
+    func dependenciesGateReadiness() throws {
+        let repository = try makeRepository()
+        let first = try repository.createTask(title: "Land the schema")
+        let second = try repository.createTask(title: "Read the schema", dependsOn: [first.id])
+
+        #expect(try repository.task(id: second.id)?.dependsOn == [first.id])
+        // The gate is about dependencies alone: `first` waits on nothing and is
+        // ready whatever column it is in.
+        #expect(try repository.tasks(readyOnly: true).map(\.id) == [first.id])
+
+        // Review is not closed, so a task waiting on one is still waiting.
+        try repository.completeTask(id: first.id, result: "landed")
+        #expect(try repository.tasks(readyOnly: true).map(\.id) == [first.id])
+
+        try repository.closeTask(id: first.id)
+        #expect(Set(try repository.tasks(readyOnly: true).map(\.id)) == [first.id, second.id])
+    }
+
+    @Test("a dependency on nothing, on itself, or on a stranger is dropped")
+    func dependencyEdgesAreTotal() throws {
+        let repository = try makeRepository()
+        let task = try repository.createTask(title: "Alone", dependsOn: [9_999])
+        #expect(task.dependsOn.isEmpty)
+
+        try repository.setDependencies([task.id], of: task.id)
+        #expect(try repository.task(id: task.id)?.dependsOn.isEmpty == true)
+        // Nothing waiting on anything is ready.
+        #expect(try repository.tasks(readyOnly: true).map(\.id) == [task.id])
+    }
+
+    // MARK: - Kind, labels, notes
+
+    @Test("a task carries what kind of work it is and whatever labels were put on it")
+    func kindAndLabelsRoundTrip() throws {
+        let repository = try makeRepository()
+        let task = try repository.createTask(
+            title: "Tail the rollout format",
+            kind: .fix,
+            labels: ["Adapter", "codex", "adapter", "  ", "codex"]
+        )
+        #expect(task.kind == .fix)
+        // Trimmed, lowercased, deduplicated, in the order given.
+        #expect(task.labels == ["adapter", "codex"])
+        #expect(try repository.task(id: task.id)?.labels == ["adapter", "codex"])
+
+        let updated = try repository.updateTask(id: task.id, kind: .research, labels: [])
+        #expect(updated.kind == .research)
+        #expect(updated.labels.isEmpty)
+    }
+
+    @Test("a note says what kind of thing it is, and where to go and check")
+    func notesCarryKindAndRef() throws {
+        let repository = try makeRepository()
+        let worker = Fixtures.key(.codex, "worker-1")
+        let task = try repository.createTask(title: "Decide the wire format")
+        try repository.appendLog(
+            taskID: task.id, actor: worker, kind: TaskNoteKind.decision.rawValue,
+            message: "Protobuf, not JSON: the store is already binary.",
+            ref: "a1b2c3d"
+        )
+        let entry = try #require(try repository.log(taskID: task.id).last)
+        #expect(entry.noteKind == .decision)
+        #expect(entry.ref == "a1b2c3d")
+        // The ledger's own lines are not notes.
+        #expect(try repository.log(taskID: task.id).first?.noteKind == nil)
     }
 
     @Test("an update leaves untouched what it was not given")

@@ -102,13 +102,22 @@ public struct AuspexPlan: Identifiable, Hashable, Sendable, Codable {
 
 /// Where a task sits on the board.
 ///
-/// Four columns, and the fourth is not "closed": a task that a person still
-/// has to read is exactly the thing this app exists to surface, so `done`
-/// stays on the board and the ledger decides how loudly.
+/// Five columns, and the interesting one is the fourth. An agent that says it
+/// finished has not closed anything: it has *asked to be checked*, which is a
+/// different claim and one only a person can answer. So `tasks.complete` and
+/// `auspex.notify(done)` both land a task in ``review``, where it stays —
+/// counted, coloured, and on the board — until somebody closes it.
+///
+/// That is the same thing the ledger already called "done, reported, nobody has
+/// read it"; naming it Review is what makes the column, the chip, and the card
+/// agree about it, and what stops `done` meaning two things at once.
 public enum AuspexTaskStatus: String, Codable, Sendable, CaseIterable, Hashable {
     case todo
     case doing
     case blocked
+    /// Finished by whoever did it, and waiting on a person to agree.
+    case review
+    /// Closed by a person.
     case done
 
     /// The column heading.
@@ -117,6 +126,7 @@ public enum AuspexTaskStatus: String, Codable, Sendable, CaseIterable, Hashable 
         case .todo: "To do"
         case .doing: "Doing"
         case .blocked: "Blocked"
+        case .review: "Review"
         case .done: "Done"
         }
     }
@@ -127,8 +137,143 @@ public enum AuspexTaskStatus: String, Codable, Sendable, CaseIterable, Hashable 
         case .todo: 0
         case .doing: 1
         case .blocked: 2
-        case .done: 3
+        case .review: 3
+        case .done: 4
         }
+    }
+
+    /// Whether the task is still somebody's job.
+    ///
+    /// `review` counts as open: the work is done and the *task* is not, because
+    /// nobody has looked at it. A count of open tasks that dropped a task the
+    /// moment its worker declared victory would be the one number on the board
+    /// an agent could move on its own.
+    public var isOpen: Bool { self != .done }
+
+    /// Whether a person is what this task is waiting for.
+    public var wantsPerson: Bool {
+        switch self {
+        case .blocked, .review: true
+        case .todo, .doing, .done: false
+        }
+    }
+}
+
+// MARK: - Importance, kind, labels
+
+/// How much a task matters, in the four steps a person can actually tell
+/// apart.
+///
+/// Stored as ``AuspexTask/priority`` — an `Int` the ledger has always had —
+/// rather than as a second column, so an orchestrator that has been passing
+/// `priority: 3` keeps working and reads as `urgent` on the board. The enum is
+/// what the *UI* is allowed to know: four icons, four words, one order.
+public enum TaskImportance: String, Codable, Sendable, CaseIterable, Hashable {
+    case low
+    case normal
+    case important
+    case urgent
+
+    /// The word on the chip.
+    public var label: String {
+        switch self {
+        case .low: "low"
+        case .normal: "normal"
+        case .important: "important"
+        case .urgent: "urgent"
+        }
+    }
+
+    /// The stored priority this importance is written as.
+    public var priority: Int {
+        switch self {
+        case .low: -1
+        case .normal: 0
+        case .important: 2
+        case .urgent: 4
+        }
+    }
+
+    /// Which band a stored priority falls in.
+    public init(priority: Int) {
+        switch priority {
+        case ..<0: self = .low
+        case 0: self = .normal
+        case 1...2: self = .important
+        default: self = .urgent
+        }
+    }
+
+    /// Sort order: the loudest first.
+    public var rank: Int {
+        switch self {
+        case .urgent: 0
+        case .important: 1
+        case .normal: 2
+        case .low: 3
+        }
+    }
+
+    /// Whether the board draws a mark for it at all.
+    ///
+    /// `normal` does not. A chip on every row is a chip nobody reads, and the
+    /// great majority of tasks are ordinary.
+    public var isMarked: Bool { self != .normal }
+}
+
+/// What kind of work a task is.
+///
+/// Four, and they are the four a person sorts a backlog by. Free text would
+/// have been kinder to the agent filing it and useless to the person reading
+/// it: a filter over "feature | feat | enhancement | new" filters nothing.
+public enum TaskKind: String, Codable, Sendable, CaseIterable, Hashable {
+    case feature
+    case fix
+    case chore
+    case research
+
+    public var label: String { rawValue }
+
+    /// The spellings an agent might reach for, folded onto the four.
+    ///
+    /// Generous on the way in and strict on the way out, which is the only
+    /// way a vocabulary survives contact with a dozen orchestrators.
+    public init?(loose raw: String) {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "feature", "feat", "enhancement", "new": self = .feature
+        case "fix", "bug", "bugfix", "defect", "hotfix": self = .fix
+        case "chore", "task", "maintenance", "refactor", "docs", "build": self = .chore
+        case "research", "spike", "investigation", "study", "explore": self = .research
+        default: return nil
+        }
+    }
+}
+
+/// What one line of a task's history *is*.
+///
+/// The log has always carried a `kind`, and the ledger's own entries —
+/// `created`, `claimed`, `status`, `completed`, `linked` — use it to say what
+/// happened. These four are what an *agent* is allowed to say, and they are
+/// the difference between a work log and a chat transcript: a decision is
+/// something a later reader must not silently undo, evidence is something they
+/// can go and check, and a risk is something nobody has dealt with yet.
+public enum TaskNoteKind: String, Codable, Sendable, CaseIterable, Hashable {
+    /// A choice was made, and this is what it was.
+    case decision
+    /// Something was checked, and here is where to look — see
+    /// ``AuspexTaskLogEntry/ref``.
+    case evidence
+    /// Something that could still go wrong.
+    case risk
+    /// Everything else worth writing down.
+    case note
+
+    public var label: String { rawValue }
+
+    /// Whether the entry is one an agent wrote rather than one the ledger
+    /// recorded about itself.
+    public static func isNote(_ kind: String) -> Bool {
+        TaskNoteKind(rawValue: kind) != nil
     }
 }
 
@@ -178,6 +323,18 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     /// How the task got here: `mcp`, `ui`, or whatever a later ingress calls
     /// itself.
     public let source: String?
+    /// What kind of work this is. `nil` when nobody said, which is most tasks
+    /// — an inferred kind would be a chip that is wrong on half the board.
+    public let kind: TaskKind?
+    /// Free-text labels, in the order they were given. Deduplicated and capped
+    /// on the way in; the vocabulary is the orchestrator's.
+    public let labels: [String]
+    /// The tasks that have to be closed before this one is ready to start.
+    ///
+    /// Ids rather than a graph object: a dependency is a fact about two rows,
+    /// and the readers that care — "is this ready", "what is it waiting on" —
+    /// both want the list rather than the closure.
+    public let dependsOn: [Int64]
     public let createdAt: Date
     public let updatedAt: Date
 
@@ -198,9 +355,15 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         completedAt: Date?,
         result: String?,
         source: String?,
+        kind: TaskKind? = nil,
+        labels: [String] = [],
+        dependsOn: [Int64] = [],
         createdAt: Date,
         updatedAt: Date
     ) {
+        self.kind = kind
+        self.labels = labels
+        self.dependsOn = dependsOn
         self.id = id
         self.planID = planID
         self.title = title
@@ -221,8 +384,48 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         self.updatedAt = updatedAt
     }
 
+    /// The short handle a person reads and says out loud — `AUX-3f9k`.
+    ///
+    /// Derived from the id rather than stored, so it exists for every row the
+    /// ledger has ever written and cannot drift from the row it names. See
+    /// ``TaskShortID``.
+    public var shortID: String { TaskShortID.forTask(id) }
+
+    /// How much this matters, as the board draws it.
+    public var importance: TaskImportance { TaskImportance(priority: priority) }
+
     /// Whether anybody is holding this task.
     public var isClaimed: Bool { claimedBy != nil || claimRole != nil }
+
+    /// Whether every task this one waits on is closed.
+    ///
+    /// - Parameter closed: the ids of the tasks that are `done`. A dependency
+    ///   on a task the ledger no longer holds is treated as *satisfied*: a
+    ///   deleted row is not a reason to strand the work that referenced it.
+    public func isReady(closed: Set<Int64>, known: Set<Int64>) -> Bool {
+        dependsOn.allSatisfy { closed.contains($0) || !known.contains($0) }
+    }
+
+    /// The dependencies that are still open, in the order they were given.
+    public func blockingDependencies(closed: Set<Int64>, known: Set<Int64>) -> [Int64] {
+        dependsOn.filter { known.contains($0) && !closed.contains($0) }
+    }
+
+    /// The same task, with its dependencies filled in.
+    ///
+    /// The row decoder cannot fetch them — an edge lives in another table —
+    /// so the repository decodes the row and then attaches, in one query for a
+    /// whole page of tasks rather than one per row.
+    public func withDependencies(_ ids: [Int64]) -> AuspexTask {
+        AuspexTask(
+            id: id, planID: planID, title: title, body: body, status: status,
+            priority: priority, projectID: projectID, projectKey: projectKey,
+            createdBy: createdBy, claimRole: claimRole, claimScope: claimScope,
+            claimedBy: claimedBy, claimedAt: claimedAt, completedAt: completedAt,
+            result: result, source: source, kind: kind, labels: labels,
+            dependsOn: ids, createdAt: createdAt, updatedAt: updatedAt
+        )
+    }
 
     /// The one line a row shows under the title: who took it and for what.
     public var claimDescription: String? {
@@ -275,10 +478,18 @@ public struct AuspexTaskLogEntry: Identifiable, Hashable, Sendable, Codable {
     public let timestamp: Date
     /// Who wrote it, when a session did.
     public let actor: SessionKey?
-    /// `created`, `claimed`, `status`, `note`, `completed`, `linked`…
+    /// `created`, `claimed`, `status`, `completed`, `linked` — what the ledger
+    /// recorded — or one of ``TaskNoteKind``'s four, which is what an agent
+    /// wrote.
     public let kind: String
     /// The line itself.
     public let message: String?
+    /// Where to go and check: a commit, a URL, a path.
+    ///
+    /// Carried on evidence most of the time and allowed on any note, because a
+    /// decision worth recording usually has a diff behind it. Sanitized and
+    /// capped like every other agent-supplied string.
+    public let ref: String?
 
     public init(
         id: Int64,
@@ -286,7 +497,8 @@ public struct AuspexTaskLogEntry: Identifiable, Hashable, Sendable, Codable {
         timestamp: Date,
         actor: SessionKey?,
         kind: String,
-        message: String?
+        message: String?,
+        ref: String? = nil
     ) {
         self.id = id
         self.taskID = taskID
@@ -294,7 +506,11 @@ public struct AuspexTaskLogEntry: Identifiable, Hashable, Sendable, Codable {
         self.actor = actor
         self.kind = kind
         self.message = message
+        self.ref = ref
     }
+
+    /// The note kind, when this entry is one an agent wrote.
+    public var noteKind: TaskNoteKind? { TaskNoteKind(rawValue: kind) }
 }
 
 // MARK: - Notices

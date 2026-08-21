@@ -114,6 +114,16 @@ public final class AuspexStore: Sendable {
             try migrateSnapshotsToSchema3(db)
         }
 
+        // v7 and not a second v6: migrations are append-only, and `v6` shipped
+        // meaning the context-usage rewrite. A second registration under that
+        // name would run on a store that had already recorded it and be
+        // skipped, so a person who updated through both builds would have the
+        // task columns silently missing.
+        migrator.registerMigration("v7_task_shape") { db in
+            try addTaskShapeColumns(db)
+            try createTaskDependencyTables(db)
+        }
+
         return migrator
     }
 
@@ -681,6 +691,59 @@ public final class AuspexStore: Sendable {
             table.add(column: "project_key", .text)
         }
         try db.create(index: "tasks_on_project_key", on: "tasks", columns: ["project_key"])
+    }
+
+    // MARK: - v7 schema: what a task is, beyond a title
+
+    /// The three things a task row could not say about itself.
+    ///
+    /// `kind` and `labels` are how a board of three hundred rows becomes
+    /// searchable: what sort of work this is, and whatever vocabulary the
+    /// person or the orchestrator wants on top. `ref` on the log is the one
+    /// that changes what a *note* is — an agent that writes "checked, it holds"
+    /// has said nothing a reader can verify, and one that writes it with the
+    /// commit beside it has.
+    ///
+    /// Labels are stored as a JSON array in one column rather than as a join
+    /// table, and it is a deliberate limit: labels are read whole with the task
+    /// and never queried across tasks in SQL (the board filters in memory over
+    /// a frame it already holds). A join table would buy a `GROUP BY` nobody
+    /// runs, at the price of a second write per task.
+    private static func addTaskShapeColumns(_ db: Database) throws {
+        try db.alter(table: "tasks") { table in
+            table.add(column: "kind", .text)
+            table.add(column: "labels", .text)
+        }
+        try db.alter(table: "task_log") { table in
+            table.add(column: "ref", .text)
+        }
+    }
+
+    /// Which tasks wait on which.
+    ///
+    /// A table rather than a JSON column on `tasks`, unlike labels, because a
+    /// dependency is a fact about *two* rows and both of them read it: "what am
+    /// I waiting on" and "what is waiting on me" are the same rows scanned from
+    /// opposite ends, and the second question has no answer at all in a column.
+    ///
+    /// Cascading on delete in both directions, which is the whole of the
+    /// referential care this needs: an edge to a task that no longer exists is
+    /// not a dependency, it is a dangling row that would make a task
+    /// permanently un-ready.
+    private static func createTaskDependencyTables(_ db: Database) throws {
+        try db.create(table: "task_deps") { table in
+            table.column("task_id", .integer)
+                .notNull()
+                .references("tasks", onDelete: .cascade)
+            table.column("depends_on_id", .integer)
+                .notNull()
+                .references("tasks", onDelete: .cascade)
+            table.column("created_at", .double).notNull()
+            table.primaryKey(["task_id", "depends_on_id"])
+        }
+        try db.create(
+            index: "task_deps_on_depends_on", on: "task_deps", columns: ["depends_on_id"]
+        )
     }
 
     // MARK: - Meta accessors
