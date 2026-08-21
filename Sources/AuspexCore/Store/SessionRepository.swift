@@ -434,6 +434,65 @@ public struct SessionRepository: Sendable {
         try events(key: key, after: 0, limit: limit)
     }
 
+    /// How much indexed prose a session is carrying, by kind, since its last
+    /// compaction.
+    ///
+    /// The measured half of ``ContextComposition``. Two statements and no
+    /// scan of the whole log:
+    ///
+    /// 1. The newest `compaction` row, which is where the current window
+    ///    begins. A session that has never compacted starts at zero, which is
+    ///    the beginning of what Auspex indexed rather than the beginning of
+    ///    the session — the difference is what ``ContextTextVolume/isTruncated``
+    ///    exists to say.
+    /// 2. The newest `limit` `textBody` rows after it. Newest rather than
+    ///    oldest because the window holds the recent end of a conversation:
+    ///    if the cap bites, what it dropped is the part most likely to have
+    ///    been compacted away already.
+    ///
+    /// Both are index seeks on `(session_key, kind)`, and the decode is one
+    /// `AgentEventKind` per row. Called when a person opens the context
+    /// popover, never on a frame.
+    public func contextTextVolume(key: SessionKey, limit: Int = 4_000) throws -> ContextTextVolume {
+        guard limit > 0 else { return .empty }
+        return try dbWriter.read { db in
+            let compactedAt = try Int64.fetchOne(db, sql: """
+                SELECT MAX(id) FROM events WHERE session_key = ? AND kind = ?
+                """, arguments: [key.description, "compaction"])
+            let rows = try String.fetchAll(db, sql: """
+                SELECT detail_json FROM events
+                WHERE session_key = ? AND kind = ? AND id > ? AND detail_json IS NOT NULL
+                ORDER BY id DESC
+                LIMIT ?
+                """, arguments: [key.description, "textBody", compactedAt ?? 0, limit])
+
+            let decoder = StoreJSON.makeDecoder()
+            var user = 0
+            var assistant = 0
+            var toolResult = 0
+            var counted = 0
+            for json in rows {
+                guard let kind = try? StoreJSON.decode(
+                    AgentEventKind.self, from: json, using: decoder
+                ), case let .textBody(role, text, _) = kind else { continue }
+                counted += 1
+                switch role {
+                case .user: user += text.count
+                case .assistant: assistant += text.count
+                case .toolResult: toolResult += text.count
+                }
+            }
+            return ContextTextVolume(
+                userCharacters: user,
+                assistantCharacters: assistant,
+                toolResultCharacters: toolResult,
+                events: counted,
+                isTruncated: rows.count >= limit,
+                sinceCompaction: compactedAt != nil
+            )
+        }
+    }
+
     /// How many events are stored for a session.
     public func eventCount(key: SessionKey) throws -> Int {
         try dbWriter.read { db in

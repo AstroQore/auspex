@@ -274,7 +274,7 @@ extension DemoScript {
         /// total and one is a level. Codex and Grok write the window into
         /// their logs; Claude Code does not, so a Claude beat is `derived` and
         /// the card draws its gauge as an estimate.
-        case context(used: Int, window: Int?, derived: Bool)
+        case context(used: Int, window: Int?, cached: Int? = nil, derived: Bool)
         /// The harness compacts its own context.
         case compact
         /// The harness records the plan window it is billing against, and how
@@ -462,7 +462,7 @@ extension DemoScript.Blueprint {
                 // Claude Code writes the counters and not the window, so this
                 // gauge is the `derived` one: the card draws its remainder
                 // dotted and the popover says which half was looked up.
-                .context(used: 96_400, window: 200_000, derived: true),
+                .context(used: 96_400, window: 200_000, cached: 78_900, derived: true),
                 .endTurn
             ],
             live: [
@@ -490,7 +490,7 @@ extension DemoScript.Blueprint {
                 // A long session that has compacted once and is filling up
                 // again is what the gauge exists to make visible.
                 .compact,
-                .context(used: 184_600, window: 200_000, derived: true),
+                .context(used: 184_600, window: 200_000, cached: 151_200, derived: true),
                 .endTurn,
                 .idle(8.0)
             ],
@@ -517,7 +517,7 @@ extension DemoScript.Blueprint {
                 // Codex writes `model_context_window` into every token_count,
                 // so this gauge is measured: a solid bed, no dotted remainder,
                 // and a popover with nothing to hedge.
-                .context(used: 33_400, window: 272_000, derived: false),
+                .context(used: 33_400, window: 272_000, cached: 21_800, derived: false),
                 .quota(percent: 31.0, resetsIn: 12_600, plan: "pro"),
                 .endTurn
             ],
@@ -533,7 +533,7 @@ extension DemoScript.Blueprint {
                 .usage(33_050, 4_120, 18_600),
                 // Three quarters of the way in: the middle band of the ramp,
                 // which is the one that says "not now, but soon".
-                .context(used: 201_500, window: 272_000, derived: false),
+                .context(used: 201_500, window: 272_000, cached: 174_300, derived: false),
                 .quota(percent: 43.2, resetsIn: 7_800, plan: "pro"),
                 .endTurn,
                 .idle(6.0)
@@ -1070,7 +1070,7 @@ extension DemoScript {
                     cachedTokens: cached
                 ))
 
-            case .context(let used, let window, let derived):
+            case .context(let used, let window, let cached, let derived):
                 // No jitter, unlike `.usage`. A fill is a *level*, and the
                 // demo's percentages are chosen to land one session in each
                 // band of the ramp — a random nudge would move a screenshot
@@ -1080,7 +1080,7 @@ extension DemoScript {
                 emit(.contextUsage(
                     used: used,
                     window: window,
-                    cached: nil,
+                    cached: cached,
                     source: derived ? .derived : .measured
                 ))
 

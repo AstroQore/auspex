@@ -45,6 +45,8 @@ struct SessionTraceView: View {
                 reportedFocus: model.reports[session.key]
                     .flatMap { $0.isSuperseded(byAssistantAt: session.brief.lastAssistantAt) ? nil : $0 }?
                     .line,
+                contextComposition: model.contextComposition,
+                onOpenContext: { model.loadContextComposition() },
                 onSelect: { model.selectedKey = $0 },
                 onOpenTrajectory: { model.openTrajectory() },
                 onDismissNotice: { model.dismissNotice(session.key) }
@@ -337,6 +339,11 @@ struct SessionHeaderView: View {
     var attention: AttentionState = .none
     /// The line the agent wrote about what it is doing, while it is current.
     var reportedFocus: String?
+    /// What is filling the window, once somebody opened the popover and asked.
+    /// `nil` until then, and on every surface that has no store behind it.
+    var contextComposition: ContextComposition?
+    /// Asked to work the estimate out. Called on open rather than on draw.
+    var onOpenContext: (() -> Void)?
     let onSelect: (SessionKey) -> Void
     /// Opens this session's trajectory. `nil` where there is nowhere to open
     /// it — the offscreen renderer builds this header without a board column
@@ -629,6 +636,21 @@ struct SessionHeaderView: View {
                     + "\(TokenFormat.compact(session.tokensOut))"
             )
             .fixedSize()
+            // Beside the totals it is most often confused with, so the
+            // difference between a running total and a level is one glance
+            // rather than a paragraph. Absent for the harnesses that record
+            // nothing, which is most of them.
+            if let gauge = ContextGauge(
+                usage: session.contextUsage, compactions: session.compactions
+            ) {
+                ContextHeaderGauge(
+                    gauge: gauge,
+                    tokensOut: session.tokensOut,
+                    composition: contextComposition,
+                    onOpen: onOpenContext
+                )
+                .fixedSize()
+            }
             resumeButton
             if let onOpenTrajectory { trajectoryButton(onOpenTrajectory) }
             actionsMenu

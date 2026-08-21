@@ -450,6 +450,11 @@ final class LiveBoardModel {
             expandedRows = []
             followsTail = true
             lastTraceEventAt = nil
+            // A composition describes one session's window. Carrying the last
+            // one into the next session's popover would answer the question
+            // about the wrong transcript.
+            contextComposition = nil
+            contextCompositionTask?.cancel()
             reloadTrace()
             if viewMode == .trajectory {
                 if selectedKey == nil { closeTrajectory() } else { loadTrajectory() }
@@ -1016,6 +1021,17 @@ final class LiveBoardModel {
     /// `true` while the first load for a session is in flight.
     private(set) var isLoadingTrace = false
 
+    /// What is filling the selected session's context window, once somebody
+    /// opened the popover and asked.
+    ///
+    /// Loaded on demand and not with the trace, because it is a different
+    /// question with a different cost: the trace is two hundred rows on every
+    /// frame the selection changes, and this is a scan of every indexed body
+    /// since the last compaction. Nobody pays for it until they open the
+    /// panel that shows it.
+    private(set) var contextComposition: ContextComposition?
+    private var contextCompositionTask: Task<Void, Never>?
+
     // MARK: Search
 
     /// The toolbar's query.
@@ -1242,6 +1258,45 @@ final class LiveBoardModel {
                 self.rebuildTraceItems()
             }
         }
+    }
+
+    /// Works out what is in the selected session's window.
+    ///
+    /// Called when the context popover opens, never on a frame. Re-reads on
+    /// every open rather than caching: a live session's window moves, and a
+    /// panel that answered with the shape it had two minutes ago would be
+    /// wrong in exactly the situation somebody opened it for.
+    func loadContextComposition() {
+        guard let key = selectedKey,
+              let repository,
+              let gauge = selectedSession.flatMap({
+                  ContextGauge(usage: $0.contextUsage, compactions: $0.compactions)
+              })
+        else {
+            contextComposition = nil
+            return
+        }
+
+        contextCompositionTask?.cancel()
+        contextCompositionTask = Task { [weak self] in
+            let volume = await Task.detached(priority: .userInitiated) { () -> ContextTextVolume in
+                (try? repository.contextTextVolume(key: key)) ?? .empty
+            }.value
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.selectedKey == key else { return }
+                self.contextComposition = ContextCompositionEstimator.estimate(
+                    volume: volume, gauge: gauge
+                )
+            }
+        }
+    }
+
+    /// Hands the pane a composition directly, for the suite and for the
+    /// offscreen renderer, neither of which has a person to click.
+    func adoptContextComposition(_ composition: ContextComposition?) {
+        contextCompositionTask?.cancel()
+        contextComposition = composition
     }
 
     /// Hands the pane a trace directly.

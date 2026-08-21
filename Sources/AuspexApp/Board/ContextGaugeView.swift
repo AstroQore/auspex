@@ -37,6 +37,10 @@ struct ContextGaugeView: View, Equatable {
     /// The narrowest the bar is allowed to be squeezed before the label starts
     /// giving way instead.
     var minimumTrack: CGFloat = 36
+    /// Whether the numbers ride along. Off where something above the bar
+    /// already says them — the popover prints the fill in full a line up, and
+    /// printing it twice makes a reader look for the difference.
+    var showsLabel = true
 
     var body: some View {
         HStack(spacing: 8) {
@@ -45,13 +49,15 @@ struct ContextGaugeView: View, Equatable {
                     .frame(height: thickness)
                     .frame(minWidth: minimumTrack, maxWidth: .infinity)
             }
-            Text(gauge.label)
-                .font(AuspexType.monoSmall)
-                .auspexTabularDigits()
-                .foregroundStyle(ContextGaugeStyle.colour(gauge.level))
-                .lineLimit(1)
-                .fixedSize()
-            if let badge = gauge.compactionBadge {
+            if showsLabel {
+                Text(gauge.label)
+                    .font(AuspexType.monoSmall)
+                    .auspexTabularDigits()
+                    .foregroundStyle(ContextGaugeStyle.colour(gauge.level))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            if showsLabel, let badge = gauge.compactionBadge {
                 Text(badge)
                     .font(AuspexType.monoSmall)
                     .auspexTabularDigits()

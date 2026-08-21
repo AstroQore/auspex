@@ -341,6 +341,40 @@ if let flag = arguments.firstIndex(of: "--render-trajectory") {
     }
 }
 
+// Renders the context popover on its own. `ImageRenderer` has no window and
+// therefore no popover, so `--render-board` can draw the header control that
+// opens this and never what is behind it — and what is behind it is the one
+// panel in the app whose entire job is to be read carefully.
+if let flag = arguments.firstIndex(of: "--render-context") {
+    let rest = arguments[arguments.index(after: flag)...]
+    guard let path = rest.first, !path.hasPrefix("-") else {
+        FileHandle.standardError.write(
+            Data("auspex: --render-context needs a destination path.\n".utf8)
+        )
+        exit(2)
+    }
+    guard let appearance = renderAppearance(in: rest) else { exitOnBadAppearance() }
+    let positional = rest.dropFirst().filter { !$0.contains("=") }
+    let warmup = positional.first.flatMap(TimeInterval.init) ?? 20
+    let height = positional.dropFirst().first.flatMap(Double.init)
+        ?? ContextPopoverRenderer.defaultSize.height
+    let width = positional.dropFirst(2).first.flatMap(Double.init)
+        ?? ContextPopoverRenderer.defaultSize.width
+    do {
+        let summary = try ContextPopoverRenderer.render(
+            to: URL(fileURLWithPath: path),
+            warmup: warmup,
+            size: CGSize(width: width, height: height),
+            appearance: appearance
+        )
+        FileHandle.standardOutput.write(Data("auspex: wrote \(path) — \(summary)\n".utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 if arguments.contains("--help") || arguments.contains("-h") {
     FileHandle.standardOutput.write(Data("""
         auspex — one live board for every AI coding agent on this Mac.
@@ -423,7 +457,17 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         at `height` x `width` points (default 980 x 1600). The
                         session shown is whichever demo session has the most to
                         show. Reads no harness store.
-                        `appearance=` on any of the four renderers picks which
+          --render-context <path> [seconds] [height] [width]
+                        [appearance=<light|dark>]
+                        Render the context popover on its own — the fill, the
+                        estimated composition, and the exact counts — to a PNG,
+                        offscreen (default 560 x 360 points). `ImageRenderer`
+                        has no window and therefore no popover, so this is the
+                        only way to look at the panel at all. It runs the real
+                        demo pipeline and the real estimate query behind it;
+                        the session shown is whichever one has a reading with
+                        something to hedge. Reads no harness store.
+                        `appearance=` on any of the five renderers picks which
                         column of the palette to draw with — `dark` (the
                         default) or `light`. Not `system`: a picture whose
                         colours depend on what the machine was set to when the
