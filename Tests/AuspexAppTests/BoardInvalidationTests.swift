@@ -107,6 +107,29 @@ struct BoardInvalidationTests {
         #expect(await !invalidates(reading: { _ = model.sessionCount }, during: again))
     }
 
+    @Test("A frame carrying only a fresh instant leaves the board value alone")
+    func idempotentFrameDoesNotRepublishTheBoard() async {
+        let model = LiveBoardModel()
+        let sessions = sessions
+        model.apply(frame(sessions))
+        await model.settle()
+
+        // A new `BoardSnapshot` with a later `generatedAt` and the same
+        // sessions: `==` can never be true between two of these, so the scene,
+        // the crew wall, the Harnesses page and the menu bar's panel were all
+        // invalidated by the instant alone, eight times a second.
+        let later = BoardSnapshot(
+            generatedAt: instant.addingTimeInterval(5),
+            sessions: sessions
+        )
+        #expect(
+            await !invalidates(
+                reading: { _ = model.board },
+                during: { model.apply(later); await model.settle() }
+            )
+        )
+    }
+
     @Test("A frame that changes a session does re-lay its section out")
     func changedSessionTouchesTheWall() async {
         let model = LiveBoardModel()

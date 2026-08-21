@@ -1229,6 +1229,17 @@ final class LiveBoardModel {
         }
     }
 
+    /// Hands the pane a trace directly.
+    ///
+    /// Internal so the suite can ask what the pane does with a session of four
+    /// thousand rows without a live tail behind it. The app's only way in is
+    /// ``reloadTrace()``, which reads the store.
+    func adoptTrace(_ entries: [TraceEntry]) {
+        isLoadingTrace = false
+        trace = entries
+        rebuildTraceItems()
+    }
+
     /// Rebuilds the flattened list the trace renders: the filtered rows, with
     /// a separator inserted wherever the turn number changes.
     ///

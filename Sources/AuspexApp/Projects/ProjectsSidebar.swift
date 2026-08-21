@@ -49,7 +49,16 @@ struct ProjectsSidebar: View {
         } else {
             ForEach(tree.projects) { project in
                 let isFocused = focusedProjectKey == project.key
-                ProjectRow(project: project, isFocused: isFocused) {
+                ProjectRow(
+                    project: project,
+                    // What this project is carrying on the task board, from
+                    // the model that already folded every task into the
+                    // person's own projects — the sidebar must not re-derive
+                    // that, because the folding is what a `GROUP BY` in SQLite
+                    // could not do.
+                    tasks: environment.tasks.taskCounts(byProjectKey: project.key),
+                    isFocused: isFocused
+                ) {
                     // One meaning per click: *show me this project*. It opens
                     // the row and focuses the wall together, because a sidebar
                     // that expanded without focusing would make the same
@@ -98,22 +107,19 @@ struct ProjectsSidebar: View {
         depth: Int,
         finished: Int
     ) -> some View {
-        let isOpen = openedInFull.contains(id)
-        let shown = isOpen ? rows : Array(rows.prefix(ProjectTree.listLimit))
-        ForEach(shown) { row in
+        let fold = SidebarFold.make(
+            rows: rows.count,
+            finished: finished,
+            isOpen: openedInFull.contains(id)
+        )
+        ForEach(rows.prefix(fold.shown)) { row in
             sessionRow(row, depth: depth + row.depth)
         }
-        let capped = rows.count - shown.count
-        if capped > 0 || finished > 0 {
-            MoreRow(
-                depth: depth,
-                running: capped,
-                finished: finished,
-                isOpen: isOpen
-            ) {
-                if isOpen {
+        if fold.offersMore {
+            MoreRow(depth: depth, fold: fold) {
+                if fold.isOpen {
                     openedInFull.remove(id)
-                } else if capped > 0 {
+                } else if fold.capped > 0 {
                     openedInFull.insert(id)
                 }
             }
@@ -254,6 +260,8 @@ private struct TreeRow<Content: View>: View {
 /// anything — which is the question a person opens a sidebar to ask.
 private struct ProjectRow: View {
     let project: ProjectTree.Project
+    /// How much work is filed against this project on the task board.
+    var tasks = TaskProjectCounts(total: 0, open: 0)
     let isFocused: Bool
     let action: () -> Void
 
@@ -264,9 +272,17 @@ private struct ProjectRow: View {
             // name and four accents cannot both be read, and the name is the
             // one a person is scanning for. The accents come back the moment
             // the column is dragged wider.
+            //
+            // The task count goes second, because *what is running here* is
+            // what a live board is read for and *what is planned here* keeps.
+            // Three candidates rather than two, and it costs nothing at the
+            // widths anybody uses: `ViewThatFits` measures in order and stops
+            // at the first that fits, so a column wide enough for the whole
+            // row is one measurement exactly as it was.
             ViewThatFits(in: .horizontal) {
-                content(showsDots: true)
-                content(showsDots: false)
+                content(showsDots: true, showsTasks: true)
+                content(showsDots: false, showsTasks: true)
+                content(showsDots: false, showsTasks: false)
             }
         }
         .help(
@@ -277,7 +293,7 @@ private struct ProjectRow: View {
     }
 
     @ViewBuilder
-    private func content(showsDots: Bool) -> some View {
+    private func content(showsDots: Bool, showsTasks: Bool) -> some View {
         HStack(spacing: 8) {
             if project.isPinned {
                 Image(systemName: "pin.fill")
@@ -309,6 +325,11 @@ private struct ProjectRow: View {
             } else if project.liveCount > 0 {
                 LivePill(count: project.liveCount)
             }
+            // After the live count, and quieter than it. A project with tasks
+            // filed against it and nothing running is a project somebody meant
+            // to come back to, which is worth saying in a column that
+            // otherwise only says what is happening this second.
+            if showsTasks { TaskPill(counts: tasks) }
         }
     }
 
@@ -434,6 +455,41 @@ enum ProjectColour {
     }
 }
 
+/// How much of one branch of the tree is drawn, and what is left over.
+///
+/// A value rather than three expressions in a `body`, because it is the rule
+/// that keeps the sidebar's cost bounded and a rule worth a test is a rule
+/// worth a name.
+struct SidebarFold: Equatable {
+    /// How many of the branch's rows to draw.
+    var shown: Int
+    /// How many running sessions are not drawn. `0` when the branch is open.
+    var capped: Int
+    /// How many of the branch's sessions have finished. Never drawn here — see
+    /// ``ProjectTree/listable(_:)``.
+    var finished: Int
+    /// Whether the reader has asked for the whole of this branch.
+    var isOpen: Bool
+
+    /// Whether the branch needs the row that says what is missing.
+    var offersMore: Bool { capped > 0 || finished > 0 }
+
+    static func make(
+        rows: Int,
+        finished: Int,
+        isOpen: Bool,
+        limit: Int = ProjectTree.listLimit
+    ) -> SidebarFold {
+        let shown = isOpen ? rows : min(rows, limit)
+        return SidebarFold(
+            shown: shown,
+            capped: max(0, rows - shown),
+            finished: max(0, finished),
+            isOpen: isOpen && rows > limit
+        )
+    }
+}
+
 /// The row at the end of a capped branch: what is not drawn, and where it is.
 ///
 /// One row for two different absences, because they read as one question —
@@ -448,48 +504,48 @@ enum ProjectColour {
 ///
 /// Drawn as a tree row so it indents with the branch it belongs to, and in the
 /// tertiary text colour so it never competes with a session for attention.
-private struct MoreRow: View {
+struct MoreRow: View {
     let depth: Int
-    /// How many live sessions are not drawn. `0` when the branch is open, or
-    /// when it was never capped.
-    let running: Int
-    /// How many of the branch's sessions have finished.
-    let finished: Int
-    let isOpen: Bool
+    let fold: SidebarFold
     let action: () -> Void
 
     var body: some View {
-        TreeRow(depth: depth, isEnabled: running > 0 || isOpen, action: action) {
-            Text(title)
+        TreeRow(depth: depth, isEnabled: fold.capped > 0 || fold.isOpen, action: action) {
+            Text(Self.title(fold))
                 .font(AuspexType.row)
                 .foregroundStyle(AuspexPalette.text3)
                 .lineLimit(1)
             Spacer(minLength: 4)
-            if isOpen {
+            if fold.isOpen {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(AuspexPalette.text3)
             }
         }
-        .help(help)
+        .help(Self.help(fold))
     }
 
-    private var title: String {
-        if isOpen { return "Show fewer" }
-        if running > 0, finished > 0 { return "+\(running) more · \(finished) finished" }
-        if running > 0 { return "+\(running) more" }
-        return finished == 1 ? "1 finished" : "\(finished) finished"
+    /// What the row says. A function of the fold rather than three `if`s in a
+    /// body, so the one row that admits the column is showing a summary can be
+    /// asserted on without a window.
+    static func title(_ fold: SidebarFold) -> String {
+        if fold.isOpen { return "Show fewer" }
+        if fold.capped > 0, fold.finished > 0 {
+            return "+\(fold.capped) more · \(fold.finished) finished"
+        }
+        if fold.capped > 0 { return "+\(fold.capped) more" }
+        return fold.finished == 1 ? "1 finished" : "\(fold.finished) finished"
     }
 
-    private var help: String {
-        if isOpen { return "List only the first \(ProjectTree.listLimit) again" }
+    static func help(_ fold: SidebarFold) -> String {
+        if fold.isOpen { return "List only the first \(ProjectTree.listLimit) again" }
         var parts: [String] = []
-        if running > 0 { parts.append("List all of this checkout's running sessions") }
-        if finished > 0 {
+        if fold.capped > 0 { parts.append("List every running session here") }
+        if fold.finished > 0 {
             parts.append(
-                finished == 1
+                fold.finished == 1
                     ? "1 finished session is in the board's Ended section"
-                    : "\(finished) finished sessions are in the board's Ended section"
+                    : "\(fold.finished) finished sessions are in the board's Ended section"
             )
         }
         return parts.joined(separator: ". ")
@@ -592,6 +648,38 @@ private struct AttentionPill: View {
         .accessibilityLabel(
             attention.wantsPerson ? "\(count) need you" : "\(count) finished"
         )
+    }
+}
+
+/// How much work is filed against a project and not finished.
+///
+/// The task board's number in the sidebar, so a person who filed three things
+/// against `auspex` last week sees that from the column they navigate by rather
+/// than only from the Tasks page. Drawn in the tertiary colour with no fill:
+/// it is a standing fact, and the pills beside it are about right now.
+///
+/// Nothing at all when the project carries nothing — which is most projects,
+/// most of the time. ``TaskProjectCounts/openDescription`` owns that rule, so
+/// the sidebar and the Projects page cannot disagree about when to draw one.
+private struct TaskPill: View {
+    let counts: TaskProjectCounts
+
+    var body: some View {
+        if let description = counts.openDescription {
+            Text(description)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(AuspexPalette.text3)
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(AuspexPalette.bg3)
+                )
+                .fixedSize()
+                .accessibilityLabel(description)
+                .help("\(description) on the task board · \(counts.total) filed in all")
+        }
     }
 }
 

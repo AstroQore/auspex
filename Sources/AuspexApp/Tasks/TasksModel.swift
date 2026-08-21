@@ -49,9 +49,8 @@ final class TasksModel {
     /// into a person's project (see ``rebuild()``) happens here and a `GROUP BY`
     /// in SQLite would not know about it.
     ///
-    /// TODO: the sidebar's project rows should draw `taskCounts(byProjectKey:)`
-    /// as a quiet pill beside the live count — `ProjectsSidebar.swift` belongs
-    /// to another branch, so this is left as the seam rather than the edit.
+    /// Read by the Projects page and by the sidebar's project rows, which draw
+    /// it as a quiet pill after the live count — see `ProjectsSidebar`.
     private(set) var projectTaskCounts: [String: TaskProjectCounts] = [:]
 
     /// What one project is carrying. Zero for a project nobody has filed
