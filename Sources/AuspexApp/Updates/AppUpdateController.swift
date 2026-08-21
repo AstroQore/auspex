@@ -60,7 +60,11 @@ final class AppUpdateController: NSObject, SPUUpdaterDelegate {
     private var updaterController: SPUStandardUpdaterController?
     private var canCheckObservation: NSKeyValueObservation?
 
-    private override init() {
+    /// Use ``shared``. This exists so the inert path can be tested without a
+    /// process-wide singleton the next test would inherit — building a second
+    /// one and never activating it costs nothing, and two *activated* ones
+    /// cannot happen because activation needs a packaged bundle.
+    override init() {
         super.init()
     }
 
