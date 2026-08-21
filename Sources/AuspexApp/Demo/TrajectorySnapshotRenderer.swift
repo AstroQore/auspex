@@ -61,6 +61,10 @@ enum TrajectorySnapshotRenderer {
             )
         )
         renderer.scale = scale
+        // A window has no transparency, and saying so is what keeps the PNG at
+        // three channels instead of four — a third of the bytes, in a
+        // repository that carries a dozen of these.
+        renderer.isOpaque = true
         let image = renderer.nsImage
         guard let image,
               let tiff = image.tiffRepresentation,

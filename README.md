@@ -70,6 +70,26 @@ rendered from that demo board by the app itself (`--render-board`,
 `--render-scene`, `--render-crew`, `--render-trajectory`), so none of them
 carries a real session, a real path, or a real name.
 
+## It follows your Mac
+
+Every colour has a value for each appearance — the same four surface steps, the
+same three text steps, one colour per state and one per harness, with only
+their brightness moved — so the board is the same board in either. Auspex
+follows whatever your Mac is set to, including a scheduled switch at sunset.
+
+![The board in the light appearance: the same wall of cards on a warm off-white ground](docs/screenshots/board-light.png)
+
+**Settings → Appearance** overrides that with Light or Dark, switches the
+sidebar between the system's own material and the board's flat ground, and
+shows you which accent, background and foreground the choice resolved to.
+Nothing is relaunched: the window, the menu bar panel, the office and the crew
+all repaint where they stand. `--appearance light|dark` does the same for one
+launch without writing it down, which is how the performance budget is measured
+against both.
+
+Every screenshot below has a `-light` twin in `docs/screenshots/`, rendered by
+the same command with `appearance=light` on the end.
+
 ## Four ways to read one board
 
 The picker in the header switches how the live sessions are drawn. It is a mode

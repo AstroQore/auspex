@@ -87,6 +87,10 @@ enum WindowSnapshotRenderer {
             )
         )
         renderer.scale = scale
+        // A window has no transparency, and saying so is what keeps the PNG at
+        // three channels instead of four — a third of the bytes, in a
+        // repository that carries a dozen of these.
+        renderer.isOpaque = true
         guard let image = renderer.nsImage,
               let tiff = image.tiffRepresentation,
               let representation = NSBitmapImageRep(data: tiff),
