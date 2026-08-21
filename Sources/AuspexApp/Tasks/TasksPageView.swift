@@ -3,7 +3,8 @@ import AgentSessionLive
 import AuspexCore
 import SwiftUI
 
-/// The Tasks page: plans, the tasks under them, and the live sessions on each.
+/// The Tasks page: the projects on this machine, the work inside each, and the
+/// live sessions on it.
 ///
 /// ## Why a board rather than a list
 ///
@@ -11,6 +12,15 @@ import SwiftUI
 /// moving, and which is stuck*. A list sorted by anything answers it badly,
 /// because "stuck" is not a property of one row — it is the shape of the
 /// column that row is in. Four columns and a glance is the whole interaction.
+///
+/// ## Why the lanes are projects
+///
+/// Because everything else on this app already divides by project — the wall's
+/// sections, the sidebar's tree, the scene's floor plates — and a task board
+/// that divided by something else would be a second map of the same machine.
+/// A milestone is a sub-heading *inside* a lane: optional, and never the thing
+/// that contains the work. Nothing is "unfiled", because a task filed by an
+/// agent is filed in the project that agent was working in.
 ///
 /// ## What is live and what is filed
 ///
@@ -25,25 +35,19 @@ struct TasksPageView: View {
     let board: LiveBoardModel
 
     /// The width of one column. Four of them plus the gaps fit the content
-    /// column at its default width, which is what keeps the whole plan
+    /// column at its default width, which is what keeps a whole project
     /// readable without a horizontal scroll.
     static let columnWidth: CGFloat = 176
-
-    @State private var isAddingPlan = false
-    @State private var draftPlan = ""
 
     var body: some View {
         BoardScroll {
             LazyVStack(alignment: .leading, spacing: 16) {
-                planBar
+                pageBar
                 if model.isEmpty {
                     TasksEmptyState()
                 } else {
-                    ForEach(model.lanes) { lane in
-                        PlanLaneView(lane: lane, model: model, board: board)
-                    }
-                    if let unfiled = model.unfiled {
-                        PlanLaneView(lane: unfiled, model: model, board: board)
+                    ForEach(visibleLanes) { lane in
+                        ProjectLaneView(lane: lane, model: model, board: board)
                     }
                 }
                 UnregisteredSessionsSection(model: model, board: board)
@@ -54,51 +58,49 @@ struct TasksPageView: View {
         .background(BoardSurfaceBackground())
     }
 
-    /// Registering a plan by hand, and the archive switch.
+    /// Which projects are drawn.
+    ///
+    /// A project with nothing in it is not a lane: on a machine with thirty
+    /// repositories, twenty-eight empty headings would bury the two that have
+    /// work in them. The exception is the project a person has *focused* —
+    /// they bound the window to it, so the honest answer to "what is in it" is
+    /// an empty lane saying so rather than a page that omits the thing they
+    /// asked about.
+    private var visibleLanes: [TasksModel.ProjectLane] {
+        guard let focus = board.focusedProjectKey else {
+            return model.lanes.filter { !$0.isEmpty }
+        }
+        return [model.lanes.first { $0.key == focus } ?? model.emptyLane(forKey: focus)]
+    }
+
+    /// The archive switch, and what the page is showing.
     ///
     /// In the page rather than only in the toolbar, because the toolbar of the
     /// content column is shared with the board and a control that appears and
     /// disappears there is a control nobody finds twice.
     @ViewBuilder
-    private var planBar: some View {
+    private var pageBar: some View {
         HStack(spacing: 8) {
-            if isAddingPlan {
-                TextField("What is the whole piece of work?", text: $draftPlan)
-                    .textFieldStyle(.plain)
-                    .font(AuspexType.body)
-                    .onSubmit(commitPlan)
-                Button("Register", action: commitPlan)
-                    .buttonStyle(.auspex)
+            Text(summary)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
+            Spacer(minLength: 8)
+            Button { model.showsArchived.toggle() } label: {
+                Text(model.showsArchived ? "Hide archived" : "Show archived")
                     .font(AuspexType.pill)
-                    .foregroundStyle(AuspexPalette.stateThinking)
-                    .disabled(draftPlan.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button("Cancel") { isAddingPlan = false; draftPlan = "" }
-                    .buttonStyle(.auspex)
-                    .font(AuspexType.pill)
-                    .foregroundStyle(AuspexPalette.text3)
-            } else {
-                Button("New plan") { isAddingPlan = true }
-                    .buttonStyle(.auspex)
-                    .font(AuspexType.pill)
-                    .foregroundStyle(AuspexPalette.text2)
-                Spacer(minLength: 8)
-                Button { model.showsArchived.toggle() } label: {
-                    Text(model.showsArchived ? "Hide archived" : "Show archived")
-                        .font(AuspexType.pill)
-                        .foregroundStyle(
-                            model.showsArchived ? AuspexPalette.text : AuspexPalette.text3
-                        )
-                        .padding(.horizontal, 8)
-                        .frame(height: 20)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(model.showsArchived ? AuspexPalette.selection : .clear)
-                        )
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.auspex)
-                .help("Show plans that have been filed away")
+                    .foregroundStyle(
+                        model.showsArchived ? AuspexPalette.text : AuspexPalette.text3
+                    )
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(model.showsArchived ? AuspexPalette.selection : .clear)
+                    )
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.auspex)
+            .help("Show milestones that have been filed away")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -111,70 +113,72 @@ struct TasksPageView: View {
         )
     }
 
-    private func commitPlan() {
-        model.createPlan(title: draftPlan)
-        draftPlan = ""
-        isAddingPlan = false
+    private var summary: String {
+        let lanes = visibleLanes.count
+        let open = visibleLanes.reduce(0) { $0 + $1.openCount }
+        let projects = lanes == 1 ? "1 project" : "\(lanes) projects"
+        let tasks = open == 1 ? "1 task open" : "\(open) tasks open"
+        return "\(projects) · \(tasks)"
     }
-
 }
 
-// MARK: - One plan
+// MARK: - One project
 
-/// A plan and its four columns.
-private struct PlanLaneView: View {
-    let lane: TasksModel.TaskLane
+/// One project: its milestones, the tasks in none of them, and four columns
+/// under each.
+private struct ProjectLaneView: View {
+    let lane: TasksModel.ProjectLane
     let model: TasksModel
     let board: LiveBoardModel
 
-    @State private var isAddingTask = false
-    @State private var draftTitle = ""
+    @State private var isAddingMilestone = false
+    @State private var draftMilestone = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             header
-            HStack(alignment: .top, spacing: 10) {
-                ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
-                    TaskColumnView(
-                        status: status,
-                        rows: lane.column(status),
-                        model: model,
-                        board: board
-                    )
-                }
+            if isAddingMilestone { milestoneField }
+            ForEach(lane.groups) { group in
+                MilestoneGroupView(
+                    group: group,
+                    lane: lane,
+                    // A lane with milestones in it needs to say what the last
+                    // set of columns is, or two identical column headers look
+                    // like a rendering mistake. A lane with none says nothing:
+                    // "not in a milestone" over the only thing there is would
+                    // be a heading about an absence.
+                    namesLooseGroup: lane.groups.contains { $0.plan != nil },
+                    model: model,
+                    board: board
+                )
             }
-            if isAddingTask { newTaskField }
         }
         .padding(14)
         .panelChrome()
-        .opacity(lane.isArchived ? 0.6 : 1)
     }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 7) {
+                    if let harness = lane.harness {
+                        HarnessBadge(harness: harness, size: 15)
+                    } else {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(AuspexPalette.text3)
+                    }
                     Text(lane.title)
                         .font(AuspexType.cardTitle)
                         .foregroundStyle(AuspexPalette.text)
-                    if let plan = lane.plan {
-                        Text(plan.slug)
-                            .font(AuspexType.monoSmall)
-                            .foregroundStyle(AuspexPalette.text3)
-                            .textSelection(.enabled)
-                    }
-                    if lane.isArchived {
-                        Text("archived")
-                            .auspexLabel(AuspexType.labelSmall)
-                            .foregroundStyle(AuspexPalette.text3)
-                    }
                 }
-                if let summary = lane.summary {
-                    Text(summary)
-                        .font(AuspexType.caption)
+                if let subtitle = lane.subtitle {
+                    Text(subtitle)
+                        .font(AuspexType.monoSmall)
                         .foregroundStyle(AuspexPalette.text3)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
                 }
             }
             Spacer(minLength: 6)
@@ -183,26 +187,151 @@ private struct PlanLaneView: View {
                 .auspexTabularDigits()
                 .foregroundStyle(AuspexPalette.text3)
             Button {
-                isAddingTask.toggle()
+                isAddingMilestone.toggle()
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 20, height: 18)
+                Text("Milestone")
+                    .font(AuspexType.pill)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.auspex)
             .foregroundStyle(AuspexPalette.text3)
-            .help("File a task under this plan")
-            if let plan = lane.plan, !lane.isArchived {
+            .help("Register a milestone inside this project")
+        }
+    }
+
+    private var milestoneField: some View {
+        HStack(spacing: 8) {
+            TextField("What is the whole piece of work?", text: $draftMilestone)
+                .textFieldStyle(.plain)
+                .font(AuspexType.body)
+                .onSubmit(commit)
+            Button("Register", action: commit)
+                .buttonStyle(.auspex)
+                .font(AuspexType.pill)
+                .foregroundStyle(AuspexPalette.stateThinking)
+                .disabled(draftMilestone.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button("Cancel") { isAddingMilestone = false; draftMilestone = "" }
+                .buttonStyle(.auspex)
+                .font(AuspexType.pill)
+                .foregroundStyle(AuspexPalette.text3)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous).fill(AuspexPalette.bg2)
+        )
+    }
+
+    private func commit() {
+        model.createMilestone(title: draftMilestone, projectKey: lane.key)
+        draftMilestone = ""
+        isAddingMilestone = false
+    }
+}
+
+// MARK: - One milestone
+
+/// A milestone's sub-header and its four columns — or, for the tasks in no
+/// milestone, the four columns on their own.
+private struct MilestoneGroupView: View {
+    let group: TasksModel.MilestoneGroup
+    let lane: TasksModel.ProjectLane
+    /// Whether the tasks in no milestone get a heading of their own.
+    var namesLooseGroup = false
+    let model: TasksModel
+    let board: LiveBoardModel
+
+    @State private var isAddingTask = false
+    @State private var draftTitle = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            if group.tasks.isEmpty {
+                // One quiet line rather than four boxes with a dash in each:
+                // an empty project says one thing, and it should say it once.
+                Text("Nothing to do")
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .padding(.vertical, 8)
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
+                        TaskColumnView(
+                            status: status,
+                            rows: group.column(status),
+                            model: model,
+                            board: board
+                        )
+                    }
+                }
+            }
+            if isAddingTask { newTaskField }
+        }
+        .opacity(group.isArchived ? 0.6 : 1)
+    }
+
+    /// The sub-header, when there is a milestone to head. The tasks in none get
+    /// the add button and nothing else: a heading over them would be a heading
+    /// that says "the rest".
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            if group.plan == nil, namesLooseGroup {
+                Text("Not in a milestone")
+                    .auspexLabel(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+            if let title = group.title {
+                Text(title)
+                    .auspexLabel(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.text2)
+                if let plan = group.plan {
+                    Text(plan.slug)
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .textSelection(.enabled)
+                }
+                if group.isArchived {
+                    Text("archived")
+                        .auspexLabel(AuspexType.labelSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                }
+                if let summary = group.summary {
+                    Text(summary)
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 6)
+            Button {
+                isAddingTask.toggle()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 20, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.auspex)
+            .foregroundStyle(AuspexPalette.text3)
+            .help(group.plan == nil ? "File a task in this project" : "File a task under this milestone")
+            if let plan = group.plan, !group.isArchived {
                 Button { model.archivePlan(id: plan.id) } label: {
                     Image(systemName: "archivebox")
                         .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 20, height: 18)
+                        .frame(width: 20, height: 16)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.auspex)
                 .foregroundStyle(AuspexPalette.text3)
-                .help("File this plan away. Its tasks stay where they are.")
+                .help("File this milestone away. Its tasks stay in this project.")
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if group.title != nil || namesLooseGroup {
+                Rectangle().fill(AuspexPalette.line).frame(height: 1).offset(y: 3)
             }
         }
     }
@@ -227,7 +356,7 @@ private struct PlanLaneView: View {
     }
 
     private func commit() {
-        model.createTask(title: draftTitle, planID: lane.plan?.id)
+        model.createTask(title: draftTitle, projectKey: lane.key, planID: group.plan?.id)
         draftTitle = ""
         isAddingTask = false
     }
@@ -269,11 +398,11 @@ private struct TaskColumnView: View {
                 TaskCardView(row: row, model: model, board: board)
             }
             if rows.isEmpty {
-                Text("—")
-                    .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.line2)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 10)
+                // Empty, and quiet about it: the column keeps its height so it
+                // is still somewhere a task can be dropped, and says nothing.
+                // A dash in every empty column is four pieces of punctuation
+                // where the honest answer is one absence.
+                Color.clear.frame(height: 28)
             }
         }
         .frame(width: TasksPageView.columnWidth, alignment: .leading)
@@ -419,6 +548,19 @@ private struct TaskCardView: View {
                 Button("Move to \(status.label)") { model.move(taskID: row.task.id, to: status) }
                     .disabled(status == row.task.status)
             }
+            // Re-filing by hand, which is what makes the scratch project a
+            // place work passes through rather than a place it goes to die.
+            let elsewhere = model.lanes.filter { $0.key != row.task.projectKey }
+            if !elsewhere.isEmpty {
+                Divider()
+                Menu("File under…") {
+                    ForEach(elsewhere) { lane in
+                        Button(lane.title) {
+                            model.move(taskID: row.task.id, toProjectKey: lane.key)
+                        }
+                    }
+                }
+            }
             if !row.sessions.isEmpty {
                 Divider()
                 ForEach(row.sessions, id: \.key) { session in
@@ -449,16 +591,17 @@ private struct TaskCardView: View {
 /// The live sessions no task claims.
 ///
 /// Not hidden, and not silently folded into a lane. Half the value of this
-/// page is knowing what is running *outside* the plan — an agent nobody
-/// registered is the thing most likely to be duplicating somebody else's work
-/// — so it gets a heading of its own and a way to file each one.
+/// page is knowing what is running *outside* the work somebody wrote down — an
+/// agent nobody registered is the thing most likely to be duplicating
+/// somebody else's work — so it gets a heading of its own and a way to file
+/// each one.
 private struct UnregisteredSessionsSection: View {
     let model: TasksModel
     let board: LiveBoardModel
 
     var body: some View {
         let linked = Set(
-            (model.lanes + [model.unfiled].compactMap { $0 })
+            model.lanes
                 .flatMap(\.tasks)
                 .flatMap(\.sessions)
                 .map(\.key)
@@ -542,11 +685,12 @@ private struct TasksEmptyState: View {
                 .font(AuspexType.display)
                 .foregroundStyle(AuspexPalette.text)
             Text(
-                "A plan is registered by whoever hands work out — a supervisor "
-                    + "splitting a job, or you. Agents that have Auspex's MCP server "
-                    + "installed can register one with plans.create, file a task per "
-                    + "worker, and put the task id in each brief; the worker then makes "
-                    + "one tasks.claim call and its session appears on the row."
+                "Work is filed in projects — the same projects the board groups "
+                    + "sessions into. An agent with Auspex's MCP server installed calls "
+                    + "tasks.create and its task lands in the project it is working in, "
+                    + "with no path to type; a supervisor handing work out files one per "
+                    + "worker and puts the task id in each brief, and the worker makes "
+                    + "one tasks.claim call so its session appears on the row."
             )
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
@@ -597,20 +741,20 @@ enum TaskDragPayload {
 /// are two destinations, and a person on the wall should not have to navigate
 /// to somewhere they can see both.
 ///
-/// The plans are the submenus, so a task's name is read next to the plan that
-/// gives it meaning. Anything already linked is dropped from the list: an item
-/// that does nothing is a menu telling somebody a lie about what happens next.
+/// The projects are the submenus, so a task's name is read next to the project
+/// that gives it meaning. Anything already linked is dropped from the list: an
+/// item that does nothing is a menu telling somebody a lie about what happens
+/// next.
 struct LinkToTaskMenu: View {
     let key: SessionKey
     let tasks: TasksModel
 
     var body: some View {
-        let lanes = (tasks.lanes + [tasks.unfiled].compactMap { $0 })
-            .filter { !$0.isArchived }
+        let lanes = tasks.lanes.filter { !$0.isEmpty }
         if lanes.isEmpty {
             Button("Link to task…") {}
                 .disabled(true)
-                .help("Nothing is filed yet. Register a plan on the Tasks page.")
+                .help("Nothing is filed yet. File a task on the Tasks page.")
         } else {
             Menu("Link to task…") {
                 ForEach(lanes) { lane in

@@ -4,8 +4,16 @@ import AuspexCore
 import Foundation
 import Observation
 
-/// The Tasks page's state: the plans, the tasks under them, and which live
+/// The Tasks page's state: the projects, the tasks inside them, and which live
 /// sessions are attached to each.
+///
+/// ## One hierarchy
+///
+/// **Project ⊃ task ⊃ sessions.** A lane is a project — the same project the
+/// wall groups cards into and the sidebar lists — and a milestone is a
+/// sub-heading *inside* a lane rather than a lane of its own. There is no
+/// "Unfiled": a task filed by an agent is filed in the project that agent is
+/// working in, resolved before it ever reaches the store.
 ///
 /// Read on demand rather than observed. The ledger changes when a person drags
 /// a card or an agent calls a tool — a few times a minute at most — so a
@@ -15,17 +23,14 @@ import Observation
 ///
 /// The *live* half of a row — what the attached session is doing right now —
 /// does not come from here at all. It comes from the board frame, through
-/// ``apply(board:)``, which is what keeps the state dot on a task row and the
-/// state pill on its card from ever disagreeing.
+/// ``apply(board:notices:attention:)``, which is what keeps the state dot on a
+/// task row and the state pill on its card from ever disagreeing.
 @MainActor
 @Observable
 final class TasksModel {
-    /// Plans, most recently touched first, each with its tasks.
-    private(set) var lanes: [TaskLane] = []
-
-    /// Tasks filed under no plan. A legitimate shape — somebody filed one
-    /// thing — and drawn as a lane of its own rather than hidden.
-    private(set) var unfiled: TaskLane?
+    /// One lane per project, in board order: the projects being worked in
+    /// first.
+    private(set) var lanes: [ProjectLane] = []
 
     /// Whether anything has ever been filed. Distinguishes "nobody has used
     /// this yet" from "everything is finished", which want different pages.
@@ -38,7 +43,24 @@ final class TasksModel {
     /// any task moved.
     private(set) var openCount = 0
 
-    /// Whether archived plans are drawn as well.
+    /// How much work each project is carrying, by the board's project key.
+    ///
+    /// Derived here rather than queried, because the folding that puts a task
+    /// into a person's project (see ``rebuild()``) happens here and a `GROUP BY`
+    /// in SQLite would not know about it.
+    ///
+    /// TODO: the sidebar's project rows should draw `taskCounts(byProjectKey:)`
+    /// as a quiet pill beside the live count — `ProjectsSidebar.swift` belongs
+    /// to another branch, so this is left as the seam rather than the edit.
+    private(set) var projectTaskCounts: [String: TaskProjectCounts] = [:]
+
+    /// What one project is carrying. Zero for a project nobody has filed
+    /// anything in, so a caller can draw a pill without unwrapping.
+    func taskCounts(byProjectKey key: String) -> TaskProjectCounts {
+        projectTaskCounts[key] ?? TaskProjectCounts(total: 0, open: 0)
+    }
+
+    /// Whether archived milestones are drawn as well.
     var showsArchived = false {
         didSet { if oldValue != showsArchived { reload() } }
     }
@@ -51,13 +73,20 @@ final class TasksModel {
 
     private var repository: TaskRepository?
     private var live: [SessionKey: LiveSessionState] = [:]
+    /// The user's projects, as the frame carries them.
+    ///
+    /// Kept so a lane can be titled and a task can be folded into the project a
+    /// person made *after* it was filed. Compared before it is stored: claims
+    /// change when somebody edits the Projects page, which is not eight times a
+    /// second.
+    private var claims: ProjectClaims = .empty
     /// The sessions any task is attached to.
     ///
-    /// The whole reason ``apply(board:notices:)`` is affordable. It is called
-    /// from the frame hook, which runs eight times a second whether or not this
-    /// page is on screen, and deriving a title and a project for every session
-    /// on a six-hundred-session board at that rate is exactly the kind of
-    /// always-on cost `AGENTS.md` § 4.1 exists to prevent. A task board with
+    /// The whole reason ``apply(board:notices:attention:)`` is affordable. It is
+    /// called from the frame hook, which runs eight times a second whether or
+    /// not this page is on screen, and deriving a title and a project for every
+    /// session on a six-hundred-session board at that rate is exactly the kind
+    /// of always-on cost `AGENTS.md` § 4.1 exists to prevent. A task board with
     /// nothing linked to it does no work at all.
     private var linkedKeys: Set<SessionKey> = []
     private var reloadTask: Task<Void, Never>?
@@ -76,14 +105,37 @@ final class TasksModel {
         let attention: AttentionState
     }
 
-    /// One plan and everything under it.
-    struct TaskLane: Identifiable, Equatable {
-        /// `plan-<id>`, or `unfiled`. Stable across reloads so SwiftUI keeps
-        /// the column's scroll position while the board churns.
+    /// One project and all the work in it.
+    struct ProjectLane: Identifiable, Equatable {
+        /// `project-<key>`. Stable across reloads so SwiftUI keeps the lane's
+        /// state while the board churns.
+        let id: String
+        /// The board's project key — a path, a `PseudoProject` key, or the
+        /// scratch project.
+        let key: String
+        let title: String
+        /// The path under the title, when the key is one.
+        let subtitle: String?
+        /// The harness a pseudo project stands for, so a lane can wear its
+        /// mark instead of a folder icon.
+        let harness: Harness?
+        /// The milestones inside it, and the tasks that are in none.
+        let groups: [MilestoneGroup]
+
+        var tasks: [TaskRow] { groups.flatMap(\.tasks) }
+        var openCount: Int { groups.reduce(0) { $0 + $1.openCount } }
+        var isEmpty: Bool { groups.allSatisfy(\.tasks.isEmpty) }
+    }
+
+    /// One milestone inside a project, or the tasks that are in none.
+    struct MilestoneGroup: Identifiable, Equatable {
+        /// `plan-<id>`, or `<project key>-loose`.
         let id: String
         let plan: AuspexPlan?
-        let title: String
-        let summary: String?
+        /// `nil` for the tasks that are in no milestone: they are the ordinary
+        /// case and a heading over them would be a heading saying "the rest".
+        var title: String? { plan?.title }
+        var summary: String? { plan?.summary }
         let tasks: [TaskRow]
 
         var isArchived: Bool { plan?.status == .archived }
@@ -166,14 +218,21 @@ final class TasksModel {
     }
 
     /// Hands the page the frame the board is drawing, so a task row's dot is
-    /// the same fact as its card's pill.
+    /// the same fact as its card's pill — and so a lane is named the way the
+    /// wall names the same project.
     func apply(
         board: BoardSnapshot,
         notices: [SessionKey: AgentNotice],
         attention: [SessionKey: AttentionState] = [:]
     ) {
+        var changed = false
+        if board.claims != claims {
+            claims = board.claims
+            changed = true
+        }
         guard !linkedKeys.isEmpty else {
-            if !live.isEmpty { live = [:]; rebuild() }
+            if !live.isEmpty { live = [:]; changed = true }
+            if changed { rebuild() }
             return
         }
         var next: [SessionKey: LiveSessionState] = [:]
@@ -192,7 +251,7 @@ final class TasksModel {
                 attention: attention[session.key] ?? .none
             )
         }
-        guard next != live else { return }
+        guard next != live || changed else { return }
         live = next
         rebuild()
     }
@@ -212,40 +271,150 @@ final class TasksModel {
         rebuild()
     }
 
+    /// Turns the ledger into lanes: one per project, milestones inside.
+    ///
+    /// A task's stored key is folded through the user's claims first, so a
+    /// project somebody makes today collects the tasks that were filed in its
+    /// folders yesterday — the same fold ``BoardSnapshot/projectKey(for:)``
+    /// applies to a session, applied to a row that was written before the
+    /// claim existed.
     private func rebuild() {
         guard let latest else { return }
         isEmpty = latest.plans.isEmpty && latest.tasks.isEmpty
         openCount = latest.tasks.count { $0.status != .done }
 
-
         let linksByTask = Dictionary(grouping: latest.links) { $0.taskID }
         linkedKeys = Set(latest.links.map(\.session))
         func row(_ task: AuspexTask) -> TaskRow {
-            let attached = (linksByTask[task.id] ?? [])
-                .compactMap { live[$0.session] }
-            return TaskRow(task: task, sessions: attached)
+            TaskRow(task: task, sessions: (linksByTask[task.id] ?? []).compactMap { live[$0.session] })
         }
 
-        let byPlan = Dictionary(grouping: latest.tasks) { $0.planID }
-        lanes = latest.plans.map { plan in
-            TaskLane(
-                id: "plan-\(plan.id)",
-                plan: plan,
-                title: plan.title,
-                summary: plan.summary,
-                tasks: (byPlan[plan.id] ?? []).map(row)
+        let plansByID = Dictionary(latest.plans.map { ($0.id, $0) }) { first, _ in first }
+        var order: [String] = []
+        var tasksByProject: [String: [AuspexTask]] = [:]
+        var counts: [String: TaskProjectCounts] = [:]
+        for task in latest.tasks {
+            // A milestone the reader has hidden hides its tasks with it: the
+            // switch says "show archived", and a task that stayed behind would
+            // be a row under a heading that is not on the page.
+            if let planID = task.planID, plansByID[planID] == nil { continue }
+            let key = project(of: task)
+            if tasksByProject[key] == nil {
+                tasksByProject[key] = []
+                order.append(key)
+            }
+            tasksByProject[key]?.append(task)
+            let existing = counts[key] ?? TaskProjectCounts(total: 0, open: 0)
+            counts[key] = TaskProjectCounts(
+                total: existing.total + 1,
+                open: existing.open + (task.status == .done ? 0 : 1)
             )
         }
-        let orphans = byPlan[nil] ?? []
-        unfiled = orphans.isEmpty
-            ? nil
-            : TaskLane(
-                id: "unfiled",
-                plan: nil,
-                title: "Unfiled",
-                summary: "Filed without a plan — by a person, or by an agent working alone.",
-                tasks: orphans.map(row)
+        projectTaskCounts = counts
+
+        // Lanes in the order a person asks about them — what is stuck, then
+        // what is moving, then what is finished — and inside each, whatever was
+        // touched most recently. The same argument the wall's sections make:
+        // alphabetical order would bury a blocked project under `zzz-scratch`.
+        let ranked = order.sorted { lhs, rhs in
+            let left = rank(of: tasksByProject[lhs] ?? [])
+            let right = rank(of: tasksByProject[rhs] ?? [])
+            if left != right { return left < right }
+            let leftAt = tasksByProject[lhs]?.map(\.updatedAt).max() ?? .distantPast
+            let rightAt = tasksByProject[rhs]?.map(\.updatedAt).max() ?? .distantPast
+            if leftAt != rightAt { return leftAt > rightAt }
+            return lhs < rhs
+        }
+        lanes = claims.pinnedFirst(ranked) { $0 }.map { key in
+            lane(key: key, tasks: tasksByProject[key] ?? [], plans: plansByID, row: row)
+        }
+    }
+
+    /// Where a project sits in lane order: blocked work first, then open work,
+    /// then a project whose tasks are all finished.
+    private func rank(of tasks: [AuspexTask]) -> Int {
+        if tasks.contains(where: { $0.status == .blocked }) { return 0 }
+        if tasks.contains(where: { $0.status != .done }) { return 1 }
+        return 2
+    }
+
+    /// The project a stored task is drawn in.
+    private func project(of task: AuspexTask) -> String {
+        guard let key = task.projectKey, !key.isEmpty else { return TaskProject.scratchKey }
+        return claims.key(forPath: key) ?? key
+    }
+
+    /// One lane: the milestones inside a project, then everything in none.
+    ///
+    /// Milestones in the order the ledger touched them, and the loose tasks
+    /// last — they are the ordinary case, and a reader scanning for a heading
+    /// should find the headings together.
+    private func lane(
+        key: String,
+        tasks: [AuspexTask],
+        plans: [Int64: AuspexPlan],
+        row: (AuspexTask) -> TaskRow
+    ) -> ProjectLane {
+        var groups: [MilestoneGroup] = []
+        var loose: [AuspexTask] = []
+        var byPlan: [Int64: [AuspexTask]] = [:]
+        var planOrder: [Int64] = []
+        for task in tasks {
+            guard let planID = task.planID, plans[planID] != nil else {
+                loose.append(task)
+                continue
+            }
+            if byPlan[planID] == nil { planOrder.append(planID) }
+            byPlan[planID, default: []].append(task)
+        }
+        for planID in planOrder {
+            guard let plan = plans[planID] else { continue }
+            groups.append(
+                MilestoneGroup(
+                    id: "plan-\(plan.id)",
+                    plan: plan,
+                    tasks: (byPlan[planID] ?? []).map(row)
+                )
             )
+        }
+        if !loose.isEmpty || groups.isEmpty {
+            groups.append(
+                MilestoneGroup(id: "\(key)-loose", plan: nil, tasks: loose.map(row))
+            )
+        }
+        return ProjectLane(
+            id: "project-\(key)",
+            key: key,
+            title: name(forKey: key),
+            subtitle: TaskProject.subtitle(forKey: key),
+            harness: PseudoProject.harness(forKey: key),
+            groups: groups
+        )
+    }
+
+    /// What a lane is called: the name a person gave the project, the harness a
+    /// pseudo key stands for, "Scratch", or the key's last path component.
+    ///
+    /// The same ladder ``BoardSnapshot/projectDisplayName(forKey:)`` climbs,
+    /// asked of the claims alone — a lane must not need a whole frame to know
+    /// its own title, because the frame arrives eight times a second and the
+    /// title changes about once a month.
+    private func name(forKey key: String) -> String {
+        if TaskProject.isScratch(key) { return TaskProject.scratchName }
+        return claims.name(forKey: key) ?? BoardGrouping.projectName(forPath: key)
+    }
+
+    /// An empty lane for a project a person is looking *at* — the Tasks page
+    /// hides projects with nothing in them, except the one they focused.
+    func emptyLane(forKey key: String) -> ProjectLane {
+        ProjectLane(
+            id: "project-\(key)",
+            key: key,
+            title: name(forKey: key),
+            subtitle: TaskProject.subtitle(forKey: key),
+            harness: PseudoProject.harness(forKey: key),
+            groups: [MilestoneGroup(id: "\(key)-loose", plan: nil, tasks: [])]
+        )
     }
 
     // MARK: - Editing
@@ -262,12 +431,22 @@ final class TasksModel {
             return AuspexTask(
                 id: task.id, planID: task.planID, title: task.title, body: task.body,
                 status: status, priority: task.priority, projectID: task.projectID,
+                projectKey: task.projectKey,
                 createdBy: task.createdBy, claimRole: task.claimRole, claimScope: task.claimScope,
                 claimedBy: task.claimedBy, claimedAt: task.claimedAt,
                 completedAt: status == .done ? (task.completedAt ?? Date()) : nil,
                 result: task.result, source: task.source,
                 createdAt: task.createdAt, updatedAt: Date()
             )
+        }
+        reload()
+    }
+
+    /// Re-files a task into another project — the "File under…" menu.
+    func move(taskID: Int64, toProjectKey key: String) {
+        guard let repository else { return }
+        Task.detached(priority: .userInitiated) {
+            _ = try? repository.moveTask(id: taskID, toProjectKey: key)
         }
         reload()
     }
@@ -292,27 +471,27 @@ final class TasksModel {
         reload()
     }
 
-    /// Files a task by hand.
-    func createTask(title: String, planID: Int64?) {
+    /// Files a task by hand, in a project.
+    func createTask(title: String, projectKey: String, planID: Int64?) {
         guard let repository, !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         Task.detached(priority: .userInitiated) {
             _ = try? repository.createTask(
-                title: title, planID: planID, source: "ui"
+                title: title, planID: planID, projectKey: projectKey, source: "ui"
             )
         }
         reload()
     }
 
-    /// Registers a plan by hand.
-    func createPlan(title: String) {
+    /// Registers a milestone inside a project, by hand.
+    func createMilestone(title: String, projectKey: String) {
         guard let repository, !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         Task.detached(priority: .userInitiated) {
-            _ = try? repository.createPlan(title: title)
+            _ = try? repository.createPlan(title: title, projectKey: projectKey)
         }
         reload()
     }
 
-    /// Files a plan away.
+    /// Files a milestone away.
     func archivePlan(id: Int64) {
         guard let repository else { return }
         Task.detached(priority: .userInitiated) {
