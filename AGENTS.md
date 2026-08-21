@@ -11,8 +11,11 @@ one live board: who is thinking, calling tools, delegating to sub-agents,
 writing files, or waiting for permission. Sessions group by project and task,
 and the task board is exposed over MCP.
 
-Pure Swift package, ad-hoc-signed, **unsandboxed**, distributed as source.
-No Xcode workspace, no installer, no notarized release, no server, no network.
+Pure Swift package, **unsandboxed**, no Xcode workspace, no installer, no
+server, and no network except the one it uses to update itself. Builds are
+ad-hoc signed until an Apple Developer ID is configured; either way releases
+are tagged, signed with the project's Sparkle key, and delivered over two
+update channels (§ 9).
 
 **Status: pre-alpha.** The repository is a skeleton; most of
 `docs/ARCHITECTURE.md` is target design, not shipped code.
@@ -24,18 +27,23 @@ Package.swift              SwiftPM manifest — tools 6.2, macOS 26, Swift 6 lan
 Sources/
   AuspexCore/              Testable library. All logic lives here.
     AuspexPaths.swift      Single source of truth for the ~/.auspex/ tree
-    AuspexVersion.swift    Build identity; mirrors Resources/Info.plist
+    AuspexVersion.swift    Build identity; reads Resources/Info.plist
+    Config/UpdateChannel.swift  Stable vs Dev, and what each means to Sparkle
     Store/AuspexStore.swift  GRDB store + DatabaseMigrator
   AuspexApp/               SwiftUI executable. UI glue only.
     main.swift             Subcommand dispatch, then AuspexApp.main()
     AuspexApp.swift        App scene: WindowGroup + MenuBarExtra
     AppEnvironment.swift   Observable dependency holder (placeholder)
     RootView.swift         NavigationSplitView shell
+    Updates/AppUpdateController.swift  The one Sparkle updater in the process
 Tests/AuspexCoreTests/     swift-testing suites
 Resources/
   Info.plist               Bundle metadata; com.astroqore.auspex
   Auspex.entitlements      Deliberately empty — see § 5
-Scripts/build_app.sh       swift build → .app bundle → codesign → sandbox assert
+Scripts/build_app.sh       swift build → .app bundle → Sparkle → codesign → sandbox assert
+Scripts/release_app.sh     Bump, close the changelog, branch, tag. Builds nothing (§ 9)
+Scripts/generate_update_feed.sh  One archive → one signed appcast item (§ 9)
+RELEASING.md               The release runbook, secrets, and the Sparkle key
 docs/ARCHITECTURE.md       Target architecture
 ```
 
@@ -57,7 +65,7 @@ Three, all pinned in `Package.swift`:
 | --- | --- | --- |
 | `GRDB.swift` | `from: 7.0.0` | The local store. |
 | `agent-session-kit` | `exact: "0.4.2"` | The harness adapters and the live pipeline. |
-| `Sparkle` | `exact: "2.9.4"` | In-app updates (§ 10). |
+| `Sparkle` | `exact: "2.9.4"` | In-app updates (§ 9). |
 
 `Package.resolved` is gitignored, so a release built from a clean checkout of
 a tag has nothing but `Package.swift` to tell it which dependency versions to
@@ -254,9 +262,41 @@ commit as.
   mailbox out of the public log.
 - Never force-push `main`.
 
-## 9. What Not To Change Without Explicit Instruction
+## 9. Releases and Updates
+
+`RELEASING.md` is the runbook — read it before touching anything below. The
+short version, and the parts that are easy to break from inside the code:
+
+- **Two channels, one signed feed.** Sparkle always considers its untagged
+  items, which is the stable stream; Dev *adds* the `dev`-tagged ones. So Dev
+  users receive stable releases too, and `UpdateChannel.main` deliberately
+  asks Sparkle for **no** channel by name — asking for `"main"` would match
+  nothing and silently stop stable users updating at all.
+- **`CFBundleVersion` is what Sparkle compares.** It only ever goes up. A dev
+  tag names it in its suffix (`v0.2.0-dev.31` is build 31); a stable release
+  takes the next number after every preview before it. Getting this wrong is
+  silent: the release ships and reaches nobody.
+- **`Resources/Info.plist` is the source of truth for the version.**
+  `AuspexVersion` reads it and falls back to two literals only when there is
+  no bundle (`swift test`, `swift run`). `Scripts/release_app.sh` rewrites the
+  plist and those literals together — do not hand-edit one of them.
+- **Never commit the Sparkle private key.** The public half is in the plist as
+  `SUPublicEDKey`; the private half lives in the login Keychain and in the
+  `SPARKLE_PRIVATE_KEY` repository secret, and both scripts feed it to Sparkle
+  over stdin so it never reaches a command line or a log.
+- **The `updates` branch is machine-managed.** `publish-update-feed.yml` owns
+  it and rebuilds it from published releases. Never edit its `appcast.xml`.
+- **Agents do not cut releases.** Creating tags, pushing them, publishing a
+  release, or editing the `updates` branch are all human gestures. An agent
+  may change the machinery and run `release_app.sh --dry-run`; that is the
+  line.
+
+## 10. What Not To Change Without Explicit Instruction
 
 - The empty `Resources/Auspex.entitlements` (§ 5).
 - The `~/.auspex/` write scope and the `AuspexPaths` containment check.
-- The bundle identifier `com.astroqore.auspex`.
+- The bundle identifier `com.astroqore.auspex` — Sparkle names the defaults
+  domain and the bundle it replaces by it.
+- `SUPublicEDKey` and `SUFeedURL` in `Resources/Info.plist`. Changing the key
+  makes every installed copy unable to accept an update (§ 9).
 - The read-only stance toward every other harness's directory.

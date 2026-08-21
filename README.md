@@ -20,8 +20,10 @@ and by who spawned them, and a shared task board is exposed over MCP so the
 agents themselves can say what they need.
 
 > **Status: pre-alpha.** It runs, it tails the real stores, and it is used
-> daily by its author. There is no tagged release, no notarized build, and no
-> upgrade path between versions — the database schema still changes.
+> daily by its author. There is no published release yet and no notarized
+> build, and no upgrade path between versions — the database schema still
+> changes. The release and in-app update machinery exists (`RELEASING.md`);
+> nothing has been cut through it.
 
 ![The Auspex board: session cards grouped by project, with one session's trace beside them](docs/screenshots/board.png)
 
@@ -69,6 +71,36 @@ under `/Users/example`.
 rendered from that demo board by the app itself (`--render-board`,
 `--render-scene`, `--render-crew`, `--render-trajectory`), so none of them
 carries a real session, a real path, or a real name.
+
+## Download and update
+
+Tagged builds are published as GitHub Releases, and a build installed from one
+keeps itself current: **Settings → Updates**, or **Auspex → Check for
+Updates…**. Auspex checks once a day and never installs anything without being
+asked — this is a window people leave open for days, and an app that replaced
+itself under a running session would take the session's window with it.
+
+There are two streams, and you choose which one this copy follows:
+
+| | |
+| --- | --- |
+| **Stable** | Released versions only. This is the one to be on. |
+| **Dev** | Preview builds cut between releases, **plus** every stable release. |
+
+Dev is additive on purpose: trying a preview never means missing the next
+stable fix. Every build in the feed is signed with the project's EdDSA key and
+verified against the key compiled into your copy *before* a byte is unpacked,
+so a download tampered with in transit is refused rather than run. That check
+is independent of Apple's, which matters while the builds are ad-hoc signed —
+Gatekeeper will ask you to approve the first launch by hand.
+
+The choice is written to `~/.auspex/settings.json` like every other setting, so
+you can read it, change it, or undo it without the app.
+
+> **Pre-alpha, so this is not live yet.** The update feed lives on a public
+> branch of this repository, and there is no published release to point it at
+> today. Build from source (above) until there is; `RELEASING.md` describes how
+> a release is cut, signed, and published.
 
 ## It follows your Mac
 

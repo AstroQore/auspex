@@ -5,7 +5,8 @@ All notable changes to Auspex are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Auspex is pre-alpha; there are no released versions yet.
+Auspex is pre-alpha; nothing has been released yet. `RELEASING.md`
+describes how one is cut when there is.
 
 ## [Unreleased]
 
@@ -45,6 +46,32 @@ Auspex is pre-alpha; there are no released versions yet.
   raises one, and deliberately has no switch.
 
 ### Added
+
+- **Auspex updates itself, on a stable channel or a dev one.** Tagged builds go
+  out as GitHub Releases and an installed copy keeps itself current: Settings →
+  Updates, or Auspex → Check for Updates…. One signed feed serves both streams,
+  and Dev is *additive* — a preview build still receives every stable release,
+  because Sparkle always considers its untagged items. Choosing to try a
+  preview should never mean missing the next fix.
+
+  Every archive is signed with the project's EdDSA key and verified against the
+  key compiled into the running copy before a byte is unpacked, so the check
+  does not depend on Apple's — which matters while builds are ad-hoc signed.
+  Nothing installs without being asked: this is a window people leave open for
+  days, and an app that replaced itself under a running session would take the
+  session's window with it.
+
+  The channel lives in `~/.auspex/settings.json` beside every other setting;
+  an absent or unrecognised value means stable, because the failure direction
+  of this one setting has to be the one that installs less.
+
+- **A release process, in two scripts and three workflows.**
+  `Scripts/release_app.sh` cuts a release — version bump, changelog section,
+  branch, tag — and refuses a build number Sparkle would treat as a downgrade.
+  `Scripts/generate_update_feed.sh` adds one signed item to the feed and
+  asserts that it dropped nothing already in it. CI builds from the tag into a
+  *draft* release, and publishing that draft is what rebuilds the feed. See
+  `RELEASING.md`.
 
 - **Light and dark, and the Mac decides.** Auspex forced dark for as long as it
   had one palette. Every token is a pair now — declared in one total `switch`,
