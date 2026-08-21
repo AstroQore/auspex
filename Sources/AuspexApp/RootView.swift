@@ -188,11 +188,16 @@ struct RootView: View {
         // instead — see `AuspexButtonStyle`.
         .auspexControlFocus()
         .navigationSplitViewColumnWidth(min: 460, ideal: 788)
+        // Below the header, not over it. The panel is anchored under the
+        // search field it came out of, which is in that bar — hanging it at
+        // the column's top edge put it across the heading and the state chips,
+        // so the one row that says what is being searched disappeared the
+        // moment somebody searched.
         .overlay(alignment: .top) {
             if model.searchDidRun || !model.searchHits.isEmpty {
                 SearchResultsView(model: model)
                     .padding(.horizontal, 20)
-                    .padding(.top, 8)
+                    .padding(.top, BoardHeader.height + 8)
             }
         }
         // Escape is the way back out of a project, wherever the pointer is.

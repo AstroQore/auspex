@@ -20,6 +20,11 @@ struct BoardHeader: View {
     @Environment(\.isSnapshotRender) private var isSnapshotRender
     @Environment(AppEnvironment.self) private var environment
 
+    /// How tall the bar is, published so that anything hung over the board's
+    /// column can start below it rather than guessing. The search panel used to
+    /// guess, and landed on the heading.
+    static let height: CGFloat = 52
+
     var body: some View {
         HStack(spacing: 12) {
             heading
@@ -67,7 +72,7 @@ struct BoardHeader: View {
             }
         }
         .padding(.horizontal, 20)
-        .frame(height: 52)
+        .frame(height: Self.height)
         .background(AuspexPalette.canvas)
         .overlay(alignment: .bottom) {
             Rectangle().fill(AuspexPalette.line).frame(height: 1)
