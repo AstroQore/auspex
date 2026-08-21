@@ -12,6 +12,86 @@ describes how one is cut when there is.
 
 ### Changed
 
+- **The board's unit is the task, not the session.** A session is a process,
+  and half the processes on a busy machine are subagents — a step inside
+  somebody else's job, spawned and finished within one turn. Drawing each as a
+  peer of the thing that spawned it gave a wall where a delegation of four read
+  as four independent pieces of work, and the reader reassembled the family in
+  their head every time they looked.
+
+  Every surface now folds them. The Ledger draws one card per piece of work
+  with its sessions as a strip of member dots and a `↳ 3`; the sidebar lists
+  project → checkout → task, with sessions only under a task somebody opened;
+  the Aviary gives one desk per task with the task's title on the nameplate;
+  the Flock draws one bird per task with its members as small avatars under it;
+  the Flight gains a Task scope that merges every member's lane into one
+  waterfall. The header, the menu bar and the sidebar count *units*, so a
+  family of three is one working task. A single global switch — "Show
+  subagents", in the grouping menu, persisted — lists the sessions on every
+  card at once for people who want the old density, and a chevron per card
+  does it for one.
+
+  Work nobody filed a task for gets exactly the same card, derived from the
+  root of its delegation and marked `auto`, with "Promote to task…" beside it.
+  The task protocol stays enrichment rather than a dependency.
+
+- **Finishing a task asks for a review; it does not close it.** `tasks.complete`
+  and `auspex.notify(done)` move a task to a new **Review** state — still open,
+  still counted, still on the wall, wearing the sentence the worker wrote — and
+  only a person's close moves it to `done`. An agent saying it is done is a
+  claim about its own work, and the one thing a board full of agents must not
+  let any of them do is mark their own homework. The chip that used to say
+  `✓ N done` says `✓ N in review`.
+
+- **The views are named for the birds.** Ledger, Aviary, Flock, Flight, and the
+  Tasks page is the Roost. `--view` still takes `board`, `scene`, `crew` and
+  `trajectory`, because they are in people's shell histories and in settings
+  files already written.
+
+- **A flock bird's body is its session, and its colour is its harness.** The
+  wall gave each harness a silhouette; on a board of ninety that is one bird
+  drawn forty times. Bodies now come from a ten-strong plump family seeded by
+  the session key, every one of them at least 0.72 as narrow as it is wide —
+  asserted over the catalogue, because a shape with a point in it reads as
+  spiky at 56 points and vanishes at 22. The wall itself is half the size it
+  was.
+
+### Added
+
+- **Tasks carry what they are and what they wait for.** A kind
+  (feature/fix/chore/research), labels, an importance in words as well as a
+  number, and dependencies. `tasks.list` takes `ready_only` and `label`, so
+  "find me something to pick up" is one call rather than a list plus a
+  judgement. A task waiting on unfinished work says `waits on AUX-…` and is not
+  ready.
+
+- **Notes have kinds and refs.** `tasks.log` takes `decision`, `evidence`,
+  `risk` or `note`, and a `ref` — a commit, a URL, a path. That is the whole
+  difference between a work log and a chat transcript: an agent that writes
+  "checked, it holds" has said nothing anybody can verify.
+
+- **A task has a page.** Its handle, status, importance, labels, project and
+  milestone; the claim and every session on it with per-member state and
+  freshness; what it waits on; its history, with a place to write into it; and
+  Close, Reopen, Release claim and Promote. Reached from a card's double click
+  or ⌘↩.
+
+- **⌘K.** A palette over the frame in hand: a handle out of a brief, a project
+  you have not scrolled to, a session by name, and the two or three actions
+  that otherwise need a right-click on a card you have to find first.
+
+- **Filters.** Importance, label, harness, ready-only, claimed/unclaimed and
+  orphaned claims, offered only where the wall can answer them, with a bar that
+  says what is on and one click per facet to take it off.
+
+- **Orphaned claims.** A claim whose session ended without finishing is marked
+  amber on its card, filterable, and has Release beside it. Its own marker
+  rather than a bucket: debris is not the same thing as work that is stuck.
+
+- **What each harness finishes.** The Harnesses page gains claimed, finished
+  and median claim-to-finish, because "how many of its sessions are open" is
+  mostly history on a machine that has run agents all week.
+
 - **Projects contain tasks.** Plans and projects used to be two roots side by
   side, so a task an agent filed over MCP without a plan landed in a lane called
   "Unfiled" — which meant "nobody asked where this belongs", next to the project
