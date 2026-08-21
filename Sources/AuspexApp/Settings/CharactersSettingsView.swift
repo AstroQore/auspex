@@ -3,11 +3,23 @@ import AppKit
 import AuspexCore
 import SwiftUI
 
-/// The Settings window.
+/// The Settings window, and the Settings section of the board's column — one
+/// view, shown in two places.
 ///
-/// One pane today. It is a `TabView` anyway because the pane a person reaches
-/// for is named — "Settings → Characters" — and a window that grows a second
-/// tab later should not move the first one.
+/// ## Why it is not a `TabView` any more
+///
+/// A `TabView` puts the strip wherever the platform puts it, which in the
+/// board's column was directly on the header's hairline; it sizes the strip to
+/// the window rather than to the six words in it; and it knows a pane's *name*
+/// and nothing else, so the one subtitle the window had was written beside
+/// whichever pane existed first and then introduced every other pane as
+/// "characters, and where packages come from".
+///
+/// So the chrome is the app's own, and it is one shape: a title row carrying
+/// ``SettingsPane/title`` and that pane's own ``SettingsPane/subtitle``, a
+/// segmented strip sized to its six words, a rule, and the pane under it. Every
+/// pane is a plain stack of rows — the scroll view, the padding, the ground and
+/// the measure are here, once, so no pane can invent its own margins.
 struct AuspexSettingsView: View {
     let library: SpriteLibrary
     /// The user layer, for the Ignore pane. The pane writes through it, so the
@@ -19,8 +31,82 @@ struct AuspexSettingsView: View {
     var detected: Set<Harness> = []
     var socketPath: String?
 
+    @State private var pane: SettingsPane?
+
+    /// How wide a column of settings copy is allowed to get.
+    ///
+    /// The window is 660 points and the board's column can be twice that. A
+    /// paragraph run to 1300 points is a paragraph nobody finishes, so the
+    /// content stops here and the extra width stays as margin.
+    private static let measure: CGFloat = 720
+
+    private var panes: [SettingsPane] { SettingsPane.available(hasSetup: setup != nil) }
+
+    /// The pane on screen. `panes.first` until somebody picks one, and back to
+    /// it if the pane they picked is not offered here — which is what happens
+    /// to Agents in a render with no app behind it.
+    private var shown: SettingsPane {
+        guard let pane, panes.contains(pane) else { return panes.first ?? .appearance }
+        return pane
+    }
+
     var body: some View {
-        TabView {
+        VStack(alignment: .leading, spacing: 0) {
+            titleRow
+            BoardScroll {
+                content
+                    .padding(20)
+                    .frame(maxWidth: Self.measure, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(minWidth: 460, minHeight: 360)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(AuspexPalette.canvas)
+    }
+
+    // MARK: The chrome
+
+    /// The pane's name, the pane's own line, and the way to the other five.
+    ///
+    /// The strip is under the title rather than beside it because six segments
+    /// and a heading do not both fit across a 460 pt column, and a strip that
+    /// starts dropping words is worse than a strip on its own row.
+    private var titleRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Image(systemName: shown.systemImage)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AuspexPalette.text3)
+                    Text(shown.title)
+                        .font(AuspexType.paneTitle)
+                        .foregroundStyle(AuspexPalette.text)
+                }
+                Text(shown.subtitle)
+                    .font(AuspexType.body)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            SegmentedPicker(
+                selection: Binding(get: { shown }, set: { pane = $0 }),
+                options: panes.map { ($0, $0.title) }
+            )
+            .fixedSize()
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(AuspexPalette.line).frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch shown {
+        case .agents:
             if let setup {
                 AgentsSettingsView(
                     model: setup,
@@ -29,20 +115,13 @@ struct AuspexSettingsView: View {
                     socketPath: socketPath,
                     onOpenSetup: { setup.present() }
                 )
-                .tabItem { Label("Agents", systemImage: "point.3.connected.trianglepath.dotted") }
             }
-            AppearanceSettingsView(catalog: catalog)
-                .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
-            CharactersSettingsView(library: library)
-                .tabItem { Label("Characters", systemImage: "person.and.background.dotted") }
-            SceneSettingsView(catalog: catalog)
-                .tabItem { Label("Scene", systemImage: "map") }
-            CrewSettingsView(catalog: catalog)
-                .tabItem { Label("Crew", systemImage: "face.smiling") }
-            IgnoreSettingsView(catalog: catalog)
-                .tabItem { Label("Ignore", systemImage: "eye.slash") }
+        case .appearance: AppearanceSettingsView(catalog: catalog)
+        case .characters: CharactersSettingsView(library: library)
+        case .scene: SceneSettingsView(catalog: catalog)
+        case .crew: CrewSettingsView(catalog: catalog)
+        case .ignore: IgnoreSettingsView(catalog: catalog)
         }
-        .frame(width: 660, height: 620)
     }
 }
 
@@ -69,33 +148,26 @@ struct CharactersSettingsView: View {
     private var packages: [CharacterPackage] { library.catalog.packages }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                harnessDefaults
-                packageGrid
-                folderNote
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            harnessDefaults
+            packageGrid
+            folderNote
         }
-        .background(AuspexPalette.canvas)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .task { library.startWatching() }
     }
 
     // MARK: Header
 
+    /// What the pane's own title row cannot say: how many packages there are
+    /// right now, and the two buttons that change that. The name of the pane
+    /// and the sentence about what it is for are up in the chrome — see
+    /// ``AuspexSettingsView``.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "person.and.background.dotted")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Characters").auspexLabel()
-            }
-            .foregroundStyle(AuspexPalette.stateDelegating)
-
             Text(headline)
-                .font(AuspexType.display)
+                .font(AuspexType.cardTitle)
                 .foregroundStyle(AuspexPalette.textPrimary)
 
             Text(

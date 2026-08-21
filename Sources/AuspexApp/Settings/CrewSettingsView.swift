@@ -27,42 +27,27 @@ struct CrewSettingsView: View {
     private var liveliness: CrewLiveliness { catalog.crewLiveliness }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                picker
-                note
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            picker
+            note
         }
-        .background(AuspexPalette.canvas)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The pane's name and its one line live in the chrome — see
+    /// ``AuspexSettingsView``. This is the paragraph underneath them.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "face.smiling")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AuspexPalette.textTertiary)
-                Text("The crew")
-                    .auspexLabel(AuspexType.label)
-                    .foregroundStyle(AuspexPalette.textTertiary)
-            }
-            Text("How lively the wall is")
-                .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.textPrimary)
-            Text(
-                "Every avatar lives in a loop that belongs to what its session is "
-                    + "doing — thinking, working, waiting on you — and now and then it "
-                    + "breaks out of it: a glance away, a shrug, a yawn. This is how "
-                    + "often that happens. It does not change how fast anything moves, "
-                    + "and it does not switch anything off."
-            )
-            .font(AuspexType.body)
-            .foregroundStyle(AuspexPalette.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        Text(
+            "Every avatar lives in a loop that belongs to what its session is "
+                + "doing — thinking, working, waiting on you — and now and then it "
+                + "breaks out of it: a glance away, a shrug, a yawn. This is how "
+                + "often that happens. It does not change how fast anything moves, "
+                + "and it does not switch anything off."
+        )
+        .font(AuspexType.body)
+        .foregroundStyle(AuspexPalette.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var picker: some View {

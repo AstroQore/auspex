@@ -527,10 +527,11 @@ struct AuspexMark: View {
 
 /// Settings, in the board's column.
 ///
-/// The pane is built for a settings *window* and sizes itself, so it sits on
-/// the board's ground rather than stretching — the same way the empty state and
-/// the coming-soon panel do, so a person who has seen one of those knows what
-/// they are looking at.
+/// It fills the column rather than sitting on it as a 660 pt island. The island
+/// was a consequence of the pane being built for a settings *window* and
+/// carrying that window's size around with it; now the pane is flexible and the
+/// two containers each say how big they are, so the section reads like every
+/// other section of the board rather than like a window somebody pasted in.
 struct SettingsSectionView: View {
     let catalog: ProjectCatalogModel
     var setup: SetupModel?
@@ -546,7 +547,6 @@ struct SettingsSectionView: View {
             socketPath: socketPath
         )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(BoardSurfaceBackground())
             // The one part of the board's column made of AppKit's own controls
             // — toggles, steppers, text fields — which draw nothing of their
             // own to say where keyboard focus is. They keep the system ring.

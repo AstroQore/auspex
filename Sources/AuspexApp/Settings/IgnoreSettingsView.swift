@@ -17,31 +17,23 @@ struct IgnoreSettingsView: View {
     private var rules: [IgnoreRule] { catalog.settings.ignoreRules }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                addRow
-                list
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            addRow
+            list
         }
-        .background(AuspexPalette.canvas)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Header
 
+    /// How many rules there are right now, which is the one thing the pane's
+    /// title row cannot say. The name and the line above it belong to the
+    /// chrome — see ``AuspexSettingsView``.
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "eye.slash")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Ignore").auspexLabel()
-            }
-            .foregroundStyle(AuspexPalette.statePermission)
-
             Text(headline)
-                .font(AuspexType.display)
+                .font(AuspexType.cardTitle)
                 .foregroundStyle(AuspexPalette.text)
 
             Text(IgnoreCopy.stillRecorded)

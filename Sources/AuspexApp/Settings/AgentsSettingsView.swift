@@ -19,45 +19,43 @@ struct AgentsSettingsView: View {
     let onOpenSetup: () -> Void
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                notifications
-                ForEach(model.groups) { group in
-                    AgentsSettingsGroup(group: group, model: model, detected: detected)
-                }
-                note
+        VStack(alignment: .leading, spacing: 16) {
+            header
+            notifications
+            ForEach(model.groups) { group in
+                AgentsSettingsGroup(group: group, model: model, detected: detected)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            note
         }
-        .background(AuspexPalette.canvas)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Where the socket is, what the last install did, and the way back to the
+    /// sheet. The pane's name and the line about what it is for belong to the
+    /// chrome — see ``AuspexSettingsView``.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Agents")
-                    .font(AuspexType.paneTitle)
-                    .foregroundStyle(AuspexPalette.text)
-                Spacer(minLength: 8)
-                Button("Open setup…", action: onOpenSetup)
-                    .buttonStyle(.auspex)
-                    .font(AuspexType.pill)
-                    .foregroundStyle(AuspexPalette.stateThinking)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(
+                    socketPath.map { "Auspex is serving its MCP server on \($0)." }
+                        ?? "Auspex is not serving its MCP server in this process."
+                )
+                .font(AuspexType.body)
+                .foregroundStyle(AuspexPalette.text2)
+                .fixedSize(horizontal: false, vertical: true)
+                if let summary = model.summary {
+                    Text(summary)
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            Text(
-                socketPath.map { "Auspex is serving its MCP server on \($0)." }
-                    ?? "Auspex is not serving its MCP server in this process."
-            )
-            .font(AuspexType.body)
-            .foregroundStyle(AuspexPalette.text2)
-            if let summary = model.summary {
-                Text(summary)
-                    .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.text3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Spacer(minLength: 8)
+            Button("Open setup…", action: onOpenSetup)
+                .buttonStyle(.auspex)
+                .font(AuspexType.pill)
+                .foregroundStyle(AuspexPalette.stateThinking)
+                .fixedSize()
         }
     }
 

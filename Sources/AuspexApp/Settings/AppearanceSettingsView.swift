@@ -33,45 +33,30 @@ struct AppearanceSettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                modePicker
-                swatches
-                sidebarToggle
-                note
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            modePicker
+            swatches
+            sidebarToggle
+            note
         }
-        .background(AuspexPalette.canvas)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: Header
 
+    /// The paragraph the title row is too short for. The pane's name and its
+    /// one line live in the chrome — see ``AuspexSettingsView``.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "circle.lefthalf.filled")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Appearance").auspexLabel()
-            }
-            .foregroundStyle(AuspexPalette.textTertiary)
-
-            Text("Light and dark, and one accent in both")
-                .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.textPrimary)
-
-            Text(
-                "Every colour Auspex draws with has a value for each appearance, so the "
-                    + "board is the same board either way: the same four surface steps, the "
-                    + "same three text steps, one colour per state and one per harness. "
-                    + "Only their brightness moves."
-            )
-            .font(AuspexType.body)
-            .foregroundStyle(AuspexPalette.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        Text(
+            "Every colour Auspex draws with has a value for each appearance, so the "
+                + "board is the same board either way: the same four surface steps, the "
+                + "same three text steps, one colour per state and one per harness. "
+                + "Only their brightness moves."
+        )
+        .font(AuspexType.body)
+        .foregroundStyle(AuspexPalette.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     // MARK: The choice

@@ -65,9 +65,13 @@ struct BoardHeader: View {
                 windowMenu.fixedSize()
                 searchField
             } else {
-                Text(subtitle)
-                    .font(AuspexType.body)
-                    .foregroundStyle(AuspexPalette.text3)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(AuspexType.body)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
                 Spacer(minLength: 8)
             }
         }
@@ -127,14 +131,20 @@ struct BoardHeader: View {
         }
     }
 
-    private var subtitle: String {
+    /// The line beside a status page's heading.
+    ///
+    /// Settings has none. It has six panes, each about a different thing, and
+    /// one line up here can only ever describe one of them — which is exactly
+    /// what happened: every pane was introduced as "characters, and where
+    /// packages come from" for as long as there were six of them. The line each
+    /// pane deserves is now that pane's own, in its title row. See
+    /// ``SettingsPane/subtitle``.
+    private var subtitle: String? {
         switch section {
         case .harnesses:
             "\(AuspexAdapters.featured.count) harnesses · what Auspex can see on this Mac, and how"
-        case .settings:
-            "characters, and where packages come from"
         default:
-            ""
+            nil
         }
     }
 

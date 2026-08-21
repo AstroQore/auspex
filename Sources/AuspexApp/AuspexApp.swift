@@ -81,6 +81,11 @@ struct AuspexApp: App {
                 detected: environment.harnesses.detected,
                 socketPath: environment.mcp?.socketPath
             )
+            // The pane is flexible and the container picks a size — the board's
+            // column gives it the whole column, and a settings *window* has to
+            // be told, because a window with no content size of its own opens
+            // at whatever AppKit last remembered.
+            .frame(width: 660, height: 620)
             // The Settings window is its own scene and inherits nothing from
             // the main one, so a person who set Auspex to dark on a light Mac
             // would otherwise open a light Settings window to change it in.

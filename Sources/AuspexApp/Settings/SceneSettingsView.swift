@@ -20,42 +20,27 @@ struct SceneSettingsView: View {
     let catalog: ProjectCatalogModel
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                switches
-                reach
-                note
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            switches
+            reach
+            note
         }
-        .background(AuspexPalette.canvas)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// The pane's name and its one line live in the chrome — see
+    /// ``AuspexSettingsView``. This is the paragraph underneath them.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "map")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AuspexPalette.textTertiary)
-                Text("The map")
-                    .auspexLabel(AuspexType.label)
-                    .foregroundStyle(AuspexPalette.textTertiary)
-            }
-            Text("One place, three parts")
-                .font(AuspexType.display)
-                .foregroundStyle(AuspexPalette.textPrimary)
-            Text(
-                "Sessions that are working sit at desks in the office. Everything "
-                    + "else walks somewhere you can see it: a family that is delegating "
-                    + "meets round a table, and anything resting, asleep, finished, or "
-                    + "waiting to be read goes out to the garden."
-            )
-            .font(AuspexType.body)
-            .foregroundStyle(AuspexPalette.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        Text(
+            "Sessions that are working sit at desks in the office. Everything "
+                + "else walks somewhere you can see it: a family that is delegating "
+                + "meets round a table, and anything resting, asleep, finished, or "
+                + "waiting to be read goes out to the garden."
+        )
+        .font(AuspexType.body)
+        .foregroundStyle(AuspexPalette.textSecondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var switches: some View {
