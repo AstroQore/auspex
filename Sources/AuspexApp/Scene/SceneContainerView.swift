@@ -69,7 +69,10 @@ struct SceneContainerView: View {
                 onOverview: { [overview] in overview.value = $0 },
                 colorScheme: colorScheme
             )
-            .ignoresSafeArea()
+            // No `ignoresSafeArea()`: on macOS 26 the split view's sidebar is
+            // a glass panel that floats over the content column, and the safe
+            // area is exactly what keeps the map out from under it. Ignoring it
+            // drew the office beneath the sidebar and the header.
 
             if board.sessions.isEmpty {
                 emptyRoom
