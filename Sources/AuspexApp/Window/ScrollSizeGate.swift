@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Stops the window's sizing pass from walking a long lazy list.
+/// Gives a scroll view one concrete viewport without measuring its contents.
 ///
 /// ## The measurement nobody asked for
 ///
@@ -27,13 +27,10 @@ import SwiftUI
 ///
 /// ## What the gate does
 ///
-/// It is a `Layout` that answers `sizeThatFits` **from the proposal alone** and
-/// never touches `subviews`, then places its one child in the whole of the
-/// bounds. A parent asking "how tall would you be with nothing in particular
-/// proposed" gets `0`, an infinite proposal gets `.infinity` — which is exactly
-/// the flexibility a scroll view already advertises — and a concrete proposal
-/// gets itself back. The child then receives a *concrete* size, and a scroll
-/// view given a concrete size does not measure its content at all.
+/// `GeometryReader` is the system's viewport primitive: it accepts the space
+/// the parent allocates without consulting its child, then hands the child a
+/// finite width and height. The scroll view therefore knows its viewport
+/// before it considers its lazy content.
 ///
 /// It has to sit **outside** the scroll view, which is why this is a wrapper
 /// rather than a modifier applied inside `BoardScroll`. A layout inside the
@@ -41,9 +38,13 @@ import SwiftUI
 /// `docs/research/idle-window-minsize.md` records an attempt that failed for
 /// that reason.
 ///
-/// Both axes, and deliberately: every scroll view this wraps is inside a
-/// `NavigationSplitView` column whose width the split view decides, so there is
-/// no parent left that wants a content-derived width either.
+/// An earlier version used a custom `Layout` whose `sizeThatFits` ignored its
+/// child. That looked equivalent, but `placeSubviews` still called
+/// `LayoutSubview.place` on the scroll view. Under a busy Roost page, SwiftUI's
+/// lazy prefetch path used that placement to request another hosting-view
+/// update, producing an AttributeGraph transaction loop. A system viewport is
+/// deliberately less clever: it has no custom placement callback for the lazy
+/// layout to feed back into.
 ///
 /// It is inert in the offscreen renderers. Those draw into a bitmap with no
 /// scroll view at all — `BoardScroll` swaps in an overlay that *wants* the
@@ -57,48 +58,14 @@ struct ScrollSizeGate<Content: View>: View {
         if isSnapshotRender {
             content
         } else {
-            ProposalOnlyLayout { content }
-        }
-    }
-}
-
-/// A container whose size is the proposal, whatever is inside it.
-struct ProposalOnlyLayout: Layout {
-    /// What an unspecified dimension is worth.
-    ///
-    /// Zero rather than SwiftUI's own 10 × 10: this stands in front of a scroll
-    /// view, and a scroll view's honest answer to "how small could you be" is
-    /// nothing at all. It is the number a stack uses as the low end of the
-    /// range it distributes over, and the gate has to keep the scroll view's
-    /// range rather than invent a floor for it.
-    static let unspecified: CGFloat = 0
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) -> CGSize {
-        // `subviews` is not read. That is the entire point of the type, and it
-        // is the line to check first if this ever stops working.
-        CGSize(
-            width: proposal.width ?? Self.unspecified,
-            height: proposal.height ?? Self.unspecified
-        )
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) {
-        let size = ProposedViewSize(width: bounds.width, height: bounds.height)
-        for subview in subviews {
-            subview.place(
-                at: CGPoint(x: bounds.minX, y: bounds.minY),
-                anchor: .topLeading,
-                proposal: size
-            )
+            GeometryReader { viewport in
+                content
+                    .frame(
+                        width: viewport.size.width,
+                        height: viewport.size.height,
+                        alignment: .topLeading
+                    )
+            }
         }
     }
 }

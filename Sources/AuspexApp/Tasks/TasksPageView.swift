@@ -42,7 +42,20 @@ struct TasksPageView: View {
 
     var body: some View {
         BoardScroll {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            // Deliberately eager. Roost rows have dynamic heights, nested
+            // columns, drag targets and native controls. On macOS 26.5.2 a
+            // `LazyVStack` enters a self-sustaining prefetch/update cycle after
+            // a short scroll: LazyLayoutViewCache.signalPrefetch asks the
+            // hosting view for another transaction while the current one is
+            // still placing task cards. The real failure holds the main thread
+            // at 100% CPU and grows memory until the window stops answering.
+            //
+            // `VStack` has no prefetch cache to feed back. The page is already
+            // bounded by the ledger read and groups rows by project; more
+            // importantly, one project lane eagerly builds its task columns
+            // even under a lazy outer stack, so the lazy container never
+            // provided a meaningful per-card saving here.
+            VStack(alignment: .leading, spacing: 16) {
                 pageBar
                 if model.isEmpty {
                     TasksEmptyState()

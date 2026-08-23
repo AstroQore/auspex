@@ -17,6 +17,39 @@ import Testing
 @MainActor
 @Suite("Window cost")
 struct WindowCostTests {
+    // MARK: - The scroll viewport
+
+    @Test("Roost scrolling has no custom placement or lazy-prefetch feedback path")
+    func roostScrollHasNoFeedbackLayout() throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let gate = try String(
+            contentsOf: repository.appendingPathComponent(
+                "Sources/AuspexApp/Window/ScrollSizeGate.swift"
+            ),
+            encoding: .utf8
+        )
+        let roost = try String(
+            contentsOf: repository.appendingPathComponent(
+                "Sources/AuspexApp/Tasks/TasksPageView.swift"
+            ),
+            encoding: .utf8
+        )
+
+        // The first real freeze included this path:
+        // custom Layout.placeSubviews -> ScrollView sizing -> lazy prefetch ->
+        // NSHostingView.requestUpdate -> another transaction. Replacing only
+        // the custom layout proved insufficient: two real Roost scrolls still
+        // reproduced the cycle inside LazyLayoutViewCache. Both links stay
+        // absent, because either one makes the window capable of self-exciting.
+        #expect(gate.contains("GeometryReader"))
+        #expect(!gate.contains("struct ProposalOnlyLayout"))
+        #expect(!gate.contains("func placeSubviews("))
+        #expect(!roost.contains("LazyVStack("))
+    }
+
     // MARK: - The sidebar's fold
 
     @Test("a short branch is drawn whole and says nothing")

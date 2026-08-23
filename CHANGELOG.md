@@ -33,6 +33,9 @@ release yet. `RELEASING.md` describes how one is cut when there is.
 - Every Auspex-owned window, sheet and popover clears only its implicit initial
   responder; no control starts highlighted, while Tab/arrow navigation and
   subsequent focus feedback remain intact. Native Kill alert is now an owned sheet.
+- Roost no longer enters a 100% CPU SwiftUI transaction loop after scrolling:
+  scroll views use a system viewport instead of custom placement, and the
+  dynamic task board no longer participates in lazy-prefetch feedback.
 
 ### Added
 
