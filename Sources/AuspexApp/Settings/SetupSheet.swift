@@ -114,14 +114,18 @@ struct SetupSheet: View {
                     onClose()
                 }
                 .keyboardShortcut(.cancelAction)
-                Button(model.selected.isEmpty ? "Install" : "Install \(model.selected.count)") {
+                Button(model.selected.isEmpty ? "Done" : "Install \(model.selected.count)") {
+                    guard !model.selected.isEmpty else {
+                        onClose()
+                        return
+                    }
                     Task {
                         await model.install(detected: detected)
                         onClose()
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(model.selected.isEmpty || model.isWorking)
+                .disabled(model.isWorking)
             }
         }
         .padding(16)
