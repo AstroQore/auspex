@@ -8,8 +8,9 @@ import Foundation
 // sometimes inside a sandbox — and touching AppKit there is fatal.
 let arguments = CommandLine.arguments.dropFirst()
 
-// The MCP server, as an MCP client expects to spawn it: a byte pump between
-// this process's stdio and the socket the running app listens on. It reads no
+// The MCP server, as an MCP client expects to spawn it: a local bridge between
+// this process's stdio and the socket the running app listens on. It stamps
+// each request with this bridge pid for per-request attribution, reads no
 // harness store, opens no window, and writes nothing to disk.
 if AuspexStdioBridge.isRequested() {
     exit(AuspexStdioBridge.run())
@@ -530,7 +531,8 @@ if arguments.contains("--help") || arguments.contains("-h") {
           --mcp-stdio   Serve the running Auspex's task board over MCP on
                         stdio. This is the command an MCP client is
                         configured with; it connects to ~/.auspex/mcp.sock
-                        (override with AUSPEX_MCP_SOCKET) and pumps bytes.
+                        (override with AUSPEX_MCP_SOCKET), attributes each
+                        request to this bridge, and forwards it.
                         Exits 1 when Auspex is not running.
           --hook <harness> [--then <command>…]
                         Handle a harness hook invocation: read the

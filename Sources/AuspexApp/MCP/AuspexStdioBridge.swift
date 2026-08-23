@@ -8,11 +8,11 @@ import Foundation
 /// MCP clients talk to a server by launching a command and speaking
 /// newline-delimited JSON-RPC over its stdin and stdout. The running Auspex
 /// listens on a Unix socket instead, because a menu-bar app cannot be
-/// respawned once per client — so this mode is a byte pump between the two.
-/// `MCPStdioBridge` in the kit is the pump; everything here is the vocabulary
-/// around it: the flag that appears in every user's config, the environment
-/// key a test points at a temporary socket with, and the sentence a person
-/// sees when the app is not running.
+/// respawned once per client. This mode attributes each framed request to its
+/// bridge process, then uses the kit's stdio/socket pump for the transport.
+/// The rest is the vocabulary around it: the flag that appears in every
+/// user's config, the environment key a test points at a temporary socket
+/// with, and the sentence a person sees when the app is not running.
 ///
 /// The process installs no status item, opens no window, and touches nothing
 /// on disk except the socket it connects to. That is why it is dispatched from
