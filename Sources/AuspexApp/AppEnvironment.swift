@@ -217,6 +217,13 @@ public final class AppEnvironment {
             )
         }
         catalog.load()
+        // The first catch-up is intentionally bounded: a new install should
+        // summarize the work in flight, not turn every retained session into
+        // an unread inbox. Later launches resume from the explicit cursor the
+        // person moved with "Mark caught up".
+        board.setCatchUpSince(
+            catalog.lastCatchUpAt ?? Date().addingTimeInterval(-4 * 60 * 60)
+        )
 
         // A repair, not a new opt-in: `launchAtLogin` can only become true
         // after a person clicked the Settings control and ServiceManagement

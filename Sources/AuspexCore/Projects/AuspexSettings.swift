@@ -109,6 +109,13 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// the setting and ServiceManagement accepts the corresponding action.
     public var launchAtLogin: Bool
 
+    /// When the person last cleared the global Catch-up inbox.
+    ///
+    /// This is reading state rather than a retention boundary: events remain
+    /// in the store, and moving the cursor only changes which material deltas
+    /// the compact inbox offers on the next launch.
+    public var lastCatchUpAt: Date?
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
@@ -121,7 +128,8 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         showsSubagents: Bool = false,
         translucentSidebar: Bool = true,
         updateChannel: UpdateChannel = .standard,
-        launchAtLogin: Bool = false
+        launchAtLogin: Bool = false,
+        lastCatchUpAt: Date? = nil
     ) {
         self.showsSubagents = showsSubagents
         self.ignoreRules = ignoreRules
@@ -135,12 +143,13 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         self.translucentSidebar = translucentSidebar
         self.updateChannel = updateChannel
         self.launchAtLogin = launchAtLogin
+        self.lastCatchUpAt = lastCatchUpAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
         case sessionWindow, notifiesOnDone, appearance, translucentSidebar
-        case updateChannel, showsSubagents, launchAtLogin
+        case updateChannel, showsSubagents, launchAtLogin, lastCatchUpAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -189,13 +198,14 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         updateChannel = (try? container.decode(UpdateChannel.self, forKey: .updateChannel))
             ?? .standard
         launchAtLogin = (try? container.decode(Bool.self, forKey: .launchAtLogin)) ?? false
+        lastCatchUpAt = try? container.decodeIfPresent(Date.self, forKey: .lastCatchUpAt)
     }
 
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
             && crewLiveliness == nil && sessionWindow == .standard && notifiesOnDone
             && appearance == .standard && translucentSidebar && !showsSubagents
-            && updateChannel == .standard && !launchAtLogin
+            && updateChannel == .standard && !launchAtLogin && lastCatchUpAt == nil
     }
 }
 

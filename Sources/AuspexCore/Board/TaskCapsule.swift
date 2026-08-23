@@ -44,6 +44,8 @@ public struct TaskCapsule: Identifiable, Sendable, Equatable {
 
     public let id: String
     public let taskID: Int64?
+    /// The session a click should open, including for an implicit task.
+    public let leadSession: SessionKey
     public let shortID: String
     public let projectKey: String?
     public let title: String
@@ -59,6 +61,7 @@ public struct TaskCapsule: Identifiable, Sendable, Equatable {
     public init(unit: TaskUnit) {
         id = unit.id
         taskID = unit.origin.taskID
+        leadSession = unit.lead.key
         shortID = unit.shortID
         projectKey = unit.projectKey
         title = unit.title
@@ -226,4 +229,11 @@ public struct CatchUpSnapshot: Sendable, Equatable {
     public var needsYou: Int { items.count { $0.kind == .needsYou } }
     public var review: Int { items.count { $0.kind == .review } }
     public var changed: Int { items.count - needsYou - review }
+
+    /// `generatedAt` is a cursor offered to an explicit "Mark caught up"
+    /// gesture, not something the window draws. A clock tick with identical
+    /// items must remain a repeat frame and keep the previous snapshot.
+    public static func == (lhs: CatchUpSnapshot, rhs: CatchUpSnapshot) -> Bool {
+        lhs.since == rhs.since && lhs.items == rhs.items
+    }
 }

@@ -50,25 +50,28 @@ struct TaskCapsuleTests {
     }
 
     private func unit(
+        id: Int64 = 7,
         status: AuspexTaskStatus = .doing,
         lead: BoardRow? = nil,
         result: String? = nil,
         waitingOn: [TaskUnit.Dependency] = [],
         orphaned: Bool = false,
+        importance: TaskImportance = .normal,
         created: TimeInterval = 10,
         updated: TimeInterval = 50
     ) -> TaskUnit {
         let lead = lead ?? row()
         let live = lead.isEnded ? 0 : 1
         return TaskUnit(
-            id: "task:7",
-            shortID: "AUX-demo",
-            origin: .task(7),
-            promotionKey: "task:7",
+            id: "task:\(id)",
+            shortID: "AUX-\(id)",
+            origin: .task(id),
+            promotionKey: "task:\(id)",
             projectKey: Self.project,
             title: "Build catch-up",
             body: "Show only material changes since the board was reviewed.",
             status: status,
+            importance: importance,
             waitingOn: waitingOn,
             isClaimOrphaned: orphaned,
             lead: lead,
@@ -142,5 +145,29 @@ struct TaskCapsuleTests {
         let orphan = TaskCapsule(unit: unit(orphaned: true))
         #expect(orphan.risk?.source == .derived)
         #expect(orphan.nextAction?.text == "Release or reassign the orphaned claim")
+    }
+
+    @Test("the human queue explains urgency and downstream impact")
+    func humanQueue() {
+        let needs = unit(
+            id: 1,
+            lead: row(
+                id: "needs", state: .waitingPermission(tool: "Bash"),
+                attention: .needsYou(reason: "Approve Bash", source: .harness), at: 20
+            ),
+            importance: .important
+        )
+        let review = unit(id: 2, status: .review, updated: 30)
+        let orphan = unit(id: 3, orphaned: true, updated: 10)
+        let dependency = TaskUnit.Dependency(id: 1, shortID: "AUX-1", title: "Needs")
+        let downstreamA = unit(id: 4, status: .todo, waitingOn: [dependency])
+        let downstreamB = unit(id: 5, status: .todo, waitingOn: [dependency])
+
+        let queue = HumanWorkQueue(
+            units: [review, downstreamA, orphan, needs, downstreamB]
+        )
+        #expect(queue.items.map(\.reason) == [.needsYou, .review, .orphanedClaim])
+        #expect(queue.items.first?.unlocks == 2)
+        #expect(queue.items.first?.orderingReason.contains("unlocks 2 downstream tasks") == true)
     }
 }

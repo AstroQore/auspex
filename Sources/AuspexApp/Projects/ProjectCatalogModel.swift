@@ -210,6 +210,18 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - Catch-up cursor
+
+    var lastCatchUpAt: Date? { settings.lastCatchUpAt }
+
+    /// Moves the global catch-up cursor forward. Monotonic so two windows or
+    /// a delayed click can never bring already-reviewed work back as new.
+    func markCaughtUp(at date: Date = Date()) {
+        if let existing = settings.lastCatchUpAt, existing >= date { return }
+        settings.lastCatchUpAt = date
+        persist()
+    }
+
     // MARK: - The crew's liveliness
 
     /// How often the crew's avatars react. The default until somebody says

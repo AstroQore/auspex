@@ -534,6 +534,29 @@ final class LiveBoardModel {
     /// Every unit on the frame, in board order, before the filter bar.
     private(set) var units: [TaskUnit] = []
 
+    /// Material changes since the global cursor the person last cleared.
+    private(set) var catchUp = CatchUpSnapshot(
+        units: [], since: .distantPast, generatedAt: .distantPast
+    )
+
+    /// Actionable human work, ordered by explicit need and downstream impact.
+    private(set) var humanWorkQueue = HumanWorkQueue(units: [])
+
+    /// Amber risks and collisions. Never counted as Attention.
+    private(set) var watchSignals: [WatchSignal] = []
+
+    /// The durable global Catch-up cursor.
+    private(set) var catchUpSince: Date = .distantPast {
+        didSet { if oldValue != catchUpSince { scheduleAssembly() } }
+    }
+
+    /// Whether the compact Catch-up panel is on screen.
+    var isCatchUpOpen = false
+
+    func setCatchUpSince(_ date: Date) {
+        catchUpSince = date
+    }
+
     /// The frame the aviary draws: one session per piece of work.
     ///
     /// Its own property rather than a derivation in the scene's body, and
@@ -588,6 +611,9 @@ final class LiveBoardModel {
 
     /// The unit the detail page is about.
     var openUnit: TaskUnit? { openUnitID.flatMap { unitIndex[$0] } }
+
+    /// One unit by its stable frame id, for compact auxiliary surfaces.
+    func unit(withID id: String) -> TaskUnit? { unitIndex[id] }
 
     /// The finished units actually drawn, and how many are left out.
     var visibleEndedUnits: [TaskUnit] {
@@ -749,7 +775,8 @@ final class LiveBoardModel {
             reports: reports,
             ledger: ledgerFrame,
             filters: filters,
-            showsSubagents: showsSubagents
+            showsSubagents: showsSubagents,
+            catchUpSince: catchUpSince
         )
     }
 
@@ -814,6 +841,9 @@ final class LiveBoardModel {
         endedUnits = frame.endedUnits
         let unitsMoved = units != frame.units
         units = frame.units
+        catchUp = frame.catchUp
+        humanWorkQueue = frame.humanQueue
+        watchSignals = frame.watchSignals
         unitIndex = frame.unitIndex
         filterOptions = frame.filterOptions
         unitBySession = frame.unitBySession

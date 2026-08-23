@@ -104,6 +104,26 @@ struct RootView: View {
                 onClose: { environment.setup.markShown() }
             )
         }
+        .sheet(isPresented: $model.isCatchUpOpen) {
+            CatchUpPanel(
+                model: model,
+                onOpen: { unitID, key in
+                    model.selectedKey = key
+                    model.openUnitID = unitID
+                    if let unit = model.unit(withID: unitID) {
+                        model.focusedProjectKey = unit.projectKey
+                    }
+                    section = .live
+                    model.isCatchUpOpen = false
+                },
+                onMarkCaughtUp: { date in
+                    environment.catalog.markCaughtUp(at: date)
+                    model.setCatchUpSince(date)
+                    model.isCatchUpOpen = false
+                }
+            )
+            .auspexAppearance(environment.appearance)
+        }
         .task { environment.start() }
         .task { await clock.run() }
         .task { routeNotifications() }

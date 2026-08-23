@@ -62,6 +62,14 @@ struct AuspexApp: App {
                     .disabled(!environment.updates.canCheckForUpdates)
             }
             CommandGroup(after: .toolbar) {
+                Button("Catch Up…") {
+                    environment.board.isCatchUpOpen = true
+                }
+                .disabled(
+                    environment.board.catchUp.items.isEmpty
+                        && environment.board.watchSignals.isEmpty
+                )
+                Divider()
                 // The one shortcut this window did not have and every board of
                 // this shape eventually grows: a field that reaches anything on
                 // the frame by name, and does the two or three things that

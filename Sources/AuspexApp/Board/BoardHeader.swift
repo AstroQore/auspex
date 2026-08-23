@@ -35,6 +35,9 @@ struct BoardHeader: View {
                 // that is not on screen is a number they can still read off
                 // the sidebar and the cards.
                 counts(limit: fit.chips, showsMarkAll: fit.showsMarkAll)
+                if showsCatchUpInHeader {
+                    catchUpButton.fixedSize()
+                }
                 Spacer(minLength: 8)
                 if model.ignoredCount > 0 {
                     ignoredToggle.fixedSize()
@@ -114,6 +117,7 @@ struct BoardHeader: View {
         reserved += 92  // the window menu
         reserved += 150  // the search field
         if model.ignoredCount > 0 { reserved += 96 }
+        if showsCatchUpInHeader { reserved += 82 }
         let free = width - reserved
         guard free > 0 else { return (0, false) }
         // A chip is a mark, two or three digits, and a word: 86 points covers
@@ -122,6 +126,41 @@ struct BoardHeader: View {
         let wanted = model.summary.chips.count
         if fits >= wanted, free - CGFloat(wanted) * 86 >= 60 { return (nil, true) }
         return (min(fits, wanted), false)
+    }
+
+    private var catchUpCount: Int {
+        model.catchUp.items.count + model.watchSignals.count
+    }
+
+    /// The command menu remains available below this width; the header gives
+    /// the space back to the controls that have no second home.
+    private var showsCatchUpInHeader: Bool {
+        catchUpCount > 0 && (width == 0 || width >= 1_280)
+    }
+
+    private var catchUpButton: some View {
+        Button { model.isCatchUpOpen = true } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Catch up \(catchUpCount)")
+                    .font(AuspexType.caption)
+                    .auspexTabularDigits()
+            }
+            .foregroundStyle(AuspexPalette.text2)
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AuspexPalette.bg1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(AuspexPalette.stateStale.opacity(0.35), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.auspex(cornerRadius: 8))
+        .help("Review material changes, human work, and amber watch signals")
     }
 
     // MARK: Pieces
