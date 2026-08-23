@@ -228,6 +228,9 @@ reducer deliberately lets a later `liveness(true)` undo it; ordinary exited or
 killed sessions, and old process-gone history, cannot benefit from another
 probe. This keeps the three-second tick proportional to live/resumable work
 rather than retention depth without losing transient-failure recovery.
+`SessionRegistry.livenessIdentities()` reads that subset directly from the
+actor-owned table; it does not build, sort or tree-index a presentation
+`BoardSnapshot` merely to throw the ended rows away.
 
 The live ingest working set is bounded separately from retained board history.
 Discovery normally tails sources active in the last two hours; adapter-specific

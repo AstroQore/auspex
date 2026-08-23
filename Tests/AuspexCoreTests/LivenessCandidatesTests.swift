@@ -39,5 +39,11 @@ struct LivenessCandidatesTests {
         let candidates = LivenessCandidates.identities(in: board).map(\.key)
         #expect(candidates.count == 3)
         #expect(Set(candidates) == [idle.key, thinking.key, recentGone.key])
+
+        let direct = LivenessCandidates.identities(
+            in: board.sessions,
+            now: board.generatedAt
+        )
+        #expect(Set(direct.map(\.key)) == Set(candidates))
     }
 }

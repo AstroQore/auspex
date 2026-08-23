@@ -570,7 +570,7 @@ public final class AppEnvironment {
                 every: .seconds(3),
                 identities: {
                     guard let registry = registryForLiveness else { return [] }
-                    return LivenessCandidates.identities(in: await registry.snapshot())
+                    return await registry.livenessIdentities()
                 },
                 into: continuation
             )

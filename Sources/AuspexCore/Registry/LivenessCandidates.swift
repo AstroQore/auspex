@@ -17,12 +17,24 @@ public enum LivenessCandidates {
         in board: BoardSnapshot,
         recoveryGrace: TimeInterval = Self.recoveryGrace
     ) -> [SessionIdentity] {
-        board.sessions.compactMap { session in
+        identities(
+            in: board.sessions,
+            now: board.generatedAt,
+            recoveryGrace: recoveryGrace
+        )
+    }
+
+    public static func identities<S: Sequence>(
+        in sessions: S,
+        now: Date,
+        recoveryGrace: TimeInterval = Self.recoveryGrace
+    ) -> [SessionIdentity] where S.Element == SessionSnapshot {
+        sessions.compactMap { session in
             if !session.state.isEnded { return session.identity }
             guard case .ended(let reason) = session.state,
                   reason == .processGone,
                   let endedAt = session.endedAt ?? session.lastEventAt,
-                  board.generatedAt.timeIntervalSince(endedAt) <= max(0, recoveryGrace)
+                  now.timeIntervalSince(endedAt) <= max(0, recoveryGrace)
             else { return nil }
             return session.identity
         }
