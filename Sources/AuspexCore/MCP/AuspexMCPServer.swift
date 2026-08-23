@@ -187,8 +187,8 @@ public actor AuspexMCPServer {
         Auspex task id, load the auspex-coordination skill and follow its role \
         playbook, using this server's capabilities as truth. Call auspex.notify \
         the moment you need the person instead of going quiet; release a task \
-        with a reason when you stop, and finish into Review rather than closing \
-        your own work. With no task id, keep the implicit session task instead \
+        with a reason when you stop. Completion enters Review rather than \
+        closing your own work. With no task id, keep the implicit session task instead \
         of creating one merely for the protocol. If MCP or session identity is \
         unavailable, continue the user's work and report which updates were not \
         recorded.
