@@ -124,7 +124,7 @@ private struct WindowSnapshot: View {
     var section: BoardSection = .live
     /// Which pane of Settings to open on, when the section is Settings.
     ///
-    /// Settings is six pages behind one segmented control, and the two that
+    /// Settings is several pages behind one adaptive control, and the two that
     /// have to be looked at at three window widths — Agents and Characters —
     /// are the two whose contents are a *grid*. A renderer that could only
     /// reach the first pane could not photograph either.
@@ -169,6 +169,7 @@ private struct WindowSnapshot: View {
                 case .settings:
                     SettingsSectionView(
                         catalog: environment.catalog,
+                        loginItem: environment.loginItem,
                         setup: environment.setup,
                         detected: environment.harnesses.detected,
                         socketPath: environment.mcp?.socketPath,

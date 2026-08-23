@@ -111,11 +111,6 @@ struct RootView: View {
         // ``MainThreadMeter``, which is how this branch's before and after are
         // measured on a machine that is never quiet.
         .task { MainThreadMeter.shared?.start() }
-        .onReceive(
-            NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
-        ) { _ in
-            Task { await environment.shutdown() }
-        }
     }
 
     /// The split view's binding, in the app's own vocabulary.
@@ -243,6 +238,7 @@ struct RootView: View {
                     // place for a setting to go missing.
                     SettingsSectionView(
                         catalog: environment.catalog,
+                        loginItem: environment.loginItem,
                         setup: environment.setup,
                         detected: environment.harnesses.detected,
                         socketPath: environment.mcp?.socketPath
@@ -575,7 +571,11 @@ struct AuspexMark: View {
     /// The 64 px render of the icon, loaded once. `nil` only if the bundle is
     /// broken, in which case the symbol stands in.
     nonisolated(unsafe) static let birdImage: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "auspex-mark-64", withExtension: "png", subdirectory: "Brand") else { return nil }
+        guard let url = AppResourceBundle.url(
+            forResource: "auspex-mark-64",
+            withExtension: "png",
+            subdirectory: "Brand"
+        ) else { return nil }
         return NSImage(contentsOf: url)
     }()
 }
@@ -589,6 +589,7 @@ struct AuspexMark: View {
 /// other section of the board rather than like a window somebody pasted in.
 struct SettingsSectionView: View {
     let catalog: ProjectCatalogModel
+    let loginItem: LoginItemController
     var setup: SetupModel?
     var detected: Set<Harness> = []
     var socketPath: String?
@@ -600,6 +601,7 @@ struct SettingsSectionView: View {
         AuspexSettingsView(
             library: SpriteLibrary.shared,
             catalog: catalog,
+            loginItem: loginItem,
             setup: setup,
             detected: detected,
             socketPath: socketPath,

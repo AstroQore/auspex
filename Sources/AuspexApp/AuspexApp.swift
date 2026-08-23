@@ -19,6 +19,9 @@ import SwiftUI
 struct AuspexApp: App {
     static let mainWindowID = "auspex.main"
 
+    @NSApplicationDelegateAdaptor(AuspexApplicationDelegate.self)
+    private var applicationDelegate
+
     @State private var environment = AppEnvironment.launched()
 
     /// What the menu item says. It toggles, so it names what pressing it
@@ -110,6 +113,7 @@ struct AuspexApp: App {
             AuspexSettingsView(
                 library: SpriteLibrary.shared,
                 catalog: environment.catalog,
+                loginItem: environment.loginItem,
                 setup: environment.setup,
                 detected: environment.harnesses.detected,
                 socketPath: environment.mcp?.socketPath
@@ -130,6 +134,18 @@ struct AuspexApp: App {
                 .auspexAppearance(environment.appearance)
         } label: {
             MenuBarLabel(board: environment.board)
+                // The menu bar exists even when a login-item launch suppresses
+                // the main window. Starting here keeps observation and MCP
+                // alive in that normal background-only state; `start()` is
+                // idempotent when the window's own task reaches it too.
+                .task { environment.start() }
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: NSApplication.willTerminateNotification
+                    )
+                ) { _ in
+                    Task { await environment.shutdown() }
+                }
         }
         // A window rather than a menu. An `NSMenu` draws its images as
         // monochrome templates and its rows as system rows, so two harnesses
@@ -202,7 +218,11 @@ struct MenuBarLabel: View {
     /// it for light and dark menu bars the way it tints every other status
     /// item. 18 × 18 pt, from `Resources/MenuBar/menubar.pdf`.
     nonisolated(unsafe) static let templateMark: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "menubar-template", withExtension: "pdf", subdirectory: "Brand"),
+        guard let url = AppResourceBundle.url(
+            forResource: "menubar-template",
+            withExtension: "pdf",
+            subdirectory: "Brand"
+        ),
               let image = NSImage(contentsOf: url) else { return nil }
         image.isTemplate = true
         image.size = NSSize(width: 18, height: 18)
@@ -352,7 +372,7 @@ struct MenuBarContent: View {
 
     private func open(_ key: SessionKey?) {
         if let key { environment.board.selectedKey = key }
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        ApplicationPresence.prepareToShowMainWindow()
         openWindow(id: AuspexApp.mainWindowID)
     }
 }

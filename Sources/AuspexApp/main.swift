@@ -24,6 +24,24 @@ if HookIngress.isRequested(arguments: CommandLine.arguments) {
     exit(HookIngress.run())
 }
 
+// Release-only smoke entrypoint. `build_app.sh` and the release workflow run
+// this from a copied/unzipped `.app` after hiding SwiftPM's original resource
+// bundle. It deliberately opens bytes through the same resolver the UI uses,
+// which catches an archive that merely contains the files at a path the
+// executable never asks for.
+if arguments.contains("--smoke-app-resources") {
+    do {
+        let resources = try AppResourceBundle.verifyCriticalResources()
+        let summary = "auspex: loaded \(resources.count) critical resources "
+            + "from \(AppResourceBundle.resolution.source.rawValue)\n"
+        FileHandle.standardOutput.write(Data(summary.utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+}
+
 /// `appearance=light|dark` among a subcommand's trailing arguments.
 ///
 /// Keyword rather than positional because it is absent from almost every
@@ -476,7 +494,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         `width=` draws the window at that width instead of
                         1440, which is how a page is checked at the sizes a
                         person actually has one open at; `pane=` picks which
-                        of Settings' seven pages is shown (`agents`,
+                        of Settings' eight pages is shown (`agents`, `general`,
                         `characters`, …); `view=` picks the way of looking at
                         the board (`board`, `scene`, `crew`, `trajectory`).
                         `focus=` binds the window to one project the way

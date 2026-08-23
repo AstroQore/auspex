@@ -194,6 +194,22 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - Process lifecycle
+
+    /// The person's durable request. macOS's ServiceManagement status is the
+    /// operational truth shown in Settings; this value exists so replacing an
+    /// app bundle does not silently forget a request the person already made.
+    var launchAtLogin: Bool { settings.launchAtLogin }
+
+    /// Records the choice only after the system registration action succeeds.
+    /// The caller owns that ordering; keeping the write here preserves the
+    /// one-writer rule for `settings.json`.
+    func setLaunchAtLogin(_ enabled: Bool) {
+        guard settings.launchAtLogin != enabled else { return }
+        settings.launchAtLogin = enabled
+        persist()
+    }
+
     // MARK: - The crew's liveliness
 
     /// How often the crew's avatars react. The default until somebody says

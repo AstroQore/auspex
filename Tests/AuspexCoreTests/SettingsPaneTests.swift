@@ -49,7 +49,7 @@ struct SettingsPaneTests {
         #expect(!SettingsPane.available(hasSetup: false).contains(.agents))
         #expect(SettingsPane.available(hasSetup: false).count == SettingsPane.allCases.count - 1)
         // And the order the rest are in does not change when one is dropped.
-        #expect(SettingsPane.available(hasSetup: false).first == .appearance)
+        #expect(SettingsPane.available(hasSetup: false).first == .general)
     }
 
     /// The two panes that are a grid of cards are allowed to be wider than the

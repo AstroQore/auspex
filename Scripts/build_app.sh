@@ -71,8 +71,8 @@ ditto "$SPARKLE_SOURCE" "$SPARKLE_FRAMEWORK"
 
 # A signed macOS app may only contain its conventional Contents tree, so any
 # SwiftPM resource bundle has to be copied under Contents/Resources rather
-# than left beside the binary. There are none yet; this loop keeps working
-# when a target gains a `resources:` declaration.
+# than left beside the binary. Keep the copy generic so a later target bundle
+# follows the same conventional layout without another hard-coded path.
 shopt -s nullglob
 for bundle in "$BIN_DIR"/Auspex_*.bundle; do
     echo "==> bundling $(basename "$bundle")"
@@ -160,6 +160,15 @@ if grep -q "com.apple.security.app-sandbox" <<< "$SIGNED_ENTITLEMENTS"; then
     echo "$SIGNED_ENTITLEMENTS" >&2
     exit 1
 fi
+
+# A file-presence assertion would not have caught dev.2: the resource bundle
+# was in the archive, but the executable asked SwiftPM for its build-machine
+# path and trapped on another Mac. Run a copied app while that fallback is
+# physically absent and make the real resolver open every provider/brand
+# asset through Contents/Resources.
+bash "$ROOT/Scripts/smoke_test_app_bundle.sh" \
+    "$APP_DIR" \
+    "$BIN_DIR/Auspex_AuspexApp.bundle"
 
 echo "==> done: $APP_DIR"
 echo "Run with: open \"$APP_DIR\""

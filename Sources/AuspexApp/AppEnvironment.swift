@@ -150,6 +150,11 @@ public final class AppEnvironment {
     /// what the person chose.
     var appearance: AppearanceMode { appearanceOverride ?? catalog.appearance }
 
+    /// macOS's Login Items registration. Demo/offscreen launches get an inert
+    /// controller so a fabricated board neither reads nor changes the real
+    /// machine's setting.
+    let loginItem: LoginItemController
+
     public init(
         paths: AuspexPaths = .default,
         mode: Mode = .live,
@@ -160,6 +165,7 @@ public final class AppEnvironment {
         self.mode = mode
         self.offersSignalTarget = offersSignalTarget
         self.demoScale = AppLaunchOptions.clampedScale(demoScale)
+        self.loginItem = mode == .live ? LoginItemController() : .preview()
         // The demo may not read or write `~/.auspex/`, so its catalog has no
         // stores behind it: whatever it is given lives in memory for as long
         // as the process does.
@@ -211,6 +217,14 @@ public final class AppEnvironment {
             )
         }
         catalog.load()
+
+        // A repair, not a new opt-in: `launchAtLogin` can only become true
+        // after a person clicked the Settings control and ServiceManagement
+        // accepted it. Re-registering here keeps that request intact when an
+        // updater replaces the app bundle.
+        if mode == .live {
+            loginItem.reconcileDesiredState(catalog.launchAtLogin)
+        }
 
         // After the load, so the first check already goes to the stream the
         // person chose rather than to stable and then to theirs. A demo asks

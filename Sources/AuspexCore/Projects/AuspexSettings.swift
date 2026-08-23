@@ -101,6 +101,14 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// allowed to replace this one. See ``UpdateChannel``.
     public var updateChannel: UpdateChannel
 
+    /// Whether the person asked macOS to launch Auspex when they log in.
+    ///
+    /// The system registration is still the operational truth; this is the
+    /// durable user intent that lets a replaced app bundle repair a lost
+    /// registration on its next launch. It changes only after a person clicks
+    /// the setting and ServiceManagement accepts the corresponding action.
+    public var launchAtLogin: Bool
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
@@ -112,7 +120,8 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         appearance: AppearanceMode = .standard,
         showsSubagents: Bool = false,
         translucentSidebar: Bool = true,
-        updateChannel: UpdateChannel = .standard
+        updateChannel: UpdateChannel = .standard,
+        launchAtLogin: Bool = false
     ) {
         self.showsSubagents = showsSubagents
         self.ignoreRules = ignoreRules
@@ -125,12 +134,13 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         self.appearance = appearance
         self.translucentSidebar = translucentSidebar
         self.updateChannel = updateChannel
+        self.launchAtLogin = launchAtLogin
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
         case sessionWindow, notifiesOnDone, appearance, translucentSidebar
-        case updateChannel, showsSubagents
+        case updateChannel, showsSubagents, launchAtLogin
     }
 
     public init(from decoder: any Decoder) throws {
@@ -178,13 +188,14 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         // hand-edited typo must not silently opt somebody into preview builds.
         updateChannel = (try? container.decode(UpdateChannel.self, forKey: .updateChannel))
             ?? .standard
+        launchAtLogin = (try? container.decode(Bool.self, forKey: .launchAtLogin)) ?? false
     }
 
     public var isEmpty: Bool {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
             && crewLiveliness == nil && sessionWindow == .standard && notifiesOnDone
             && appearance == .standard && translucentSidebar && !showsSubagents
-            && updateChannel == .standard
+            && updateChannel == .standard && !launchAtLogin
     }
 }
 
