@@ -114,6 +114,8 @@ enum AppResourceBundle {
         .init(name: "auspex-mark-32", extensionName: "png", subdirectory: "Brand"),
         .init(name: "auspex-mark-64", extensionName: "png", subdirectory: "Brand"),
         .init(name: "menubar-template", extensionName: "pdf", subdirectory: "Brand"),
+        .init(name: "SKILL", extensionName: "md", subdirectory: "Skills/auspex-coordination"),
+        .init(name: "manifest", extensionName: "json", subdirectory: "Skills/auspex-coordination"),
     ]
 
     enum VerificationError: LocalizedError, Equatable {

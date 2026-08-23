@@ -34,7 +34,7 @@ struct AppResourceBundleTests {
     @Test("the development/test resolver can open every critical asset")
     func criticalResourcesLoad() throws {
         let urls = try AppResourceBundle.verifyCriticalResources()
-        #expect(urls.count == 9)
+        #expect(urls.count == 11)
         #expect(urls.allSatisfy { FileManager.default.isReadableFile(atPath: $0.path) })
     }
 }
