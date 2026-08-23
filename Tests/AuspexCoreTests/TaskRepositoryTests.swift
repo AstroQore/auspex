@@ -555,6 +555,51 @@ struct TaskRepositoryTests {
         #expect(approved.task.claimScope == "second")
     }
 
+    @Test("a new takeover never revives a request stale before a task edit")
+    func newRequestDoesNotReviveOldEpoch() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder-epoch")
+        let oldRequester = Fixtures.key(.claudeCode, "requester-old")
+        let newRequester = Fixtures.key(.cursor, "requester-new")
+        let task = try repository.createTask(title: "Preserve claim epochs")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: holder
+        )
+        let oldOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "old", reason: nil,
+            by: oldRequester, expectedVersion: held.version
+        )
+        guard case let .pending(oldTask, oldRequest) = oldOutcome else {
+            Issue.record("expected old pending takeover")
+            return
+        }
+
+        let edited = try repository.updateTask(
+            id: task.id,
+            body: .some("The task changed after the old request."),
+            expectedVersion: oldTask.version
+        )
+        let newOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "new", reason: nil,
+            by: newRequester, expectedVersion: edited.version
+        )
+        guard case let .pending(currentTask, newRequest) = newOutcome else {
+            Issue.record("expected new pending takeover")
+            return
+        }
+        let requests = try repository.claimRequests(taskID: task.id)
+        #expect(requests.first { $0.id == oldRequest.id }?.taskVersion == oldTask.version)
+        #expect(requests.first { $0.id == newRequest.id }?.taskVersion == currentTask.version)
+
+        let expired = try repository.resolveClaimRequest(id: oldRequest.id, approve: true)
+        #expect(expired.request.status == .expired)
+        #expect(expired.task.claimedBy == holder)
+        let surviving = try #require(
+            try repository.claimRequests(taskID: task.id).first { $0.id == newRequest.id }
+        )
+        #expect(surviving.taskVersion == expired.task.version)
+    }
+
     // MARK: - Kind, labels, notes
 
     @Test("a task carries what kind of work it is and whatever labels were put on it")

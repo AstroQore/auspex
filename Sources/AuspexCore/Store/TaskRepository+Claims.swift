@@ -171,7 +171,11 @@ extension TaskRepository {
             // claim epoch approvable at the new task version; a real task or
             // holder mutation still leaves them stale.
             try Self.refreshPendingClaimVersions(
-                taskID: id, holder: holder, to: nextVersion, in: db
+                taskID: id,
+                holder: holder,
+                from: existing.version,
+                to: nextVersion,
+                in: db
             )
             try db.execute(
                 sql: "UPDATE tasks SET updated_at = ?, version = ? WHERE id = ?",
@@ -316,6 +320,7 @@ extension TaskRepository {
                 try Self.refreshPendingClaimVersions(
                     taskID: request.taskID,
                     holder: existing.claimedBy,
+                    from: existing.version,
                     to: nextVersion,
                     in: db
                 )
@@ -389,6 +394,7 @@ extension TaskRepository {
                 try Self.refreshPendingClaimVersions(
                     taskID: request.taskID,
                     holder: existing.claimedBy,
+                    from: existing.version,
                     to: nextVersion,
                     in: db
                 )
@@ -419,6 +425,7 @@ extension TaskRepository {
     private static func refreshPendingClaimVersions(
         taskID: Int64,
         holder: SessionKey?,
+        from previousVersion: Int64,
         to version: Int64,
         in db: Database
     ) throws {
@@ -427,8 +434,9 @@ extension TaskRepository {
                 UPDATE task_claim_requests
                    SET task_version = ?
                  WHERE task_id = ? AND status = 'pending' AND holder_key IS ?
+                   AND task_version = ?
                 """,
-            arguments: [version, taskID, holder?.description]
+            arguments: [version, taskID, holder?.description, previousVersion]
         )
     }
 
