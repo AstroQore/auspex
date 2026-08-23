@@ -229,10 +229,13 @@ killed sessions, and old process-gone history, cannot benefit from another
 probe. This keeps the three-second tick proportional to live/resumable work
 rather than retention depth without losing transient-failure recovery.
 
-Database-backed tailers follow the same mechanism/safety-net split. FSEvents
-routes a changed database or WAL to its one adapter and coalesces it for 250 ms;
-the periodic SQLite poll runs every 30 seconds only to recover a missed event.
-It is not the freshness path and must not be shortened to simulate one.
+The live ingest working set is bounded separately from retained board history.
+Discovery normally tails sources active in the last two hours; adapter-specific
+evidence such as AntiGravity presence/not-fully-idle and Cursor live workers
+overrides the cutoff, and a resumed old store is rediscovered by its fresh path
+event. Database polling remains at two seconds because an already-sized WAL/
+SHM mmap write is not guaranteed to yield a usable FSEvent. The optimization
+removes dormant tailers rather than delaying active ones.
 
 ### What the UI does with both
 

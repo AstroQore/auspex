@@ -33,12 +33,13 @@ import Observation
 @MainActor
 @Observable
 public final class AppEnvironment {
-    /// FSEvents plus the 250 ms database debounce are the live mechanism.
-    /// Reopening every SQLite/WAL source is only a missed-event safety net;
-    /// doing that every two seconds dominated idle CPU on a retained store
-    /// with thousands of sessions while adding no normal-path freshness.
+    /// Keep the database poll at the kit's two-second correctness default:
+    /// WAL/-shm writes are not guaranteed to produce a useful FSEvent. Bound
+    /// cost by tailing recent sources instead. Every adapter's live evidence
+    /// (presence lock, worker, fresh write) overrides this discovery cutoff,
+    /// and a resumed old source is rediscovered by its new filesystem event.
     static let liveIngestConfiguration = IngestConfiguration(
-        sqlitePollEvery: .seconds(30)
+        activeWindow: 2 * 60 * 60
     )
 
     /// How this launch was asked to behave.

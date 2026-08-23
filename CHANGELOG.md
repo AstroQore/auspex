@@ -25,8 +25,9 @@ release yet. `RELEASING.md` describes how one is cut when there is.
   Finder/Dock reopen restores the normal main window.
 - Liveness probes exclude retained ended history instead of re-running every
   harness filesystem check over thousands of sessions every three seconds.
-- SQLite/WAL sources use FSEvents for live updates and a 30-second poll only as
-  a missed-event safety net, instead of reopening every database every two seconds.
+- Discovery tails a two-hour recent working set instead of a full day of
+  dormant stores, while live presence/worker evidence overrides the cutoff and
+  SQLite/WAL polling keeps its two-second correctness cadence.
 - Person-authored task writes now refresh Roost, Live Ledger and Catch-up only
   after the store accepts the transaction, avoiding stale queues and read/write races.
 

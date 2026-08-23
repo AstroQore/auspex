@@ -6,11 +6,12 @@ import Testing
 @MainActor
 @Suite("Live ingest performance policy")
 struct IngestPolicyTests {
-    @Test("SQLite polling is a slow safety net behind the live watcher")
-    func databaseSafetyNet() {
+    @Test("dormant sources are bounded without slowing live SQLite correctness")
+    func activeSourceWindow() {
         let policy = AppEnvironment.liveIngestConfiguration
         #expect(policy.databaseDebounce == .milliseconds(250))
-        #expect(policy.sqlitePollEvery == .seconds(30))
+        #expect(policy.sqlitePollEvery == .seconds(2))
+        #expect(policy.activeWindow == 2 * 60 * 60)
         #expect(policy.watcherLatency == 0.1)
     }
 }
