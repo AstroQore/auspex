@@ -187,12 +187,14 @@ public actor AuspexMCPServer {
         Auspex task id, load the auspex-coordination skill and follow its role \
         playbook, using this server's capabilities as truth. Call auspex.notify \
         the moment you need the person instead of going quiet; release a task \
-        with a reason when you stop. Completion enters Review rather than \
-        closing your own work. With no task id, keep the implicit session task instead \
-        of creating one merely for the protocol. Explicit tasks remain inside \
-        their observed projects. If MCP or session identity is \
-        unavailable, continue the user's work and report which updates were not \
-        recorded.
+        with a reason when you stop. Read a task's version and pass it as \
+        expected_version on later writes; a claim conflict becomes a pending \
+        takeover for the person to decide, never an automatic steal. Completion \
+        enters Review rather than closing your own work. With no task id, keep \
+        the implicit session task instead of creating one merely for the \
+        protocol. Explicit tasks remain inside their observed projects. If MCP \
+        or session identity is unavailable, continue the user's work and report \
+        which updates were not recorded.
         """
 
     // MARK: - tools/call
@@ -465,6 +467,7 @@ public actor AuspexMCPServer {
         let tasks = try ledger.tasks(planID: plan.id)
         let links = try ledger.allLinks()
         let bySession = Dictionary(grouping: links) { $0.taskID }
+        let pending = Dictionary(grouping: try ledger.claimRequests()) { $0.taskID }
         let board = await host.boardSnapshot()
         return Self.success(PlanDetailPayload(
             plan: PlanPayload(
@@ -476,7 +479,8 @@ public actor AuspexMCPServer {
                 TaskPayload(
                     $0,
                     sessions: (bySession[$0.id] ?? []).map(\.session),
-                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) },
+                    pendingClaims: pending[$0.id] ?? []
                 )
             }
         ))
@@ -561,13 +565,15 @@ public actor AuspexMCPServer {
         )
         if let label { tasks = tasks.filter { $0.labels.contains(label) } }
         let links = Dictionary(grouping: try ledger.allLinks()) { $0.taskID }
+        let pending = Dictionary(grouping: try ledger.claimRequests()) { $0.taskID }
         let board = await host.boardSnapshot()
         return Self.success(TaskListPayload(
             tasks: tasks.map {
                 TaskPayload(
                     $0,
                     sessions: (links[$0.id] ?? []).map(\.session),
-                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) },
+                    pendingClaims: pending[$0.id] ?? []
                 )
             },
             note: tasks.isEmpty
@@ -597,7 +603,7 @@ public actor AuspexMCPServer {
                 shortID: row?.shortID,
                 title: row?.title,
                 status: row?.status.rawValue,
-                satisfied: row == nil || row?.status == .done
+                satisfied: row?.status == .done
             )
         }
 
@@ -608,6 +614,8 @@ public actor AuspexMCPServer {
         let taskIDsBySession = Dictionary(grouping: allLinks, by: \.session)
             .mapValues { $0.map(\.taskID) }
         let taskLinks = try ledger.links(taskID: id)
+        let pendingClaims = try ledger.claimRequests(taskID: id)
+        let history = try ledger.log(taskID: id, limit: 20)
         let linksBySession = Dictionary(grouping: taskLinks, by: \.session)
         let linked = linksBySession.keys.sorted { $0.description < $1.description }.map { key in
             let sessionLinks = linksBySession[key] ?? []
@@ -633,14 +641,19 @@ public actor AuspexMCPServer {
                 sessions: linksBySession.keys.sorted { $0.description < $1.description },
                 projectName: task.projectKey.map {
                     TaskProject.displayName(forKey: $0, in: board)
-                }
+                },
+                pendingClaims: pendingClaims
             ),
             readiness: .init(
                 ready: blocking.isEmpty,
                 dependencies: dependencies,
                 blocking: blocking
             ),
-            history: try ledger.log(taskID: id, limit: 20).map(TaskLogPayload.Entry.init),
+            pendingClaims: pendingClaims.map(TaskClaimRequestPayload.init),
+            attempts: history
+                .filter { ["claimed", "released", "finished"].contains($0.kind) }
+                .map(TaskDetailPayload.Attempt.init),
+            history: history.map(TaskLogPayload.Entry.init),
             sessions: linked
         ))
     }
@@ -686,22 +699,37 @@ public actor AuspexMCPServer {
             field: "role", tool: AuspexMCPTools.Name.tasksClaim
         )
         let scope = MCPTextSanitizer.clean(try arguments.optionalString("scope"))
+        let reason = MCPTextSanitizer.clean(try arguments.optionalString("reason"))
+        let expectedVersion = try Self.expectedVersion(arguments)
         let caller = try await requireAttributedCaller(arguments, action: "claim a task")
         let session = caller.session!
         // The claimer's own project, applied only if the task has none — a task
         // inherits its project from whoever first takes it.
         let board = await host.boardSnapshot()
-        let task = try ledger.claimTask(
-            id: id, role: role, scope: scope, by: session,
+        let outcome = try ledger.claimOrRequestTask(
+            id: id, role: role, scope: scope, reason: reason, by: session,
             projectKey: TaskProject.resolve(explicit: nil, session: session, board: board),
+            expectedVersion: expectedVersion,
             now: now()
         )
+        let task: AuspexTask
+        let claimOutcome: String
+        switch outcome {
+        case .claimed(let claimed):
+            task = claimed
+            claimOutcome = "claimed"
+        case .pending(let unchanged, _):
+            task = unchanged
+            claimOutcome = "pending_takeover"
+        }
         await host.didChangeLedger()
         let sessions = try ledger.links(taskID: id).map(\.session)
         return Self.success(TaskPayload(
             task,
             sessions: sessions,
-            projectName: task.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+            projectName: task.projectKey.map { TaskProject.displayName(forKey: $0, in: board) },
+            pendingClaims: try ledger.claimRequests(taskID: id),
+            claimOutcome: claimOutcome
         ))
     }
 
@@ -717,13 +745,15 @@ public actor AuspexMCPServer {
         )
         let session = caller.session!
         let task = try ledger.releaseTask(
-            id: id, by: session, reason: reason, requireHolder: true, now: now()
+            id: id, by: session, reason: reason, requireHolder: true,
+            expectedVersion: try Self.expectedVersion(arguments), now: now()
         )
         await host.didChangeLedger()
         return Self.success(TaskPayload(
             task,
             sessions: try ledger.links(taskID: id).map(\.session),
-            projectName: await projectName(task.projectKey)
+            projectName: await projectName(task.projectKey),
+            pendingClaims: try ledger.claimRequests(taskID: id)
         ))
     }
 
@@ -731,6 +761,11 @@ public actor AuspexMCPServer {
         let ledger = try await requireLedger()
         let id = try requiredTaskID(arguments)
         let status = try arguments.optionalEnum("status", AuspexTaskStatus.self)
+        if status == .done {
+            throw MCPToolFailure(
+                "An agent cannot close its own task. Use tasks.complete to move it into Review."
+            )
+        }
         let title = MCPTextSanitizer.clean(try arguments.optionalString("title"), limit: 200)
         let body = MCPTextSanitizer.clean(try arguments.optionalString("body"), limit: 4_000)
         let priority = try Self.priority(arguments)
@@ -745,7 +780,13 @@ public actor AuspexMCPServer {
             planID = .some(plan.id)
         }
         let caller = try await requireAttributedCaller(arguments, action: "update a task")
-        var task = try ledger.updateTask(
+        let targetProject: String?
+        if try arguments.optionalString("project") != nil {
+            targetProject = try await projectKey(arguments, caller: caller)
+        } else {
+            targetProject = nil
+        }
+        let task = try ledger.updateTask(
             id: id,
             title: title,
             body: body.map { Optional($0) },
@@ -755,22 +796,17 @@ public actor AuspexMCPServer {
             kind: kind,
             labels: labels,
             dependsOn: dependsOn,
+            projectKey: targetProject,
             actor: caller.session,
+            expectedVersion: try Self.expectedVersion(arguments),
             now: now()
         )
-        // Re-filing is its own statement, because it writes a line into the
-        // task's history: a task that changed project silently is a task
-        // somebody will spend an afternoon looking for.
-        if try arguments.optionalString("project") != nil {
-            task = try ledger.moveTask(
-                id: id,
-                toProjectKey: try await projectKey(arguments, caller: caller),
-                actor: caller.session,
-                now: now()
-            )
-        }
         await host.didChangeLedger()
-        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
+        return Self.success(TaskPayload(
+            task,
+            projectName: await projectName(task.projectKey),
+            pendingClaims: try ledger.claimRequests(taskID: id)
+        ))
     }
 
     private func tasksComplete(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -779,7 +815,9 @@ public actor AuspexMCPServer {
         let result = MCPTextSanitizer.clean(try arguments.optionalString("result"))
         let caller = try await requireAttributedCaller(arguments, action: "finish a task")
         let task = try ledger.completeTask(
-            id: id, result: result, by: caller.session, now: now()
+            id: id, result: result, by: caller.session,
+            requireHolder: true,
+            expectedVersion: try Self.expectedVersion(arguments), now: now()
         )
         // Finishing a task *is* reporting done, and a worker that has to say so
         // twice is a worker that says it once. The board's `done` bucket counts
@@ -796,7 +834,11 @@ public actor AuspexMCPServer {
             await host.didRecordNotice(notice)
         }
         await host.didChangeLedger()
-        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
+        return Self.success(TaskPayload(
+            task,
+            projectName: await projectName(task.projectKey),
+            pendingClaims: try ledger.claimRequests(taskID: id)
+        ))
     }
 
     private func tasksLog(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -814,11 +856,13 @@ public actor AuspexMCPServer {
         }
         try ledger.appendLog(
             taskID: id, actor: caller.session, kind: kind.rawValue, message: message,
-            ref: ref, now: now()
+            ref: ref, expectedVersion: try Self.expectedVersion(arguments), now: now()
         )
         await host.didChangeLedger()
+        let task = try ledger.task(id: id)
         return Self.success(TaskLogPayload(
             taskID: id,
+            version: task?.version,
             entries: try ledger.log(taskID: id, limit: 20).map(TaskLogPayload.Entry.init)
         ))
     }
@@ -863,7 +907,19 @@ public actor AuspexMCPServer {
         guard let items = value.arrayValue else {
             throw MCPToolFailure("'depends_on' takes an array of task ids.")
         }
-        return items.compactMap { $0.intValue.map(Int64.init) }
+        var ids: [Int64] = []
+        for item in items {
+            guard let value = item.intValue, value > 0 else {
+                throw MCPToolFailure("'depends_on' contains a value that is not a positive task id.")
+            }
+            ids.append(Int64(value))
+        }
+        return ids
+    }
+
+    private static func expectedVersion(_ arguments: MCPArguments) throws -> Int64? {
+        try arguments.optionalInt("expected_version", minimum: 1, maximum: Int.max)
+            .map(Int64.init)
     }
 
     // MARK: - Sessions

@@ -265,9 +265,14 @@ args = ["--mcp-stdio"]
   project the board already draws that agent's card under. A supervisor files
   one task per worker and puts the id in each brief; each worker calls
   `tasks.claim(task_id, role, scope)`, `tasks.update` when it is blocked, and
-  `tasks.complete` when it is done. `tasks.get` returns dependency readiness,
-  recent history, and safe linked-session capsules; `tasks.release` lets only
-  the current holder give work back with a reason.
+  `tasks.complete` when it is done. `tasks.get` returns a monotonic version,
+  dependency readiness, attempt/history entries, pending takeover requests,
+  and safe linked-session capsules. New clients return that version as
+  `expected_version` on writes; old clients remain compatible. Missing,
+  self-referential, or cyclic dependencies are refused without changing the
+  graph. A conflicting claim becomes a human-approved takeover request rather
+  than stealing work; `tasks.release` lets only the current holder give work
+  back with a reason and never auto-grants a pending request.
 - **`plans.*`** — milestones: an optional heading *inside* a project, for a
   decomposition worth naming. Kept under the older name so briefs already in
   flight keep working.

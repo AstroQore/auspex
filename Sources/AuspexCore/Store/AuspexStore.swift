@@ -124,6 +124,11 @@ public final class AuspexStore: Sendable {
             try createTaskDependencyTables(db)
         }
 
+        migrator.registerMigration("v8_task_integrity") { db in
+            try addTaskVersionColumn(db)
+            try createTaskClaimRequestTable(db)
+        }
+
         return migrator
     }
 
@@ -744,6 +749,53 @@ public final class AuspexStore: Sendable {
         try db.create(
             index: "task_deps_on_depends_on", on: "task_deps", columns: ["depends_on_id"]
         )
+    }
+
+    // MARK: - v8 schema: stale-write and claim-conflict integrity
+
+    /// A compare-and-swap token on each task.
+    ///
+    /// Existing rows begin at one. Every repository mutation that changes the
+    /// durable meaning of a task increments it in the same transaction as the
+    /// change, so a client can read one task and safely write against exactly
+    /// that version.
+    private static func addTaskVersionColumn(_ db: Database) throws {
+        try db.alter(table: "tasks") { table in
+            table.add(column: "version", .integer).notNull().defaults(to: 1)
+        }
+    }
+
+    /// A conflict is work to resolve, not an error to forget.
+    ///
+    /// Only one pending row per requester and task is kept. Retrying a claim
+    /// therefore refreshes the same request instead of filling the review
+    /// surface with duplicates. Resolved rows remain as an audit trail.
+    private static func createTaskClaimRequestTable(_ db: Database) throws {
+        try db.create(table: "task_claim_requests") { table in
+            table.autoIncrementedPrimaryKey("id")
+            table.column("task_id", .integer)
+                .notNull()
+                .references("tasks", onDelete: .cascade)
+            table.column("requester_key", .text).notNull()
+            table.column("holder_key", .text)
+            table.column("claim_role", .text).notNull()
+            table.column("claim_scope", .text)
+            table.column("reason", .text)
+            table.column("task_version", .integer).notNull()
+            table.column("status", .text).notNull().defaults(to: "pending")
+            table.column("requested_at", .double).notNull()
+            table.column("resolved_at", .double)
+        }
+        try db.create(
+            index: "task_claim_requests_on_task_status",
+            on: "task_claim_requests",
+            columns: ["task_id", "status"]
+        )
+        try db.execute(sql: """
+            CREATE UNIQUE INDEX task_claim_requests_one_pending_requester
+                ON task_claim_requests (task_id, requester_key)
+             WHERE status = 'pending'
+            """)
     }
 
     // MARK: - Meta accessors

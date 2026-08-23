@@ -222,7 +222,8 @@ final class TasksModel {
                 LedgerSnapshot(
                     plans: (try? repository.plans(includingArchived: showsArchived)) ?? [],
                     tasks: (try? repository.tasks(limit: 1_000)) ?? [],
-                    links: (try? repository.allLinks()) ?? []
+                    links: (try? repository.allLinks()) ?? [],
+                    pendingClaims: (try? repository.claimRequests()) ?? []
                 )
             }.value
             guard !Task.isCancelled else { return }
@@ -262,6 +263,7 @@ final class TasksModel {
         let plans: [AuspexPlan]
         let tasks: [AuspexTask]
         let links: [AuspexTaskLink]
+        let pendingClaims: [TaskClaimRequest]
     }
 
     private var latest: LedgerSnapshot?
@@ -565,6 +567,24 @@ final class TasksModel {
         reload()
     }
 
+    /// The takeover requests a person can decide from one task's detail page.
+    func pendingClaims(taskID: Int64) -> [TaskClaimRequest] {
+        latest?.pendingClaims.filter { $0.taskID == taskID } ?? []
+    }
+
+    /// The human-only side of takeover. There is no matching MCP tool.
+    func resolveTakeover(requestID: Int64, approve: Bool) {
+        guard let repository else { return }
+        Task { [weak self] in
+            _ = await Task.detached(priority: .userInitiated) {
+                try? repository.resolveClaimRequest(id: requestID, approve: approve)
+            }.value
+            self?.reload()
+            try? await Task.sleep(for: .milliseconds(80))
+            self?.refreshLog()
+        }
+    }
+
     // MARK: - One task's history
 
     /// The task the detail page is reading, and its log.
@@ -696,7 +716,8 @@ final class TasksModel {
         self.latest = LedgerSnapshot(
             plans: latest.plans,
             tasks: latest.tasks.map(transform),
-            links: latest.links
+            links: latest.links,
+            pendingClaims: latest.pendingClaims
         )
         rebuild()
     }

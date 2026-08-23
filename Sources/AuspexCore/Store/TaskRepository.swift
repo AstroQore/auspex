@@ -19,6 +19,12 @@ import GRDB
 public struct TaskRepository: Sendable {
     public let dbWriter: any DatabaseWriter
 
+    /// The two honest outcomes of an agent trying to take work.
+    public enum ClaimOutcome: Sendable, Equatable {
+        case claimed(AuspexTask)
+        case pending(task: AuspexTask, request: TaskClaimRequest)
+    }
+
     public init(dbWriter: any DatabaseWriter) {
         self.dbWriter = dbWriter
     }
@@ -272,23 +278,18 @@ public struct TaskRepository: Sendable {
         return tasks.map { byTask[$0.id].map($0.withDependencies) ?? $0 }
     }
 
-    /// Replaces a task's dependencies. A self-edge is dropped rather than
-    /// stored: a task that waits on itself is never ready, and nothing good
-    /// comes of letting a caller say so.
+    /// Replaces a task's dependencies after validating the whole proposed
+    /// graph. Nothing is deleted until validation succeeds, so a typo, a
+    /// self-edge, or a cycle leaves the graph exactly as it was.
     private static func setDependencies(
         _ ids: [Int64],
         of taskID: Int64,
         at date: Date,
         in db: Database
     ) throws {
+        let ids = try validatedDependencies(ids, of: taskID, in: db)
         try db.execute(sql: "DELETE FROM task_deps WHERE task_id = ?", arguments: [taskID])
-        var seen: Set<Int64> = [taskID]
-        for id in ids where seen.insert(id).inserted {
-            // Only edges to rows that exist. A dependency on a task nobody
-            // filed would be a permanent block with no way to see what it is.
-            guard try Bool.fetchOne(
-                db, sql: "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?)", arguments: [id]
-            ) == true else { continue }
+        for id in ids {
             try db.execute(
                 sql: """
                     INSERT OR IGNORE INTO task_deps (task_id, depends_on_id, created_at)
@@ -300,11 +301,27 @@ public struct TaskRepository: Sendable {
     }
 
     /// Sets what a task waits on, from outside a transaction.
-    public func setDependencies(_ ids: [Int64], of taskID: Int64, now: Date = Date()) throws {
+    public func setDependencies(
+        _ ids: [Int64],
+        of taskID: Int64,
+        expectedVersion: Int64? = nil,
+        now: Date = Date()
+    ) throws {
         try dbWriter.write { db in
-            try Self.setDependencies(ids, of: taskID, at: now, in: db)
+            guard let existing = try Self.task(id: taskID, in: db) else {
+                throw TaskLedgerError.notFound("task \(taskID)")
+            }
+            try Self.assertVersion(expectedVersion, of: existing)
+            let normalized = try Self.validatedDependencies(ids, of: taskID, in: db)
+            let current = try Int64.fetchAll(
+                db,
+                sql: "SELECT depends_on_id FROM task_deps WHERE task_id = ? ORDER BY created_at, depends_on_id",
+                arguments: [taskID]
+            )
+            guard normalized != current else { return }
+            try Self.setDependencies(normalized, of: taskID, at: now, in: db)
             try db.execute(
-                sql: "UPDATE tasks SET updated_at = ? WHERE id = ?",
+                sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
                 arguments: [now.timeIntervalSince1970, taskID]
             )
         }
@@ -378,15 +395,17 @@ public struct TaskRepository: Sendable {
         id: Int64,
         toProjectKey key: String,
         actor: SessionKey? = nil,
+        expectedVersion: Int64? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
             guard let existing = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
+            try Self.assertVersion(expectedVersion, of: existing)
             guard existing.projectKey != key else { return existing }
             try db.execute(
-                sql: "UPDATE tasks SET project_key = ?, updated_at = ? WHERE id = ?",
+                sql: "UPDATE tasks SET project_key = ?, updated_at = ?, version = version + 1 WHERE id = ?",
                 arguments: [key, now.timeIntervalSince1970, id]
             )
             try Self.appendLog(
@@ -403,11 +422,10 @@ public struct TaskRepository: Sendable {
 
     /// Takes a task, recording who took it and for what.
     ///
-    /// One statement, guarded in SQL rather than read-then-write: two workers
-    /// handed the same id race here, and the loser must be told plainly rather
-    /// than quietly overwriting the winner's scope. A re-claim by the *same*
-    /// session is allowed and updates the scope — a worker refining what it
-    /// took is not a conflict.
+    /// One writer transaction: two workers handed the same id race here, and
+    /// the second sees the first's committed holder before it can write. A
+    /// re-claim by the *same* session is allowed and updates the scope — a
+    /// worker refining what it took is not a conflict.
     ///
     /// `projectKey` is the claiming session's project. It is applied only to a
     /// task that has none yet: a task inherits its project from whoever first
@@ -423,22 +441,33 @@ public struct TaskRepository: Sendable {
         scope: String?,
         by session: SessionKey?,
         projectKey: String? = nil,
+        expectedVersion: Int64? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
             guard let existing = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
+            try Self.assertVersion(expectedVersion, of: existing)
             if let holder = existing.claimedBy, holder != session {
                 throw TaskLedgerError.alreadyClaimed(holder.description)
             }
+            let nextProject = existing.projectKey ?? projectKey
+            let nextStatus: AuspexTaskStatus = existing.status == .todo ? .doing : existing.status
+            guard existing.claimRole != role
+                    || existing.claimScope != scope
+                    || existing.claimedBy != session
+                    || existing.projectKey != nextProject
+                    || existing.status != nextStatus
+            else { return existing }
             try db.execute(
                 sql: """
                     UPDATE tasks
                        SET claim_role = ?, claim_scope = ?, claimed_by_key = ?,
                            claimed_at = ?, updated_at = ?,
                            project_key = COALESCE(project_key, ?),
-                           status = CASE WHEN status = 'todo' THEN 'doing' ELSE status END
+                           status = CASE WHEN status = 'todo' THEN 'doing' ELSE status END,
+                           version = version + 1
                      WHERE id = ?
                     """,
                 arguments: [
@@ -468,6 +497,112 @@ public struct TaskRepository: Sendable {
         }
     }
 
+    /// Claims an available task, or records a takeover request when another
+    /// session holds it.
+    ///
+    /// This is the MCP path. The lower-level ``claimTask`` keeps its strict
+    /// refusal for existing callers, while a protocol-aware agent leaves a
+    /// durable request a person can approve or reject. The two decisions are
+    /// made in one transaction, so a holder cannot disappear between the
+    /// conflict check and the request being filed.
+    public func claimOrRequestTask(
+        id: Int64,
+        role: String,
+        scope: String?,
+        reason: String?,
+        by session: SessionKey,
+        projectKey: String? = nil,
+        expectedVersion: Int64? = nil,
+        now: Date = Date()
+    ) throws -> ClaimOutcome {
+        try dbWriter.write { db in
+            guard let existing = try Self.task(id: id, in: db) else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            try Self.assertVersion(expectedVersion, of: existing)
+
+            // Releasing the holder does not turn an earlier request into an
+            // implicit grant. Even an explicit retry stays pending: otherwise
+            // `tasks.claim` would be a self-approval button by another name.
+            if existing.claimedBy == nil,
+               let pending = try Self.pendingClaimRequest(
+                    taskID: id, requester: session, in: db
+               ) {
+                return .pending(task: existing, request: pending)
+            }
+
+            guard let holder = existing.claimedBy, holder != session else {
+                let task = try Self.claimTask(
+                    existing: existing,
+                    role: role,
+                    scope: scope,
+                    by: session,
+                    projectKey: projectKey,
+                    now: now,
+                    in: db
+                )
+                return .claimed(task)
+            }
+
+            if let pending = try Self.pendingClaimRequest(
+                taskID: id, requester: session, in: db
+            ), pending.role == role, pending.scope == scope, pending.reason == reason,
+               pending.holder == holder {
+                return .pending(task: existing, request: pending)
+            }
+
+            let nextVersion = existing.version + 1
+            if let pending = try Self.pendingClaimRequest(
+                taskID: id, requester: session, in: db
+            ) {
+                try db.execute(
+                    sql: """
+                        UPDATE task_claim_requests
+                           SET holder_key = ?, claim_role = ?, claim_scope = ?, reason = ?,
+                               task_version = ?, requested_at = ?
+                         WHERE id = ?
+                        """,
+                    arguments: [
+                        holder.description, role, scope, reason, nextVersion,
+                        now.timeIntervalSince1970, pending.id
+                    ]
+                )
+            } else {
+                try db.execute(
+                    sql: """
+                        INSERT INTO task_claim_requests
+                            (task_id, requester_key, holder_key, claim_role, claim_scope,
+                             reason, task_version, status, requested_at, resolved_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)
+                        """,
+                    arguments: [
+                        id, session.description, holder.description, role, scope, reason,
+                        nextVersion, now.timeIntervalSince1970
+                    ]
+                )
+            }
+            try db.execute(
+                sql: "UPDATE tasks SET updated_at = ?, version = ? WHERE id = ?",
+                arguments: [now.timeIntervalSince1970, nextVersion, id]
+            )
+            try Self.appendLog(
+                taskID: id,
+                actor: session,
+                kind: "takeover_requested",
+                message: [role, scope, reason].compactMap { $0 }.joined(separator: " · "),
+                at: now,
+                in: db
+            )
+            try Self.touchPlan(existing.planID, at: now, in: db)
+            guard let task = try Self.task(id: id, in: db),
+                  let request = try Self.pendingClaimRequest(
+                    taskID: id, requester: session, in: db
+                  )
+            else { throw TaskLedgerError.notFound("takeover request for task \(id)") }
+            return .pending(task: task, request: request)
+        }
+    }
+
     /// Releases a claim without closing the task — the honest thing for a
     /// worker that is giving up, as opposed to one that finished.
     ///
@@ -481,21 +616,25 @@ public struct TaskRepository: Sendable {
         by session: SessionKey?,
         reason: String? = nil,
         requireHolder: Bool = false,
+        expectedVersion: Int64? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
             guard let existing = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
+            try Self.assertVersion(expectedVersion, of: existing)
             if requireHolder, existing.claimedBy != session {
                 throw TaskLedgerError.notClaimHolder(existing.claimedBy?.description)
             }
+            guard existing.isClaimed else { return existing }
             try db.execute(
                 sql: """
                     UPDATE tasks
                        SET claim_role = NULL, claim_scope = NULL, claimed_by_key = NULL,
                            claimed_at = NULL, updated_at = ?,
-                           status = CASE WHEN status = 'doing' THEN 'todo' ELSE status END
+                           status = CASE WHEN status = 'doing' THEN 'todo' ELSE status END,
+                           version = version + 1
                      WHERE id = ?
                     """,
                 arguments: [now.timeIntervalSince1970, id]
@@ -508,6 +647,124 @@ public struct TaskRepository: Sendable {
                 throw TaskLedgerError.notFound("task \(id)")
             }
             return task
+        }
+    }
+
+    // MARK: - Claim takeover requests
+
+    /// Requests awaiting a person's decision, oldest first.
+    public func claimRequests(
+        taskID: Int64? = nil,
+        status: TaskClaimRequest.Status? = .pending
+    ) throws -> [TaskClaimRequest] {
+        try dbWriter.read { db in
+            var clauses: [String] = []
+            var arguments = StatementArguments()
+            if let taskID {
+                clauses.append("task_id = ?")
+                arguments += [taskID]
+            }
+            if let status {
+                clauses.append("status = ?")
+                arguments += [status.rawValue]
+            }
+            var sql = "SELECT * FROM task_claim_requests"
+            if !clauses.isEmpty { sql += " WHERE " + clauses.joined(separator: " AND ") }
+            sql += " ORDER BY requested_at ASC, id ASC"
+            return try Row.fetchAll(db, sql: sql, arguments: arguments)
+                .compactMap(TaskClaimRequest.init(row:))
+        }
+    }
+
+    /// Approves or rejects one takeover request. There is intentionally no
+    /// MCP tool for this method: the decision belongs to the person looking at
+    /// the task detail page.
+    @discardableResult
+    public func resolveClaimRequest(
+        id requestID: Int64,
+        approve: Bool,
+        now: Date = Date()
+    ) throws -> (task: AuspexTask, request: TaskClaimRequest) {
+        try dbWriter.write { db in
+            guard let request = try Row.fetchOne(
+                db,
+                sql: "SELECT * FROM task_claim_requests WHERE id = ?",
+                arguments: [requestID]
+            ).flatMap(TaskClaimRequest.init(row:)) else {
+                throw TaskLedgerError.notFound("claim request \(requestID)")
+            }
+            guard request.status == .pending else {
+                throw TaskLedgerError.claimRequestResolved(requestID)
+            }
+            guard let existing = try Self.task(id: request.taskID, in: db) else {
+                throw TaskLedgerError.notFound("task \(request.taskID)")
+            }
+
+            let resolution: TaskClaimRequest.Status = approve ? .approved : .rejected
+            try db.execute(
+                sql: """
+                    UPDATE task_claim_requests
+                       SET status = ?, resolved_at = ?
+                     WHERE id = ? AND status = 'pending'
+                    """,
+                arguments: [resolution.rawValue, now.timeIntervalSince1970, requestID]
+            )
+            if approve {
+                // One winner. Other requests stay in the audit trail but are
+                // resolved so a later click cannot displace the person just
+                // approved.
+                try db.execute(
+                    sql: """
+                        UPDATE task_claim_requests
+                           SET status = 'rejected', resolved_at = ?
+                         WHERE task_id = ? AND status = 'pending'
+                        """,
+                    arguments: [now.timeIntervalSince1970, request.taskID]
+                )
+                try db.execute(
+                    sql: """
+                        UPDATE tasks
+                           SET claim_role = ?, claim_scope = ?, claimed_by_key = ?,
+                               claimed_at = ?, updated_at = ?,
+                               status = CASE WHEN status = 'todo' THEN 'doing' ELSE status END,
+                               version = version + 1
+                         WHERE id = ?
+                        """,
+                    arguments: [
+                        request.role, request.scope, request.requester.description,
+                        now.timeIntervalSince1970, now.timeIntervalSince1970, request.taskID
+                    ]
+                )
+                try Self.link(
+                    taskID: request.taskID, session: request.requester,
+                    kind: .claim, at: now, in: db
+                )
+            } else {
+                try db.execute(
+                    sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
+                    arguments: [now.timeIntervalSince1970, request.taskID]
+                )
+            }
+            try Self.appendLog(
+                taskID: request.taskID,
+                actor: nil,
+                kind: approve ? "takeover_approved" : "takeover_rejected",
+                message: [
+                    request.requester.description, request.role, request.scope, request.reason
+                ]
+                    .compactMap { $0 }.joined(separator: " · "),
+                at: now,
+                in: db
+            )
+            try Self.touchPlan(existing.planID, at: now, in: db)
+            guard let task = try Self.task(id: request.taskID, in: db),
+                  let resolved = try Row.fetchOne(
+                    db,
+                    sql: "SELECT * FROM task_claim_requests WHERE id = ?",
+                    arguments: [requestID]
+                  ).flatMap(TaskClaimRequest.init(row:))
+            else { throw TaskLedgerError.notFound("claim request \(requestID)") }
+            return (task, resolved)
         }
     }
 
@@ -527,15 +784,23 @@ public struct TaskRepository: Sendable {
         kind: TaskKind?? = nil,
         labels: [String]? = nil,
         dependsOn: [Int64]? = nil,
+        projectKey: String? = nil,
         actor: SessionKey? = nil,
+        expectedVersion: Int64? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
             guard let existing = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
-            var assignments: [String] = ["updated_at = ?"]
+            try Self.assertVersion(expectedVersion, of: existing)
+            let currentDependencies = try Self.dependencies(of: id, in: db)
+            let nextDependencies = try dependsOn.map {
+                try Self.validatedDependencies($0, of: id, in: db)
+            }
+            var assignments: [String] = ["updated_at = ?", "version = version + 1"]
             var arguments: StatementArguments = [now.timeIntervalSince1970]
+            var targetProject = existing.projectKey
             if let title {
                 assignments.append("title = ?")
                 arguments += [title]
@@ -575,22 +840,52 @@ public struct TaskRepository: Sendable {
                 // task filed under a heading in another project would break it.
                 let milestone = try planID.flatMap { try Self.plan(id: $0, in: db) }
                 if let key = milestone?.projectKey, key != existing.projectKey {
-                    assignments.append("project_key = ?")
-                    arguments += [key]
+                    targetProject = key
                 }
+            }
+            if let projectKey { targetProject = projectKey }
+            if targetProject != existing.projectKey {
+                assignments.append("project_key = ?")
+                arguments += [targetProject]
+            }
+            let nextLabels = labels.map(TaskLabels.normalize)
+            let titleChanged = title.map { $0 != existing.title } ?? false
+            let bodyChanged = body.map { $0 != existing.body } ?? false
+            let statusChanged = status.map { $0 != existing.status } ?? false
+            let priorityChanged = priority.map { $0 != existing.priority } ?? false
+            let planChanged = planID.map { $0 != existing.planID } ?? false
+            let kindChanged = kind.map { $0 != existing.kind } ?? false
+            let labelsChanged = nextLabels.map { $0 != existing.labels } ?? false
+            let dependenciesChanged = nextDependencies.map {
+                $0 != currentDependencies
+            } ?? false
+            let projectChanged = targetProject != existing.projectKey
+            let changed = titleChanged || bodyChanged || statusChanged || priorityChanged
+                || planChanged || kindChanged || labelsChanged || dependenciesChanged
+                || projectChanged
+            guard changed else {
+                return existing.withDependencies(currentDependencies)
             }
             arguments += [id]
             try db.execute(
                 sql: "UPDATE tasks SET \(assignments.joined(separator: ", ")) WHERE id = ?",
                 arguments: arguments
             )
-            if let dependsOn {
-                try Self.setDependencies(dependsOn, of: id, at: now, in: db)
+            if let nextDependencies, nextDependencies != currentDependencies {
+                try Self.setDependencies(nextDependencies, of: id, at: now, in: db)
             }
             if let status, status != existing.status {
                 try Self.appendLog(
                     taskID: id, actor: actor, kind: "status",
                     message: "\(existing.status.rawValue) → \(status.rawValue)", at: now, in: db
+                )
+            }
+            if targetProject != existing.projectKey {
+                try Self.appendLog(
+                    taskID: id, actor: actor, kind: "project",
+                    message: [existing.projectKey, targetProject]
+                        .compactMap { $0 }.joined(separator: " → "),
+                    at: now, in: db
                 )
             }
             try Self.touchPlan(existing.planID, at: now, in: db)
@@ -615,17 +910,23 @@ public struct TaskRepository: Sendable {
         id: Int64,
         result: String?,
         by session: SessionKey? = nil,
+        requireHolder: Bool = false,
+        expectedVersion: Int64? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
             guard let existing = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
+            try Self.assertVersion(expectedVersion, of: existing)
+            if requireHolder, existing.claimedBy != session {
+                throw TaskLedgerError.notTaskHolder(existing.claimedBy?.description)
+            }
             try db.execute(
                 sql: """
                     UPDATE tasks
                        SET status = 'review', completed_at = ?, updated_at = ?,
-                           result = COALESCE(?, result)
+                           result = COALESCE(?, result), version = version + 1
                      WHERE id = ?
                     """,
                 arguments: [now.timeIntervalSince1970, now.timeIntervalSince1970, result, id]
@@ -651,18 +952,20 @@ public struct TaskRepository: Sendable {
     public func closeTask(
         id: Int64,
         by session: SessionKey? = nil,
+        expectedVersion: Int64? = nil,
         now: Date = Date()
     ) throws -> AuspexTask {
         try dbWriter.write { db in
             guard let existing = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
+            try Self.assertVersion(expectedVersion, of: existing)
             try db.execute(
                 sql: """
                     UPDATE tasks
                        SET status = 'done',
                            completed_at = COALESCE(completed_at, ?),
-                           updated_at = ?
+                           updated_at = ?, version = version + 1
                      WHERE id = ?
                     """,
                 arguments: [now.timeIntervalSince1970, now.timeIntervalSince1970, id]
@@ -688,9 +991,27 @@ public struct TaskRepository: Sendable {
         now: Date = Date()
     ) throws {
         try dbWriter.write { db in
+            guard try Self.task(id: taskID, in: db) != nil else {
+                throw TaskLedgerError.notFound("task \(taskID)")
+            }
+            let exists = try Bool.fetchOne(
+                db,
+                sql: """
+                    SELECT EXISTS(
+                        SELECT 1 FROM task_links
+                         WHERE task_id = ? AND session_key = ? AND kind = ?
+                    )
+                    """,
+                arguments: [taskID, session.description, kind.rawValue]
+            ) == true
+            guard !exists else { return }
             try Self.link(taskID: taskID, session: session, kind: kind, at: now, in: db)
             try Self.appendLog(
                 taskID: taskID, actor: session, kind: "linked", message: kind.rawValue, at: now, in: db
+            )
+            try db.execute(
+                sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
+                arguments: [now.timeIntervalSince1970, taskID]
             )
         }
     }
@@ -698,14 +1019,37 @@ public struct TaskRepository: Sendable {
     /// Detaches a session from a task. A claim link is left alone: releasing a
     /// claim is ``releaseTask(id:by:now:)``, and unlinking one behind its back
     /// would leave the task claimed by a session no longer on it.
-    public func unlink(taskID: Int64, session: SessionKey) throws {
+    public func unlink(
+        taskID: Int64,
+        session: SessionKey,
+        now: Date = Date()
+    ) throws {
         try dbWriter.write { db in
+            let exists = try Bool.fetchOne(
+                db,
+                sql: """
+                    SELECT EXISTS(
+                        SELECT 1 FROM task_links
+                         WHERE task_id = ? AND session_key = ? AND kind <> 'claim'
+                    )
+                    """,
+                arguments: [taskID, session.description]
+            ) == true
+            guard exists else { return }
             try db.execute(
                 sql: """
                     DELETE FROM task_links
                      WHERE task_id = ? AND session_key = ? AND kind <> 'claim'
                     """,
                 arguments: [taskID, session.description]
+            )
+            try Self.appendLog(
+                taskID: taskID, actor: session, kind: "unlinked", message: nil,
+                at: now, in: db
+            )
+            try db.execute(
+                sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
+                arguments: [now.timeIntervalSince1970, taskID]
             )
         }
     }
@@ -751,15 +1095,20 @@ public struct TaskRepository: Sendable {
         kind: String,
         message: String?,
         ref: String? = nil,
+        expectedVersion: Int64? = nil,
         now: Date = Date()
     ) throws {
         try dbWriter.write { db in
+            guard let existing = try Self.task(id: taskID, in: db) else {
+                throw TaskLedgerError.notFound("task \(taskID)")
+            }
+            try Self.assertVersion(expectedVersion, of: existing)
             try Self.appendLog(
                 taskID: taskID, actor: actor, kind: kind, message: message,
                 ref: ref, at: now, in: db
             )
             try db.execute(
-                sql: "UPDATE tasks SET updated_at = ? WHERE id = ?",
+                sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
                 arguments: [now.timeIntervalSince1970, taskID]
             )
         }
@@ -918,6 +1267,137 @@ public struct TaskRepository: Sendable {
             .flatMap(AuspexTask.init(row:))
     }
 
+    private static func assertVersion(_ expected: Int64?, of task: AuspexTask) throws {
+        guard let expected else { return }
+        guard expected == task.version else {
+            throw TaskLedgerError.versionConflict(expected: expected, actual: task.version)
+        }
+    }
+
+    private static func dependencies(of taskID: Int64, in db: Database) throws -> [Int64] {
+        try Int64.fetchAll(
+            db,
+            sql: """
+                SELECT depends_on_id FROM task_deps
+                 WHERE task_id = ? ORDER BY created_at ASC, depends_on_id ASC
+                """,
+            arguments: [taskID]
+        )
+    }
+
+    /// Validates a proposed dependency replacement without touching the
+    /// current graph. Following edges from each proposed dependency must never
+    /// lead back to the task being changed.
+    private static func validatedDependencies(
+        _ raw: [Int64],
+        of taskID: Int64,
+        in db: Database
+    ) throws -> [Int64] {
+        var seen: Set<Int64> = []
+        let ids = raw.filter { seen.insert($0).inserted }
+        if ids.contains(taskID) { throw TaskLedgerError.selfDependency(taskID) }
+
+        let known = Set(try Int64.fetchAll(db, sql: "SELECT id FROM tasks"))
+        if let missing = ids.first(where: { !known.contains($0) }) {
+            throw TaskLedgerError.dependencyNotFound(missing)
+        }
+
+        let rows = try Row.fetchAll(
+            db, sql: "SELECT task_id, depends_on_id FROM task_deps"
+        )
+        var graph: [Int64: [Int64]] = [:]
+        for row in rows {
+            guard let from = row["task_id"] as Int64?,
+                  let to = row["depends_on_id"] as Int64? else { continue }
+            graph[from, default: []].append(to)
+        }
+        graph[taskID] = ids
+
+        var visiting: Set<Int64> = []
+        var visited: Set<Int64> = []
+        func visit(_ node: Int64, path: [Int64]) throws {
+            if visiting.contains(node) {
+                let start = path.firstIndex(of: node) ?? 0
+                throw TaskLedgerError.dependencyCycle(Array(path[start...]) + [node])
+            }
+            guard visited.insert(node).inserted else { return }
+            visiting.insert(node)
+            for next in graph[node] ?? [] {
+                try visit(next, path: path + [node])
+            }
+            visiting.remove(node)
+        }
+        try visit(taskID, path: [])
+        return ids
+    }
+
+    /// The claim write shared by the strict repository call and the MCP
+    /// claim-or-request transaction. The caller has already checked the
+    /// current holder and expected version.
+    private static func claimTask(
+        existing: AuspexTask,
+        role: String,
+        scope: String?,
+        by session: SessionKey,
+        projectKey: String?,
+        now: Date,
+        in db: Database
+    ) throws -> AuspexTask {
+        let nextProject = existing.projectKey ?? projectKey
+        let nextStatus: AuspexTaskStatus = existing.status == .todo ? .doing : existing.status
+        guard existing.claimRole != role
+                || existing.claimScope != scope
+                || existing.claimedBy != session
+                || existing.projectKey != nextProject
+                || existing.status != nextStatus
+        else { return existing }
+        try db.execute(
+            sql: """
+                UPDATE tasks
+                   SET claim_role = ?, claim_scope = ?, claimed_by_key = ?,
+                       claimed_at = ?, updated_at = ?,
+                       project_key = COALESCE(project_key, ?),
+                       status = CASE WHEN status = 'todo' THEN 'doing' ELSE status END,
+                       version = version + 1
+                 WHERE id = ?
+                """,
+            arguments: [
+                role, scope, session.description, now.timeIntervalSince1970,
+                now.timeIntervalSince1970, projectKey, existing.id
+            ]
+        )
+        if existing.projectKey == nil, let projectKey {
+            try adoptProject(projectKey, forPlan: existing.planID, in: db)
+        }
+        try link(taskID: existing.id, session: session, kind: .claim, at: now, in: db)
+        try appendLog(
+            taskID: existing.id, actor: session, kind: "claimed",
+            message: [role, scope].compactMap { $0 }.joined(separator: " · "),
+            at: now, in: db
+        )
+        try touchPlan(existing.planID, at: now, in: db)
+        guard let task = try task(id: existing.id, in: db) else {
+            throw TaskLedgerError.notFound("task \(existing.id)")
+        }
+        return task
+    }
+
+    private static func pendingClaimRequest(
+        taskID: Int64,
+        requester: SessionKey,
+        in db: Database
+    ) throws -> TaskClaimRequest? {
+        try Row.fetchOne(
+            db,
+            sql: """
+                SELECT * FROM task_claim_requests
+                 WHERE task_id = ? AND requester_key = ? AND status = 'pending'
+                 ORDER BY id DESC LIMIT 1
+                """,
+            arguments: [taskID, requester.description]
+        ).flatMap(TaskClaimRequest.init(row:))
+    }
+
     /// Gives a milestone the project of the first task filed under it.
     ///
     /// A milestone is registered before anybody knows where the work will
@@ -1068,6 +1548,12 @@ public enum TaskLedgerError: Error, Sendable, Equatable, CustomStringConvertible
     case notFound(String)
     case alreadyClaimed(String)
     case notClaimHolder(String?)
+    case notTaskHolder(String?)
+    case versionConflict(expected: Int64, actual: Int64)
+    case dependencyNotFound(Int64)
+    case selfDependency(Int64)
+    case dependencyCycle([Int64])
+    case claimRequestResolved(Int64)
     /// The board is read-only in this process — a demo replay.
     case readOnly
 
@@ -1077,6 +1563,18 @@ public enum TaskLedgerError: Error, Sendable, Equatable, CustomStringConvertible
         case let .alreadyClaimed(holder): "Already claimed by \(holder)."
         case let .notClaimHolder(holder?): "Only \(holder) can release this claim."
         case .notClaimHolder(nil): "This task has no claim for this session to release."
+        case let .notTaskHolder(holder?): "Only the current holder, \(holder), can finish this task."
+        case .notTaskHolder(nil): "Claim this task before finishing it."
+        case let .versionConflict(expected, actual):
+            "Task version changed: expected \(expected), current \(actual). Read tasks.get and retry deliberately."
+        case let .dependencyNotFound(id):
+            "Dependency task \(id) does not exist. The dependency graph was not changed."
+        case let .selfDependency(id):
+            "Task \(id) cannot depend on itself. The dependency graph was not changed."
+        case let .dependencyCycle(path):
+            "Dependency cycle \(path.map(String.init).joined(separator: " → ")); the graph was not changed."
+        case let .claimRequestResolved(id):
+            "Claim request \(id) has already been resolved."
         case .readOnly: "This Auspex is replaying a demo board and will not write to it."
         }
     }
@@ -1150,6 +1648,7 @@ extension AuspexTask {
         else { return nil }
         self.init(
             id: id,
+            version: row["version"] as Int64? ?? 1,
             planID: row["plan_id"],
             title: title,
             body: row["body"],
@@ -1171,6 +1670,34 @@ extension AuspexTask {
             labels: TaskLabels.decode(row["labels"]),
             createdAt: Date(timeIntervalSince1970: createdAt),
             updatedAt: Date(timeIntervalSince1970: updatedAt)
+        )
+    }
+}
+
+extension TaskClaimRequest {
+    init?(row: Row) {
+        guard let id = row["id"] as Int64?,
+              let taskID = row["task_id"] as Int64?,
+              let requesterRaw = row["requester_key"] as String?,
+              let requester = SessionKey(string: requesterRaw),
+              let role = row["claim_role"] as String?,
+              let taskVersion = row["task_version"] as Int64?,
+              let statusRaw = row["status"] as String?,
+              let status = Status(rawValue: statusRaw),
+              let requestedAt = row["requested_at"] as Double?
+        else { return nil }
+        self.init(
+            id: id,
+            taskID: taskID,
+            requester: requester,
+            holder: (row["holder_key"] as String?).flatMap(SessionKey.init(string:)),
+            role: role,
+            scope: row["claim_scope"],
+            reason: row["reason"],
+            taskVersion: taskVersion,
+            status: status,
+            requestedAt: Date(timeIntervalSince1970: requestedAt),
+            resolvedAt: (row["resolved_at"] as Double?).map(Date.init(timeIntervalSince1970:))
         )
     }
 }

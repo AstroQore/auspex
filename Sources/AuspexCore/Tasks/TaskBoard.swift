@@ -286,6 +286,11 @@ public enum TaskNoteKind: String, Codable, Sendable, CaseIterable, Hashable {
 /// of twelve sessions needs from a row.
 public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     public let id: Int64
+    /// Monotonically increases whenever the task's durable meaning changes.
+    /// Agents read this value and send it back as `expected_version` on a
+    /// write, so a stale transcript is refused rather than overwriting newer
+    /// work.
+    public let version: Int64
     /// The milestone it hangs under, when it has one. A task without a
     /// milestone is the ordinary case — somebody filed one thing — and shows
     /// under its project with no sub-heading rather than in a lane of orphans.
@@ -340,6 +345,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
 
     public init(
         id: Int64,
+        version: Int64 = 1,
         planID: Int64?,
         title: String,
         body: String?,
@@ -365,6 +371,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         self.labels = labels
         self.dependsOn = dependsOn
         self.id = id
+        self.version = version
         self.planID = planID
         self.title = title
         self.body = body
@@ -399,16 +406,18 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
 
     /// Whether every task this one waits on is closed.
     ///
-    /// - Parameter closed: the ids of the tasks that are `done`. A dependency
-    ///   on a task the ledger no longer holds is treated as *satisfied*: a
-    ///   deleted row is not a reason to strand the work that referenced it.
+    /// - Parameters:
+    ///   - closed: the ids of the tasks that are `done`.
+    ///   - known: every task id in the ledger. An unknown dependency is
+    ///     blocked, never silently satisfied; repository writes reject such
+    ///     edges, and this keeps a damaged or externally-edited store honest.
     public func isReady(closed: Set<Int64>, known: Set<Int64>) -> Bool {
-        dependsOn.allSatisfy { closed.contains($0) || !known.contains($0) }
+        dependsOn.allSatisfy { known.contains($0) && closed.contains($0) }
     }
 
     /// The dependencies that are still open, in the order they were given.
     public func blockingDependencies(closed: Set<Int64>, known: Set<Int64>) -> [Int64] {
-        dependsOn.filter { known.contains($0) && !closed.contains($0) }
+        dependsOn.filter { !known.contains($0) || !closed.contains($0) }
     }
 
     /// The same task, in another column.
@@ -418,7 +427,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     /// store round trip later.
     public func moved(to status: AuspexTaskStatus, at date: Date = Date()) -> AuspexTask {
         AuspexTask(
-            id: id, planID: planID, title: title, body: body, status: status,
+            id: id, version: version, planID: planID, title: title, body: body, status: status,
             priority: priority, projectID: projectID, projectKey: projectKey,
             createdBy: createdBy, claimRole: claimRole, claimScope: claimScope,
             claimedBy: claimedBy, claimedAt: claimedAt,
@@ -438,7 +447,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     /// whole page of tasks rather than one per row.
     public func withDependencies(_ ids: [Int64]) -> AuspexTask {
         AuspexTask(
-            id: id, planID: planID, title: title, body: body, status: status,
+            id: id, version: version, planID: planID, title: title, body: body, status: status,
             priority: priority, projectID: projectID, projectKey: projectKey,
             createdBy: createdBy, claimRole: claimRole, claimScope: claimScope,
             claimedBy: claimedBy, claimedAt: claimedAt, completedAt: completedAt,
@@ -455,6 +464,55 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         case let (nil, scope?): scope
         case (nil, nil): nil
         }
+    }
+}
+
+/// A durable request to take over a task another session already holds.
+/// Recording one never grants the claim; only a person can approve it.
+public struct TaskClaimRequest: Identifiable, Hashable, Sendable, Codable {
+    public enum Status: String, Codable, Sendable, CaseIterable, Hashable {
+        case pending
+        case approved
+        case rejected
+    }
+
+    public let id: Int64
+    public let taskID: Int64
+    public let requester: SessionKey
+    public let holder: SessionKey?
+    public let role: String
+    public let scope: String?
+    public let reason: String?
+    /// The task version produced by recording this request.
+    public let taskVersion: Int64
+    public let status: Status
+    public let requestedAt: Date
+    public let resolvedAt: Date?
+
+    public init(
+        id: Int64,
+        taskID: Int64,
+        requester: SessionKey,
+        holder: SessionKey?,
+        role: String,
+        scope: String?,
+        reason: String?,
+        taskVersion: Int64,
+        status: Status,
+        requestedAt: Date,
+        resolvedAt: Date?
+    ) {
+        self.id = id
+        self.taskID = taskID
+        self.requester = requester
+        self.holder = holder
+        self.role = role
+        self.scope = scope
+        self.reason = reason
+        self.taskVersion = taskVersion
+        self.status = status
+        self.requestedAt = requestedAt
+        self.resolvedAt = resolvedAt
     }
 }
 

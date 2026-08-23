@@ -188,6 +188,38 @@ struct TaskLedgerMigrationTests {
         #expect(store.storedEventSchemaVersion == AgentSessionLive.eventSchemaVersion)
     }
 
+    @Test("a v7 task gains version one and the takeover ledger without data loss")
+    func taskIntegrityMigrationPreservesOldTasks() throws {
+        let queue = try DatabaseQueue(configuration: AuspexStore.configuration())
+        try migrator().migrate(queue, upTo: "v7_task_shape")
+        try queue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO tasks
+                        (title, status, priority, source, created_at, updated_at,
+                         project_key, kind, labels)
+                    VALUES ('Existing task', 'doing', 2, 'ui', 10, 20,
+                            '/Users/example/Code/auspex', 'fix', '["migration"]')
+                    """
+            )
+        }
+
+        try migrator().migrate(queue)
+
+        let repository = TaskRepository(dbWriter: queue)
+        let task = try #require(try repository.tasks().first)
+        #expect(task.title == "Existing task")
+        #expect(task.version == 1)
+        #expect(try repository.claimRequests().isEmpty)
+        let columns = try queue.read { db in
+            try String.fetchAll(
+                db, sql: "SELECT name FROM pragma_table_info('task_claim_requests')"
+            )
+        }
+        #expect(columns.contains("task_version"))
+        #expect(columns.contains("requester_key"))
+    }
+
     @Test("a blob nothing can rescue costs one row, not the whole board")
     func undecodableRowIsSkipped() throws {
         let store = try AuspexStore(inMemory: true)

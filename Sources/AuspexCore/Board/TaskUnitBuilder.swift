@@ -298,6 +298,7 @@ public enum TaskUnitBuilder {
             id: id,
             shortID: shortID,
             origin: origin,
+            version: task?.version,
             promotionKey: promotionKey,
             projectKey: projectKey,
             planID: task?.planID,

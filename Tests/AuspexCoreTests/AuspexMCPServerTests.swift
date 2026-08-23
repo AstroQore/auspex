@@ -271,6 +271,7 @@ struct AuspexMCPServerTests {
         ])))
         let taskID = try #require(task["id"]?.intValue)
         #expect(task["status"]?.stringValue == "todo")
+        #expect(task["version"]?.intValue == 1)
 
         let claimed = try RPC.structured(await server.answer(line: RPC.call("tasks.claim", [
             "task_id": .int(Int64(taskID)), "role": "implementer", "scope": "the TOML half"
@@ -279,6 +280,7 @@ struct AuspexMCPServerTests {
         #expect(claimed["claimRole"]?.stringValue == "implementer")
         #expect(claimed["claimScope"]?.stringValue == "the TOML half")
         #expect(claimed["claimedBy"]?.stringValue == Self.sessionKey.description)
+        #expect(claimed["claimOutcome"]?.stringValue == "claimed")
         #expect(claimed["sessions"]?.arrayValue?.first?.stringValue == Self.sessionKey.description)
 
         let done = try RPC.structured(await server.answer(line: RPC.call("tasks.complete", [
@@ -380,12 +382,15 @@ struct AuspexMCPServerTests {
             "task_id": .int(task.id)
         ])))
         #expect(detail["task"]?["id"]?.intValue == Int(task.id))
+        #expect(detail["task"]?["version"]?.intValue == Int((try ledger.task(id: task.id))?.version ?? 0))
         #expect(detail["readiness"]?["ready"]?.boolValue == false)
         #expect(
             detail["readiness"]?["blocking"]?.arrayValue?.compactMap(\.intValue)
                 == [Int(dependency.id)]
         )
         #expect(detail["history"]?.arrayValue?.last?["kind"]?.stringValue == "decision")
+        #expect(detail["attempts"]?.arrayValue?.first?["event"]?.stringValue == "claimed")
+        #expect(detail["attempts"]?.arrayValue?.first?["session"]?.stringValue == Self.sessionKey.description)
         let capsule = try #require(detail["sessions"]?.arrayValue?.first?["session"])
         #expect(capsule["key"]?.stringValue == Self.sessionKey.description)
         #expect(capsule["activity"]?["provenance"]?.stringValue == "inferred")
@@ -416,6 +421,24 @@ struct AuspexMCPServerTests {
         ])))
         #expect(refusal.contains("Only \(other.description) can release"))
         #expect(try ledger.task(id: theirs.id)?.claimedBy == other)
+    }
+
+    @Test("tasks.complete is holder-only")
+    func completeIsHolderOnly() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let other = Fixtures.key(.codex, "somebody-else")
+        let task = try ledger.createTask(title: "Not my finish")
+        let held = try ledger.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: other
+        )
+        let refusal = try RPC.failureText(await server.answer(line: RPC.call("tasks.complete", [
+            "task_id": .int(task.id),
+            "expected_version": .int(held.version),
+            "result": "I should not finish this"
+        ])))
+        #expect(refusal.contains("Only the current holder, \(other.description), can finish"))
+        #expect(try ledger.task(id: task.id)?.status == .doing)
     }
 
     @Test("overview.get is the compact current-project situation")
@@ -573,18 +596,68 @@ struct AuspexMCPServerTests {
         #expect(tasks["note"]?.stringValue?.contains("tasks.create") == true)
     }
 
-    @Test("a claim held by somebody else is refused with the holder named")
-    func claimConflictIsReported() async throws {
+    @Test("a claim held by somebody else becomes a visible takeover request")
+    func claimConflictIsPending() async throws {
         let (server, _, store) = try makeServer()
         let ledger = TaskRepository(store: store)
         let other = Fixtures.key(.codex, "somebody-else")
         let task = try ledger.createTask(title: "One job")
         try ledger.claimTask(id: task.id, role: "implementer", scope: nil, by: other)
 
-        let message = try RPC.failureText(await server.answer(line: RPC.call("tasks.claim", [
-            "task_id": .int(task.id), "role": "implementer"
+        let pending = try RPC.structured(await server.answer(line: RPC.call("tasks.claim", [
+            "task_id": .int(task.id),
+            "role": "reviewer",
+            "scope": "migration",
+            "reason": "I have the compatibility context"
         ])))
-        #expect(message.contains("Already claimed by \(other.description)"))
+        #expect(pending["claimedBy"]?.stringValue == other.description)
+        #expect(pending["claimOutcome"]?.stringValue == "pending_takeover")
+        let request = try #require(pending["pendingClaims"]?.arrayValue?.first)
+        #expect(request["requester"]?.stringValue == Self.sessionKey.description)
+        #expect(request["holder"]?.stringValue == other.description)
+        #expect(request["status"]?.stringValue == "pending")
+        #expect(request["taskVersion"]?.intValue == pending["version"]?.intValue)
+        #expect(try ledger.task(id: task.id)?.claimedBy == other)
+    }
+
+    @Test("expected_version refuses a stale agent mutation atomically")
+    func expectedVersionFencesStaleMCPWrites() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let task = try ledger.createTask(title: "Keep the newer state")
+        let current = try ledger.updateTask(id: task.id, status: .doing)
+        #expect(current.version == 2)
+
+        let message = try RPC.failureText(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(task.id),
+            "expected_version": 1,
+            "title": "stale title",
+            "depends_on": .array([.int(9_999)])
+        ])))
+        #expect(message.contains("expected 1, current 2"))
+        let stored = try #require(try ledger.task(id: task.id))
+        #expect(stored.title == "Keep the newer state")
+        #expect(stored.status == .doing)
+        #expect(stored.version == 2)
+
+        let fresh = try RPC.structured(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(task.id),
+            "expected_version": 2,
+            "status": "blocked"
+        ])))
+        #expect(fresh["version"]?.intValue == 3)
+        #expect(fresh["status"]?.stringValue == "blocked")
+    }
+
+    @Test("tasks.update cannot bypass Review and close the agent's own work")
+    func updateCannotSelfClose() async throws {
+        let (server, _, store) = try makeServer()
+        let task = try TaskRepository(store: store).createTask(title: "Review me")
+        let message = try RPC.failureText(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(task.id), "status": "done", "expected_version": 1
+        ])))
+        #expect(message.contains("cannot close its own task"))
+        #expect(try TaskRepository(store: store).task(id: task.id)?.status == .todo)
     }
 
     @Test("a task id that is not a positive number never reaches the store")

@@ -405,8 +405,11 @@ public enum AuspexMCPTools {
             and shows the role and scope on the row, which is how somebody \
             scanning twelve live sessions tells them apart.
 
-            Refused when another session already holds it. Re-claiming a task \
-            you already hold is fine and updates the scope.
+            When another session already holds it, your request is recorded \
+            for a person to approve or reject; it never steals the claim. \
+            The result says claimOutcome 'claimed' or 'pending_takeover', so a \
+            successful request is never mistaken for ownership. Re-claiming a \
+            task you already hold is fine and updates the scope.
             """,
         inputSchema: .object([
             "type": "object",
@@ -420,6 +423,11 @@ public enum AuspexMCPTools {
                     "type": "string",
                     "description": "Which part of it is yours, in a few words."
                 ]),
+                "reason": .object([
+                    "type": "string",
+                    "description": "Why a person should approve this if somebody else holds it."
+                ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id", "role"])
@@ -443,6 +451,7 @@ public enum AuspexMCPTools {
                     "type": "string",
                     "description": "Why you are giving it back, in one sentence."
                 ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id", "reason"])
@@ -488,6 +497,7 @@ public enum AuspexMCPTools {
                         project on the board. Filed in the task's history.
                         """
                 ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id"])
@@ -504,7 +514,8 @@ public enum AuspexMCPTools {
 
             **This asks for a review; it does not close anything.** The task \
             moves to 'review', stays counted as open, and waits for a person. \
-            That is on purpose: nobody marks their own homework.
+            That is on purpose: nobody marks their own homework. Only the \
+            current claim holder can finish it; claim the task first.
             """,
         inputSchema: .object([
             "type": "object",
@@ -514,6 +525,7 @@ public enum AuspexMCPTools {
                     "type": "string",
                     "description": "What you finished, in one sentence."
                 ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id"])
@@ -553,6 +565,7 @@ public enum AuspexMCPTools {
                         Belongs on 'evidence' most of all.
                         """
                 ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id", "message"])
@@ -733,6 +746,16 @@ public enum AuspexMCPTools {
             Task ids that have to be closed before this one can start. A task \
             waiting on unfinished work is not 'ready', and tasks.list with \
             ready_only leaves it out.
+            """
+    ])
+
+    private static let expectedVersionProperty: MCPJSON = .object([
+        "type": "integer",
+        "minimum": 1,
+        "description": """
+            The version returned by tasks.get or the last successful write. \
+            When supplied, a newer task is refused atomically; read it again \
+            before deciding whether to retry. Optional for older clients.
             """
     ])
 

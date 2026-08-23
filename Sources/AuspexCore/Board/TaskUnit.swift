@@ -69,6 +69,8 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
     /// The handle a person reads — `AUX-3f9k`. See ``TaskShortID``.
     public let shortID: String
     public let origin: Origin
+    /// The ledger version, absent only for an implicit unit.
+    public let version: Int64?
 
     /// What the card is keyed on across frames.
     ///
@@ -223,6 +225,7 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         id: String,
         shortID: String,
         origin: Origin,
+        version: Int64? = nil,
         promotionKey: String,
         projectKey: String?,
         planID: Int64? = nil,
@@ -254,6 +257,7 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         self.id = id
         self.shortID = shortID
         self.origin = origin
+        self.version = version
         self.promotionKey = promotionKey
         self.projectKey = projectKey
         self.planID = planID

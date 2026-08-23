@@ -50,6 +50,8 @@ struct PlanPayload: Encodable {
 
 struct TaskPayload: Encodable {
     let id: Int64
+    /// Compare-and-swap token for the next agent-authored mutation.
+    let version: Int64
     /// The handle a person reads and says out loud. Sent so an agent writing a
     /// brief can quote the same string the board shows.
     let shortID: String
@@ -81,9 +83,19 @@ struct TaskPayload: Encodable {
     let createdAt: Date
     let updatedAt: Date
     let sessions: [String]?
+    let pendingClaims: [TaskClaimRequestPayload]?
+    /// Present on tasks.claim so a success cannot be mistaken for ownership.
+    let claimOutcome: String?
 
-    init(_ task: AuspexTask, sessions: [SessionKey]? = nil, projectName: String? = nil) {
+    init(
+        _ task: AuspexTask,
+        sessions: [SessionKey]? = nil,
+        projectName: String? = nil,
+        pendingClaims: [TaskClaimRequest] = [],
+        claimOutcome: String? = nil
+    ) {
         self.id = task.id
+        self.version = task.version
         self.shortID = task.shortID
         self.importance = task.importance.rawValue
         self.kind = task.kind?.rawValue
@@ -105,6 +117,35 @@ struct TaskPayload: Encodable {
         self.createdAt = task.createdAt
         self.updatedAt = task.updatedAt
         self.sessions = sessions?.map(\.description)
+        self.pendingClaims = pendingClaims.isEmpty
+            ? nil : pendingClaims.map(TaskClaimRequestPayload.init)
+        self.claimOutcome = claimOutcome
+    }
+}
+
+struct TaskClaimRequestPayload: Encodable {
+    let id: Int64
+    let requester: String
+    let holder: String?
+    let role: String
+    let scope: String?
+    let reason: String?
+    let taskVersion: Int64
+    let status: String
+    let requestedAt: Date
+    let resolvedAt: Date?
+
+    init(_ request: TaskClaimRequest) {
+        self.id = request.id
+        self.requester = request.requester.description
+        self.holder = request.holder?.description
+        self.role = request.role
+        self.scope = request.scope
+        self.reason = request.reason
+        self.taskVersion = request.taskVersion
+        self.status = request.status.rawValue
+        self.requestedAt = request.requestedAt
+        self.resolvedAt = request.resolvedAt
     }
 }
 
@@ -156,6 +197,7 @@ struct TaskSummaryPayload: Encodable {
 
 struct TaskLogPayload: Encodable {
     let taskID: Int64
+    let version: Int64?
     let entries: [Entry]
 
     struct Entry: Encodable {
@@ -179,6 +221,9 @@ struct TaskLogPayload: Encodable {
 struct TaskDetailPayload: Encodable {
     let task: TaskPayload
     let readiness: Readiness
+    let pendingClaims: [TaskClaimRequestPayload]
+    /// Claim/release/finish is an execution-attempt audit, not task identity.
+    let attempts: [Attempt]
     let history: [TaskLogPayload.Entry]
     let sessions: [LinkedSession]
 
@@ -202,6 +247,20 @@ struct TaskDetailPayload: Encodable {
         let linkedAt: Date
         let availability: String
         let session: SessionCapsulePayload?
+    }
+
+    struct Attempt: Encodable {
+        let event: String
+        let session: String?
+        let at: Date
+        let detail: String?
+
+        init(_ entry: AuspexTaskLogEntry) {
+            self.event = entry.kind
+            self.session = entry.actor?.description
+            self.at = entry.timestamp
+            self.detail = entry.message
+        }
     }
 }
 

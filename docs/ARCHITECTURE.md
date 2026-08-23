@@ -484,8 +484,14 @@ The fourth is the task board — `tasks.*`, with `plans.*` as its milestones —
 whose intended caller is whoever *hands work out*: a supervisor files a task
 per worker and puts the id in each brief, so each worker makes one
 `tasks.claim(task_id, role, scope)` call. `tasks.get` joins dependency readiness,
-recent structured history, and linked-session capsules; `tasks.release` is an
-atomic holder-only release and keeps the reason. `sessions.list`,
+recent structured history, execution-attempt events, pending takeover requests,
+and linked-session capsules. Each task carries a monotonic version; protocol-aware
+writers return it as `expected_version`, while omission remains supported for
+older clients. Dependency replacement validates missing nodes, self-edges and
+cycles before touching the graph. A claim conflict records a durable request
+that only the person in the task detail view can approve or reject; release
+never auto-promotes it. `tasks.release` is an atomic holder-only release and
+keeps the reason. `sessions.list`,
 `sessions.get`, `sessions.tree`, `sessions.self` and `peers.status` are
 read-only. Session capsules are deliberately metadata-only: no raw transcript,
 complete assistant prose, argv, source path, or tool output. Activity and

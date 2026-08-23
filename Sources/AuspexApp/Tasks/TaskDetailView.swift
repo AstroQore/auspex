@@ -42,6 +42,7 @@ struct TaskDetailView: View {
                     if unit.isInReview, let result = unit.result { reviewBox(result) }
                     properties
                     if !unit.waitingOn.isEmpty || !unit.dependsOn.isEmpty { dependencies }
+                    if !pendingTakeovers.isEmpty { takeoverRequests }
                     members
                     if unit.origin.taskID != nil {
                         notes
@@ -200,6 +201,7 @@ struct TaskDetailView: View {
     private var properties: some View {
         VStack(alignment: .leading, spacing: 0) {
             property("Status", unit.status.label)
+            if let version = unit.version { property("Version", "v\(version)") }
             property("Importance", unit.importance.label)
             if let kind = unit.kind { property("Kind", kind.label) }
             if let key = unit.projectKey {
@@ -217,6 +219,70 @@ struct TaskDetailView: View {
             }
         }
         .panelChrome()
+    }
+
+    private var pendingTakeovers: [TaskClaimRequest] {
+        guard let taskID = unit.origin.taskID else { return [] }
+        return tasks.pendingClaims(taskID: taskID)
+    }
+
+    /// Claim conflicts wait here for a person. Releasing the current holder
+    /// does not auto-promote anybody; the same explicit decision remains.
+    private var takeoverRequests: some View {
+        section(
+            pendingTakeovers.count == 1 ? "Takeover request" : "Takeover requests"
+        ) {
+            VStack(spacing: 0) {
+                ForEach(pendingTakeovers) { request in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            HarnessBadge(harness: request.requester.harness, size: 16)
+                            Text(request.requester.harness.displayName)
+                                .font(AuspexType.body)
+                                .foregroundStyle(AuspexPalette.text)
+                            Text(String(request.requester.sessionID.prefix(8)))
+                                .font(AuspexType.monoSmall)
+                                .foregroundStyle(AuspexPalette.text3)
+                            Text(request.role)
+                                .font(AuspexType.caption)
+                                .foregroundStyle(AuspexPalette.text2)
+                            if let scope = request.scope {
+                                Text("· \(scope)")
+                                    .font(AuspexType.caption)
+                                    .foregroundStyle(AuspexPalette.text3)
+                            }
+                            Spacer(minLength: 8)
+                            Text(RelativeTimeText.since(request.requestedAt))
+                                .font(AuspexType.monoSmall)
+                                .foregroundStyle(AuspexPalette.text3)
+                        }
+                        if let reason = request.reason {
+                            Text(reason)
+                                .font(AuspexType.body)
+                                .foregroundStyle(AuspexPalette.text2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        HStack(spacing: 8) {
+                            Text("requested at v\(request.taskVersion)")
+                                .font(AuspexType.monoSmall)
+                                .foregroundStyle(AuspexPalette.text3)
+                            Spacer(minLength: 8)
+                            actionButton("Reject", tint: AuspexPalette.text3) {
+                                tasks.resolveTakeover(requestID: request.id, approve: false)
+                            }
+                            actionButton("Approve", tint: AuspexPalette.stateWriting) {
+                                tasks.resolveTakeover(requestID: request.id, approve: true)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    if request.id != pendingTakeovers.last?.id {
+                        Divider().overlay(AuspexPalette.line)
+                    }
+                }
+            }
+            .panelChrome()
+        }
     }
 
     private func property(_ key: String, _ value: String) -> some View {
