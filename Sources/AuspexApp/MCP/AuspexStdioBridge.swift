@@ -51,25 +51,42 @@ enum AuspexStdioBridge {
     /// last-activity timestamp race.
     static func run() -> Int32 {
         let path = MCPStdioBridge.socketPath(config)
+        return run(socketPath: path)
+    }
+
+    /// Injectable descriptors make the real bridge path testable without
+    /// replacing process stdin/stdout or launching AppKit.
+    static func run(
+        socketPath path: String,
+        input: Int32 = STDIN_FILENO,
+        output: Int32 = STDOUT_FILENO,
+        standardError: FileHandle = .standardError
+    ) -> Int32 {
 
         var descriptors: [Int32] = [-1, -1]
         guard pipe(&descriptors) == 0 else {
             // One direct connection remains safely attributable from the
             // kernel roster. With multiple clients the server fails closed.
-            return MCPStdioBridge.run(config, socketPath: path)
+            return MCPStdioBridge.run(
+                config, socketPath: path, input: input, output: output,
+                standardError: standardError
+            )
         }
         let readEnd = descriptors[0]
         let writeEnd = descriptors[1]
 
         let peerPID = getpid()
         let thread = Thread {
-            pumpAttributed(from: STDIN_FILENO, to: writeEnd, peerPID: peerPID)
+            pumpAttributed(from: input, to: writeEnd, peerPID: peerPID)
             close(writeEnd)
         }
         thread.name = "com.astroqore.auspex.mcp.hello"
         thread.start()
 
-        let code = MCPStdioBridge.run(config, socketPath: path, input: readEnd)
+        let code = MCPStdioBridge.run(
+            config, socketPath: path, input: readEnd, output: output,
+            standardError: standardError
+        )
         close(readEnd)
         return code
     }
