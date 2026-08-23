@@ -1,4 +1,5 @@
 import AgentSessionLive
+import Foundation
 
 /// The sessions whose process state can still change the board.
 ///
@@ -8,9 +9,22 @@ import AgentSessionLive
 /// event reactivates its session before the next snapshot, so excluding ended
 /// rows here loses no resurrection signal.
 public enum LivenessCandidates {
-    public static func identities(in board: BoardSnapshot) -> [SessionIdentity] {
+    /// Long enough for many three-second ticks to repair a transient probe,
+    /// bounded so old process-gone history does not become permanent work.
+    public static let recoveryGrace: TimeInterval = 60
+
+    public static func identities(
+        in board: BoardSnapshot,
+        recoveryGrace: TimeInterval = Self.recoveryGrace
+    ) -> [SessionIdentity] {
         board.sessions.compactMap { session in
-            session.state.isEnded ? nil : session.identity
+            if !session.state.isEnded { return session.identity }
+            guard case .ended(let reason) = session.state,
+                  reason == .processGone,
+                  let endedAt = session.endedAt ?? session.lastEventAt,
+                  board.generatedAt.timeIntervalSince(endedAt) <= max(0, recoveryGrace)
+            else { return nil }
+            return session.identity
         }
     }
 }

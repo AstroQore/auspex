@@ -222,11 +222,12 @@ feeds the answers back in through `SessionRegistry.applyPlacements(_:)` and
 `ProcessTable`, whose three-second cache then serves one read per tick instead
 of two.
 
-The liveness loop receives only sessions whose state is not already `ended`.
-Retained history can number in the thousands and cannot become more ended from
-another process probe; a new transcript event reactivates a resumed session
-before the next snapshot. This keeps the three-second tick proportional to
-live/resumable work rather than retention depth.
+The liveness loop receives non-ended sessions plus a bounded 60-second recovery
+window for `.ended(.processGone)`. That one ending is a probe verdict and the
+reducer deliberately lets a later `liveness(true)` undo it; ordinary exited or
+killed sessions, and old process-gone history, cannot benefit from another
+probe. This keeps the three-second tick proportional to live/resumable work
+rather than retention depth without losing transient-failure recovery.
 
 ### What the UI does with both
 

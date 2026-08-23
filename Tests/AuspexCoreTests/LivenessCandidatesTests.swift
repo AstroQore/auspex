@@ -6,7 +6,7 @@ import Testing
 
 @Suite("Liveness candidate scope")
 struct LivenessCandidatesTests {
-    @Test("ended history is never re-probed while live and resumable sessions remain")
+    @Test("only recent reversible process-gone endings remain in the probe set")
     func excludesEndedHistory() {
         var thinking = SessionStateReducer.initialSnapshot(
             identity: Fixtures.identity(key: Fixtures.key(.claudeCode, "thinking"))
@@ -20,12 +20,24 @@ struct LivenessCandidatesTests {
             identity: Fixtures.identity(key: Fixtures.key(.cursor, "ended"))
         )
         ended.state = .ended(reason: .exited)
+        ended.endedAt = Fixtures.date(9)
+        var recentGone = SessionStateReducer.initialSnapshot(
+            identity: Fixtures.identity(key: Fixtures.key(.grokBuild, "recent-gone"))
+        )
+        recentGone.state = .ended(reason: .processGone)
+        recentGone.endedAt = Fixtures.date(-40)
+        var oldGone = SessionStateReducer.initialSnapshot(
+            identity: Fixtures.identity(key: Fixtures.key(.grokBot, "old-gone"))
+        )
+        oldGone.state = .ended(reason: .processGone)
+        oldGone.endedAt = Fixtures.date(-51)
 
         let board = BoardSnapshot(
-            generatedAt: Fixtures.date(10), sessions: [ended, idle, thinking]
+            generatedAt: Fixtures.date(10),
+            sessions: [ended, oldGone, recentGone, idle, thinking]
         )
         let candidates = LivenessCandidates.identities(in: board).map(\.key)
-        #expect(candidates.count == 2)
-        #expect(Set(candidates) == [idle.key, thinking.key])
+        #expect(candidates.count == 3)
+        #expect(Set(candidates) == [idle.key, thinking.key, recentGone.key])
     }
 }
