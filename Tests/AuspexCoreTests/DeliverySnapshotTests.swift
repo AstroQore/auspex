@@ -98,8 +98,14 @@ struct DeliverySnapshotTests {
         let directory = try GitFixtures.makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let runner = ProcessGitCommandRunner()
+        // This test is about the retained byte ceiling, not the deadline. A
+        // loaded GitHub runner can spend more than two seconds starting
+        // `/usr/bin/git`; keep that unrelated scheduling delay from turning
+        // the fixture into an uninitialised repository and masking the thing
+        // the assertions below exercise. Product reads still use their own
+        // 1.5-second bound in `GitDeliveryReader`.
         #expect(runner.run(
-            in: directory, arguments: ["init", "--quiet"], timeout: 2, maxOutputBytes: 1_024
+            in: directory, arguments: ["init", "--quiet"], timeout: 10, maxOutputBytes: 1_024
         ).exitCode == 0)
         for index in 0..<100 {
             try Data("x".utf8).write(to: directory.appendingPathComponent("file-\(index).txt"))
@@ -108,7 +114,7 @@ struct DeliverySnapshotTests {
         let result = runner.run(
             in: directory,
             arguments: ["status", "--porcelain=v1", "--untracked-files=normal"],
-            timeout: 2,
+            timeout: 10,
             maxOutputBytes: 64
         )
 
