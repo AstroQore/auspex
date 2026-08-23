@@ -18,15 +18,13 @@ untagged default items. That asymmetry is what makes previews safe to offer: a
 security fix cut on stable reaches the preview builds without anything special
 being done for them.
 
-> **The feed URL resolves now, and serves nothing yet.** New builds read
+> **The shared feed is live.** New builds read
 > `https://raw.githubusercontent.com/AstroQore/auspex/updates/appcast.xml`.
-> `AstroQore/auspex` used to be private, which meant `raw.githubusercontent.com`
-> would 404 for every user without a token; the repository is public now, so
-> that blocker is gone and no mirror is needed. What is still missing is the
-> `updates` branch itself — nothing has been published to it, so the URL 404s
-> because the file is not there rather than because nobody may read it. The
-> first run of `.github/workflows/publish-update-feed.yml` creates it, and
-> in-app updates start working the moment it does.
+> The machine-managed `updates` branch currently publishes the newest Stable
+> and Dev archives; Stable users see the untagged item, while Dev users see
+> both. Publishing a GitHub Release triggers
+> `.github/workflows/publish-update-feed.yml` to rebuild that branch from the
+> published assets. Do not edit it by hand.
 
 ## The versioning rule
 

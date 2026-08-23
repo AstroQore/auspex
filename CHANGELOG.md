@@ -5,8 +5,8 @@ All notable changes to Auspex are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Auspex is pre-alpha; Dev previews may be published, but there is no Stable
-release yet. `RELEASING.md` describes how one is cut when there is.
+Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
+`RELEASING.md` describes how releases are cut and delivered.
 
 ## [Unreleased]
 
