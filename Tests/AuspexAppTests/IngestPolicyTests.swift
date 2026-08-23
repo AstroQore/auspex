@@ -11,7 +11,7 @@ struct IngestPolicyTests {
         let policy = AppEnvironment.liveIngestConfiguration
         #expect(policy.databaseDebounce == .milliseconds(250))
         #expect(policy.sqlitePollEvery == .seconds(2))
-        #expect(policy.activeWindow == 2 * 60 * 60)
+        #expect(policy.activeWindow == 60 * 60)
         #expect(policy.watcherLatency == 0.1)
     }
 }

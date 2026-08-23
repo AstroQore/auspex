@@ -39,7 +39,7 @@ public final class AppEnvironment {
     /// (presence lock, worker, fresh write) overrides this discovery cutoff,
     /// and a resumed old source is rediscovered by its new filesystem event.
     static let liveIngestConfiguration = IngestConfiguration(
-        activeWindow: 2 * 60 * 60
+        activeWindow: 60 * 60
     )
 
     /// How this launch was asked to behave.

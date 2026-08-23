@@ -233,7 +233,7 @@ actor-owned table; it does not build, sort or tree-index a presentation
 `BoardSnapshot` merely to throw the ended rows away.
 
 The live ingest working set is bounded separately from retained board history.
-Discovery normally tails sources active in the last two hours; adapter-specific
+Discovery normally tails sources active in the last hour; adapter-specific
 evidence such as AntiGravity presence/not-fully-idle and Cursor live workers
 overrides the cutoff, and a resumed old store is rediscovered by its fresh path
 event. Database polling remains at two seconds because an already-sized WAL/
