@@ -32,11 +32,10 @@ and by who spawned them, and a shared task board is exposed over MCP so the
 agents themselves can say what they need.
 
 > **Status: pre-alpha.** It runs, it tails the real stores, and it is used
-> daily by its author. There is no published release yet and no notarized
-> build, and no upgrade path between versions — the database schema still
-> changes. The release and in-app update machinery exists (`RELEASING.md`);
-> nothing has been cut through it. So the Download link above is a promise,
-> and today the answer is two commands:
+> daily by its author. One Dev preview is published; there is no stable or
+> notarized build, and no promised upgrade path between versions — the
+> database schema still changes. Treat Download as an experimental preview,
+> or build the current source with two commands:
 >
 > ```sh
 > git clone https://github.com/AstroQore/auspex.git && cd auspex
@@ -122,10 +121,9 @@ Gatekeeper will ask you to approve the first launch by hand.
 The choice is written to `~/.auspex/settings.json` like every other setting, so
 you can read it, change it, or undo it without the app.
 
-> **Pre-alpha, so this is not live yet.** The update feed lives on a public
-> branch of this repository, and there is no published release to point it at
-> today. Build from source (above) until there is; `RELEASING.md` describes how
-> a release is cut, signed, and published.
+> **Pre-alpha.** The Dev feed currently has a preview; there is no Stable
+> release and no notarization. Build from source when you need the current
+> branch; `RELEASING.md` describes how releases are cut, signed, and published.
 
 ## It follows your Mac
 

@@ -30,10 +30,9 @@ Codex、ChatGPT Work、Cursor、Grok Build、Grok Bot、AntiGravity —— 并�
 会话按项目和派生关系分组；一块共享的任务看板通过 MCP 对外暴露，agent 自己也能说
 出它需要什么。
 
-> **状态：pre-alpha。** 它能跑，它在 tail 真实的存储，作者每天在用。但还没有正式
-> 发布过版本，没有公证过的构建，版本之间也没有升级路径 —— 数据库 schema 还在变。
-> 发布流程和应用内更新的机制已经就位（见 `RELEASING.md`），只是还没有真正走过一次。
-> 所以上面那个「下载」链接目前是一句承诺，今天的答案是两条命令：
+> **状态：pre-alpha。** 它能跑，它在 tail 真实的存储，作者每天在用。现在已有一个
+> Dev 预览版，但还没有 Stable 或公证过的构建，版本之间也不承诺升级路径 —— 数据库
+> schema 还在变。把「下载」当作实验预览；要用当前源码则是两条命令：
 >
 > ```sh
 > git clone https://github.com/AstroQore/auspex.git && cd auspex
@@ -111,9 +110,9 @@ ad-hoc 签名的阶段这一点尤其重要，Gatekeeper 会让你手动放行�
 这个选择和其它设置一样写在 `~/.auspex/settings.json` 里，你可以直接读它、改它，或者
 不开 app 就撤销它。
 
-> **还在 pre-alpha，所以这条路还没通。** 更新 feed 放在本仓库的一个公开分支上，目前
-> 还没有已发布的版本可以指过去。在那之前请从源码构建（见上）；`RELEASING.md` 写了一
-> 次发布是怎么切出来、签名并发布的。
+> **仍是 pre-alpha。** Dev feed 里已有预览版，但没有 Stable，也没有 notarization。
+> 需要当前分支时请从源码构建（见上）；`RELEASING.md` 写了一次发布是怎么切出来、签名
+> 并发布的。
 
 ## 跟随系统外观
 
