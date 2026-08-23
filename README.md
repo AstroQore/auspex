@@ -253,22 +253,32 @@ args = ["--mcp-stdio"]
   goes by. `tasks.complete` files a `done` on its own, so a worker never has to
   say it twice.
 - **`auspex.report(focus, progress)`** — replaces Auspex's inference about what
-  a session is doing with the session's own sentence.
+  a session is doing with the session's own sentence. Session reads return that
+  persisted focus, progress, timestamp, and whether later prose superseded it.
+- **`overview.get(project?)`** — the compact situation report: this session,
+  Doing, Blocked, Review, unclaimed ready work, orphaned claims, and every
+  session explicitly needing the person. With no argument it uses the caller's
+  current project.
 - **`tasks.*`** — the shared task board. **Every task belongs to a project**,
   and the project is resolved from the calling session, so an agent that files
   one never has to say where it is working: `tasks.create` lands in the same
   project the board already draws that agent's card under. A supervisor files
   one task per worker and puts the id in each brief; each worker calls
   `tasks.claim(task_id, role, scope)`, `tasks.update` when it is blocked, and
-  `tasks.complete` when it is done.
+  `tasks.complete` when it is done. `tasks.get` returns dependency readiness,
+  recent history, and safe linked-session capsules; `tasks.release` lets only
+  the current holder give work back with a reason.
 - **`plans.*`** — milestones: an optional heading *inside* a project, for a
   decomposition worth naming. Kept under the older name so briefs already in
   flight keep working.
-- **`sessions.self` / `sessions.list` / `sessions.tree` / `peers.status`** —
+- **`sessions.self` / `sessions.list` / `sessions.get` / `sessions.tree` /
+  `peers.status`** —
   read-only. An agent never has to know its own session id: Auspex resolves it
-  from the process on the other end of the socket.
+  from the process on the other end of the socket. `sessions.list` can be
+  project-filtered; `sessions.get` returns structured metadata, task links, and
+  self-reports, never raw transcript, full assistant text, argv, or tool output.
 
-Sixteen tools in all. `auspex --mcp-stdio` is a thin bridge for clients that
+Twenty tools in all. `auspex --mcp-stdio` is a thin bridge for clients that
 speak stdio — it connects to the socket and pumps bytes, and exits 1 with one
 line when Auspex is not running, so the protocol is enrichment and never a
 dependency. The same registration installs **hooks** where a harness has them:
@@ -435,7 +445,8 @@ Eight lines, and then the long version.
 6. Everything that persists goes through `AuspexPaths` into **one store under
    `~/.auspex/`** (mode 0700) — the SQLite database, the settings, the backups.
 7. An **MCP server** on `~/.auspex/mcp.sock` lets a session say what inference
-   cannot see: that it is blocked, that it is done, what it is working on.
+   cannot see and exposes safe project, task, and peer context alongside the
+   shared task board.
 8. **Hooks are opt-in and fenced.** Auspex writes them only when you click, only
    inside a region it owns, only after a backup, and can undo them exactly.
 

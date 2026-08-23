@@ -36,10 +36,10 @@ public protocol AuspexMCPHost: Sendable {
     /// here is what stands in for that label: the transport records activity
     /// on the connection immediately before dispatching its line, so the
     /// caller is the head of this list — exactly, unless two clients are
-    /// answered in the same instant. `sessions.self` says which pid it used,
-    /// and every tool that acts as a session takes an explicit `session_id`
-    /// override, so a wrong guess is visible and correctable rather than
-    /// silent.
+    /// answered in the same instant. The server deliberately uses only that
+    /// head; walking on to another connected process could turn an unknown
+    /// caller into the wrong agent. `session_id` can corroborate this process
+    /// evidence but never override it.
     func clientPIDs() async -> [pid_t]
 
     /// An agent called for the person. The app posts the notification and

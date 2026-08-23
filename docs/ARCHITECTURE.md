@@ -463,7 +463,7 @@ rather than a convention.
 
 ## MCP
 
-Auspex exposes itself to agents over MCP: sixteen tools, in three layers.
+Auspex exposes itself to agents over MCP: twenty tools, in four layers.
 
 The first is the one that matters. `auspex.notify(kind, message)` lets a
 session say it needs the person — a question, a review, a blocker, or finished
@@ -475,11 +475,22 @@ question at all: Claude Code and Cursor write no permission state to disk, and
 The second is `auspex.report(focus, progress)`, which replaces Auspex's
 inference about what a session is doing with the session's own sentence.
 
-The third is the task board — `tasks.*`, with `plans.*` as its milestones —
+The third is `overview.get`: one compact current-project read with the caller,
+Doing, Blocked, Review, unclaimed ready work, orphaned claims, and sessions
+explicitly needing a person. It is the normal first call for an agent joining a
+project whose work is already in flight.
+
+The fourth is the task board — `tasks.*`, with `plans.*` as its milestones —
 whose intended caller is whoever *hands work out*: a supervisor files a task
 per worker and puts the id in each brief, so each worker makes one
-`tasks.claim(task_id, role, scope)` call. `sessions.list`, `sessions.tree`,
-`sessions.self` and `peers.status` are read-only.
+`tasks.claim(task_id, role, scope)` call. `tasks.get` joins dependency readiness,
+recent structured history, and linked-session capsules; `tasks.release` is an
+atomic holder-only release and keeps the reason. `sessions.list`,
+`sessions.get`, `sessions.tree`, `sessions.self` and `peers.status` are
+read-only. Session capsules are deliberately metadata-only: no raw transcript,
+complete assistant prose, argv, source path, or tool output. Activity and
+project placement are marked `inferred`, agent reports `self_reported`, and
+harness attention `observed` so a reader can distinguish the evidence.
 
 **Projects contain tasks, and the project is resolved rather than asked for.**
 `tasks.create` with no `project` argument files the task under the project of
@@ -536,19 +547,24 @@ ways: a person clicked, only inside a region Auspex owns, backed up into
 bytes somebody else wrote are never re-serialised. See `AGENTS.md` § 6 for all
 five and for what "a region Auspex owns" means in a hook table.
 
-**Identity.** An agent never has to know its own session id. The kernel
-reports the socket's peer pid; `MCPSelfResolver` walks up from it until it
-finds a process the board already owns, or one of the session-id environment
-variables harnesses hand down to everything they spawn. `sessions.self` says
-which pid it used and what convinced it, and every tool that acts *as* a
-session takes an explicit `session_id` override — so a wrong guess is visible
-rather than silent.
+**Identity.** An agent never has to know its own session id. The kernel reports
+the socket's peer pid; `MCPSelfResolver` walks up from it until it finds a
+process the board already owns, or one of the session-id environment variables
+harnesses hand down to everything they spawn. The kit's current line-handler
+API does not carry a connection id, so the host orders peers by activity
+immediately before dispatch and the server trusts only the head. It never walks
+on to some other connected client when that process is unresolvable.
+`sessions.self` says which pid it used and what convinced it. An optional
+`session_id` is only a corroborating hint: it must agree with the process
+evidence and cannot identify a caller by itself. Anonymous task/milestone
+creation remains possible (explicit project or Scratch); writes that author
+session state or history fail closed when the process cannot be attributed.
 
 **Untrusted input.** Tool arguments are the one place a model writes straight
 into the database and onto the screen, so `MCPTextSanitizer` strips control
 characters, bidirectional overrides and zero-width formatters, collapses
 whitespace and caps length before any value reaches the store. Unknown
-argument keys are refused rather than ignored. A demo replay refuses the nine
+argument keys are refused rather than ignored. A demo replay refuses the ten
 writing tools by name.
 
 ## Non-Goals

@@ -470,9 +470,26 @@ public struct TaskRepository: Sendable {
 
     /// Releases a claim without closing the task — the honest thing for a
     /// worker that is giving up, as opposed to one that finished.
+    ///
+    /// The UI keeps `requireHolder` false: a person has to be able to clear an
+    /// orphan whose process is gone. MCP passes true, and the holder check and
+    /// release happen in this one transaction so another claimer cannot slip in
+    /// between a read and the write.
     @discardableResult
-    public func releaseTask(id: Int64, by session: SessionKey?, now: Date = Date()) throws -> AuspexTask {
+    public func releaseTask(
+        id: Int64,
+        by session: SessionKey?,
+        reason: String? = nil,
+        requireHolder: Bool = false,
+        now: Date = Date()
+    ) throws -> AuspexTask {
         try dbWriter.write { db in
+            guard let existing = try Self.task(id: id, in: db) else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            if requireHolder, existing.claimedBy != session {
+                throw TaskLedgerError.notClaimHolder(existing.claimedBy?.description)
+            }
             try db.execute(
                 sql: """
                     UPDATE tasks
@@ -483,7 +500,10 @@ public struct TaskRepository: Sendable {
                     """,
                 arguments: [now.timeIntervalSince1970, id]
             )
-            try Self.appendLog(taskID: id, actor: session, kind: "released", message: nil, at: now, in: db)
+            try Self.appendLog(
+                taskID: id, actor: session, kind: "released", message: reason, at: now, in: db
+            )
+            try Self.touchPlan(existing.planID, at: now, in: db)
             guard let task = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
@@ -1047,6 +1067,7 @@ public struct TaskProjectCounts: Hashable, Sendable {
 public enum TaskLedgerError: Error, Sendable, Equatable, CustomStringConvertible {
     case notFound(String)
     case alreadyClaimed(String)
+    case notClaimHolder(String?)
     /// The board is read-only in this process — a demo replay.
     case readOnly
 
@@ -1054,6 +1075,8 @@ public enum TaskLedgerError: Error, Sendable, Equatable, CustomStringConvertible
         switch self {
         case let .notFound(what): "No such \(what)."
         case let .alreadyClaimed(holder): "Already claimed by \(holder)."
+        case let .notClaimHolder(holder?): "Only \(holder) can release this claim."
+        case .notClaimHolder(nil): "This task has no claim for this session to release."
         case .readOnly: "This Auspex is replaying a demo board and will not write to it."
         }
     }

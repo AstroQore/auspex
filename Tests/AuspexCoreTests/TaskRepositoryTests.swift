@@ -208,6 +208,29 @@ struct TaskRepositoryTests {
         #expect(released.claimRole == nil)
     }
 
+    @Test("a holder-only release is atomic and records why")
+    func holderOnlyRelease() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "worker-1")
+        let stranger = Fixtures.key(.claudeCode, "worker-2")
+        let task = try repository.createTask(title: "One holder")
+        try repository.claimTask(id: task.id, role: "implementer", scope: nil, by: holder)
+
+        #expect(throws: TaskLedgerError.notClaimHolder(holder.description)) {
+            try repository.releaseTask(
+                id: task.id, by: stranger, reason: "not mine", requireHolder: true
+            )
+        }
+        #expect(try repository.task(id: task.id)?.claimedBy == holder)
+
+        let released = try repository.releaseTask(
+            id: task.id, by: holder, reason: "handoff to the migration owner",
+            requireHolder: true
+        )
+        #expect(released.claimedBy == nil)
+        #expect(try repository.log(taskID: task.id).last?.message == "handoff to the migration owner")
+    }
+
     @Test("completing a task records what was finished")
     func completeRecordsResult() throws {
         let repository = try makeRepository()
