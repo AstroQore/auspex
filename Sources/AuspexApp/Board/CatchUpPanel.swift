@@ -82,6 +82,9 @@ struct CatchUpPanel: View {
         .frame(width: 720)
         .frame(minHeight: 420, idealHeight: 620, maxHeight: 720)
         .background(AuspexPalette.bg0)
+        // Every interactive control here is drawn by Auspex. Keyboard focus
+        // uses the style's thin accent hairline, never AppKit's blue block.
+        .auspexControlFocus()
     }
 
     private var header: some View {
@@ -201,7 +204,7 @@ private struct CapsuleRow: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex(cornerRadius: 9))
     }
 
     private var phaseLabel: String {
@@ -273,7 +276,7 @@ private struct WatchSignalRow: View {
                     .fill(AuspexPalette.stateStale.opacity(0.06))
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.auspex(cornerRadius: 8))
     }
 
     private var label: String {

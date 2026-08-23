@@ -85,7 +85,6 @@ struct IgnoreRuleSheet: View {
                     if let kind { catalog.add(rule: IgnoreRule(kind: kind)) }
                     onClose()
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(kind == nil)
             }
         }

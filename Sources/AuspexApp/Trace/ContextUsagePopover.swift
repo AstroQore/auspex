@@ -52,6 +52,8 @@ struct ContextHeaderGauge: View {
             ContextUsagePopover(
                 gauge: gauge, tokensOut: tokensOut, composition: composition
             )
+            .auspexSystemControlFocus()
+            .auspexNoInitialFocus()
         }
     }
 

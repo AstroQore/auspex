@@ -61,9 +61,16 @@ struct ProjectsPageView: View {
         .background(BoardSurfaceBackground())
         .sheet(isPresented: $isCreating) {
             NewProjectSheet(catalog: catalog) { isCreating = false }
+                // Presented from the hand-drawn board column, which disables
+                // AppKit's effect. This form restores native Tab feedback,
+                // then clears only the automatic initial responder.
+                .auspexSystemControlFocus()
+                .auspexNoInitialFocus()
         }
         .sheet(isPresented: $isImporting) {
             ImportProjectsSheet(catalog: catalog) { isImporting = false }
+                .auspexSystemControlFocus()
+                .auspexNoInitialFocus()
         }
     }
 

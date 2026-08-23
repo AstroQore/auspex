@@ -73,6 +73,7 @@ struct RootView: View {
             IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
                 environment.ignoreDraft = nil
             }
+            .auspexNoInitialFocus()
         }
         .modifier(KillConfirmation(control: environment.control))
         // Over everything, and dismissed by clicking anywhere else. A palette
@@ -105,6 +106,7 @@ struct RootView: View {
                 socketPath: environment.mcp?.socketPath,
                 onClose: { environment.setup.markShown() }
             )
+            .auspexNoInitialFocus()
         }
         .sheet(isPresented: $model.isCatchUpOpen) {
             CatchUpPanel(
@@ -126,6 +128,7 @@ struct RootView: View {
                 }
             )
             .auspexAppearance(environment.appearance)
+            .auspexNoInitialFocus()
         }
         .task { environment.start() }
         .task { await clock.run() }

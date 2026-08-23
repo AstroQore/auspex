@@ -37,6 +37,9 @@ struct AuspexApp: App {
             RootView()
                 .environment(environment)
                 .frame(minWidth: 960, minHeight: 560)
+                // AppKit otherwise chooses the first compact action in the
+                // key-view loop before the person has navigated anywhere.
+                .auspexNoInitialFocus()
                 // The office reads character packages out of
                 // `~/.auspex/characters/`, and a person dropping one in expects
                 // the room to change, not to be told to relaunch.
@@ -139,11 +142,13 @@ struct AuspexApp: App {
             // the main one, so a person who set Auspex to dark on a light Mac
             // would otherwise open a light Settings window to change it in.
             .auspexAppearance(environment.appearance)
+            .auspexNoInitialFocus()
         }
 
         MenuBarExtra {
             MenuBarContent(environment: environment)
                 .auspexAppearance(environment.appearance)
+                .auspexNoInitialFocus()
         } label: {
             MenuBarLabel(board: environment.board)
                 // The menu bar exists even when a login-item launch suppresses

@@ -896,6 +896,8 @@ private struct FamilyChip: View {
         )
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
             list
+                .auspexSystemControlFocus()
+                .auspexNoInitialFocus()
         }
     }
 

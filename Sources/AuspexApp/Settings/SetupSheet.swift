@@ -124,7 +124,6 @@ struct SetupSheet: View {
                         onClose()
                     }
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(model.isWorking)
             }
         }
