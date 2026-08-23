@@ -14,7 +14,10 @@ struct TaskCapsuleTests {
         state: SessionState = .thinking,
         activity: String = "Thinking",
         reported: String? = nil,
+        reportedAt: TimeInterval? = nil,
         reply: String? = nil,
+        turnEndedAt: TimeInterval? = nil,
+        notice: BoardRow.RowNotice? = nil,
         stale: Bool = false,
         attention: AttentionState = .none,
         at: TimeInterval = 50
@@ -44,8 +47,11 @@ struct TaskCapsuleTests {
             depth: 0,
             assignedTask: "Build catch-up",
             latestAssistant: reply,
+            lastTurnEndedAt: turnEndedAt.map(Fixtures.date),
             attention: attention,
-            reportedFocus: reported
+            notice: notice,
+            reportedFocus: reported,
+            reportedFocusAt: reportedAt.map(Fixtures.date)
         )
     }
 
@@ -134,6 +140,74 @@ struct TaskCapsuleTests {
             units: [old], since: Fixtures.date(30), generatedAt: Fixtures.date(100)
         )
         #expect(snapshot.items.isEmpty)
+    }
+
+    @Test("tool and token churn alone is not a material catch-up change")
+    func noisyEventIsNotMaterial() {
+        let noisy = unit(
+            lead: row(
+                state: .toolCalling(name: "swift test"),
+                activity: "swift test --filter CatchUp",
+                at: 80
+            ),
+            created: 5,
+            updated: 10
+        )
+        let snapshot = CatchUpSnapshot(
+            units: [noisy], since: Fixtures.date(30), generatedAt: Fixtures.date(100)
+        )
+        #expect(snapshot.items.isEmpty)
+    }
+
+    @Test("reports and turn outcomes are material catch-up changes")
+    func semanticSessionChangesAreMaterial() {
+        let report = unit(
+            id: 1,
+            lead: row(reported: "Checking the archive", reportedAt: 70, at: 90),
+            created: 5,
+            updated: 10
+        )
+        let outcome = unit(
+            id: 2,
+            lead: row(reply: "The archive passed", turnEndedAt: 75, at: 90),
+            created: 5,
+            updated: 10
+        )
+        let snapshot = CatchUpSnapshot(
+            units: [report, outcome], since: Fixtures.date(30), generatedAt: Fixtures.date(100)
+        )
+        #expect(snapshot.items.map(\.id) == ["task:2", "task:1"])
+        #expect(snapshot.items.map(\.capsule.changedAt) == [Fixtures.date(75), Fixtures.date(70)])
+    }
+
+    @Test("activity text does not invalidate an unchanged catch-up snapshot")
+    func activityTextDoesNotInvalidateSnapshot() {
+        let first = CatchUpSnapshot(
+            units: [unit(
+                status: .review,
+                lead: row(activity: "Reading", at: 20),
+                created: 5,
+                updated: 10
+            )],
+            since: Fixtures.date(30),
+            generatedAt: Fixtures.date(100)
+        )
+        let second = CatchUpSnapshot(
+            units: [unit(
+                status: .review,
+                lead: row(
+                    state: .toolCalling(name: "Bash"),
+                    activity: "Bash",
+                    at: 90
+                ),
+                created: 5,
+                updated: 10
+            )],
+            since: Fixtures.date(30),
+            generatedAt: Fixtures.date(110)
+        )
+        #expect(first == second)
+        #expect(first.items.first?.capsule.current != second.items.first?.capsule.current)
     }
 
     @Test("dependency and orphan messages do not invent progress")

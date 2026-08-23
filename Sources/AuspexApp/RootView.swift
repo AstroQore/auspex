@@ -118,7 +118,8 @@ struct RootView: View {
                     section = .live
                     model.isCatchUpOpen = false
                 },
-                onMarkCaughtUp: { date in
+                onMarkCaughtUp: {
+                    let date = Date()
                     environment.catalog.markCaughtUp(at: date)
                     model.setCatchUpSince(date)
                     model.isCatchUpOpen = false

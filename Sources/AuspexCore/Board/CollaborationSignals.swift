@@ -63,16 +63,6 @@ public enum CollaborationSignals {
         signals.reserveCapacity(units.count)
 
         for unit in units {
-            if unit.isClaimOrphaned {
-                signals.append(WatchSignal(
-                    id: "orphan:\(unit.id)",
-                    kind: .orphanedClaim,
-                    confidence: .high,
-                    message: "The claiming session ended before the task was finished.",
-                    unitIDs: [unit.id],
-                    sessionKeys: unit.claim.map { [$0.session] } ?? []
-                ))
-            }
             for row in unit.members where !row.isEnded {
                 if row.isStale {
                     signals.append(WatchSignal(
@@ -109,8 +99,26 @@ public enum CollaborationSignals {
             }
         }
 
-        signals.append(contentsOf: collisions(units: units, key: \.directory, kind: .sharedDirectory))
-        signals.append(contentsOf: collisions(units: units, key: \.branch, kind: .sharedBranch))
+        signals.append(contentsOf: collisions(
+            units: units,
+            kind: .sharedDirectory,
+            grouping: { _, row in
+                guard let directory = clean(row.directory) else { return nil }
+                return CollisionKey(identity: directory, display: directory)
+            }
+        ))
+        signals.append(contentsOf: collisions(
+            units: units,
+            kind: .sharedBranch,
+            grouping: { unit, row in
+                guard let project = clean(unit.projectKey),
+                      let branch = clean(row.branch) else { return nil }
+                return CollisionKey(
+                    identity: project + "\u{1F}" + branch,
+                    display: branch
+                )
+            }
+        ))
         return signals.sorted { lhs, rhs in
             let left = signalRank(lhs.kind)
             let right = signalRank(rhs.kind)
@@ -119,38 +127,48 @@ public enum CollaborationSignals {
         }
     }
 
+    private struct CollisionKey: Hashable {
+        let identity: String
+        let display: String
+    }
+
     private static func collisions(
         units: [TaskUnit],
-        key: KeyPath<BoardRow, String?>,
-        kind: WatchSignal.Kind
+        kind: WatchSignal.Kind,
+        grouping: (TaskUnit, BoardRow) -> CollisionKey?
     ) -> [WatchSignal] {
         struct Member {
             let unitID: String
             let row: BoardRow
         }
-        var groups: [String: [Member]] = [:]
+        var groups: [CollisionKey: [Member]] = [:]
         for unit in units where unit.isOpen {
             for row in unit.members where !row.isEnded {
-                guard let value = row[keyPath: key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !value.isEmpty else { continue }
-                groups[value, default: []].append(Member(unitID: unit.id, row: row))
+                guard let key = grouping(unit, row) else { continue }
+                groups[key, default: []].append(Member(unitID: unit.id, row: row))
             }
         }
 
-        return groups.compactMap { value, members in
+        return groups.compactMap { key, members in
             let unitIDs = Array(Set(members.map(\.unitID))).sorted()
             guard unitIDs.count > 1 else { return nil }
             let sessions = members.map(\.row.key).sorted { $0.description < $1.description }
             let noun = kind == .sharedDirectory ? "working directory" : "branch"
             return WatchSignal(
-                id: "\(kind.rawValue):\(stableKey(value))",
+                id: "\(kind.rawValue):\(stableKey(key.identity))",
                 kind: kind,
                 confidence: .high,
-                message: "\(unitIDs.count) tasks share the same \(noun): \(value)",
+                message: "\(unitIDs.count) tasks share the same \(noun): \(key.display)",
                 unitIDs: unitIDs,
                 sessionKeys: sessions
             )
         }
+    }
+
+    private static func clean(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     private static func stableKey(_ value: String) -> String {

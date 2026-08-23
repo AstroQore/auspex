@@ -43,13 +43,18 @@ struct CollaborationSignalsTests {
         )
     }
 
-    private func unit(_ id: Int64, row: BoardRow, orphaned: Bool = false) -> TaskUnit {
+    private func unit(
+        _ id: Int64,
+        row: BoardRow,
+        orphaned: Bool = false,
+        projectKey: String = "/Users/example/Code/auspex"
+    ) -> TaskUnit {
         TaskUnit(
             id: "task:\(id)",
             shortID: "AUX-\(id)",
             origin: .task(id),
             promotionKey: "task:\(id)",
-            projectKey: "/Users/example/Code/auspex",
+            projectKey: projectKey,
             title: "Task \(id)",
             status: .doing,
             isClaimOrphaned: orphaned,
@@ -91,7 +96,7 @@ struct CollaborationSignalsTests {
         #expect(CollaborationSignals.derive(units: [unit], now: Fixtures.date(1_000)).isEmpty)
     }
 
-    @Test("stale, long tool, context, and orphan signals stay outside attention")
+    @Test("stale, long tool, and context signals stay outside attention")
     func localWatchSignals() {
         let context = ContextGauge(
             used: 190, window: 200, cached: nil, isDerived: false,
@@ -106,10 +111,19 @@ struct CollaborationSignalsTests {
             now: Fixtures.date(600),
             longToolAfter: 300
         )
-        #expect(Set(signals.map(\.kind)) == [
-            .orphanedClaim, .staleSession, .longTool, .contextPressure
-        ])
+        #expect(Set(signals.map(\.kind)) == [.staleSession, .longTool, .contextPressure])
         #expect(lead.attention == .none)
+    }
+
+    @Test("an orphaned claim appears only in the human queue")
+    func orphanIsNotDuplicatedAsWatchSignal() {
+        let orphan = unit(1, row: row("lead", directory: nil), orphaned: true)
+        let queue = HumanWorkQueue(units: [orphan])
+        let signals = CollaborationSignals.derive(
+            units: [orphan], now: Fixtures.date(1_000)
+        )
+        #expect(queue.items.map(\.reason) == [.orphanedClaim])
+        #expect(!signals.contains { $0.kind == .orphanedClaim })
     }
 
     @Test("same branch in different directories is still visible")
@@ -122,5 +136,19 @@ struct CollaborationSignalsTests {
         )
         #expect(signals.contains { $0.kind == .sharedBranch })
         #expect(!signals.contains { $0.kind == .sharedDirectory })
+    }
+
+    @Test("the same branch name in different projects is not a collision")
+    func branchNamesAreScopedToProject() {
+        let first = row("one", directory: "~/first", branch: "main")
+        let second = row("two", directory: "~/second", branch: "main")
+        let signals = CollaborationSignals.derive(
+            units: [
+                unit(1, row: first, projectKey: "/Users/example/Code/first"),
+                unit(2, row: second, projectKey: "/Users/example/Code/second"),
+            ],
+            now: Fixtures.date(1_000)
+        )
+        #expect(!signals.contains { $0.kind == .sharedBranch })
     }
 }

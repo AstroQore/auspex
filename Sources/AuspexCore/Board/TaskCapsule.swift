@@ -153,9 +153,14 @@ public struct TaskCapsule: Identifiable, Sendable, Equatable {
     }
 
     private static func changedAt(_ unit: TaskUnit) -> Date? {
-        [unit.lastEventAt, unit.updatedAt, unit.lead.notice?.at]
-            .compactMap { $0 }
-            .max()
+        var candidates = [unit.createdAt, unit.updatedAt, unit.endedAt]
+        candidates.reserveCapacity(3 + unit.members.count * 3)
+        for member in unit.members {
+            candidates.append(member.reportedFocusAt)
+            candidates.append(member.notice?.at)
+            candidates.append(member.lastTurnEndedAt)
+        }
+        return candidates.compactMap { $0 }.max()
     }
 
     private static func clean(_ text: String?) -> String? {
@@ -230,10 +235,24 @@ public struct CatchUpSnapshot: Sendable, Equatable {
     public var review: Int { items.count { $0.kind == .review } }
     public var changed: Int { items.count - needsYou - review }
 
-    /// `generatedAt` is a cursor offered to an explicit "Mark caught up"
-    /// gesture, not something the window draws. A clock tick with identical
-    /// items must remain a repeat frame and keep the previous snapshot.
+    /// `generatedAt` records when this value was derived. It is deliberately
+    /// not a cursor for the person's "Mark caught up" gesture: reconciliation
+    /// may retain an equal prior snapshot, so that gesture must sample a fresh
+    /// clock at the instant of the click.
+    ///
+    /// Equality follows only the semantic revision that decides whether a row
+    /// belongs in the inbox. Observed activity text can change on every tool
+    /// event; retaining the old snapshot until a report, notice, turn outcome,
+    /// task edit, or terminal transition arrives keeps that churn from
+    /// invalidating the header.
     public static func == (lhs: CatchUpSnapshot, rhs: CatchUpSnapshot) -> Bool {
-        lhs.since == rhs.since && lhs.items == rhs.items
+        guard lhs.since == rhs.since, lhs.items.count == rhs.items.count else {
+            return false
+        }
+        return zip(lhs.items, rhs.items).allSatisfy { left, right in
+            left.id == right.id
+                && left.kind == right.kind
+                && left.capsule.changedAt == right.capsule.changedAt
+        }
     }
 }

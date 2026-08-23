@@ -9,7 +9,7 @@ import SwiftUI
 struct CatchUpPanel: View {
     @Bindable var model: LiveBoardModel
     let onOpen: (String, SessionKey) -> Void
-    let onMarkCaughtUp: (Date) -> Void
+    let onMarkCaughtUp: () -> Void
 
     private var queueIDs: Set<String> { Set(model.humanWorkQueue.items.map(\.id)) }
     private var otherChanges: [CatchUpSnapshot.Item] {
@@ -92,13 +92,13 @@ struct CatchUpPanel: View {
                 Text("Catch up")
                     .font(AuspexType.paneTitle)
                     .foregroundStyle(AuspexPalette.text)
-                Text("Changes since (model.catchUp.since, style: .relative)")
+                Text("Changes since \(model.catchUp.since, style: .relative)")
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
             }
             Spacer(minLength: 8)
             Button("Mark caught up") {
-                onMarkCaughtUp(model.catchUp.generatedAt)
+                onMarkCaughtUp()
             }
             .buttonStyle(.auspex)
             Button("Done") { model.isCatchUpOpen = false }
