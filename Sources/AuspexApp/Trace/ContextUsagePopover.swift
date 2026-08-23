@@ -46,12 +46,15 @@ struct ContextHeaderGauge: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .auspexSystemControlFocus()
         .help(gauge.helpText)
         .accessibilityLabel(gauge.accessibilityLabel)
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ContextUsagePopover(
                 gauge: gauge, tokensOut: tokensOut, composition: composition
             )
+            .auspexSystemControlFocus()
+            .auspexNoInitialFocus()
         }
     }
 

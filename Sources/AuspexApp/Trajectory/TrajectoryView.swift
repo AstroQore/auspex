@@ -284,6 +284,7 @@ private struct TrajectoryBar: View {
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text)
+                    .auspexSystemControlFocus()
             }
         }
         .padding(.horizontal, 9)
@@ -390,6 +391,7 @@ private struct TrajectoryFactsBar: View {
                     model.query = ""
                 }
                 .buttonStyle(.link)
+                .auspexSystemControlFocus()
                 .font(AuspexType.caption)
             }
         }
@@ -475,6 +477,7 @@ private struct TrajectoryStepList: View {
                     model.query = ""
                 }
                 .buttonStyle(.link)
+                .auspexSystemControlFocus()
             }
         }
         .frame(maxWidth: .infinity)

@@ -239,6 +239,7 @@ struct CommandPalette: View {
                 .textFieldStyle(.plain)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text)
+                .auspexSystemControlFocus()
                 .focused($isFocused)
                 .onSubmit { run(items.indices.contains(selection) ? items[selection] : nil) }
                 .onKeyPress(.downArrow) {

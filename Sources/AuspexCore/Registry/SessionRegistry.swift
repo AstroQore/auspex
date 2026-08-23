@@ -211,6 +211,21 @@ public actor SessionRegistry {
         snapshots[key]
     }
 
+    /// Liveness needs identities, not a presentation frame. Reading directly
+    /// from the actor-owned table avoids sorting thousands of retained rows,
+    /// rebuilding their tree, and then immediately discarding ended history
+    /// every three seconds.
+    public func livenessIdentities(
+        now: Date = Date(),
+        recoveryGrace: TimeInterval = LivenessCandidates.recoveryGrace
+    ) -> [SessionIdentity] {
+        LivenessCandidates.identities(
+            in: snapshots.values,
+            now: now,
+            recoveryGrace: recoveryGrace
+        )
+    }
+
     // MARK: - Ingest
 
     /// Applies one event: fold, buffer, and schedule.

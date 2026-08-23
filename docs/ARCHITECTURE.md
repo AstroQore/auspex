@@ -222,6 +222,24 @@ feeds the answers back in through `SessionRegistry.applyPlacements(_:)` and
 `ProcessTable`, whose three-second cache then serves one read per tick instead
 of two.
 
+The liveness loop receives non-ended sessions plus a bounded 60-second recovery
+window for `.ended(.processGone)`. That one ending is a probe verdict and the
+reducer deliberately lets a later `liveness(true)` undo it; ordinary exited or
+killed sessions, and old process-gone history, cannot benefit from another
+probe. This keeps the three-second tick proportional to live/resumable work
+rather than retention depth without losing transient-failure recovery.
+`SessionRegistry.livenessIdentities()` reads that subset directly from the
+actor-owned table; it does not build, sort or tree-index a presentation
+`BoardSnapshot` merely to throw the ended rows away.
+
+The live ingest working set is bounded separately from retained board history.
+Discovery normally tails sources active in the last hour; adapter-specific
+evidence such as AntiGravity presence/not-fully-idle and Cursor live workers
+overrides the cutoff, and a resumed old store is rediscovered by its fresh path
+event. Database polling remains at two seconds because an already-sized WAL/
+SHM mmap write is not guaranteed to yield a usable FSEvent. The optimization
+removes dormant tailers rather than delaying active ones.
+
 ### What the UI does with both
 
 Neither axis is a view's to compute. `ProjectTree` and `BoardGrouping` are in
@@ -463,7 +481,7 @@ rather than a convention.
 
 ## MCP
 
-Auspex exposes itself to agents over MCP: sixteen tools, in three layers.
+Auspex exposes itself to agents over MCP: twenty tools, in four layers.
 
 The first is the one that matters. `auspex.notify(kind, message)` lets a
 session say it needs the person — a question, a review, a blocker, or finished
@@ -475,11 +493,34 @@ question at all: Claude Code and Cursor write no permission state to disk, and
 The second is `auspex.report(focus, progress)`, which replaces Auspex's
 inference about what a session is doing with the session's own sentence.
 
-The third is the task board — `tasks.*`, with `plans.*` as its milestones —
+The third is `overview.get`: one compact current-project read with the caller,
+Doing, Blocked, Review, unclaimed ready work, orphaned claims, and sessions
+explicitly needing a person. It is the normal first call for an agent joining a
+project whose work is already in flight.
+
+The fourth is the task board — `tasks.*`, with `plans.*` as its milestones —
 whose intended caller is whoever *hands work out*: a supervisor files a task
 per worker and puts the id in each brief, so each worker makes one
-`tasks.claim(task_id, role, scope)` call. `sessions.list`, `sessions.tree`,
-`sessions.self` and `peers.status` are read-only.
+`tasks.claim(task_id, role, scope)` call. `tasks.get` joins dependency readiness,
+recent structured history, execution-attempt events, pending takeover requests,
+and linked-session capsules. Each task carries a monotonic version; protocol-aware
+writers return it as `expected_version`, while omission remains supported for
+older clients. Dependency replacement validates missing nodes, self-edges and
+cycles before touching the graph. A claim conflict records a durable request
+that only the person in the task detail view can approve or reject; release
+never auto-promotes it. `tasks.release` is an atomic holder-only release and
+keeps the reason. `sessions.list`,
+`sessions.get`, `sessions.tree`, `sessions.self` and `peers.status` are
+read-only. Session capsules are deliberately metadata-only: no raw transcript,
+complete assistant prose, argv, source path, or tool output. Activity and
+project placement are marked `inferred`, agent reports `self_reported`, and
+harness attention `observed` so a reader can distinguish the evidence.
+
+`sessions.list` is project-scoped by default and uses the safe capsule too.
+An unattributed caller must name a project; no read silently expands to every
+session on the machine. The richer `SessionPayload` with prompt and cwd is
+reserved for `sessions.self`, where process attribution proves the session is
+asking about itself.
 
 **Projects contain tasks, and the project is resolved rather than asked for.**
 `tasks.create` with no `project` argument files the task under the project of
@@ -536,20 +577,73 @@ ways: a person clicked, only inside a region Auspex owns, backed up into
 bytes somebody else wrote are never re-serialised. See `AGENTS.md` § 6 for all
 five and for what "a region Auspex owns" means in a hook table.
 
-**Identity.** An agent never has to know its own session id. The kernel
-reports the socket's peer pid; `MCPSelfResolver` walks up from it until it
-finds a process the board already owns, or one of the session-id environment
-variables harnesses hand down to everything they spawn. `sessions.self` says
-which pid it used and what convinced it, and every tool that acts *as* a
-session takes an explicit `session_id` override — so a wrong guess is visible
-rather than silent.
+**Identity.** An agent never has to know its own session id. The official stdio
+bridge stamps every JSON-RPC object with its own pid; the server keeps that
+attribution request-scoped and accepts it only while the kernel's live socket
+roster contains the same process. `MCPSelfResolver` then walks its ancestry
+until it finds a process the board already owns, or a session-id environment
+variable the harness handed down. Old unstamped clients work only when exactly
+one socket is attached; with two they fail closed instead of using activity
+order. The socket is a local-user trust boundary, not authentication against a
+different process running as that same user. The next agent-session-kit API
+must attach its frozen connection id and kernel peer directly to each handler
+call; once Auspex pins that release, the bridge stamp can disappear.
+`sessions.self` says which pid it used and what convinced it. An optional
+`session_id` is only a corroborating hint: it must agree with the process
+evidence and cannot identify a caller by itself. Anonymous task/milestone
+creation remains possible (explicit project or Scratch); writes that author
+session state or history fail closed when the process cannot be attributed.
 
 **Untrusted input.** Tool arguments are the one place a model writes straight
 into the database and onto the screen, so `MCPTextSanitizer` strips control
 characters, bidirectional overrides and zero-width formatters, collapses
 whitespace and caps length before any value reaches the store. Unknown
-argument keys are refused rather than ignored. A demo replay refuses the nine
+argument keys are refused rather than ignored. A demo replay refuses the ten
 writing tools by name.
+
+## Catch-up, review, and delivery
+
+Every Auspex-owned presentation begins with no first responder. A zero-area
+AppKit probe clears `makeFirstResponder(nil)` once per presentation token and
+never changes `initialFirstResponder` or the key-view loop. Tab and arrow keys
+therefore retain native navigation and visible feedback after the person asks
+for it; passive opening alone selects nothing. Command Palette focus is
+intentional because ⌘K itself is an explicit text-entry gesture. System-owned
+panels such as `NSOpenPanel`, Sparkle and macOS permission prompts are outside
+this policy.
+
+`TaskCapsule` is the semantic compression boundary. It derives goal, phase,
+current work, last outcome, next action and risk with provenance; its material
+timestamp changes only for task rows, explicit reports/notices, turn outcomes
+or process endings, never for ordinary token/tool churn. Pending takeover
+requests enter the ledger frame only when the ledger changes and become a
+first-class human-queue item that opens the approval detail. `CatchUpSnapshot`
+compares those stable values off-main-actor. `HumanWorkQueue` orders things the
+person can act on; `CollaborationSignals` carries amber observations and does
+not notify. Orphan claims live only in the human queue, and branch collisions
+are keyed by project plus branch.
+
+Delivery is deliberately pull-based. Opening one task detail asks
+`GitDeliveryReader` for a bounded local snapshot; Refresh asks again. The
+reader invokes fixed `/usr/bin/git` arguments without a shell, disables hooks,
+textconv and optional locks, caps time/output/files, and never fetches. A
+`HandoffPacket` combines only the task capsule, recorded evidence/decisions/
+risks, that observed snapshot and bounded resume hints. It writes nowhere and
+sends nothing; the human copies it explicitly.
+
+## Installed coordination playbook and login lifecycle
+
+The optional `auspex-coordination` Skill is an app resource and an owned
+directory, not another mutable prompt fragment. Its manifest carries a version,
+file list and SHA-256; install/update/uninstall requires a click, backs up first,
+verifies after, refuses symlinks/foreign/modified content, and is currently
+offered only for harnesses with a stable Skill directory contract.
+
+Login launch uses `SMAppService.mainApp`. Registration is an explicit toggle;
+launch-time reconciliation mirrors macOS and never re-enables an item the user
+disabled in System Settings. Login events suppress the initial board window
+while still starting the observer/menu bar. A later Finder/Dock reopen restores
+regular activation and the main window.
 
 ## Non-Goals
 

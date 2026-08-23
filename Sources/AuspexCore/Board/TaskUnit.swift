@@ -69,6 +69,8 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
     /// The handle a person reads — `AUX-3f9k`. See ``TaskShortID``.
     public let shortID: String
     public let origin: Origin
+    /// The ledger version, absent only for an implicit unit.
+    public let version: Int64?
 
     /// What the card is keyed on across frames.
     ///
@@ -128,6 +130,10 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
     /// common piece of debris. It is amber, filterable, and has a Release
     /// beside it.
     public let isClaimOrphaned: Bool
+
+    /// Claim conflicts awaiting an explicit person decision.
+    public let pendingTakeoverCount: Int
+    public let pendingTakeoverAt: Date?
 
     /// The session the card is *about*: whoever claimed the task, or the root
     /// of the family.
@@ -223,6 +229,7 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         id: String,
         shortID: String,
         origin: Origin,
+        version: Int64? = nil,
         promotionKey: String,
         projectKey: String?,
         planID: Int64? = nil,
@@ -237,6 +244,8 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         waitingOn: [Dependency] = [],
         claim: Claim? = nil,
         isClaimOrphaned: Bool = false,
+        pendingTakeoverCount: Int = 0,
+        pendingTakeoverAt: Date? = nil,
         lead: BoardRow,
         members: [BoardRow],
         attention: AttentionState = .none,
@@ -254,6 +263,7 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         self.id = id
         self.shortID = shortID
         self.origin = origin
+        self.version = version
         self.promotionKey = promotionKey
         self.projectKey = projectKey
         self.planID = planID
@@ -268,6 +278,8 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         self.waitingOn = waitingOn
         self.claim = claim
         self.isClaimOrphaned = isClaimOrphaned
+        self.pendingTakeoverCount = pendingTakeoverCount
+        self.pendingTakeoverAt = pendingTakeoverAt
         self.lead = lead
         self.members = members
         self.attention = attention

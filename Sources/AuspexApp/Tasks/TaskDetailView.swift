@@ -31,6 +31,7 @@ struct TaskDetailView: View {
     @State private var draftNote = ""
     @State private var draftRef = ""
     @State private var noteKind = TaskNoteKind.note
+    @State private var delivery = TaskDeliveryModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,8 +41,24 @@ struct TaskDetailView: View {
                     title
                     if let body = unit.body { bodyText(body) }
                     if unit.isInReview, let result = unit.result { reviewBox(result) }
+                    TaskDeliverySection(unit: unit, board: board, model: delivery)
+                    if unit.isInReview { TaskReviewRecordSection(log: tasks.openLog) }
+                    TaskHandoffSection(
+                        unit: unit, board: board, log: tasks.openLog, delivery: delivery
+                    )
                     properties
                     if !unit.waitingOn.isEmpty || !unit.dependsOn.isEmpty { dependencies }
+                    if let taskID = unit.origin.taskID,
+                       let message = tasks.takeoverResolutionMessage(taskID: taskID) {
+                        Text(message)
+                            .font(AuspexType.body)
+                            .foregroundStyle(AuspexPalette.statePermission)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .panelChrome()
+                    }
+                    if !pendingTakeovers.isEmpty { takeoverRequests }
                     members
                     if unit.origin.taskID != nil {
                         notes
@@ -58,7 +75,10 @@ struct TaskDetailView: View {
         // The page has a fact on it that copies, so it has to be able to say
         // so — see ``CopyToast``.
         .auspexCopyToast()
-        .task(id: unit.origin.taskID) { tasks.loadLog(taskID: unit.origin.taskID) }
+        .task(id: unit.id) {
+            tasks.loadLog(taskID: unit.origin.taskID)
+            await delivery.load(unit: unit, board: board)
+        }
     }
 
     // MARK: Header
@@ -106,25 +126,67 @@ struct TaskDetailView: View {
     @ViewBuilder
     private var actions: some View {
         if unit.isInReview {
+            let previous = board.reviewNeighbor(of: unit, direction: .previous)
+            let next = board.reviewNeighbor(of: unit, direction: .next)
+            reviewNavigationButton("chevron.left", help: "Previous review") {
+                board.openUnitID = previous?.id
+            }
+            .disabled(previous == nil)
+            reviewNavigationButton("chevron.right", help: "Next review") {
+                board.openUnitID = next?.id
+            }
+            .disabled(next == nil)
+            actionButton("Defer") { board.deferReview(unit) }
+            actionButton("Reopen", tint: AuspexPalette.stateStale) {
+                let replacement = board.reviewReplacement(after: unit)
+                tasks.reopen(unit: unit)
+                board.openUnitID = replacement?.id
+            }
             actionButton("Close", tint: AuspexPalette.stateWriting) {
+                let replacement = board.reviewReplacement(after: unit)
                 tasks.close(unit: unit)
-                board.openUnitID = nil
+                board.openUnitID = replacement?.id
             }
         } else if unit.status == .done {
-            actionButton("Reopen") { tasks.reopen(unit: unit) }
+            actionButton("Reopen") {
+                tasks.reopen(unit: unit)
+            }
         }
         if unit.isClaimOrphaned, let id = unit.origin.taskID {
             actionButton("Release claim", tint: AuspexPalette.stateStale) {
                 tasks.releaseClaim(taskID: id)
             }
         }
-        if unit.counts.live > 0 {
+        // Review already has five compact controls in this bar. A member row
+        // below still opens Flight in one click, so duplicating it here would
+        // make the minimum-width task page overflow for no added capability.
+        if unit.counts.live > 0, !unit.isInReview {
             actionButton("Open flight") {
                 board.selectedKey = unit.lead.key
                 board.openUnitID = nil
                 board.openTrajectory()
             }
         }
+    }
+
+    private func reviewNavigationButton(
+        _ systemName: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(AuspexPalette.text2)
+                .frame(width: 24, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 7))
+        .help(help)
     }
 
     private func actionButton(
@@ -175,7 +237,7 @@ struct TaskDetailView: View {
     /// is here to read.
     private func reviewBox(_ result: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Finished, waiting on you")
+            Text("Agent report · self-reported")
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.stateWriting)
             Text(result)
@@ -200,6 +262,7 @@ struct TaskDetailView: View {
     private var properties: some View {
         VStack(alignment: .leading, spacing: 0) {
             property("Status", unit.status.label)
+            if let version = unit.version { property("Version", "v\(version)") }
             property("Importance", unit.importance.label)
             if let kind = unit.kind { property("Kind", kind.label) }
             if let key = unit.projectKey {
@@ -217,6 +280,70 @@ struct TaskDetailView: View {
             }
         }
         .panelChrome()
+    }
+
+    private var pendingTakeovers: [TaskClaimRequest] {
+        guard let taskID = unit.origin.taskID else { return [] }
+        return tasks.pendingClaims(taskID: taskID)
+    }
+
+    /// Claim conflicts wait here for a person. Releasing the current holder
+    /// does not auto-promote anybody; the same explicit decision remains.
+    private var takeoverRequests: some View {
+        section(
+            pendingTakeovers.count == 1 ? "Takeover request" : "Takeover requests"
+        ) {
+            VStack(spacing: 0) {
+                ForEach(pendingTakeovers) { request in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            HarnessBadge(harness: request.requester.harness, size: 16)
+                            Text(request.requester.harness.displayName)
+                                .font(AuspexType.body)
+                                .foregroundStyle(AuspexPalette.text)
+                            Text(String(request.requester.sessionID.prefix(8)))
+                                .font(AuspexType.monoSmall)
+                                .foregroundStyle(AuspexPalette.text3)
+                            Text(request.role)
+                                .font(AuspexType.caption)
+                                .foregroundStyle(AuspexPalette.text2)
+                            if let scope = request.scope {
+                                Text("· \(scope)")
+                                    .font(AuspexType.caption)
+                                    .foregroundStyle(AuspexPalette.text3)
+                            }
+                            Spacer(minLength: 8)
+                            Text(RelativeTimeText.since(request.requestedAt))
+                                .font(AuspexType.monoSmall)
+                                .foregroundStyle(AuspexPalette.text3)
+                        }
+                        if let reason = request.reason {
+                            Text(reason)
+                                .font(AuspexType.body)
+                                .foregroundStyle(AuspexPalette.text2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        HStack(spacing: 8) {
+                            Text("requested at v\(request.taskVersion)")
+                                .font(AuspexType.monoSmall)
+                                .foregroundStyle(AuspexPalette.text3)
+                            Spacer(minLength: 8)
+                            actionButton("Reject", tint: AuspexPalette.text3) {
+                                tasks.resolveTakeover(requestID: request.id, approve: false)
+                            }
+                            actionButton("Approve", tint: AuspexPalette.stateWriting) {
+                                tasks.resolveTakeover(requestID: request.id, approve: true)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    if request.id != pendingTakeovers.last?.id {
+                        Divider().overlay(AuspexPalette.line)
+                    }
+                }
+            }
+            .panelChrome()
+        }
     }
 
     private func property(_ key: String, _ value: String) -> some View {
@@ -402,10 +529,12 @@ struct TaskDetailView: View {
                 TextField("Write it down", text: $draftNote)
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
+                    .auspexSystemControlFocus()
                 TextField("ref", text: $draftRef)
                     .textFieldStyle(.plain)
                     .font(AuspexType.monoSmall)
                     .frame(width: 96)
+                    .auspexSystemControlFocus()
                 Button("Add") { commitNote() }
                     .buttonStyle(.auspex)
                     .disabled(draftNote.trimmingCharacters(in: .whitespaces).isEmpty)

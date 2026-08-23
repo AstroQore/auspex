@@ -195,6 +195,39 @@ struct TaskRepositoryTests {
         #expect(refined.claimScope == "the socket only")
     }
 
+    @Test("concurrent claimers produce one holder and one refusal")
+    func concurrentClaimsAreSerialized() async throws {
+        let repository = try makeRepository()
+        let task = try repository.createTask(title: "One winner")
+        let contenders = [
+            Fixtures.key(.codex, "worker-1"),
+            Fixtures.key(.claudeCode, "worker-2")
+        ]
+        let outcomes = await withTaskGroup(of: String.self) { group in
+            for contender in contenders {
+                group.addTask {
+                    do {
+                        let task = try repository.claimTask(
+                            id: task.id, role: "implementer", scope: nil,
+                            by: contender, expectedVersion: task.version
+                        )
+                        return "claimed:\(task.claimedBy?.description ?? "none")"
+                    } catch let error as TaskLedgerError {
+                        return "refused:\(error.description)"
+                    } catch {
+                        return "unexpected"
+                    }
+                }
+            }
+            var values: [String] = []
+            for await outcome in group { values.append(outcome) }
+            return values
+        }
+        #expect(outcomes.count { $0.hasPrefix("claimed:") } == 1)
+        #expect(outcomes.count { $0.hasPrefix("refused:") } == 1)
+        #expect(try repository.task(id: task.id)?.version == 2)
+    }
+
     @Test("releasing a claim reopens the task without closing it")
     func releaseReopens() throws {
         let repository = try makeRepository()
@@ -206,6 +239,29 @@ struct TaskRepositoryTests {
         #expect(released.status == .todo)
         #expect(released.claimedBy == nil)
         #expect(released.claimRole == nil)
+    }
+
+    @Test("a holder-only release is atomic and records why")
+    func holderOnlyRelease() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "worker-1")
+        let stranger = Fixtures.key(.claudeCode, "worker-2")
+        let task = try repository.createTask(title: "One holder")
+        try repository.claimTask(id: task.id, role: "implementer", scope: nil, by: holder)
+
+        #expect(throws: TaskLedgerError.notClaimHolder(holder.description)) {
+            try repository.releaseTask(
+                id: task.id, by: stranger, reason: "not mine", requireHolder: true
+            )
+        }
+        #expect(try repository.task(id: task.id)?.claimedBy == holder)
+
+        let released = try repository.releaseTask(
+            id: task.id, by: holder, reason: "handoff to the migration owner",
+            requireHolder: true
+        )
+        #expect(released.claimedBy == nil)
+        #expect(try repository.log(taskID: task.id).last?.message == "handoff to the migration owner")
     }
 
     @Test("completing a task records what was finished")
@@ -278,16 +334,270 @@ struct TaskRepositoryTests {
         #expect(Set(try repository.tasks(readyOnly: true).map(\.id)) == [first.id, second.id])
     }
 
-    @Test("a dependency on nothing, on itself, or on a stranger is dropped")
-    func dependencyEdgesAreTotal() throws {
+    @Test("invalid dependencies are refused and leave the graph untouched")
+    func dependencyEdgesFailClosed() throws {
         let repository = try makeRepository()
-        let task = try repository.createTask(title: "Alone", dependsOn: [9_999])
-        #expect(task.dependsOn.isEmpty)
+        #expect(throws: TaskLedgerError.dependencyNotFound(9_999)) {
+            try repository.createTask(title: "Alone", dependsOn: [9_999])
+        }
+        #expect(try repository.tasks().isEmpty)
 
-        try repository.setDependencies([task.id], of: task.id)
-        #expect(try repository.task(id: task.id)?.dependsOn.isEmpty == true)
-        // Nothing waiting on anything is ready.
-        #expect(try repository.tasks(readyOnly: true).map(\.id) == [task.id])
+        let first = try repository.createTask(title: "First")
+        let second = try repository.createTask(title: "Second", dependsOn: [first.id])
+        #expect(throws: TaskLedgerError.selfDependency(second.id)) {
+            try repository.setDependencies([second.id], of: second.id)
+        }
+        #expect(try repository.task(id: second.id)?.dependsOn == [first.id])
+
+        #expect(throws: TaskLedgerError.dependencyCycle([first.id, second.id, first.id])) {
+            try repository.setDependencies([second.id], of: first.id)
+        }
+        #expect(try repository.task(id: first.id)?.dependsOn.isEmpty == true)
+        #expect(try repository.task(id: second.id)?.dependsOn == [first.id])
+    }
+
+    @Test("task versions reject stale writes without partial mutation")
+    func versionsFenceStaleWriters() throws {
+        let repository = try makeRepository()
+        let task = try repository.createTask(title: "One truth")
+        #expect(task.version == 1)
+
+        let moved = try repository.updateTask(
+            id: task.id, status: .doing, expectedVersion: task.version
+        )
+        #expect(moved.version == 2)
+        #expect(throws: TaskLedgerError.versionConflict(expected: 1, actual: 2)) {
+            try repository.updateTask(
+                id: task.id, title: "stale title", dependsOn: [9_999], expectedVersion: 1
+            )
+        }
+        let current = try #require(try repository.task(id: task.id))
+        #expect(current.title == "One truth")
+        #expect(current.status == .doing)
+        #expect(current.version == 2)
+
+        // A sparse update that changes nothing is not a mutation.
+        #expect(try repository.updateTask(id: task.id).version == 2)
+    }
+
+    @Test("claim conflicts become human-approved takeover requests")
+    func takeoverRequestsAreExplicit() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder")
+        let requester = Fixtures.key(.claudeCode, "requester")
+        let task = try repository.createTask(title: "One owner")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: "store", by: holder
+        )
+
+        let outcome = try repository.claimOrRequestTask(
+            id: task.id,
+            role: "reviewer",
+            scope: "migration",
+            reason: "I have the compatibility context",
+            by: requester,
+            expectedVersion: held.version
+        )
+        guard case let .pending(pendingTask, request) = outcome else {
+            Issue.record("expected a pending takeover")
+            return
+        }
+        #expect(pendingTask.claimedBy == holder)
+        #expect(pendingTask.version == held.version + 1)
+        #expect(request.taskVersion == pendingTask.version)
+        #expect(request.status == .pending)
+
+        let retry = try repository.claimOrRequestTask(
+            id: task.id,
+            role: "reviewer",
+            scope: "migration",
+            reason: "I have the compatibility context",
+            by: requester
+        )
+        guard case let .pending(retriedTask, retriedRequest) = retry else {
+            Issue.record("expected the existing pending takeover")
+            return
+        }
+        #expect(retriedRequest.id == request.id)
+        #expect(retriedTask.version == pendingTask.version)
+        #expect(try repository.claimRequests(taskID: task.id).count == 1)
+
+        let otherRequester = Fixtures.key(.cursor, "requester-2")
+        let secondOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "tester", scope: "concurrency", reason: nil,
+            by: otherRequester, expectedVersion: retriedTask.version
+        )
+        guard case .pending = secondOutcome else {
+            Issue.record("expected a second pending takeover")
+            return
+        }
+        #expect(try repository.claimRequests(taskID: task.id).count == 2)
+
+        // A release makes the request visible on an unclaimed task; it does
+        // not grant it in the background.
+        let released = try repository.releaseTask(id: task.id, by: holder, requireHolder: true)
+        #expect(released.claimedBy == nil)
+        #expect(try repository.claimRequests(taskID: task.id).count == 2)
+        let afterReleaseRetry = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "migration",
+            reason: "I have the compatibility context", by: requester,
+            expectedVersion: released.version
+        )
+        guard case let .pending(stillReleased, sameRequest) = afterReleaseRetry else {
+            Issue.record("a retry must not self-approve a pending takeover")
+            return
+        }
+        #expect(stillReleased.claimedBy == nil)
+        #expect(stillReleased.version == released.version)
+        #expect(sameRequest.id == request.id)
+
+        let expired = try repository.resolveClaimRequest(id: request.id, approve: true)
+        #expect(expired.request.status == .expired)
+        #expect(expired.task.version == released.version + 1)
+        #expect(expired.task.claimedBy == nil)
+        #expect(try repository.claimRequests(taskID: task.id).count == 1)
+        let resolved = try repository.claimRequests(taskID: task.id, status: nil)
+        #expect(resolved.count { $0.status == .expired } == 1)
+        #expect(try repository.log(taskID: task.id).map(\.kind).contains("takeover_expired"))
+    }
+
+    @Test("approving a current takeover atomically transfers the exact reviewed claim")
+    func approvingCurrentTakeoverTransfersClaim() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder-current")
+        let requester = Fixtures.key(.claudeCode, "requester-current")
+        let task = try repository.createTask(title: "Transfer this exact claim")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: "old scope", by: holder
+        )
+        let outcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "new scope", reason: "handoff",
+            by: requester, expectedVersion: held.version
+        )
+        guard case let .pending(requestedTask, request) = outcome else {
+            Issue.record("expected a pending takeover")
+            return
+        }
+
+        let approved = try repository.resolveClaimRequest(id: request.id, approve: true)
+        #expect(approved.request.status == .approved)
+        #expect(approved.task.version == requestedTask.version + 1)
+        #expect(approved.task.claimedBy == requester)
+        #expect(approved.task.claimRole == "reviewer")
+        #expect(approved.task.claimScope == "new scope")
+        #expect(try repository.claimRequests(taskID: task.id).isEmpty)
+        #expect(try repository.log(taskID: task.id).map(\.kind).contains("takeover_approved"))
+    }
+
+    @Test("rejecting a takeover leaves the current claim intact")
+    func rejectingTakeoverKeepsHolder() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder")
+        let requester = Fixtures.key(.claudeCode, "requester")
+        let task = try repository.createTask(title: "Keep the owner")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: holder
+        )
+        let outcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: nil, reason: nil,
+            by: requester, expectedVersion: held.version
+        )
+        guard case let .pending(requestedTask, request) = outcome else {
+            Issue.record("expected a pending takeover")
+            return
+        }
+        let rejected = try repository.resolveClaimRequest(id: request.id, approve: false)
+        #expect(rejected.request.status == .rejected)
+        #expect(rejected.task.version == requestedTask.version + 1)
+        #expect(rejected.task.claimedBy == holder)
+    }
+
+    @Test("rejecting one takeover does not expire another for the same holder")
+    func takeoverDecisionOrderDoesNotChooseTheWinner() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder-many")
+        let first = Fixtures.key(.claudeCode, "requester-first")
+        let second = Fixtures.key(.cursor, "requester-second")
+        let task = try repository.createTask(title: "Choose one reviewer")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: holder
+        )
+        let firstOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "first", reason: nil,
+            by: first, expectedVersion: held.version
+        )
+        guard case let .pending(firstTask, firstRequest) = firstOutcome else {
+            Issue.record("expected first pending takeover")
+            return
+        }
+        let secondOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "second", reason: nil,
+            by: second, expectedVersion: firstTask.version
+        )
+        guard case let .pending(secondTask, secondRequest) = secondOutcome else {
+            Issue.record("expected second pending takeover")
+            return
+        }
+        let synchronized = try repository.claimRequests(taskID: task.id)
+        #expect(synchronized.allSatisfy { $0.taskVersion == secondTask.version })
+
+        let rejected = try repository.resolveClaimRequest(
+            id: firstRequest.id, approve: false
+        )
+        let remaining = try #require(
+            try repository.claimRequests(taskID: task.id).first { $0.id == secondRequest.id }
+        )
+        #expect(remaining.taskVersion == rejected.task.version)
+
+        let approved = try repository.resolveClaimRequest(id: remaining.id, approve: true)
+        #expect(approved.request.status == .approved)
+        #expect(approved.task.claimedBy == second)
+        #expect(approved.task.claimScope == "second")
+    }
+
+    @Test("a new takeover never revives a request stale before a task edit")
+    func newRequestDoesNotReviveOldEpoch() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder-epoch")
+        let oldRequester = Fixtures.key(.claudeCode, "requester-old")
+        let newRequester = Fixtures.key(.cursor, "requester-new")
+        let task = try repository.createTask(title: "Preserve claim epochs")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: holder
+        )
+        let oldOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "old", reason: nil,
+            by: oldRequester, expectedVersion: held.version
+        )
+        guard case let .pending(oldTask, oldRequest) = oldOutcome else {
+            Issue.record("expected old pending takeover")
+            return
+        }
+
+        let edited = try repository.updateTask(
+            id: task.id,
+            body: .some("The task changed after the old request."),
+            expectedVersion: oldTask.version
+        )
+        let newOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "new", reason: nil,
+            by: newRequester, expectedVersion: edited.version
+        )
+        guard case let .pending(currentTask, newRequest) = newOutcome else {
+            Issue.record("expected new pending takeover")
+            return
+        }
+        let requests = try repository.claimRequests(taskID: task.id)
+        #expect(requests.first { $0.id == oldRequest.id }?.taskVersion == oldTask.version)
+        #expect(requests.first { $0.id == newRequest.id }?.taskVersion == currentTask.version)
+
+        let expired = try repository.resolveClaimRequest(id: oldRequest.id, approve: true)
+        #expect(expired.request.status == .expired)
+        #expect(expired.task.claimedBy == holder)
+        let surviving = try #require(
+            try repository.claimRequests(taskID: task.id).first { $0.id == newRequest.id }
+        )
+        #expect(surviving.taskVersion == expired.task.version)
     }
 
     // MARK: - Kind, labels, notes

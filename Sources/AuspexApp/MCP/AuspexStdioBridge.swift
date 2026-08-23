@@ -8,11 +8,11 @@ import Foundation
 /// MCP clients talk to a server by launching a command and speaking
 /// newline-delimited JSON-RPC over its stdin and stdout. The running Auspex
 /// listens on a Unix socket instead, because a menu-bar app cannot be
-/// respawned once per client — so this mode is a byte pump between the two.
-/// `MCPStdioBridge` in the kit is the pump; everything here is the vocabulary
-/// around it: the flag that appears in every user's config, the environment
-/// key a test points at a temporary socket with, and the sentence a person
-/// sees when the app is not running.
+/// respawned once per client. This mode attributes each framed request to its
+/// bridge process, then uses the kit's stdio/socket pump for the transport.
+/// The rest is the vocabulary around it: the flag that appears in every
+/// user's config, the environment key a test points at a temporary socket
+/// with, and the sentence a person sees when the app is not running.
 ///
 /// The process installs no status item, opens no window, and touches nothing
 /// on disk except the socket it connects to. That is why it is dispatched from
@@ -44,61 +44,51 @@ enum AuspexStdioBridge {
         MCPStdioBridge.isRequested(config, arguments: arguments)
     }
 
-    /// Connects, announces which process spawned us, and pumps until either
-    /// side closes.
-    ///
-    /// ## Why the announcement
-    ///
-    /// The socket's peer pid — which the kit reports from `LOCAL_PEERPID` — is
-    /// *this* process, and walking up from it reaches the harness. That is the
-    /// primary way `sessions.self` works and it needs nothing from here. The
-    /// hello covers the case where the kernel will not attribute a peer pid at
-    /// all: `getppid()` is the harness directly, known for free, and one line
-    /// costs nothing to send.
-    ///
-    /// It is a JSON-RPC *notification*, so the server answers with silence and
-    /// the MCP client never sees a message it did not ask for.
-    ///
-    /// The line is injected by making the bridge read from a pipe this process
-    /// fills — the hello first, then everything stdin says — rather than by
-    /// reaching into the kit's transport. The pump stays the kit's, and this
-    /// file stays the vocabulary.
+    /// Connects and pumps until either side closes. Every JSON-RPC request is
+    /// re-encoded with this bridge process's pid in a reserved top-level field.
+    /// The running app corroborates that value against `LOCAL_PEERPID` in its
+    /// live roster, so two simultaneous bridges cannot be confused by a
+    /// last-activity timestamp race.
     static func run() -> Int32 {
         let path = MCPStdioBridge.socketPath(config)
+        return run(socketPath: path)
+    }
+
+    /// Injectable descriptors make the real bridge path testable without
+    /// replacing process stdin/stdout or launching AppKit.
+    static func run(
+        socketPath path: String,
+        input: Int32 = STDIN_FILENO,
+        output: Int32 = STDOUT_FILENO,
+        standardError: FileHandle = .standardError
+    ) -> Int32 {
 
         var descriptors: [Int32] = [-1, -1]
         guard pipe(&descriptors) == 0 else {
-            // No pipe, no hello — and no reason to fail: the peer pid answers
-            // the same question in the ordinary case.
-            return MCPStdioBridge.run(config, socketPath: path)
+            // One direct connection remains safely attributable from the
+            // kernel roster. With multiple clients the server fails closed.
+            return MCPStdioBridge.run(
+                config, socketPath: path, input: input, output: output,
+                standardError: standardError
+            )
         }
         let readEnd = descriptors[0]
         let writeEnd = descriptors[1]
 
-        let hello = helloLine(parent: getppid())
+        let peerPID = getpid()
         let thread = Thread {
-            _ = writeAll(hello, to: writeEnd)
-            pump(from: STDIN_FILENO, to: writeEnd)
+            pumpAttributed(from: input, to: writeEnd, peerPID: peerPID)
             close(writeEnd)
         }
         thread.name = "com.astroqore.auspex.mcp.hello"
         thread.start()
 
-        let code = MCPStdioBridge.run(config, socketPath: path, input: readEnd)
+        let code = MCPStdioBridge.run(
+            config, socketPath: path, input: readEnd, output: output,
+            standardError: standardError
+        )
         close(readEnd)
         return code
-    }
-
-    /// The announcement, as one framed line.
-    static func helloLine(parent: pid_t) -> Data {
-        let json = MCPJSON.object([
-            "jsonrpc": "2.0",
-            "method": "auspex/hello",
-            "params": .object(["pid": .int(Int64(parent))])
-        ])
-        var data = (try? json.serialized()) ?? Data()
-        data.append(0x0A)
-        return data
     }
 
     // MARK: - Plumbing
@@ -120,24 +110,36 @@ enum AuspexStdioBridge {
         return true
     }
 
-    /// Copies bytes until the source ends. Byte-for-byte: the newline framing
-    /// travels inside the stream, so nothing here needs to know where a
-    /// message starts or ends.
-    private static func pump(from source: Int32, to destination: Int32) {
+    /// Attributes complete newline-framed objects with a moving scan cursor.
+    /// The buffer is compacted once per read, never once per line, so a burst
+    /// of small MCP messages remains O(n).
+    private static func pumpAttributed(
+        from source: Int32,
+        to destination: Int32,
+        peerPID: pid_t
+    ) {
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+        var buffer = Data()
         while true {
             let count = chunk.withUnsafeMutableBytes { read(source, $0.baseAddress, $0.count) }
             if count > 0 {
-                var offset = 0
-                while offset < count {
-                    let written = chunk.withUnsafeBytes { raw -> Int in
-                        guard let base = raw.baseAddress else { return -1 }
-                        return Darwin.write(destination, base + offset, count - offset)
+                buffer.append(contentsOf: chunk[0..<count])
+                var start = buffer.startIndex
+                while let newline = buffer[start...].firstIndex(of: 0x0A) {
+                    let raw = Data(buffer[start..<newline])
+                    if !raw.isEmpty {
+                        var attributed = MCPTransportEnvelope.attributing(
+                            raw, to: Int32(peerPID)
+                        )
+                        // The transport's cap applies after attribution too.
+                        guard attributed.count <= MCPSocketServer.maximumLineBytes else { return }
+                        attributed.append(0x0A)
+                        guard writeAll(attributed, to: destination) else { return }
                     }
-                    if written > 0 { offset += written; continue }
-                    if errno == EINTR { continue }
-                    return
+                    start = buffer.index(after: newline)
                 }
+                if start != buffer.startIndex { buffer = Data(buffer[start...]) }
+                guard buffer.count <= MCPSocketServer.maximumLineBytes else { return }
                 continue
             }
             if count == 0 { return }

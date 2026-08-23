@@ -65,6 +65,8 @@ public struct BoardFrameInputs: Sendable, Equatable {
     /// tree contains, which is derived with the frame. See
     /// ``TaskUnitGrouping/expandsMembers(_:)``.
     public var showsSubagents: Bool
+    /// The global catch-up cursor the person last acknowledged.
+    public var catchUpSince: Date
 
     public init(
         claims: ProjectClaims = .empty,
@@ -83,11 +85,13 @@ public struct BoardFrameInputs: Sendable, Equatable {
         reports: [SessionKey: AgentReport] = [:],
         ledger: TaskLedgerFrame = .empty,
         filters: TaskFilters = .none,
-        showsSubagents: Bool = false
+        showsSubagents: Bool = false,
+        catchUpSince: Date = .distantPast
     ) {
         self.ledger = ledger
         self.filters = filters
         self.showsSubagents = showsSubagents
+        self.catchUpSince = catchUpSince
         self.claims = claims
         self.rules = rules
         self.window = window
@@ -157,6 +161,12 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     public let summary: BoardSummary
     /// The sidebar's tree.
     public let tree: ProjectTree
+    /// Material changes since the person's catch-up cursor.
+    public let catchUp: CatchUpSnapshot
+    /// Work that currently requires a human gesture, in explainable order.
+    public let humanQueue: HumanWorkQueue
+    /// Amber inferred/observed risks, never folded into Attention.
+    public let watchSignals: [WatchSignal]
 
     /// How many sessions the frame holds.
     public var sessionCount: Int { board.sessions.count }
@@ -217,6 +227,9 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         endedRows: [BoardRow],
         summary: BoardSummary,
         tree: ProjectTree,
+        catchUp: CatchUpSnapshot,
+        humanQueue: HumanWorkQueue,
+        watchSignals: [WatchSignal],
         attention: [SessionKey: AttentionState] = [:],
         olderHidden: Int = 0,
         boardRevision: UInt64 = 1,
@@ -238,6 +251,9 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.endedRows = endedRows
         self.summary = summary
         self.tree = tree
+        self.catchUp = catchUp
+        self.humanQueue = humanQueue
+        self.watchSignals = watchSignals
         self.attention = attention
         self.olderHidden = olderHidden
         self.boardRevision = boardRevision
@@ -303,6 +319,9 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             endedRows: kept(endedRows, previous.endedRows),
             summary: kept(summary, previous.summary),
             tree: kept(tree, previous.tree),
+            catchUp: kept(catchUp, previous.catchUp),
+            humanQueue: kept(humanQueue, previous.humanQueue),
+            watchSignals: kept(watchSignals, previous.watchSignals),
             attention: kept(attention, previous.attention),
             olderHidden: olderHidden,
             boardRevision: boardMoved ? boardRevision &+ 1 : previous.boardRevision,
@@ -572,6 +591,11 @@ public actor BoardFrameAssembler {
             // to it. Ended units are dropped here as they always were — see
             // ``ProjectTree/listable(_:)``.
             tree: ProjectTree.build(board: board, names: inputs.projectNames, units: allUnits),
+            catchUp: CatchUpSnapshot(
+                units: allUnits, since: inputs.catchUpSince, generatedAt: raw.generatedAt
+            ),
+            humanQueue: HumanWorkQueue(units: allUnits),
+            watchSignals: CollaborationSignals.derive(units: allUnits, now: raw.generatedAt),
             attention: attention,
             olderHidden: windowed.hidden
         )

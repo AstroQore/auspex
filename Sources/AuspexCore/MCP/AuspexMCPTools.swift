@@ -41,7 +41,7 @@ import Foundation
 ///
 /// Dotted names — `tasks.claim`, not `tasks_claim`. MCP clients normalise the
 /// separator for their own tool namespaces anyway, and the dot is what makes a
-/// list of sixteen tools read as four groups.
+/// list of twenty tools read as five groups.
 public enum AuspexMCPTools {
     /// The MCP protocol revision this server implements.
     public static let protocolVersion = "2025-06-18"
@@ -55,18 +55,22 @@ public enum AuspexMCPTools {
     public enum Name {
         public static let notify = "auspex.notify"
         public static let report = "auspex.report"
+        public static let overviewGet = "overview.get"
         public static let plansList = "plans.list"
         public static let plansGet = "plans.get"
         public static let plansCreate = "plans.create"
         public static let plansArchive = "plans.archive"
         public static let tasksList = "tasks.list"
+        public static let tasksGet = "tasks.get"
         public static let tasksCreate = "tasks.create"
         public static let tasksClaim = "tasks.claim"
+        public static let tasksRelease = "tasks.release"
         public static let tasksUpdate = "tasks.update"
         public static let tasksComplete = "tasks.complete"
         public static let tasksLog = "tasks.log"
         public static let sessionsSelf = "sessions.self"
         public static let sessionsList = "sessions.list"
+        public static let sessionsGet = "sessions.get"
         public static let sessionsTree = "sessions.tree"
         public static let peersStatus = "peers.status"
     }
@@ -76,7 +80,7 @@ public enum AuspexMCPTools {
     /// a plain refusal rather than a board that silently forgets.
     public static let writingTools: Set<String> = [
         Name.notify, Name.report, Name.plansCreate, Name.plansArchive,
-        Name.tasksCreate, Name.tasksClaim, Name.tasksUpdate,
+        Name.tasksCreate, Name.tasksClaim, Name.tasksRelease, Name.tasksUpdate,
         Name.tasksComplete, Name.tasksLog
     ]
 
@@ -84,10 +88,11 @@ public enum AuspexMCPTools {
 
     /// Every tool, in the order a reader should meet them.
     public static let all: [MCPTool] = [
-        notify, report,
+        notify, report, overviewGet,
         plansList, plansGet, plansCreate, plansArchive,
-        tasksList, tasksCreate, tasksClaim, tasksUpdate, tasksComplete, tasksLog,
-        sessionsSelf, sessionsList, sessionsTree, peersStatus
+        tasksList, tasksGet, tasksCreate, tasksClaim, tasksRelease,
+        tasksUpdate, tasksComplete, tasksLog,
+        sessionsSelf, sessionsList, sessionsGet, sessionsTree, peersStatus
     ]
 
     /// One tool by name.
@@ -165,6 +170,28 @@ public enum AuspexMCPTools {
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["focus"])
+        ])
+    )
+
+    /// One compact project briefing. Kept ahead of the individual ledgers in
+    /// the catalog because it is the ordinary first read for an agent joining
+    /// work already in flight.
+    public static let overviewGet = MCPTool(
+        name: Name.overviewGet,
+        title: "Read the project situation",
+        description: """
+            A compact briefing for one project: who you are, tasks doing work, \
+            blocked work, review, unclaimed ready work, orphaned claims, and \
+            sessions explicitly needing the person.
+
+            With no project it uses this session's project. Pass a project \
+            only when you are coordinating somewhere else. The session rows \
+            are safe metadata capsules: no transcript, assistant prose, argv, \
+            or raw tool output.
+            """,
+        inputSchema: .object([
+            "type": "object",
+            "properties": .object(["project": projectFilterProperty])
         ])
     )
 
@@ -306,6 +333,24 @@ public enum AuspexMCPTools {
         ])
     )
 
+    public static let tasksGet = MCPTool(
+        name: Name.tasksGet,
+        title: "Read one task",
+        description: """
+            One task with dependency readiness, its recent structured history, \
+            and safe metadata capsules for every linked session. It never \
+            returns transcript text, complete assistant messages, argv, or \
+            command output.
+            """,
+        inputSchema: .object([
+            "type": "object",
+            "properties": .object([
+                "task_id": .object(["type": "integer", "description": "The task to read."])
+            ]),
+            "required": .array(["task_id"])
+        ])
+    )
+
     public static let tasksCreate = MCPTool(
         name: Name.tasksCreate,
         title: "File a task",
@@ -360,8 +405,11 @@ public enum AuspexMCPTools {
             and shows the role and scope on the row, which is how somebody \
             scanning twelve live sessions tells them apart.
 
-            Refused when another session already holds it. Re-claiming a task \
-            you already hold is fine and updates the scope.
+            When another session already holds it, your request is recorded \
+            for a person to approve or reject; it never steals the claim. \
+            The result says claimOutcome 'claimed' or 'pending_takeover', so a \
+            successful request is never mistaken for ownership. Re-claiming a \
+            task you already hold is fine and updates the scope.
             """,
         inputSchema: .object([
             "type": "object",
@@ -375,9 +423,38 @@ public enum AuspexMCPTools {
                     "type": "string",
                     "description": "Which part of it is yours, in a few words."
                 ]),
+                "reason": .object([
+                    "type": "string",
+                    "description": "Why a person should approve this if somebody else holds it."
+                ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id", "role"])
+        ])
+    )
+
+    public static let tasksRelease = MCPTool(
+        name: Name.tasksRelease,
+        title: "Give a task back",
+        description: """
+            Release the task this session currently holds without finishing \
+            it. Only the holder may do this; a person can still force-release \
+            an orphaned claim in the Auspex UI. The reason is kept in the task \
+            history for whoever takes it next.
+            """,
+        inputSchema: .object([
+            "type": "object",
+            "properties": .object([
+                "task_id": .object(["type": "integer", "description": "The task to release."]),
+                "reason": .object([
+                    "type": "string",
+                    "description": "Why you are giving it back, in one sentence."
+                ]),
+                "expected_version": expectedVersionProperty,
+                "session_id": sessionIDProperty
+            ]),
+            "required": .array(["task_id", "reason"])
         ])
     )
 
@@ -420,6 +497,7 @@ public enum AuspexMCPTools {
                         project on the board. Filed in the task's history.
                         """
                 ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id"])
@@ -436,7 +514,8 @@ public enum AuspexMCPTools {
 
             **This asks for a review; it does not close anything.** The task \
             moves to 'review', stays counted as open, and waits for a person. \
-            That is on purpose: nobody marks their own homework.
+            That is on purpose: nobody marks their own homework. Only the \
+            current claim holder can finish it; claim the task first.
             """,
         inputSchema: .object([
             "type": "object",
@@ -446,6 +525,7 @@ public enum AuspexMCPTools {
                     "type": "string",
                     "description": "What you finished, in one sentence."
                 ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id"])
@@ -485,6 +565,7 @@ public enum AuspexMCPTools {
                         Belongs on 'evidence' most of all.
                         """
                 ]),
+                "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty
             ]),
             "required": .array(["task_id", "message"])
@@ -509,9 +590,9 @@ public enum AuspexMCPTools {
         name: Name.sessionsList,
         title: "List sessions",
         description: """
-            Every agent session Auspex can see on this machine, across every \
-            harness — what each is doing, what it was asked to do, and whether \
-            it is calling for the user. Read-only.
+            Safe metadata capsules for agent sessions in the caller's project \
+            by default, or an explicitly named project. Never returns prompts, \
+            cwd, full assistant prose, argv, or tool output. Read-only.
             """,
         inputSchema: .object([
             "type": "object",
@@ -528,8 +609,29 @@ public enum AuspexMCPTools {
                     "type": "boolean",
                     "description": "Leave out the sessions that have ended. Default true."
                 ]),
+                "project": projectFilterProperty,
                 "limit": limitProperty(default: 50)
             ])
+        ])
+    )
+
+    public static let sessionsGet = MCPTool(
+        name: Name.sessionsGet,
+        title: "Read one session",
+        description: """
+            A safe context capsule for one session plus the tasks linked to it. \
+            The capsule is structured metadata only: it does not expose raw \
+            transcript content, full assistant text, argv, or tool output.
+            """,
+        inputSchema: .object([
+            "type": "object",
+            "properties": .object([
+                "session_key": .object([
+                    "type": "string",
+                    "description": "The exact '<harness>:<session id>' key."
+                ])
+            ]),
+            "required": .array(["session_key"])
         ])
     )
 
@@ -566,17 +668,19 @@ public enum AuspexMCPTools {
 
     // MARK: - Shared schema fragments
 
-    /// The identity override, on every tool that acts *as* a session.
+    /// The identity hint, on every tool that acts *as* a session.
     ///
     /// Normally unnecessary and deliberately described that way: the pid on
     /// the socket answers the question, and an agent that guesses its own id
-    /// wrong would file its work under somebody else's row. It exists for the
-    /// harness whose bridge the kernel will not attribute a pid to.
+    /// wrong would file its work under somebody else's row. It never overrides
+    /// process evidence: the server accepts it only when the connection's
+    /// process tree independently resolves to the same session.
     private static let sessionIDProperty: MCPJSON = .object([
         "type": "string",
         "description": """
-            Only if Auspex could not work out who you are. Your harness's own \
-            session id, or '<harness>:<session id>'.
+            Optional identity check: your harness's own session id, or \
+            '<harness>:<session id>'. It must agree with the session Auspex \
+            resolves from this connection and cannot identify you by itself.
             """
     ])
 
@@ -599,6 +703,15 @@ public enum AuspexMCPTools {
             board, or a project key from sessions.self. Leave it out to use \
             the project this session is working in, which is almost always \
             what you want.
+            """
+    ])
+
+    private static let projectFilterProperty: MCPJSON = .object([
+        "type": "string",
+        "description": """
+            An absolute path, project name, or project key. Both overview.get \
+            and sessions.list use this session's project when omitted; an \
+            unattributed sessions.list caller must name one explicitly.
             """
     ])
 
@@ -633,6 +746,16 @@ public enum AuspexMCPTools {
             Task ids that have to be closed before this one can start. A task \
             waiting on unfinished work is not 'ready', and tasks.list with \
             ready_only leaves it out.
+            """
+    ])
+
+    private static let expectedVersionProperty: MCPJSON = .object([
+        "type": "integer",
+        "minimum": 1,
+        "description": """
+            The version returned by tasks.get or the last successful write. \
+            When supplied, a newer task is refused atomically; read it again \
+            before deciding whether to retry. Optional for older clients.
             """
     ])
 

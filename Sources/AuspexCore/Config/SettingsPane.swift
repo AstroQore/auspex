@@ -18,6 +18,7 @@ import Foundation
 /// draws for itself comes after.
 public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable {
     case agents
+    case general
     case appearance
     case characters
     case scene
@@ -32,6 +33,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
     public var title: String {
         switch self {
         case .agents: "Agents"
+        case .general: "General"
         case .appearance: "Appearance"
         case .characters: "Characters"
         case .scene: "Scene"
@@ -48,6 +50,8 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
         switch self {
         case .agents:
             "What Auspex has written into each harness, and how to take it back."
+        case .general:
+            "Whether the observer is already there when you log in."
         case .appearance:
             "Light and dark, and one accent in both."
         case .characters:
@@ -67,6 +71,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
     public var systemImage: String {
         switch self {
         case .agents: "point.3.connected.trianglepath.dotted"
+        case .general: "gearshape"
         case .appearance: "circle.lefthalf.filled"
         case .characters: "person.and.background.dotted"
         case .scene: "map"
@@ -100,7 +105,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable, Codable 
     public var measure: CGFloat {
         switch self {
         case .agents, .characters: Self.gridMeasure
-        case .appearance, .scene, .crew, .ignore, .updates: Self.proseMeasure
+        case .general, .appearance, .scene, .crew, .ignore, .updates: Self.proseMeasure
         }
     }
 

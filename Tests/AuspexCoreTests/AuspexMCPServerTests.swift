@@ -42,6 +42,7 @@ struct AuspexMCPServerTests {
         readOnly: Bool = false,
         table: (any ProcessTableReading)? = nil,
         clientPIDs: [pid_t] = [bridgePID],
+        connectionCount: Int? = nil,
         board: BoardSnapshot? = nil
     ) throws -> (AuspexMCPServer, TestMCPHost, AuspexStore) {
         let store = try AuspexStore(inMemory: true)
@@ -50,6 +51,7 @@ struct AuspexMCPServerTests {
             store: store,
             table: table ?? makeTable(),
             clientPIDs: clientPIDs,
+            connectionCount: connectionCount,
             isReadOnly: readOnly
         )
         let server = AuspexMCPServer(host: host, now: { Fixtures.date(100) })
@@ -66,6 +68,9 @@ struct AuspexMCPServerTests {
         #expect(result?["serverInfo"]?["name"]?.stringValue == "auspex")
         let instructions = try #require(result?["instructions"]?.stringValue)
         #expect(instructions.contains("auspex.notify"))
+        #expect(instructions.contains("auspex-coordination"))
+        #expect(instructions.contains("implicit session task"))
+        #expect(instructions.contains("Completion enters Review"))
     }
 
     @Test("a notification is answered with silence")
@@ -81,7 +86,7 @@ struct AuspexMCPServerTests {
         let result = try RPC.decode(await server.answer(line: RPC.line("tools/list", id: 2)))["result"]
         let tools = try #require(result?["tools"]?.arrayValue)
         #expect(tools.count == AuspexMCPTools.all.count)
-        #expect(tools.count == 16)
+        #expect(tools.count == 20)
         for tool in tools {
             #expect(tool["name"]?.stringValue?.isEmpty == false)
             #expect(tool["inputSchema"]?["type"]?.stringValue == "object")
@@ -172,19 +177,20 @@ struct AuspexMCPServerTests {
         let message = try RPC.failureText(await server.answer(line: RPC.call("auspex.notify", [
             "kind": "blocked", "message": "no network"
         ])))
-        #expect(message.contains("could not work out which session"))
+        #expect(message.contains("process-attributed session"))
         #expect(try TaskRepository(store: store).liveNotices().isEmpty)
     }
 
-    @Test("an explicit session_id overrides the pid, and a bad one is refused")
-    func sessionIDOverride() async throws {
-        let (server, _, _) = try makeServer(clientPIDs: [])
+    @Test("session_id can corroborate process evidence but cannot override it")
+    func sessionIDIsOnlyACrossCheck() async throws {
+        let (server, _, _) = try makeServer()
         let structured = try RPC.structured(await server.answer(line: RPC.call("auspex.notify", [
             "kind": "done",
             "message": "migration landed",
             "session_id": .string(Self.sessionKey.sessionID)
         ])))
         #expect(structured["session"]?.stringValue == Self.sessionKey.description)
+        #expect(structured["evidence"]?.stringValue?.contains("session_id agreed") == true)
         // Finished work waits on a person, so the bucket it lands in is the
         // one a person empties.
         #expect(structured["bucket"]?.stringValue == "review")
@@ -193,19 +199,28 @@ struct AuspexMCPServerTests {
             "kind": "done", "message": "x", "session_id": "claudeCode:nobody"
         ])))
         #expect(refusal.contains("No session on the board"))
+
+        let (unresolved, _, _) = try makeServer(clientPIDs: [])
+        let uncorroborated = try RPC.failureText(await unresolved.answer(line: RPC.call(
+            "auspex.notify", [
+                "kind": "done", "message": "x",
+                "session_id": .string(Self.sessionKey.description)
+            ]
+        )))
+        #expect(uncorroborated.contains("cannot corroborate"))
+        #expect(uncorroborated.contains("cannot identify its caller by itself"))
     }
 
-    @Test("the hello a bridge sends is used when the socket reports no pid")
-    func helloIsTheFallback() async throws {
+    @Test("a legacy hello never becomes global identity evidence")
+    func helloIsNotIdentity() async throws {
         let (server, _, _) = try makeServer(clientPIDs: [])
         _ = await server.answer(
             line: RPC.line("auspex/hello", params: ["pid": .int(Int64(Self.harnessPID))])
         )
-        let structured = try RPC.structured(await server.answer(line: RPC.call("auspex.notify", [
+        let failure = try RPC.failureText(await server.answer(line: RPC.call("auspex.notify", [
             "kind": "needs_review", "message": "please look at the diff"
         ])))
-        #expect(structured["session"]?.stringValue == Self.sessionKey.description)
-        #expect(structured["evidence"]?.stringValue?.contains("declared") == true)
+        #expect(failure.contains("process-attributed session"))
     }
 
     @Test("a session id in the environment identifies a harness with no pid on the board")
@@ -257,6 +272,7 @@ struct AuspexMCPServerTests {
         ])))
         let taskID = try #require(task["id"]?.intValue)
         #expect(task["status"]?.stringValue == "todo")
+        #expect(task["version"]?.intValue == 1)
 
         let claimed = try RPC.structured(await server.answer(line: RPC.call("tasks.claim", [
             "task_id": .int(Int64(taskID)), "role": "implementer", "scope": "the TOML half"
@@ -265,6 +281,7 @@ struct AuspexMCPServerTests {
         #expect(claimed["claimRole"]?.stringValue == "implementer")
         #expect(claimed["claimScope"]?.stringValue == "the TOML half")
         #expect(claimed["claimedBy"]?.stringValue == Self.sessionKey.description)
+        #expect(claimed["claimOutcome"]?.stringValue == "claimed")
         #expect(claimed["sessions"]?.arrayValue?.first?.stringValue == Self.sessionKey.description)
 
         let done = try RPC.structured(await server.answer(line: RPC.call("tasks.complete", [
@@ -343,6 +360,117 @@ struct AuspexMCPServerTests {
         #expect(last["ref"]?.stringValue == "a1b2c3d")
     }
 
+    @Test("tasks.get returns readiness, history, and safe peer capsules")
+    func taskDetailIsStructuredAndSafe() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let dependency = try ledger.createTask(
+            title: "Land the schema", projectKey: "/Users/example/Code/widget"
+        )
+        let task = try ledger.createTask(
+            title: "Wire the reader", projectKey: "/Users/example/Code/widget",
+            dependsOn: [dependency.id]
+        )
+        try ledger.claimTask(
+            id: task.id, role: "implementer", scope: "MCP payloads", by: Self.sessionKey
+        )
+        try ledger.appendLog(
+            taskID: task.id, actor: Self.sessionKey, kind: "decision",
+            message: "Capsules carry metadata, never transcript bodies."
+        )
+
+        let detail = try RPC.structured(await server.answer(line: RPC.call("tasks.get", [
+            "task_id": .int(task.id)
+        ])))
+        #expect(detail["task"]?["id"]?.intValue == Int(task.id))
+        #expect(detail["task"]?["version"]?.intValue == Int((try ledger.task(id: task.id))?.version ?? 0))
+        #expect(detail["readiness"]?["ready"]?.boolValue == false)
+        #expect(
+            detail["readiness"]?["blocking"]?.arrayValue?.compactMap(\.intValue)
+                == [Int(dependency.id)]
+        )
+        #expect(detail["history"]?.arrayValue?.last?["kind"]?.stringValue == "decision")
+        #expect(detail["attempts"]?.arrayValue?.first?["event"]?.stringValue == "claimed")
+        #expect(detail["attempts"]?.arrayValue?.first?["session"]?.stringValue == Self.sessionKey.description)
+        let capsule = try #require(detail["sessions"]?.arrayValue?.first?["session"])
+        #expect(capsule["key"]?.stringValue == Self.sessionKey.description)
+        #expect(capsule["activity"]?["provenance"]?.stringValue == "inferred")
+        #expect(capsule["assignment"] == nil)
+        #expect(capsule["cwd"] == nil)
+        #expect(capsule["latestAssistant"] == nil)
+    }
+
+    @Test("tasks.release is holder-only and keeps the reason")
+    func releaseIsHolderOnly() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let mine = try ledger.createTask(title: "Give this back")
+        try ledger.claimTask(id: mine.id, role: "implementer", scope: nil, by: Self.sessionKey)
+
+        let released = try RPC.structured(await server.answer(line: RPC.call("tasks.release", [
+            "task_id": .int(mine.id), "reason": "The prerequisite belongs to another worker."
+        ])))
+        #expect(released["status"]?.stringValue == "todo")
+        #expect(released["claimedBy"] == nil)
+        #expect(try ledger.log(taskID: mine.id).last?.message == "The prerequisite belongs to another worker.")
+
+        let other = Fixtures.key(.codex, "somebody-else")
+        let theirs = try ledger.createTask(title: "Not mine")
+        try ledger.claimTask(id: theirs.id, role: "implementer", scope: nil, by: other)
+        let refusal = try RPC.failureText(await server.answer(line: RPC.call("tasks.release", [
+            "task_id": .int(theirs.id), "reason": "I should not be able to do this."
+        ])))
+        #expect(refusal.contains("Only \(other.description) can release"))
+        #expect(try ledger.task(id: theirs.id)?.claimedBy == other)
+    }
+
+    @Test("tasks.complete is holder-only")
+    func completeIsHolderOnly() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let other = Fixtures.key(.codex, "somebody-else")
+        let task = try ledger.createTask(title: "Not my finish")
+        let held = try ledger.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: other
+        )
+        let refusal = try RPC.failureText(await server.answer(line: RPC.call("tasks.complete", [
+            "task_id": .int(task.id),
+            "expected_version": .int(held.version),
+            "result": "I should not finish this"
+        ])))
+        #expect(refusal.contains("Only the current holder, \(other.description), can finish"))
+        #expect(try ledger.task(id: task.id)?.status == .doing)
+    }
+
+    @Test("overview.get is the compact current-project situation")
+    func projectOverview() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let project = "/Users/example/Code/widget"
+        _ = try ledger.createTask(title: "Implement", status: .doing, projectKey: project)
+        _ = try ledger.createTask(title: "Blocked", status: .blocked, projectKey: project)
+        _ = try ledger.createTask(title: "Review", status: .review, projectKey: project)
+        _ = try ledger.createTask(title: "Ready", projectKey: project)
+        let orphan = try ledger.createTask(title: "Orphaned", projectKey: project)
+        try ledger.claimTask(
+            id: orphan.id, role: "implementer", scope: nil,
+            by: Fixtures.key(.codex, "ended-worker")
+        )
+        _ = await server.answer(line: RPC.call("auspex.notify", [
+            "kind": "blocked", "message": "Choose the migration boundary."
+        ]))
+
+        let overview = try RPC.structured(await server.answer(line: RPC.call("overview.get")))
+        #expect(overview["project"]?["key"]?.stringValue == project)
+        #expect(overview["self"]?["key"]?.stringValue == Self.sessionKey.description)
+        #expect(overview["doing"]?.arrayValue?.count == 2) // implement + orphaned claim
+        #expect(overview["blocked"]?.arrayValue?.count == 1)
+        #expect(overview["review"]?.arrayValue?.count == 1)
+        #expect(overview["ready"]?.arrayValue?.count == 1)
+        #expect(overview["orphanedClaims"]?.arrayValue?.first?["id"]?.intValue == Int(orphan.id))
+        #expect(overview["needsYou"]?.arrayValue?.first?["attention"]?["provenance"]?.stringValue == "self_reported")
+    }
+
     @Test("saying done finishes the task this session was holding")
     func notifyDoneAsksForAReview() async throws {
         let (server, _, store) = try makeServer()
@@ -363,6 +491,30 @@ struct AuspexMCPServerTests {
         let stored = try #require(try TaskRepository(store: store).task(id: Int64(id)))
         #expect(stored.status == .review)
         #expect(stored.result == "fenced writer plus 9 tests")
+    }
+
+    @Test("a done notice cannot finish a task released during the notice callback")
+    func notifyDoneCannotFinishTransferredWork() async throws {
+        let (server, host, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let task = try ledger.createTask(title: "Do not finish stale ownership")
+        _ = try ledger.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: Self.sessionKey
+        )
+        await host.setNoticeInterceptor { _ in
+            _ = try? ledger.releaseTask(
+                id: task.id, by: Self.sessionKey, requireHolder: true
+            )
+        }
+
+        let notice = try RPC.structured(await server.answer(line: RPC.call("auspex.notify", [
+            "kind": "done", "message": "the old holder finished"
+        ])))
+        #expect(notice["reviewing"] == nil)
+        let stored = try #require(try ledger.task(id: task.id))
+        #expect(stored.status == .todo)
+        #expect(stored.claimedBy == nil)
+        #expect(stored.result == nil)
     }
 
     // MARK: - Projects contain tasks
@@ -469,18 +621,68 @@ struct AuspexMCPServerTests {
         #expect(tasks["note"]?.stringValue?.contains("tasks.create") == true)
     }
 
-    @Test("a claim held by somebody else is refused with the holder named")
-    func claimConflictIsReported() async throws {
+    @Test("a claim held by somebody else becomes a visible takeover request")
+    func claimConflictIsPending() async throws {
         let (server, _, store) = try makeServer()
         let ledger = TaskRepository(store: store)
         let other = Fixtures.key(.codex, "somebody-else")
         let task = try ledger.createTask(title: "One job")
         try ledger.claimTask(id: task.id, role: "implementer", scope: nil, by: other)
 
-        let message = try RPC.failureText(await server.answer(line: RPC.call("tasks.claim", [
-            "task_id": .int(task.id), "role": "implementer"
+        let pending = try RPC.structured(await server.answer(line: RPC.call("tasks.claim", [
+            "task_id": .int(task.id),
+            "role": "reviewer",
+            "scope": "migration",
+            "reason": "I have the compatibility context"
         ])))
-        #expect(message.contains("Already claimed by \(other.description)"))
+        #expect(pending["claimedBy"]?.stringValue == other.description)
+        #expect(pending["claimOutcome"]?.stringValue == "pending_takeover")
+        let request = try #require(pending["pendingClaims"]?.arrayValue?.first)
+        #expect(request["requester"]?.stringValue == Self.sessionKey.description)
+        #expect(request["holder"]?.stringValue == other.description)
+        #expect(request["status"]?.stringValue == "pending")
+        #expect(request["taskVersion"]?.intValue == pending["version"]?.intValue)
+        #expect(try ledger.task(id: task.id)?.claimedBy == other)
+    }
+
+    @Test("expected_version refuses a stale agent mutation atomically")
+    func expectedVersionFencesStaleMCPWrites() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let task = try ledger.createTask(title: "Keep the newer state")
+        let current = try ledger.updateTask(id: task.id, status: .doing)
+        #expect(current.version == 2)
+
+        let message = try RPC.failureText(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(task.id),
+            "expected_version": 1,
+            "title": "stale title",
+            "depends_on": .array([.int(9_999)])
+        ])))
+        #expect(message.contains("expected 1, current 2"))
+        let stored = try #require(try ledger.task(id: task.id))
+        #expect(stored.title == "Keep the newer state")
+        #expect(stored.status == .doing)
+        #expect(stored.version == 2)
+
+        let fresh = try RPC.structured(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(task.id),
+            "expected_version": 2,
+            "status": "blocked"
+        ])))
+        #expect(fresh["version"]?.intValue == 3)
+        #expect(fresh["status"]?.stringValue == "blocked")
+    }
+
+    @Test("tasks.update cannot bypass Review and close the agent's own work")
+    func updateCannotSelfClose() async throws {
+        let (server, _, store) = try makeServer()
+        let task = try TaskRepository(store: store).createTask(title: "Review me")
+        let message = try RPC.failureText(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(task.id), "status": "done", "expected_version": 1
+        ])))
+        #expect(message.contains("cannot close its own task"))
+        #expect(try TaskRepository(store: store).task(id: task.id)?.status == .todo)
     }
 
     @Test("a task id that is not a positive number never reaches the store")
@@ -563,7 +765,7 @@ struct AuspexMCPServerTests {
         #expect(structured["evidence"]?.stringValue?.isEmpty == false)
     }
 
-    @Test("sessions.list carries the notice a session filed")
+    @Test("sessions.list carries safe attention without prompt or cwd")
     func sessionsListShowsNotices() async throws {
         let (server, _, _) = try makeServer()
         _ = await server.answer(line: RPC.call("auspex.notify", [
@@ -571,8 +773,153 @@ struct AuspexMCPServerTests {
         ]))
         let structured = try RPC.structured(await server.answer(line: RPC.call("sessions.list")))
         let first = try #require(structured["sessions"]?.arrayValue?.first)
-        #expect(first["notice"]?["kind"]?.stringValue == "needs_review")
-        #expect(first["notice"]?["message"]?.stringValue == "look at the diff")
+        #expect(first["attention"]?["state"]?.stringValue == "needs_you")
+        #expect(first["attention"]?["message"]?.stringValue == "look at the diff")
+        #expect(first["assignment"] == nil)
+        #expect(first["cwd"] == nil)
+    }
+
+    @Test("sessions.list filters by project and returns persisted report freshness")
+    func sessionsListShowsReportsAndFiltersProjects() async throws {
+        var primary = makeBoard().sessions[0]
+        primary.brief.lastAssistantAt = Fixtures.date(120)
+        let otherKey = Fixtures.key(.codex, "other-project")
+        var other = SessionStateReducer.initialSnapshot(identity: Fixtures.identity(
+            key: otherKey,
+            cwd: "/Users/example/Code/other",
+            gitRoot: "/Users/example/Code/other",
+            pid: nil
+        ))
+        other.state = .thinking
+        let board = BoardSnapshot(generatedAt: Fixtures.date(130), sessions: [primary, other])
+        let (server, _, store) = try makeServer(board: board)
+        try TaskRepository(store: store).recordReport(
+            session: Self.sessionKey,
+            focus: "Hardening MCP identity",
+            progress: "3 of 4",
+            now: Fixtures.date(100)
+        )
+
+        let listed = try RPC.structured(await server.answer(line: RPC.call("sessions.list", [
+            "project": "/Users/example/Code/widget"
+        ])))
+        #expect(listed["total"]?.intValue == 1)
+        let session = try #require(listed["sessions"]?.arrayValue?.first)
+        #expect(session["key"]?.stringValue == Self.sessionKey.description)
+        #expect(session["report"]?["focus"]?.stringValue == "Hardening MCP identity")
+        #expect(session["report"]?["progress"]?.stringValue == "3 of 4")
+        #expect(session["report"]?["reportedAt"] != nil)
+        #expect(session["report"]?["freshness"]?.stringValue == "superseded")
+        #expect(session["report"]?["provenance"]?.stringValue == "self_reported")
+        #expect(session["assignment"] == nil)
+        #expect(session["cwd"] == nil)
+
+        let defaultScoped = try RPC.structured(
+            await server.answer(line: RPC.call("sessions.list"))
+        )
+        #expect(defaultScoped["total"]?.intValue == 1)
+        #expect(
+            defaultScoped["sessions"]?.arrayValue?.first?["key"]?.stringValue
+                == Self.sessionKey.description
+        )
+    }
+
+    @Test("sessions.get returns safe metadata and linked task context")
+    func sessionDetailIsSafe() async throws {
+        var writing = makeBoard().sessions[0]
+        writing.state = .writingFile(path: "/Users/example/private/secret.swift")
+        let safeBoard = BoardSnapshot(
+            generatedAt: makeBoard().generatedAt,
+            sessions: [writing]
+        )
+        let (server, _, store) = try makeServer(board: safeBoard)
+        let ledger = TaskRepository(store: store)
+        let task = try ledger.createTask(title: "Context work")
+        try ledger.claimTask(
+            id: task.id, role: "implementer", scope: "safe capsule", by: Self.sessionKey
+        )
+        try ledger.recordReport(
+            session: Self.sessionKey, focus: "Building the capsule", progress: "done"
+        )
+
+        let detail = try RPC.structured(await server.answer(line: RPC.call("sessions.get", [
+            "session_key": .string(Self.sessionKey.description)
+        ])))
+        let capsule = try #require(detail["session"])
+        #expect(capsule["key"]?.stringValue == Self.sessionKey.description)
+        #expect(capsule["report"]?["focus"]?.stringValue == "Building the capsule")
+        #expect(capsule["linkedTasks"]?["ids"]?.arrayValue?.compactMap(\.intValue) == [Int(task.id)])
+        #expect(detail["tasks"]?.arrayValue?.first?["title"]?.stringValue == "Context work")
+        #expect(capsule["assignment"] == nil)
+        #expect(capsule["cwd"] == nil)
+        #expect(capsule["latestAssistant"] == nil)
+        #expect(capsule["activity"]?["detail"]?.stringValue == "secret.swift")
+        #expect(capsule["activity"]?["detail"]?.stringValue?.contains("/Users/") == false)
+    }
+
+    @Test("unattributed callers may create Scratch work but cannot author later mutations")
+    func unresolvedWritesFailClosedExceptCreation() async throws {
+        let (server, _, _) = try makeServer(clientPIDs: [])
+        let created = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "A task from an unattributed coordinator"
+        ])))
+        let id = try #require(created["id"]?.intValue)
+        #expect(created["project"]?.stringValue == TaskProject.scratchKey)
+
+        let update = try RPC.failureText(await server.answer(line: RPC.call("tasks.update", [
+            "task_id": .int(Int64(id)), "status": "doing"
+        ])))
+        #expect(update.contains("process-attributed session"))
+
+        let log = try RPC.failureText(await server.answer(line: RPC.call("tasks.log", [
+            "task_id": .int(Int64(id)), "message": "anonymous mutation"
+        ])))
+        #expect(log.contains("process-attributed session"))
+    }
+
+    @Test("multiple unlabelled connections fail closed instead of using activity order")
+    func ambiguousConnectionsFailClosed() async throws {
+        let (server, _, store) = try makeServer(clientPIDs: [9_999, Self.bridgePID])
+        let task = try TaskRepository(store: store).createTask(title: "Do not misattribute")
+        let failure = try RPC.failureText(await server.answer(line: RPC.call("tasks.claim", [
+            "task_id": .int(task.id), "role": "implementer"
+        ])))
+        #expect(failure.contains("2 connections are attached without request-scoped identity"))
+        #expect(try TaskRepository(store: store).task(id: task.id)?.claimedBy == nil)
+    }
+
+    @Test("request-scoped bridge identity selects the exact peer among live connections")
+    func attributedRequestSelectsExactPeer() async throws {
+        let (server, _, store) = try makeServer(clientPIDs: [9_999, Self.bridgePID])
+        let task = try TaskRepository(store: store).createTask(title: "Exact caller")
+        let line = RPC.attributed(RPC.call("tasks.claim", [
+            "task_id": .int(task.id), "role": "implementer", "expected_version": 1
+        ]), peerPID: Self.bridgePID)
+        let claimed = try RPC.structured(await server.answer(line: line))
+        #expect(claimed["claimedBy"]?.stringValue == Self.sessionKey.description)
+        #expect(
+            try TaskRepository(store: store).task(id: task.id)?.claimedBy == Self.sessionKey
+        )
+    }
+
+    @Test("request attribution not present in the kernel roster is never a fallback hint")
+    func detachedAttributedPeerFailsClosed() async throws {
+        let (server, _, store) = try makeServer(clientPIDs: [Self.bridgePID])
+        let task = try TaskRepository(store: store).createTask(title: "Detached caller")
+        let line = RPC.attributed(RPC.call("tasks.claim", [
+            "task_id": .int(task.id), "role": "implementer"
+        ]), peerPID: 9_999)
+        let failure = try RPC.failureText(await server.answer(line: line))
+        #expect(failure.contains("process 9999 is not attached"))
+        #expect(try TaskRepository(store: store).task(id: task.id)?.claimedBy == nil)
+    }
+
+    @Test("two connections with unavailable kernel pids remain ambiguous")
+    func unknownPeerRosterFailsClosed() async throws {
+        let (server, _, _) = try makeServer(clientPIDs: [], connectionCount: 2)
+        let result = try RPC.structured(await server.answer(line: RPC.call("sessions.self")))
+        #expect(result["resolved"]?.boolValue == false)
+        #expect(result["evidence"]?.stringValue?.contains("2 connections") == true)
     }
 
     @Test("peers.status counts a notify as somebody needing you")

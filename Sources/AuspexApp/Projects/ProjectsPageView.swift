@@ -61,9 +61,16 @@ struct ProjectsPageView: View {
         .background(BoardSurfaceBackground())
         .sheet(isPresented: $isCreating) {
             NewProjectSheet(catalog: catalog) { isCreating = false }
+                // Presented from the hand-drawn board column, which disables
+                // AppKit's effect. This form restores native Tab feedback,
+                // then clears only the automatic initial responder.
+                .auspexSystemControlFocus()
+                .auspexNoInitialFocus()
         }
         .sheet(isPresented: $isImporting) {
             ImportProjectsSheet(catalog: catalog) { isImporting = false }
+                .auspexSystemControlFocus()
+                .auspexNoInitialFocus()
         }
     }
 
@@ -278,6 +285,7 @@ private struct ProjectCard: View {
                     .textFieldStyle(.plain)
                     .font(AuspexType.cardTitle)
                     .foregroundStyle(AuspexPalette.text)
+                    .auspexSystemControlFocus()
                     .onSubmit { catalog.rename(project, to: name) }
                     .frame(maxWidth: 260, alignment: .leading)
 
@@ -386,6 +394,7 @@ private struct ProjectCard: View {
             }
             .controlSize(.small)
             .buttonStyle(.borderless)
+            .auspexSystemControlFocus()
             .font(AuspexType.caption)
         }
     }

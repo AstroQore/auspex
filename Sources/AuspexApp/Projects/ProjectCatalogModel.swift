@@ -194,6 +194,45 @@ final class ProjectCatalogModel {
         persist()
     }
 
+    // MARK: - Process lifecycle
+
+    /// The last ServiceManagement state Auspex persisted. macOS remains the
+    /// operational truth and launch reconciliation may turn this off when the
+    /// person disabled the item in System Settings.
+    var launchAtLogin: Bool { settings.launchAtLogin }
+
+    /// The installed bundle for which macOS last confirmed the item enabled.
+    var loginItemRegistration: LoginItemRegistrationReceipt? {
+        settings.loginItemRegistration
+    }
+
+    /// Records an explicit click or a reconciled macOS state. The caller owns
+    /// the ServiceManagement ordering; keeping the write here preserves the
+    /// one-writer rule for `settings.json`.
+    func setLaunchAtLogin(
+        _ enabled: Bool,
+        registration: LoginItemRegistrationReceipt?
+    ) {
+        let registration = enabled ? registration : nil
+        guard settings.launchAtLogin != enabled
+                || settings.loginItemRegistration != registration else { return }
+        settings.launchAtLogin = enabled
+        settings.loginItemRegistration = registration
+        persist()
+    }
+
+    // MARK: - Catch-up cursor
+
+    var lastCatchUpAt: Date? { settings.lastCatchUpAt }
+
+    /// Moves the global catch-up cursor forward. Monotonic so two windows or
+    /// a delayed click can never bring already-reviewed work back as new.
+    func markCaughtUp(at date: Date = Date()) {
+        if let existing = settings.lastCatchUpAt, existing >= date { return }
+        settings.lastCatchUpAt = date
+        persist()
+    }
+
     // MARK: - The crew's liveliness
 
     /// How often the crew's avatars react. The default until somebody says

@@ -10,21 +10,24 @@ import SwiftUI
 ///
 /// A `TabView` puts the strip wherever the platform puts it, which in the
 /// board's column was directly on the header's hairline; it sizes the strip to
-/// the window rather than to the six words in it; and it knows a pane's *name*
+/// the window rather than to the destinations in it; and it knows a pane's *name*
 /// and nothing else, so the one subtitle the window had was written beside
 /// whichever pane existed first and then introduced every other pane as
 /// "characters, and where packages come from".
 ///
 /// So the chrome is the app's own, and it is one shape: a title row carrying
 /// ``SettingsPane/title`` and that pane's own ``SettingsPane/subtitle``, a
-/// segmented strip sized to its six words, a rule, and the pane under it. Every
-/// pane is a plain stack of rows — the scroll view, the padding, the ground and
+/// segmented strip (or a compact menu when the column is narrow), a rule, and
+/// the pane under it. Every pane is a plain stack of rows — the scroll view,
+/// the padding, the ground and
 /// the measure are here, once, so no pane can invent its own margins.
 struct AuspexSettingsView: View {
     let library: SpriteLibrary
     /// The user layer, for the Ignore pane. The pane writes through it, so the
     /// board reacts to a rule the moment it is added.
     let catalog: ProjectCatalogModel
+    /// The one process-wide macOS Login Items registration.
+    let loginItem: LoginItemController
     /// What Auspex has written into each harness. `nil` where there is no app
     /// behind the pane — the offscreen renderer, and the previews.
     var setup: SetupModel?
@@ -70,11 +73,12 @@ struct AuspexSettingsView: View {
 
     // MARK: The chrome
 
-    /// The pane's name, the pane's own line, and the way to the other five.
+    /// The pane's name, the pane's own line, and the way to every other pane.
     ///
-    /// The strip is under the title rather than beside it because six segments
-    /// and a heading do not both fit across a 460 pt column, and a strip that
-    /// starts dropping words is worse than a strip on its own row.
+    /// The strip is under the title rather than beside it because the panes
+    /// and a heading do not both fit across a 460 pt column. At that narrow
+    /// measure the complete strip becomes one menu instead of overflowing or
+    /// dropping destinations.
     private var titleRow: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
@@ -91,11 +95,25 @@ struct AuspexSettingsView: View {
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            SegmentedPicker(
-                selection: Binding(get: { shown }, set: { pane = $0 }),
-                options: panes.map { ($0, $0.title) }
-            )
-            .fixedSize()
+            ViewThatFits(in: .horizontal) {
+                SegmentedPicker(
+                    selection: Binding(get: { shown }, set: { pane = $0 }),
+                    options: panes.map { ($0, $0.title) }
+                )
+                .fixedSize()
+
+                Picker(
+                    "Settings pane",
+                    selection: Binding(get: { shown }, set: { pane = $0 })
+                ) {
+                    ForEach(panes) { option in
+                        Label(option.title, systemImage: option.systemImage).tag(option)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(maxWidth: 220, alignment: .leading)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
@@ -119,6 +137,7 @@ struct AuspexSettingsView: View {
                     onOpenSetup: { setup.present() }
                 )
             }
+        case .general: GeneralSettingsView(catalog: catalog, loginItem: loginItem)
         case .appearance: AppearanceSettingsView(catalog: catalog)
         case .characters: CharactersSettingsView(library: library)
         case .scene: SceneSettingsView(catalog: catalog)

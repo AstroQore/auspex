@@ -195,6 +195,31 @@ struct TaskUnitTests {
         #expect(unit.bucket == .idle)
     }
 
+    @Test("pending takeovers travel with the ledger into the task unit")
+    func pendingTakeoverIsVisibleOnUnit() {
+        let holder = Self.key("holder")
+        let request = TaskClaimRequest(
+            id: 41,
+            taskID: 3,
+            requester: Self.key("requester", .codex),
+            holder: holder,
+            role: "reviewer",
+            scope: "handoff",
+            reason: "current owner is blocked",
+            taskVersion: 2,
+            status: .pending,
+            requestedAt: Fixtures.date(25),
+            resolvedAt: nil
+        )
+        let ledger = TaskLedgerFrame(
+            tasks: [Self.task(id: 3, title: "Retention", claimedBy: holder)],
+            pendingClaims: [request]
+        )
+        let unit = try! #require(Self.units(Self.board([]), ledger: ledger).first)
+        #expect(unit.pendingTakeoverCount == 1)
+        #expect(unit.pendingTakeoverAt == Fixtures.date(25))
+    }
+
     // MARK: - Promotion
 
     @Test("filing a task for a family keeps the card it already had")

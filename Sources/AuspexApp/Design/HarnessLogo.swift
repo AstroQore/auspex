@@ -61,7 +61,7 @@ enum HarnessLogo {
     static func nsImage(for harness: Harness, size: CGFloat) -> NSImage? {
         let key = Key(harness: harness, size: size)
         if let cached = cache[key] { return cached }
-        guard let url = Bundle.module.url(
+        guard let url = AppResourceBundle.url(
             forResource: assetName(for: harness),
             withExtension: "svg",
             subdirectory: "ProviderIcons"

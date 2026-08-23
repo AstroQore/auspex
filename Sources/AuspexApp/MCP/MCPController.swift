@@ -18,7 +18,7 @@ import Observation
 /// the path away from a live instance that agents are attached to. So the demo
 /// serves only when a socket is named explicitly through `AUSPEX_MCP_SOCKET`,
 /// which is how a test points one at a temporary directory. Either way the
-/// board it serves is read-only: the nine writing tools are refused by name.
+/// board it serves is read-only: the ten writing tools are refused by name.
 @MainActor
 @Observable
 final class MCPController {

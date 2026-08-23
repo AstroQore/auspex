@@ -244,6 +244,7 @@ struct TrajectoryInspector: View {
                         NSPasteboard.general.setString(text, forType: .string)
                     }
                     .buttonStyle(.link)
+                    .auspexSystemControlFocus()
                     .font(AuspexType.caption)
                 }
             }

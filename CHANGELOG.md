@@ -5,10 +5,58 @@ All notable changes to Auspex are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Auspex is pre-alpha; nothing has been released yet. `RELEASING.md`
-describes how one is cut when there is.
+Auspex is pre-alpha; Dev previews may be published, but there is no Stable
+release yet. `RELEASING.md` describes how one is cut when there is.
 
 ## [Unreleased]
+
+### Fixed
+
+- Packaged apps now resolve SwiftPM resources from `Contents/Resources`, so a
+  GitHub-downloaded build no longer crashes in `Bundle.module` when the CI
+  checkout fallback path is absent. Release CI smoke-tests the copied archive.
+- MCP writes no longer infer identity from the most recently active socket;
+  official bridge requests carry request-scoped, kernel-roster-corroborated
+  process attribution, while ambiguous legacy connections fail closed.
+- Takeover approval expires when the reviewed task version or holder changed,
+  and Catch-up ignores tool/token churn, uses a fresh click-time cursor, avoids
+  duplicate orphan rows, and scopes branch collisions to a project.
+- Login launch respects a user disabling the item in macOS and a later
+  Finder/Dock reopen restores the normal main window.
+- Liveness probes exclude retained ended history instead of re-running every
+  harness filesystem check over thousands of sessions every three seconds.
+- Discovery tails a one-hour recent working set instead of a full day of
+  dormant stores, while live presence/worker evidence overrides the cutoff and
+  SQLite/WAL polling keeps its two-second correctness cadence.
+- Person-authored task writes now refresh Roost, Live Ledger and Catch-up only
+  after the store accepts the transaction, avoiding stale queues and read/write races.
+- Every Auspex-owned window, sheet and popover clears only its implicit initial
+  responder; no control starts highlighted, while Tab/arrow navigation and
+  subsequent focus feedback remain intact. Native Kill alert is now an owned sheet.
+- Roost no longer enters a 100% CPU SwiftUI transaction loop after scrolling:
+  scroll views use a system viewport instead of custom placement, and the
+  dynamic task board no longer participates in lazy-prefetch feedback.
+
+### Added
+
+- A 30-second Catch-up panel with a ranked human queue (including takeover
+  approvals), semantic changes and non-notifying amber watch signals.
+- Carbon-inspired task integrity: monotonic versions and `expected_version`,
+  atomic dependency validation, durable human-approved takeover requests,
+  holder-only completion into Review, and attempt context in `tasks.get`.
+- Review Next navigation, on-demand bounded local-Git Delivery evidence, and
+  copy-only provenance-labelled Handoff Packets.
+- Safe `overview.get`, `tasks.get`, `tasks.release`, `sessions.get`, and
+  project-scoped `sessions.list` context without peer transcripts or prompts.
+- An installable, versioned `auspex-coordination` Supervisor/Worker/Reviewer
+  Skill with owned-directory hashing, backups and exact reversal.
+- Explicit Launch at login controls in first-run setup and General Settings,
+  implemented with ServiceManagement and a quiet login launch.
+
+### Changed
+
+- The bundled coordination Skill now carries task versions through writes and
+  treats `pending_takeover` as a request rather than ownership.
 
 ## [0.1.0-dev.2] - 2026-08-21
 

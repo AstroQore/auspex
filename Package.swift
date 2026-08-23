@@ -56,7 +56,14 @@ let package = Package(
             // looks them up by, and `build_app.sh` moves the whole
             // `Auspex_AuspexApp.bundle` into `Contents/Resources` before
             // signing.
-            resources: [.copy("Resources/ProviderIcons"), .copy("Resources/Brand")],
+            resources: [
+                .copy("Resources/ProviderIcons"),
+                .copy("Resources/Brand"),
+                // Versioned, on-demand agent playbooks. The installer reads
+                // these from the shipped app resource bundle and writes them
+                // only after a person clicks the corresponding setup row.
+                .copy("Resources/Skills")
+            ],
             swiftSettings: [.swiftLanguageMode(.v6)],
             // Sparkle ships as a framework, and `build_app.sh` puts it where
             // every other macOS app keeps one: `Contents/Frameworks`. Without

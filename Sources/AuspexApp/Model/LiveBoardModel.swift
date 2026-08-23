@@ -352,7 +352,8 @@ final class LiveBoardModel {
                     frame: TaskLedgerFrame(
                         tasks: (try? ledger.tasks(limit: 1_000)) ?? [],
                         links: (try? ledger.allLinks()) ?? [],
-                        plans: (try? ledger.plans(includingArchived: true)) ?? []
+                        plans: (try? ledger.plans(includingArchived: true)) ?? [],
+                        pendingClaims: (try? ledger.claimRequests()) ?? []
                     )
                 )
             }.value
@@ -534,6 +535,29 @@ final class LiveBoardModel {
     /// Every unit on the frame, in board order, before the filter bar.
     private(set) var units: [TaskUnit] = []
 
+    /// Material changes since the global cursor the person last cleared.
+    private(set) var catchUp = CatchUpSnapshot(
+        units: [], since: .distantPast, generatedAt: .distantPast
+    )
+
+    /// Actionable human work, ordered by explicit need and downstream impact.
+    private(set) var humanWorkQueue = HumanWorkQueue(units: [])
+
+    /// Amber risks and collisions. Never counted as Attention.
+    private(set) var watchSignals: [WatchSignal] = []
+
+    /// The durable global Catch-up cursor.
+    private(set) var catchUpSince: Date = .distantPast {
+        didSet { if oldValue != catchUpSince { scheduleAssembly() } }
+    }
+
+    /// Whether the compact Catch-up panel is on screen.
+    var isCatchUpOpen = false
+
+    func setCatchUpSince(_ date: Date) {
+        catchUpSince = date
+    }
+
     /// The frame the aviary draws: one session per piece of work.
     ///
     /// Its own property rather than a derivation in the scene's body, and
@@ -566,6 +590,47 @@ final class LiveBoardModel {
     /// The unit whose detail page is open, if any.
     var openUnitID: String?
 
+    /// Review ordering that exists only for this launch.
+    ///
+    /// Kept out of observation: deferring immediately navigates away from the
+    /// current page, and every value the next page draws comes from ``units``.
+    /// Publishing this set would make a local queue preference invalidate the
+    /// task wall even though no task changed.
+    @ObservationIgnored private var reviewOrdering = ReviewQueue()
+
+    /// Work currently waiting for a person's judgement.
+    ///
+    /// Stored as one scalar when units move. The header reads it several times
+    /// per layout, and filtering every unit there would put queue work on the
+    /// always-on render path for a button that is clicked occasionally.
+    private(set) var reviewCount = 0
+
+    /// Opens the first non-deferred Review item, then the oldest deferred one
+    /// only when everything left has been deferred.
+    func openNextReview() {
+        openUnitID = reviewOrdering.first(units: units)?.id
+    }
+
+    /// The adjacent item without wrapping, for the arrow buttons in the review
+    /// page. No task or attention state changes.
+    func reviewNeighbor(of unit: TaskUnit, direction: ReviewQueue.Direction) -> TaskUnit? {
+        reviewOrdering.neighbor(of: unit.id, direction: direction, units: units)
+    }
+
+    /// The item to show after the current review is resolved. Wraps once to the
+    /// front, but never returns the task being closed or reopened.
+    func reviewReplacement(after unit: TaskUnit) -> TaskUnit? {
+        reviewOrdering.neighbor(of: unit.id, direction: .next, units: units)
+            ?? reviewOrdering.first(units: units, excluding: unit.id)
+    }
+
+    /// Moves one Review item to the end of this launch's queue and advances.
+    /// Nothing is written to the ledger and the task stays in Review.
+    func deferReview(_ unit: TaskUnit) {
+        reviewOrdering.deferReview(id: unit.id)
+        openUnitID = reviewOrdering.first(units: units, excluding: unit.id)?.id
+    }
+
     /// Whether the command palette is on screen. ⌘K.
     var isPaletteOpen = false
 
@@ -588,6 +653,9 @@ final class LiveBoardModel {
 
     /// The unit the detail page is about.
     var openUnit: TaskUnit? { openUnitID.flatMap { unitIndex[$0] } }
+
+    /// One unit by its stable frame id, for compact auxiliary surfaces.
+    func unit(withID id: String) -> TaskUnit? { unitIndex[id] }
 
     /// The finished units actually drawn, and how many are left out.
     var visibleEndedUnits: [TaskUnit] {
@@ -749,7 +817,8 @@ final class LiveBoardModel {
             reports: reports,
             ledger: ledgerFrame,
             filters: filters,
-            showsSubagents: showsSubagents
+            showsSubagents: showsSubagents,
+            catchUpSince: catchUpSince
         )
     }
 
@@ -814,7 +883,18 @@ final class LiveBoardModel {
         endedUnits = frame.endedUnits
         let unitsMoved = units != frame.units
         units = frame.units
+        // These are observed by the header and Catch-up sheet. Observation
+        // invalidates on any write, even an equal value, so the assembler's
+        // semantic reconciliation only saves work if the model preserves it.
+        if catchUp != frame.catchUp { catchUp = frame.catchUp }
+        if humanWorkQueue != frame.humanQueue { humanWorkQueue = frame.humanQueue }
+        if watchSignals != frame.watchSignals { watchSignals = frame.watchSignals }
         unitIndex = frame.unitIndex
+        if unitsMoved {
+            reviewOrdering.reconcile(units: frame.units)
+            let nextReviewCount = frame.units.count { $0.isInReview }
+            if reviewCount != nextReviewCount { reviewCount = nextReviewCount }
+        }
         filterOptions = frame.filterOptions
         unitBySession = frame.unitBySession
         endedRows = frame.endedRows

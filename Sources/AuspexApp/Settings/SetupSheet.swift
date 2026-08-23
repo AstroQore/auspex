@@ -18,6 +18,8 @@ import SwiftUI
 /// no is what teaches people to dismiss dialogs without reading them.
 struct SetupSheet: View {
     @Bindable var model: SetupModel
+    let catalog: ProjectCatalogModel
+    let loginItem: LoginItemController
     let detected: Set<Harness>
     let socketPath: String?
     let onClose: () -> Void
@@ -28,6 +30,7 @@ struct SetupSheet: View {
             Divider().overlay(AuspexPalette.line)
             BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    StartupSetupRow(catalog: catalog, loginItem: loginItem)
                     ForEach(model.groups) { group in
                         SetupGroupView(group: group, model: model, detected: detected)
                     }
@@ -45,6 +48,7 @@ struct SetupSheet: View {
         .frame(width: 640)
         .frame(minHeight: 340, idealHeight: 540, maxHeight: 620)
         .background(AuspexPalette.bg0)
+        .onAppear { loginItem.refresh() }
     }
 
     private var header: some View {
@@ -57,19 +61,20 @@ struct SetupSheet: View {
             }
             Text(
                 "Auspex already watches every agent session on this Mac by reading "
-                    + "the files they write. These add the two parts reading cannot do: "
-                    + "an MCP server, so an agent can call you when it needs you and "
-                    + "claim the task it was given — and hooks, so a harness can say it "
-                    + "is waiting for your permission, which none of them write down."
+                    + "the files they write. These add explicit coordination: an MCP "
+                    + "server for task truth and human attention, a versioned skill that "
+                    + "teaches Supervisor/Worker/Reviewer handoffs, and hooks for states "
+                    + "such as permission waits that transcripts do not record."
             )
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
             .fixedSize(horizontal: false, vertical: true)
             Text(
                 "Every box is off until you tick it. Each one names the file it "
-                    + "writes to, writes only inside a fenced block Auspex owns, backs "
-                    + "the file up to ~/.auspex/backups/ first, and can be undone from "
-                    + "the Harnesses page."
+                    + "writes to. Config edits stay inside an Auspex-owned fence; the "
+                    + "skill gets one exclusive directory with an ownership marker and "
+                    + "content hash. Existing or modified directories are left alone. "
+                    + "Updates are backed up to ~/.auspex/backups/ and can be undone."
             )
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.text3)
@@ -109,17 +114,90 @@ struct SetupSheet: View {
                     onClose()
                 }
                 .keyboardShortcut(.cancelAction)
-                Button(model.selected.isEmpty ? "Install" : "Install \(model.selected.count)") {
+                Button(model.selected.isEmpty ? "Done" : "Install \(model.selected.count)") {
+                    guard !model.selected.isEmpty else {
+                        onClose()
+                        return
+                    }
                     Task {
                         await model.install(detected: detected)
                         onClose()
                     }
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.selected.isEmpty || model.isWorking)
+                .disabled(model.isWorking)
             }
         }
         .padding(16)
+    }
+}
+
+/// Login launch sits beside the harness integrations because a monitoring
+/// board is only useful after restart if it is already there. Unlike the
+/// batched config installs below, this Toggle is itself the person's explicit
+/// ServiceManagement gesture and takes effect immediately.
+private struct StartupSetupRow: View {
+    let catalog: ProjectCatalogModel
+    let loginItem: LoginItemController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Toggle(
+                isOn: Binding(
+                    get: { loginItem.isOn(desired: catalog.launchAtLogin) },
+                    set: { enabled in
+                        guard loginItem.setEnabled(enabled) else { return }
+                        catalog.setLaunchAtLogin(
+                            enabled,
+                            registration: loginItem.registrationForPersistence
+                        )
+                    }
+                )
+            ) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Keep Auspex watching after restart")
+                        .font(AuspexType.body)
+                        .foregroundStyle(AuspexPalette.text)
+                    Text(loginItem.statusDescription)
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.checkbox)
+
+            Text(
+                "Uses macOS Login Items to start the signed main app quietly. "
+                    + "No helper, LaunchAgent, or additional disk access is installed."
+            )
+            .font(AuspexType.caption)
+            .foregroundStyle(AuspexPalette.text3)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if loginItem.status == .requiresApproval {
+                Button("Open Login Items", systemImage: "gear") {
+                    loginItem.openSystemSettings()
+                }
+                .buttonStyle(.auspex)
+                .controlSize(.small)
+            }
+
+            if let error = loginItem.errorDescription {
+                Text("macOS did not change the login item: \(error)")
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.statePermission)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let reconciliation = loginItem.reconciliationDescription {
+                Text(reconciliation)
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelChrome()
     }
 }
 
@@ -240,7 +318,10 @@ private struct SetupRowView: View {
     private var stateNote: String? {
         switch row.state {
         case .installed: "Installed."
-        case let .installedElsewhere(what): "Already there, pointing at \(what). Ticking this replaces it."
+        case let .installedElsewhere(what):
+            row.piece == .coordinationSkill
+                ? "An owned \(what) is installed. Ticking this updates it after backup."
+                : "Already there, pointing at \(what). Ticking this replaces it."
         case let .unavailable(reason): reason
         case let .unreadable(reason): reason
         case .absent: nil

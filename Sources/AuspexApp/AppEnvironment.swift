@@ -33,6 +33,15 @@ import Observation
 @MainActor
 @Observable
 public final class AppEnvironment {
+    /// Keep the database poll at the kit's two-second correctness default:
+    /// WAL/-shm writes are not guaranteed to produce a useful FSEvent. Bound
+    /// cost by tailing recent sources instead. Every adapter's live evidence
+    /// (presence lock, worker, fresh write) overrides this discovery cutoff,
+    /// and a resumed old source is rediscovered by its new filesystem event.
+    static let liveIngestConfiguration = IngestConfiguration(
+        activeWindow: 60 * 60
+    )
+
     /// How this launch was asked to behave.
     public enum Mode: String, Sendable {
         /// Tail the real harness stores under the user's home.
@@ -150,6 +159,11 @@ public final class AppEnvironment {
     /// what the person chose.
     var appearance: AppearanceMode { appearanceOverride ?? catalog.appearance }
 
+    /// macOS's Login Items registration. Demo/offscreen launches get an inert
+    /// controller so a fabricated board neither reads nor changes the real
+    /// machine's setting.
+    let loginItem: LoginItemController
+
     public init(
         paths: AuspexPaths = .default,
         mode: Mode = .live,
@@ -160,6 +174,7 @@ public final class AppEnvironment {
         self.mode = mode
         self.offersSignalTarget = offersSignalTarget
         self.demoScale = AppLaunchOptions.clampedScale(demoScale)
+        self.loginItem = mode == .live ? LoginItemController() : .preview()
         // The demo may not read or write `~/.auspex/`, so its catalog has no
         // stores behind it: whatever it is given lives in memory for as long
         // as the process does.
@@ -211,6 +226,29 @@ public final class AppEnvironment {
             )
         }
         catalog.load()
+        // The first catch-up is intentionally bounded: a new install should
+        // summarize the work in flight, not turn every retained session into
+        // an unread inbox. Later launches resume from the explicit cursor the
+        // person moved with "Mark caught up".
+        board.setCatchUpSince(
+            catalog.lastCatchUpAt ?? Date().addingTimeInterval(-4 * 60 * 60)
+        )
+
+        // ServiceManagement is the operational truth. Reconciliation only
+        // mirrors its state and, when an in-place update can be proven,
+        // refreshes the bundle receipt. It never calls register: a person may
+        // have switched the item off directly in System Settings.
+        if mode == .live {
+            if let reconciliation = loginItem.reconcileDesiredState(
+                catalog.launchAtLogin,
+                registration: catalog.loginItemRegistration
+            ) {
+                catalog.setLaunchAtLogin(
+                    reconciliation.enabled,
+                    registration: reconciliation.registration
+                )
+            }
+        }
 
         // After the load, so the first check already goes to the stream the
         // person chose rather than to stable and then to theirs. A demo asks
@@ -243,6 +281,7 @@ public final class AppEnvironment {
         if mode == .demo { try? DemoTaskLedger.seed(into: TaskRepository(store: store)) }
         board.startLedger(repository: TaskRepository(store: store))
         tasks.start(repository: TaskRepository(store: store))
+        tasks.onLedgerChange = { [weak board] in board?.reloadLedger() }
         projects.start(repository: ProjectRepository(store: store))
         // A demo reads no harness store — and no harness *config* either. The
         // page (and any offscreen render of it) would otherwise show this
@@ -358,7 +397,10 @@ public final class AppEnvironment {
                 await MainActor.run { self?.board.apply(report: report) }
             },
             onLedgerChange: { [weak self] in
-                await MainActor.run { self?.tasks.reload() }
+                await MainActor.run {
+                    self?.tasks.reload()
+                    self?.board.reloadLedger()
+                }
             },
             // A hook's events join the stream the tailers feed, so a permission
             // prompt and a tool call are folded by the same reducer in the
@@ -494,7 +536,8 @@ public final class AppEnvironment {
         let coordinator = IngestCoordinator(
             adapters: AuspexAdapters.all,
             home: home,
-            cursorStore: store.sourceCursors
+            cursorStore: store.sourceCursors,
+            configuration: Self.liveIngestConfiguration
         )
         self.coordinator = coordinator
 
@@ -527,7 +570,7 @@ public final class AppEnvironment {
                 every: .seconds(3),
                 identities: {
                     guard let registry = registryForLiveness else { return [] }
-                    return await registry.snapshot().sessions.map(\.identity)
+                    return await registry.livenessIdentities()
                 },
                 into: continuation
             )

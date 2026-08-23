@@ -126,6 +126,12 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     /// in prose again, because an observation newer than a report is better
     /// than the report.
     public let reportedFocus: String?
+    /// When the active self-report was written.
+    ///
+    /// Kept beside the flattened line so catch-up can distinguish a semantic
+    /// report from ordinary transcript churn without reaching back into the
+    /// report store on every frame.
+    public let reportedFocusAt: Date?
 
     public var id: SessionKey { key }
 
@@ -205,6 +211,7 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         attention: AttentionState = .none,
         notice: RowNotice? = nil,
         reportedFocus: String? = nil,
+        reportedFocusAt: Date? = nil,
         context: ContextGauge? = nil
     ) {
         self.variantLabel = variantLabel
@@ -238,6 +245,7 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         self.attention = attention
         self.notice = notice
         self.reportedFocus = reportedFocus
+        self.reportedFocusAt = reportedFocusAt
         self.context = context
     }
 }
@@ -378,6 +386,7 @@ public struct BoardRowBuilder: Sendable {
             attention: attention(for: session, brief: brief, notice: notice),
             notice: notice.map(BoardRow.RowNotice.init),
             reportedFocus: report?.line,
+            reportedFocusAt: report?.createdAt,
             context: ContextGauge(
                 usage: session.contextUsage, compactions: session.compactions
             )

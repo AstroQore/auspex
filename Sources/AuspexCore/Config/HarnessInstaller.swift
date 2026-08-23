@@ -13,9 +13,11 @@ import Foundation
 ///
 /// - **Only when a person clicks.** Nothing here runs on launch, on a timer,
 ///   or while a status page is being looked at.
-/// - **Only inside a fence.** Every write is a `>>> auspex >>>` block or one
-///   named JSON member. Bytes somebody else authored are never rewritten —
-///   see ``ConfigTextEditors``.
+/// - **Only inside something Auspex can prove it owns.** A `>>> auspex >>>`
+///   block, one named JSON member, owned hook entries, or the exclusive
+///   `auspex-coordination` directory with its versioned content hash. Bytes
+///   somebody else authored are never rewritten — see ``ConfigTextEditors``
+///   and ``CoordinationSkillInstaller``.
 /// - **Backed up first**, into `~/.auspex/backups/`, not next to the original:
 ///   a stray `.bak` in `~/.codex/` would itself be a write into a harness's
 ///   directory.
@@ -33,23 +35,34 @@ public struct HarnessInstaller: Sendable {
     public let command: String
     /// The flag that puts it into bridge mode.
     public let arguments: [String]
+    /// The checked-in coordination playbook this build can install.
+    ///
+    /// Optional so Core tests and headless callers do not have to know where
+    /// the App target's SwiftPM resource bundle lives. A missing package makes
+    /// the row unavailable; it never falls back to bytes from a build path.
+    public let coordinationSkill: CoordinationSkillPackage?
 
     public init(
         homeDirectory: URL = AuspexPaths.realHomeDirectory(),
         paths: AuspexPaths = .default,
         command: String,
-        arguments: [String] = ["--mcp-stdio"]
+        arguments: [String] = ["--mcp-stdio"],
+        coordinationSkill: CoordinationSkillPackage? = nil
     ) {
         self.homeDirectory = homeDirectory
         self.paths = paths
         self.command = command
         self.arguments = arguments
+        self.coordinationSkill = coordinationSkill
     }
 
     /// What can be installed for one harness.
     public enum Piece: String, Sendable, CaseIterable, Hashable {
         /// The `auspex` entry in the harness's MCP config.
         case mcpServer
+        /// The on-demand Supervisor/Worker/Reviewer playbook. This is guidance;
+        /// the MCP server remains the source of task truth and enforcement.
+        case coordinationSkill
         /// The paragraph in the harness's always-loaded instructions telling an
         /// agent when to call `auspex.notify` and how to claim a task.
         case protocolNote
@@ -60,6 +73,7 @@ public struct HarnessInstaller: Sendable {
         public var title: String {
             switch self {
             case .mcpServer: "Register the Auspex MCP server"
+            case .coordinationSkill: "Install the Auspex coordination skill"
             case .protocolNote: "Install the task-protocol note"
             case .hooks: "Install harness hooks"
             }
@@ -70,9 +84,12 @@ public struct HarnessInstaller: Sendable {
             case .mcpServer:
                 "Adds one `auspex` server entry, so this harness's agents can "
                     + "call notify, plans and tasks."
+            case .coordinationSkill:
+                "Adds a versioned, on-demand Supervisor/Worker/Reviewer playbook. "
+                    + "It guides MCP use; the server remains the source of truth."
             case .protocolNote:
-                "Appends a fenced paragraph telling agents to call auspex.notify "
-                    + "when they need you, and to claim the task id in their brief."
+                "Appends the always-loaded invariants and routes coordinated work "
+                    + "to the richer auspex-coordination skill."
             case .hooks:
                 "Lets the harness tell Auspex the moment it needs permission, "
                     + "starts, delegates or stops — the states no transcript records."
@@ -176,6 +193,28 @@ public struct HarnessInstaller: Sendable {
                 harness: harness, piece: piece, path: location.path,
                 state: mcpState(location)
             )
+        case .coordinationSkill:
+            guard let coordinationSkill,
+                  let path = Self.coordinationSkillPath(for: harness, home: homeDirectory)
+            else {
+                return Offer(
+                    harness: harness, piece: piece, path: nil,
+                    state: .unavailable(Self.reasonUnavailable(harness, piece))
+                )
+            }
+            let destination = URL(fileURLWithPath: path, isDirectory: true)
+            let installer = CoordinationSkillInstaller(
+                harness: harness,
+                destination: destination,
+                package: coordinationSkill,
+                paths: paths
+            )
+            return Offer(
+                harness: harness,
+                piece: piece,
+                path: path,
+                state: installer.status()
+            )
         case .protocolNote:
             guard let path = Self.protocolNotePath(for: harness, home: homeDirectory) else {
                 return Offer(
@@ -217,12 +256,20 @@ public struct HarnessInstaller: Sendable {
     /// Why a harness has no row of this kind.
     public static func reasonUnavailable(_ harness: Harness, _ piece: Piece) -> String {
         if piece == .hooks { return HookInstallers.reasonUnavailable(harness) }
+        if piece == .coordinationSkill {
+            if coordinationSkillPath(for: harness, home: URL(fileURLWithPath: "/")) == nil {
+                return "Auspex only installs this skill for Claude Code and Codex."
+            }
+            return "This build does not contain a verified auspex-coordination resource."
+        }
         if let note = HarnessMCPConfigStore.externallyManagedNote(for: harness) {
             return "MCP is \(note)."
         }
         switch piece {
         case .mcpServer:
             return "No local MCP config file to write."
+        case .coordinationSkill:
+            return "This harness has no verified global skill directory Auspex can manage."
         case .protocolNote:
             return "This harness has no always-loaded instruction file Auspex knows about."
         case .hooks:
@@ -247,12 +294,51 @@ public struct HarnessInstaller: Sendable {
         }
     }
 
+    /// The one exclusive directory Auspex may manage for a harness skill.
+    ///
+    /// These are the two global roots verified by their harnesses. Project
+    /// skill directories and inferred locations are deliberately excluded:
+    /// installing into a repository would be a different permission boundary.
+    public static func coordinationSkillPath(for harness: Harness, home: URL) -> String? {
+        switch harness {
+        case .claudeCode:
+            return home.appendingPathComponent(
+                ".claude/skills/\(CoordinationSkillPackage.name)",
+                isDirectory: true
+            ).path
+        case .codex:
+            return home.appendingPathComponent(
+                ".codex/skills/\(CoordinationSkillPackage.name)",
+                isDirectory: true
+            ).path
+        default:
+            return nil
+        }
+    }
+
     // MARK: - Install
 
     /// Writes one piece. Idempotent: installing what is already installed
     /// reports `didChange == false` and touches nothing.
     public func install(_ harness: Harness, _ piece: Piece) -> Report {
         let offer = offer(harness, piece)
+        if piece == .coordinationSkill {
+            guard let coordinationSkill,
+                  let path = Self.coordinationSkillPath(for: harness, home: homeDirectory)
+            else {
+                return Report(
+                    harness: harness, piece: piece, didChange: false,
+                    path: nil, backupPath: nil,
+                    failure: Self.reasonUnavailable(harness, piece)
+                )
+            }
+            return CoordinationSkillInstaller(
+                harness: harness,
+                destination: URL(fileURLWithPath: path, isDirectory: true),
+                package: coordinationSkill,
+                paths: paths
+            ).install()
+        }
         if piece == .hooks {
             guard let hooks = hookInstaller(for: harness) else {
                 return Report(
@@ -289,6 +375,23 @@ public struct HarnessInstaller: Sendable {
     /// Removes one piece, restoring the file to what it was without it.
     public func uninstall(_ harness: Harness, _ piece: Piece) -> Report {
         let offer = offer(harness, piece)
+        if piece == .coordinationSkill {
+            guard let coordinationSkill,
+                  let path = Self.coordinationSkillPath(for: harness, home: homeDirectory)
+            else {
+                return Report(
+                    harness: harness, piece: piece, didChange: false,
+                    path: nil, backupPath: nil,
+                    failure: Self.reasonUnavailable(harness, piece)
+                )
+            }
+            return CoordinationSkillInstaller(
+                harness: harness,
+                destination: URL(fileURLWithPath: path, isDirectory: true),
+                package: coordinationSkill,
+                paths: paths
+            ).uninstall()
+        }
         if piece == .hooks {
             guard let hooks = hookInstaller(for: harness) else {
                 return Report(
@@ -379,6 +482,9 @@ public struct HarnessInstaller: Sendable {
             case .json:
                 return try installedJSON(into: text)
             }
+        case .coordinationSkill:
+            // A directory package, handled before this text-edit path.
+            throw InstallError.notATextEdit
         case .hooks:
             // Handled by a `HookInstaller` before the edit machinery here is
             // reached: a hook table is a list somebody else also appends to,
@@ -404,7 +510,7 @@ public struct HarnessInstaller: Sendable {
             case .json:
                 return try removedJSON(from: text)
             }
-        case .hooks:
+        case .coordinationSkill, .hooks:
             throw InstallError.notATextEdit
         }
     }
@@ -571,10 +677,9 @@ extension HarnessInstaller {
     /// The paragraph that goes into a harness's always-loaded instructions.
     ///
     /// Short on purpose. It competes for context with everything else in the
-    /// file, and a protocol nobody reads is worse than no protocol — so it says
-    /// the one thing that matters (call for the person instead of going quiet),
-    /// the one habit that makes the board useful (claim the task id you were
-    /// given), and stops.
+    /// file. The installed skill owns the full Supervisor/Worker/Reviewer
+    /// workflow; this always-loaded note keeps only the invariants needed to
+    /// route an agent there and degrade safely when MCP is absent.
     ///
     /// It never tells an agent to do anything Auspex cannot do: no shell
     /// commands, no paths, no "run this". Everything is a tool call the server
@@ -584,7 +689,8 @@ extension HarnessInstaller {
         ## Auspex
 
         Auspex watches every agent session on this Mac and exposes an MCP server
-        called `auspex`. Two habits make it useful:
+        called `auspex`. Passive observation works without agent cooperation;
+        MCP adds explicit coordination. Keep these invariants:
 
         1. **Call `auspex.notify` instead of going quiet.** The moment you need
            the person — a question (`needs_input`), something to check
@@ -593,23 +699,18 @@ extension HarnessInstaller {
            need. It posts a macOS notification and moves your session into the
            right bucket on their board. Nothing else can tell "waiting for a
            human" apart from "thinking hard".
-        2. **Keep the task board honest.** If your brief names a task id, call
-           `tasks.claim(task_id, role, scope)` before you start. If it does not,
-           read `plans.list` and `tasks.list` first and claim the task that
-           matches; file one with `tasks.create` only if none does. Call
-           `tasks.update` when you get blocked and `tasks.complete` with one line
-           of what you finished — which asks for a review rather than closing
-           anything, because only a person closes a task.
-        3. **Write down what a later reader would have to rediscover.**
-           `tasks.log` takes a `kind`: `decision` for a choice nobody should
-           silently undo, `evidence` (with a `ref` — a commit, a URL, a path)
-           for something they can go and check, `risk` for what is still
-           unhandled. One line each, and never command output.
-
-        If you are the one handing work out, register the decomposition with
-        `plans.create` and a task per worker, and put each task id in the brief
-        you send. You never need to know your own session id — Auspex works it
-        out from the process on the other end of the connection.
+        2. **Use the `auspex-coordination` skill for tracked work.** When a brief
+           names an Auspex task id, load that skill and follow its
+           Supervisor/Worker/Reviewer playbook. Discover the connected server's
+           capabilities and treat MCP as the state source; the skill is guidance.
+        3. **Do not manufacture coordination.** With no task id, continue the
+           user's work under the implicit session task. Do not create or claim an
+           explicit task merely to satisfy this note. Agent completion enters
+           Review; it does not close the task.
+        4. **Degrade honestly.** If MCP is unavailable or `sessions.self` cannot
+           resolve this process, continue the user's task and say which board
+           updates were not recorded. Never impersonate another session or claim
+           a notification, task update, or completion the server rejected.
         """
     }
 }

@@ -165,28 +165,34 @@ Auspex actually observes, and write nothing outside `~/.auspex/`.
   read-only and expect a live WAL.
 - **One exception, and it is the whole exception: `HarnessInstaller`.**
   Registering Auspex's MCP server with a harness, installing the short
-  task-protocol note, and registering the hooks mean writing `~/.claude.json`,
-  `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.codex/hooks.json`,
-  `~/.cursor/hooks.json`, `~/.claude/CLAUDE.md` and their siblings. That is
-  allowed only through `Sources/AuspexCore/Config/HarnessInstaller.swift` and the
-  `HookInstaller`s it delegates to, and only under all five of these
+  task-protocol note, installing the versioned coordination skill, and
+  registering the hooks mean writing `~/.claude.json`,
+  `~/.claude/settings.json`, `~/.claude/skills/auspex-coordination/`,
+  `~/.codex/config.toml`, `~/.codex/hooks.json`,
+  `~/.codex/skills/auspex-coordination/`, `~/.cursor/hooks.json`,
+  `~/.claude/CLAUDE.md` and their siblings. That is allowed only through
+  `Sources/AuspexCore/Config/HarnessInstaller.swift` and the installers it
+  delegates to, and only under all five of these
   conditions — if a change would break any of them, it does not belong there:
   1. **A person clicked.** Never on launch, never on a timer, never while a
      page is merely being looked at.
   2. **Inside a region Auspex owns.** A `# >>> auspex >>>` block, one JSON
-     member named `auspex`, or — in a hook table, which is a list other tools
-     append to and where JSON gives no comment to fence with — the entries
-     whose command runs the Auspex binary with `--hook`. Bytes somebody else
-     wrote are never re-serialised; that is why `ConfigTextEditors` edits text
-     rather than round-tripping a parser.
+     member named `auspex`, the entries whose command runs the Auspex binary
+     with `--hook`, or the exclusive `auspex-coordination` skill directory.
+     The skill directory is owned only while its marker, exact file list and
+     content hash all agree; a foreign or modified directory is never adopted,
+     updated or removed. Bytes somebody else wrote are never re-serialised;
+     that is why `ConfigTextEditors` edits text rather than round-tripping a
+     parser.
   3. **Backed up first**, into `~/.auspex/backups/`. A `.bak` beside the
      original would itself be a write into a harness's directory.
   4. **Verified after.** Re-read, re-parsed, and restored from the backup if
      the file no longer parses.
-  5. **Exactly reversible.** Uninstall removes the fence, the member or our
-     hook entries and nothing else. Where a slot had to be *displaced* rather
-     than shared — Codex's single `notify` — the fence records the original
-     line verbatim so uninstall can put it back byte for byte.
+  5. **Exactly reversible.** Uninstall removes the fence, the member, our hook
+     entries, or an unchanged owned skill directory and nothing else. Where a
+     slot had to be *displaced* rather than shared — Codex's single `notify` —
+     the fence records the original line verbatim so uninstall can put it back
+     byte for byte.
 
   The observation layer keeps the absolute rule. It has no reason to write,
   and a second write path is how that stops being true.

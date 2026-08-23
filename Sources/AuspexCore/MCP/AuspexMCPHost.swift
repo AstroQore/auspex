@@ -28,19 +28,11 @@ public protocol AuspexMCPHost: Sendable {
     /// liveness loop so an ancestor walk costs no extra sweep.
     func processTable() async -> any ProcessTableReading
 
-    /// The pids of the processes attached to the MCP socket, **most recently
-    /// active first**.
-    ///
-    /// The kit's transport hands one line handler every connection's traffic,
-    /// so a request does not arrive labelled with its connection. The order
-    /// here is what stands in for that label: the transport records activity
-    /// on the connection immediately before dispatching its line, so the
-    /// caller is the head of this list — exactly, unless two clients are
-    /// answered in the same instant. `sessions.self` says which pid it used,
-    /// and every tool that acts as a session takes an explicit `session_id`
-    /// override, so a wrong guess is visible and correctable rather than
-    /// silent.
-    func clientPIDs() async -> [pid_t]
+    /// The exact live socket roster. `connectionCount` includes peers whose
+    /// pid the kernel could not expose; that distinction is what makes the
+    /// one-connection compatibility fallback fail closed with two unknown
+    /// peers instead of mistaking them for no connection at all.
+    func clientRoster() async -> MCPClientRoster
 
     /// An agent called for the person. The app posts the notification and
     /// refreshes the board.
@@ -56,6 +48,16 @@ public protocol AuspexMCPHost: Sendable {
     /// puts these into the same stream the tailers feed, so the reducer folds a
     /// permission prompt and a tool call the same way.
     func didObserve(_ events: [AgentEvent]) async
+}
+
+public struct MCPClientRoster: Sendable, Equatable {
+    public let connectionCount: Int
+    public let processIDs: [pid_t]
+
+    public init(connectionCount: Int, processIDs: [pid_t]) {
+        self.connectionCount = connectionCount
+        self.processIDs = processIDs
+    }
 }
 
 public extension AuspexMCPHost {

@@ -35,6 +35,10 @@ struct BoardHeader: View {
                 // that is not on screen is a number they can still read off
                 // the sidebar and the cards.
                 counts(limit: fit.chips, showsMarkAll: fit.showsMarkAll)
+                if showsCatchUpInHeader {
+                    catchUpButton.fixedSize()
+                }
+                if showsReviewInHeader { reviewNext.fixedSize() }
                 Spacer(minLength: 8)
                 if model.ignoredCount > 0 {
                     ignoredToggle.fixedSize()
@@ -114,6 +118,8 @@ struct BoardHeader: View {
         reserved += 92  // the window menu
         reserved += 150  // the search field
         if model.ignoredCount > 0 { reserved += 96 }
+        if showsCatchUpInHeader { reserved += 82 }
+        if showsReviewInHeader { reserved += 78 }
         let free = width - reserved
         guard free > 0 else { return (0, false) }
         // A chip is a mark, two or three digits, and a word: 86 points covers
@@ -122,6 +128,46 @@ struct BoardHeader: View {
         let wanted = model.summary.chips.count
         if fits >= wanted, free - CGFloat(wanted) * 86 >= 60 { return (nil, true) }
         return (min(fits, wanted), false)
+    }
+
+    private var catchUpCount: Int {
+        model.catchUp.items.count + model.watchSignals.count
+    }
+
+    /// Catch-up is the primary entry back into a busy board and stays visible
+    /// at the default window width. Review Next is its focused shortcut and
+    /// joins it only when the centre column is wide enough for both.
+    private var showsCatchUpInHeader: Bool {
+        catchUpCount > 0
+    }
+
+    private var showsReviewInHeader: Bool {
+        model.reviewCount > 0 && (width == 0 || width >= 1_000)
+    }
+
+    private var catchUpButton: some View {
+        Button { model.isCatchUpOpen = true } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Catch up \(catchUpCount)")
+                    .font(AuspexType.caption)
+                    .auspexTabularDigits()
+            }
+            .foregroundStyle(AuspexPalette.text2)
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AuspexPalette.bg1)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(AuspexPalette.stateStale.opacity(0.35), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.auspex(cornerRadius: 8))
+        .help("Review material changes, human work, and amber watch signals")
     }
 
     // MARK: Pieces
@@ -158,6 +204,35 @@ struct BoardHeader: View {
             }
         }
         .fixedSize()
+    }
+
+    /// Opens the review queue from whichever whole-board view is on screen.
+    /// The count is already one of the summary facts; this is the action beside
+    /// it, and it changes no task until the person chooses Close or Reopen.
+    private var reviewNext: some View {
+        Button { model.openNextReview() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Review \(model.reviewCount)")
+                    .font(AuspexType.caption)
+                    .auspexTabularDigits()
+            }
+            .foregroundStyle(AuspexPalette.stateWriting)
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AuspexPalette.stateWriting.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(AuspexPalette.stateWriting.opacity(0.24), lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 8))
+        .help("Review next — open the first task waiting for your judgement")
     }
 
     /// The number beside the heading, when the heading is about a number of
@@ -287,6 +362,7 @@ struct BoardHeader: View {
             }
             .pickerStyle(.inline)
             .labelsHidden()
+            .auspexSystemControlFocus()
             Divider()
             // The wall's one density switch. A card folds its subagents into a
             // strip of dots, which is what makes twelve pieces of work
@@ -368,6 +444,7 @@ struct BoardHeader: View {
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text)
+                    .auspexSystemControlFocus()
             }
         }
         .padding(.horizontal, 10)

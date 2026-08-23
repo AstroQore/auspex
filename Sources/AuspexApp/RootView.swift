@@ -73,6 +73,7 @@ struct RootView: View {
             IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
                 environment.ignoreDraft = nil
             }
+            .auspexNoInitialFocus()
         }
         .modifier(KillConfirmation(control: environment.control))
         // Over everything, and dismissed by clicking anywhere else. A palette
@@ -99,10 +100,35 @@ struct RootView: View {
         )) {
             SetupSheet(
                 model: environment.setup,
+                catalog: environment.catalog,
+                loginItem: environment.loginItem,
                 detected: environment.harnesses.detected,
                 socketPath: environment.mcp?.socketPath,
                 onClose: { environment.setup.markShown() }
             )
+            .auspexNoInitialFocus()
+        }
+        .sheet(isPresented: $model.isCatchUpOpen) {
+            CatchUpPanel(
+                model: model,
+                onOpen: { unitID, key in
+                    model.selectedKey = key
+                    model.openUnitID = unitID
+                    if let unit = model.unit(withID: unitID) {
+                        model.focusedProjectKey = unit.projectKey
+                    }
+                    section = .live
+                    model.isCatchUpOpen = false
+                },
+                onMarkCaughtUp: {
+                    let date = Date()
+                    environment.catalog.markCaughtUp(at: date)
+                    model.setCatchUpSince(date)
+                    model.isCatchUpOpen = false
+                }
+            )
+            .auspexAppearance(environment.appearance)
+            .auspexNoInitialFocus()
         }
         .task { environment.start() }
         .task { await clock.run() }
@@ -111,11 +137,6 @@ struct RootView: View {
         // ``MainThreadMeter``, which is how this branch's before and after are
         // measured on a machine that is never quiet.
         .task { MainThreadMeter.shared?.start() }
-        .onReceive(
-            NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
-        ) { _ in
-            Task { await environment.shutdown() }
-        }
     }
 
     /// The split view's binding, in the app's own vocabulary.
@@ -243,6 +264,7 @@ struct RootView: View {
                     // place for a setting to go missing.
                     SettingsSectionView(
                         catalog: environment.catalog,
+                        loginItem: environment.loginItem,
                         setup: environment.setup,
                         detected: environment.harnesses.detected,
                         socketPath: environment.mcp?.socketPath
@@ -575,7 +597,11 @@ struct AuspexMark: View {
     /// The 64 px render of the icon, loaded once. `nil` only if the bundle is
     /// broken, in which case the symbol stands in.
     nonisolated(unsafe) static let birdImage: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "auspex-mark-64", withExtension: "png", subdirectory: "Brand") else { return nil }
+        guard let url = AppResourceBundle.url(
+            forResource: "auspex-mark-64",
+            withExtension: "png",
+            subdirectory: "Brand"
+        ) else { return nil }
         return NSImage(contentsOf: url)
     }()
 }
@@ -589,6 +615,7 @@ struct AuspexMark: View {
 /// other section of the board rather than like a window somebody pasted in.
 struct SettingsSectionView: View {
     let catalog: ProjectCatalogModel
+    let loginItem: LoginItemController
     var setup: SetupModel?
     var detected: Set<Harness> = []
     var socketPath: String?
@@ -600,6 +627,7 @@ struct SettingsSectionView: View {
         AuspexSettingsView(
             library: SpriteLibrary.shared,
             catalog: catalog,
+            loginItem: loginItem,
             setup: setup,
             detected: detected,
             socketPath: socketPath,

@@ -218,33 +218,77 @@ final class SessionControlModel {
     }
 }
 
-/// The dialog that stands between a menu item and a signal.
+/// The sheet that stands between a menu item and a signal.
 ///
 /// At the window's root and not on the control that raised it: the same "Kill…"
 /// exists on every card and in the trace header, and a dialog attached to each
-/// of them would be one dialog per card — several hundred of them, all able to
+/// of them would be one sheet per card — several hundred of them, all able to
 /// be open at once. One here, keyed off the one prompt the model can hold.
 ///
-/// An alert rather than a sheet because it is a question with two answers, and
-/// because `role: .destructive` is what makes the button red without anybody
-/// choosing a colour.
+/// This used to be a system alert. AppKit always assigns an alert a default
+/// button, so opening it painted a blue selection before the person had made a
+/// choice and there was no content view in which to clear that responder. The
+/// app-owned sheet keeps the destructive/cancel semantics while participating
+/// in the same no-initial-focus rule as every other presentation.
 struct KillConfirmation: ViewModifier {
     let control: SessionControlModel
 
     func body(content: Content) -> some View {
-        content.alert(
-            control.prompt?.headline ?? "",
-            isPresented: Binding(
-                get: { control.prompt != nil },
-                set: { if !$0 { control.dismiss() } }
-            ),
-            presenting: control.prompt
-        ) { prompt in
-            Button(prompt.confirmTitle, role: .destructive) { control.confirm(prompt) }
-            Button("Cancel", role: .cancel) { control.dismiss() }
-        } message: { prompt in
-            Text(prompt.message)
+        content.sheet(item: prompt) { prompt in
+            KillConfirmationSheet(
+                prompt: prompt,
+                onConfirm: { control.confirm(prompt) },
+                onCancel: { control.dismiss() }
+            )
+            .auspexNoInitialFocus()
         }
+    }
+
+    private var prompt: Binding<ControlPrompt?> {
+        Binding(
+            get: { control.prompt },
+            set: { value in
+                if value == nil { control.dismiss() }
+            }
+        )
+    }
+}
+
+/// An explicit two-action confirmation with no implicit default action.
+///
+/// Escape remains the cancel key. Return deliberately does nothing until the
+/// person has moved focus with the keyboard; it cannot both mean "no default
+/// selection" and silently activate the destructive choice.
+private struct KillConfirmationSheet: View {
+    let prompt: ControlPrompt
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(prompt.headline)
+                .font(AuspexType.paneTitle)
+                .foregroundStyle(AuspexPalette.text)
+            Text(prompt.message)
+                .font(AuspexType.body)
+                .foregroundStyle(AuspexPalette.text2)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.auspex)
+                    .keyboardShortcut(.cancelAction)
+                Button(prompt.confirmTitle, role: .destructive, action: onConfirm)
+                    .buttonStyle(.auspex)
+                    .foregroundStyle(AuspexPalette.statePermission)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+        .background(AuspexPalette.canvas)
+        .auspexControlFocus()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(prompt.headline)
     }
 }
 

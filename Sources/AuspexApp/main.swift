@@ -8,8 +8,9 @@ import Foundation
 // sometimes inside a sandbox — and touching AppKit there is fatal.
 let arguments = CommandLine.arguments.dropFirst()
 
-// The MCP server, as an MCP client expects to spawn it: a byte pump between
-// this process's stdio and the socket the running app listens on. It reads no
+// The MCP server, as an MCP client expects to spawn it: a local bridge between
+// this process's stdio and the socket the running app listens on. It stamps
+// each request with this bridge pid for per-request attribution, reads no
 // harness store, opens no window, and writes nothing to disk.
 if AuspexStdioBridge.isRequested() {
     exit(AuspexStdioBridge.run())
@@ -22,6 +23,24 @@ if AuspexStdioBridge.isRequested() {
 // `HookIngress.deadline` no matter what is on the other end.
 if HookIngress.isRequested(arguments: CommandLine.arguments) {
     exit(HookIngress.run())
+}
+
+// Release-only smoke entrypoint. `build_app.sh` and the release workflow run
+// this from a copied/unzipped `.app` after hiding SwiftPM's original resource
+// bundle. It deliberately opens bytes through the same resolver the UI uses,
+// which catches an archive that merely contains the files at a path the
+// executable never asks for.
+if arguments.contains("--smoke-app-resources") {
+    do {
+        let resources = try AppResourceBundle.verifyCriticalResources()
+        let summary = "auspex: loaded \(resources.count) critical resources "
+            + "from \(AppResourceBundle.resolution.source.rawValue)\n"
+        FileHandle.standardOutput.write(Data(summary.utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("auspex: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
 }
 
 /// `appearance=light|dark` among a subcommand's trailing arguments.
@@ -476,7 +495,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                         `width=` draws the window at that width instead of
                         1440, which is how a page is checked at the sizes a
                         person actually has one open at; `pane=` picks which
-                        of Settings' seven pages is shown (`agents`,
+                        of Settings' eight pages is shown (`agents`, `general`,
                         `characters`, …); `view=` picks the way of looking at
                         the board (`board`, `scene`, `crew`, `trajectory`).
                         `focus=` binds the window to one project the way
@@ -512,7 +531,8 @@ if arguments.contains("--help") || arguments.contains("-h") {
           --mcp-stdio   Serve the running Auspex's task board over MCP on
                         stdio. This is the command an MCP client is
                         configured with; it connects to ~/.auspex/mcp.sock
-                        (override with AUSPEX_MCP_SOCKET) and pumps bytes.
+                        (override with AUSPEX_MCP_SOCKET), attributes each
+                        request to this bridge, and forwards it.
                         Exits 1 when Auspex is not running.
           --hook <harness> [--then <command>…]
                         Handle a harness hook invocation: read the

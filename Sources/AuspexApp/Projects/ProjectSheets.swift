@@ -75,7 +75,6 @@ struct NewProjectSheet: View {
                     catalog.addProject(name: chosenName, roots: roots, colorHex: colorHex)
                     onClose()
                 }
-                .keyboardShortcut(.defaultAction)
                 .disabled(roots.isEmpty)
             }
         }
@@ -279,7 +278,6 @@ struct ImportProjectsSheet: View {
                 add()
                 onClose()
             }
-            .keyboardShortcut(.defaultAction)
             .disabled(selected.isEmpty)
         }
     }

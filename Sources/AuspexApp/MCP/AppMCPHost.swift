@@ -71,10 +71,12 @@ actor AppMCPHost: AuspexMCPHost {
     func boardSnapshot() async -> BoardSnapshot { await readBoard() }
     func ledger() -> TaskRepository? { store.map(TaskRepository.init(store:)) }
     func processTable() -> any ProcessTableReading { table }
-    func clientPIDs() -> [pid_t] {
-        (listener?.clientConnections ?? [])
-            .sorted { $0.lastActivityAt > $1.lastActivityAt }
-            .compactMap(\.processID)
+    func clientRoster() -> MCPClientRoster {
+        let connections = listener?.clientConnections ?? []
+        return MCPClientRoster(
+            connectionCount: connections.count,
+            processIDs: connections.compactMap(\.processID)
+        )
     }
     func didRecordNotice(_ notice: AgentNotice) async { await onNotice(notice) }
     func didRecordReport(_ report: AgentReport) async { await onReport(report) }

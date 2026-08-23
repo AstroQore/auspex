@@ -232,6 +232,24 @@ jobs:
           rm -f "$AUSPEX_ARCHIVE"
           ditto -c -k --sequesterRsrc --keepParent .build/Auspex.app "$AUSPEX_ARCHIVE"
 
+      - name: Smoke test the final archive away from SwiftPM
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root="$RUNNER_TEMP/auspex-final-archive"
+          rm -rf "$smoke_root"
+          mkdir -p "$smoke_root"
+          ditto -x -k "$AUSPEX_ARCHIVE" "$smoke_root"
+          archived_app="$(find "$smoke_root" -maxdepth 2 -type d -name Auspex.app -print -quit)"
+          if [[ -z "$archived_app" ]]; then
+            echo "::error::The release archive contains no Auspex.app."
+            exit 1
+          fi
+          bin_dir="$(swift build -c release --show-bin-path)"
+          bash Scripts/smoke_test_app_bundle.sh \
+            "$archived_app" \
+            "$bin_dir/Auspex_AuspexApp.bundle"
+
       - name: Checksum the archive
         shell: bash
         run: |

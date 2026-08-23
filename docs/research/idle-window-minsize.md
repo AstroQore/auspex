@@ -176,13 +176,38 @@ walk did find is worth keeping — a split view's columns are separate
 `WindowSizingProbe` prints it on demand (`AUSPEX_WINDOW_PROBE=1`) so the next
 person starts from the tree rather than from a guess.
 
-**(2) Stop the sizing pass descending into the lazy lists.** This was the fix,
-and the reason the earlier `FixedMinimumLayout` attempt failed is the one this
-note guessed: it was not in front of the thing being asked. A `Layout` that
-answers `sizeThatFits` from the proposal and never touches `subviews`, placed
-immediately *outside* the scroll view — inside `BoardScroll`, which every
-scrolling surface in the app goes through — cuts the chain at
-`ScrollViewUtilities.sizeThatFits`. See `ScrollSizeGate`.
+**(2) Stop the sizing pass descending into the lazy lists.** The first fix put a
+custom `Layout` immediately outside every `BoardScroll`. Its `sizeThatFits`
+ignored the child, which did remove the original window-minimum measurement in
+the samples available at the time.
+
+That fix was later disproved by a real Roost freeze on macOS 26.5.2. The main
+thread stayed in one SwiftUI transaction at 100% CPU while memory approached
+1 GB. A five-second sample showed the other half of the custom layout's
+contract: `ProposalOnlyLayout.placeSubviews` called `LayoutSubview.place` on
+the scroll view, which entered `ScrollViewUtilities.sizeThatFits`, then
+`LazyLayoutViewCache.signalPrefetch`, `NSHostingView.requestUpdate`, and another
+transaction. The gate had moved the feedback path from sizing to placement; it
+had not removed it.
+
+`ScrollSizeGate` now uses `GeometryReader`, the system viewport primitive. It
+accepts the parent allocation without consulting the child and gives the
+scroll view a finite frame, with no custom `Layout.placeSubviews` callback for
+lazy prefetch to feed back into.
+
+That removed one link but did **not** close the incident. The same real window
+reproduced after two scroll gestures with the system viewport in place:
+`LazyLayoutViewCache` repeatedly placed and measured the dynamic task lanes,
+then signalled another prefetch/update transaction. Roost therefore uses an
+eager `VStack` for its project lanes. This is a smaller cost than it sounds:
+each project lane already materialises all of its task columns as one child of
+the outer stack, so laziness never operated at card granularity. Removing the
+lazy cache removes the feedback source the second sample retained.
+
+Both changes are guarded. The acceptance test is the exact real-window path —
+open Roost, scroll its main content repeatedly while live sessions are writing,
+then leave it visible past the two-minute mark — not the absence of one stack
+in an idle sample.
 
 **Two things this note did not suspect, and they were larger.**
 

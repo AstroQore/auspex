@@ -9,10 +9,9 @@ import Foundation
 /// stdio into that socket — and knows nothing about tools. This is the half
 /// that knows what the lines mean, and it is the only half Auspex writes.
 ///
-/// An actor because two things mutate here from different places: the map of
-/// pids a bridge declared for itself, and the per-connection bookkeeping that
-/// stands in for a connection label. Neither is hot — a handful of messages per
-/// agent per minute — so a serial actor is the right shape rather than a lock.
+/// An actor because hook routing and ledger operations are serialized here.
+/// Request attribution is task-local, so overlapping connections cannot
+/// overwrite one another while this actor is re-entered at an `await`.
 ///
 /// ## What it will not do
 ///
@@ -20,23 +19,13 @@ import Foundation
 ///   command, opens a path an agent named, or interpolates input into SQL: the
 ///   repository binds every value.
 /// - **Never writes in demo mode.** A demo Auspex answers reads out of its
-///   fabricated board and refuses the nine writing tools by name.
+///   fabricated board and refuses the ten writing tools by name.
 /// - **Never trusts a length.** Every agent-authored string goes through
 ///   ``MCPTextSanitizer`` before it reaches the store or the screen.
 public actor AuspexMCPServer {
-    private let host: any AuspexMCPHost
-    private let resolver: MCPSelfResolver
+    let host: any AuspexMCPHost
+    let resolver: MCPSelfResolver
     private let now: @Sendable () -> Date
-
-    /// The pids bridges have declared for themselves in `auspex/hello`,
-    /// newest last.
-    ///
-    /// A fallback, not the primary answer: the socket's own `LOCAL_PEERPID` is
-    /// what identifies a client, and this only matters when the kernel would
-    /// not give one. Bounded, because a long-lived Auspex sees a bridge per
-    /// agent invocation and this must not become a pid log.
-    private var declaredPIDs: [pid_t] = []
-    private static let declaredPIDLimit = 32
 
     /// Turns harness hook payloads into board events, and remembers which
     /// sessions are blocked on a permission so the resolution can close the one
@@ -57,6 +46,13 @@ public actor AuspexMCPServer {
 
     /// Answers one framed line. `nil` for a notification.
     public func answer(line: Data) async -> Data? {
+        let attribution = MCPTransportEnvelope.attribution(in: line)
+        return await RequestScope.$attribution.withValue(attribution) {
+            await answerAttributed(line: line)
+        }
+    }
+
+    private func answerAttributed(line: Data) async -> Data? {
         let request: MCPRequest
         do {
             request = try MCPRequest.decode(line: line)
@@ -83,20 +79,13 @@ public actor AuspexMCPServer {
         }
     }
 
-    /// Notifications: `notifications/initialized`, Auspex's own hello, and the
-    /// hook ingress.
+    /// Notifications: initialization, legacy bridge hello, and hook ingress.
+    /// Hello is accepted for wire compatibility but is never identity evidence:
+    /// it was global to the server and could cross two live connections.
     private func handleNotification(_ request: MCPRequest) async {
         switch request.method {
         case "auspex/hello":
-            guard let pid = request.params?["pid"]?.intValue, pid > 0, pid < Int(Int32.max) else {
-                return
-            }
-            let declared = pid_t(pid)
-            declaredPIDs.removeAll { $0 == declared }
-            declaredPIDs.append(declared)
-            if declaredPIDs.count > Self.declaredPIDLimit {
-                declaredPIDs.removeFirst(declaredPIDs.count - Self.declaredPIDLimit)
-            }
+            return
         case HookEvent.method:
             await handleHook(request.params)
         default:
@@ -176,17 +165,25 @@ public actor AuspexMCPServer {
 
     /// What a client shows the model before it has called anything.
     ///
-    /// The same three sentences the installed protocol snippet carries, for the
-    /// harness that reads server instructions and the one whose config file
-    /// Auspex was never allowed to touch.
+    /// The same invariants as the installed short note, for a harness that
+    /// reads server instructions and one whose config Auspex never touches.
+    /// The versioned skill carries the detailed role playbooks.
     static let instructions = """
-        Auspex is watching every AI agent session on this Mac. Two habits make \
-        it useful: call auspex.notify the moment you need the person — a \
-        question, a review, a blocker, or a finished piece of work — instead of \
-        going quiet, and keep the task board honest by claiming the task id your \
-        brief named (or reading tasks.list when it named none). Tasks belong to \
-        projects: one you file is filed in the project this session is working \
-        in, so you never have to say where you are.
+        Auspex passively watches every AI agent session on this Mac; MCP adds \
+        explicit coordination. Read overview.get when you join work already in \
+        flight; it gives the current project's tasks, peers, blockers, review, \
+        and ready work without exposing transcripts. When a brief names an \
+        Auspex task id, load the auspex-coordination skill and follow its role \
+        playbook, using this server's capabilities as truth. Call auspex.notify \
+        the moment you need the person instead of going quiet; release a task \
+        with a reason when you stop. Read a task's version and pass it as \
+        expected_version on later writes; a claim conflict becomes a pending \
+        takeover for the person to decide, never an automatic steal. Completion \
+        enters Review rather than closing your own work. With no task id, keep \
+        the implicit session task instead of creating one merely for the \
+        protocol. Explicit tasks remain inside their observed projects. If MCP \
+        or session identity is unavailable, continue the user's work and report \
+        which updates were not recorded.
         """
 
     // MARK: - tools/call
@@ -222,18 +219,22 @@ public actor AuspexMCPServer {
         switch name {
         case AuspexMCPTools.Name.notify:        return try await notify(arguments)
         case AuspexMCPTools.Name.report:        return try await report(arguments)
+        case AuspexMCPTools.Name.overviewGet:   return try await overviewGet(arguments)
         case AuspexMCPTools.Name.plansList:     return try await plansList(arguments)
         case AuspexMCPTools.Name.plansGet:      return try await plansGet(arguments)
         case AuspexMCPTools.Name.plansCreate:   return try await plansCreate(arguments)
         case AuspexMCPTools.Name.plansArchive:  return try await plansArchive(arguments)
         case AuspexMCPTools.Name.tasksList:     return try await tasksList(arguments)
+        case AuspexMCPTools.Name.tasksGet:      return try await tasksGet(arguments)
         case AuspexMCPTools.Name.tasksCreate:   return try await tasksCreate(arguments)
         case AuspexMCPTools.Name.tasksClaim:    return try await tasksClaim(arguments)
+        case AuspexMCPTools.Name.tasksRelease:  return try await tasksRelease(arguments)
         case AuspexMCPTools.Name.tasksUpdate:   return try await tasksUpdate(arguments)
         case AuspexMCPTools.Name.tasksComplete: return try await tasksComplete(arguments)
         case AuspexMCPTools.Name.tasksLog:      return try await tasksLog(arguments)
         case AuspexMCPTools.Name.sessionsSelf:  return try await sessionsSelf(arguments)
         case AuspexMCPTools.Name.sessionsList:  return try await sessionsList(arguments)
+        case AuspexMCPTools.Name.sessionsGet:   return try await sessionsGet(arguments)
         case AuspexMCPTools.Name.sessionsTree:  return try await sessionsTree(arguments)
         case AuspexMCPTools.Name.peersStatus:   return try await peersStatus(arguments)
         default: throw MCPRPCError.methodNotFound(name)
@@ -250,18 +251,9 @@ public actor AuspexMCPServer {
             tool: AuspexMCPTools.Name.notify
         )
         let urgency = try arguments.optionalEnum("urgency", AgentNoticeUrgency.self) ?? .normal
-        let caller = try await caller(arguments)
+        let caller = try await requireAttributedCaller(arguments, action: "call the person")
         let ledger = try await requireLedger()
-
-        guard let session = caller.session else {
-            // Refusing is the honest answer: a notice filed against nobody
-            // would count towards a board nobody can act on, and the agent can
-            // fix it in one call by passing its own id.
-            throw MCPToolFailure(
-                "Auspex could not work out which session this is (\(caller.evidence)). "
-                    + "Call sessions.self, or pass 'session_id'."
-            )
-        }
+        let session = caller.session!
 
         let notice = try ledger.recordNotice(
             session: session, kind: kind, message: message, urgency: urgency, now: now()
@@ -278,7 +270,12 @@ public actor AuspexMCPServer {
             for task in (try? ledger.tasks(linkedTo: session)) ?? []
             where task.claimedBy == session && task.status != .done && task.status != .review {
                 guard let moved = try? ledger.completeTask(
-                    id: task.id, result: message, by: session, now: now()
+                    id: task.id,
+                    result: message,
+                    by: session,
+                    requireHolder: true,
+                    expectedVersion: task.version,
+                    now: now()
                 ) else { continue }
                 reviewed.append(moved.id)
             }
@@ -309,15 +306,9 @@ public actor AuspexMCPServer {
         let progress = MCPTextSanitizer.clean(
             try arguments.optionalString("progress"), limit: MCPTextSanitizer.labelLimit
         )
-        let caller = try await caller(arguments)
+        let caller = try await requireAttributedCaller(arguments, action: "file a report")
         let ledger = try await requireLedger()
-
-        guard let session = caller.session else {
-            throw MCPToolFailure(
-                "Auspex could not work out which session this is (\(caller.evidence)). "
-                    + "Call sessions.self, or pass 'session_id'."
-            )
-        }
+        let session = caller.session!
         let report = try ledger.recordReport(
             session: session, focus: focus, progress: progress, now: now()
         )
@@ -366,6 +357,7 @@ public actor AuspexMCPServer {
         let tasks = try ledger.tasks(planID: plan.id)
         let links = try ledger.allLinks()
         let bySession = Dictionary(grouping: links) { $0.taskID }
+        let pending = Dictionary(grouping: try ledger.claimRequests()) { $0.taskID }
         let board = await host.boardSnapshot()
         return Self.success(PlanDetailPayload(
             plan: PlanPayload(
@@ -377,7 +369,8 @@ public actor AuspexMCPServer {
                 TaskPayload(
                     $0,
                     sessions: (bySession[$0.id] ?? []).map(\.session),
-                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) },
+                    pendingClaims: pending[$0.id] ?? []
                 )
             }
         ))
@@ -409,6 +402,7 @@ public actor AuspexMCPServer {
 
     private func plansArchive(_ arguments: MCPArguments) async throws -> MCPJSON {
         let ledger = try await requireLedger()
+        _ = try await requireAttributedCaller(arguments, action: "archive a milestone")
         let reference = try arguments.requiredString("plan")
         guard let plan = try ledger.plan(reference: reference) else {
             throw MCPToolFailure("No milestone is registered as '\(reference)'.")
@@ -461,13 +455,15 @@ public actor AuspexMCPServer {
         )
         if let label { tasks = tasks.filter { $0.labels.contains(label) } }
         let links = Dictionary(grouping: try ledger.allLinks()) { $0.taskID }
+        let pending = Dictionary(grouping: try ledger.claimRequests()) { $0.taskID }
         let board = await host.boardSnapshot()
         return Self.success(TaskListPayload(
             tasks: tasks.map {
                 TaskPayload(
                     $0,
                     sessions: (links[$0.id] ?? []).map(\.session),
-                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+                    projectName: $0.projectKey.map { TaskProject.displayName(forKey: $0, in: board) },
+                    pendingClaims: pending[$0.id] ?? []
                 )
             },
             note: tasks.isEmpty
@@ -475,6 +471,80 @@ public actor AuspexMCPServer {
                     ? "Nothing here is ready: every task is either finished or waiting on one that is not. Call again without ready_only to see what is blocked."
                     : "Nothing is filed here. If your brief named a task id it may be under an archived milestone, or in another project; otherwise file one with tasks.create.")
                 : nil
+        ))
+    }
+
+    private func tasksGet(_ arguments: MCPArguments) async throws -> MCPJSON {
+        let ledger = try await requireLedger()
+        let id = try requiredTaskID(arguments)
+        guard let task = try ledger.task(id: id) else {
+            throw TaskLedgerError.notFound("task \(id)")
+        }
+
+        let allTasks = try ledger.tasks(limit: Self.ledgerReadLimit)
+        let byID = Dictionary(uniqueKeysWithValues: allTasks.map { ($0.id, $0) })
+        let known = Set(byID.keys)
+        let closed = Set(allTasks.filter { $0.status == .done }.map(\.id))
+        let blocking = task.blockingDependencies(closed: closed, known: known)
+        let dependencies = task.dependsOn.map { dependency -> TaskDetailPayload.Dependency in
+            let row = byID[dependency]
+            return TaskDetailPayload.Dependency(
+                id: dependency,
+                shortID: row?.shortID,
+                title: row?.title,
+                status: row?.status.rawValue,
+                satisfied: row?.status == .done
+            )
+        }
+
+        let board = await host.boardSnapshot()
+        let notices = try ledger.liveNotices()
+        let reports = try ledger.allReports()
+        let allLinks = try ledger.allLinks()
+        let taskIDsBySession = Dictionary(grouping: allLinks, by: \.session)
+            .mapValues { $0.map(\.taskID) }
+        let taskLinks = try ledger.links(taskID: id)
+        let pendingClaims = try ledger.claimRequests(taskID: id)
+        let history = try ledger.log(taskID: id, limit: 20)
+        let linksBySession = Dictionary(grouping: taskLinks, by: \.session)
+        let linked = linksBySession.keys.sorted { $0.description < $1.description }.map { key in
+            let sessionLinks = linksBySession[key] ?? []
+            let snapshot = board.session(for: key)
+            return TaskDetailPayload.LinkedSession(
+                key: key.description,
+                linkKinds: sessionLinks.map { $0.kind.rawValue },
+                linkedAt: sessionLinks.map(\.createdAt).min() ?? task.updatedAt,
+                availability: snapshot == nil ? "not_on_board" : "on_board",
+                session: snapshot.map {
+                    SessionCapsulePayload(
+                        $0, board: board, notice: notices[key],
+                        report: reports[key],
+                        linkedTaskIDs: taskIDsBySession[key] ?? []
+                    )
+                }
+            )
+        }
+
+        return Self.success(TaskDetailPayload(
+            task: TaskPayload(
+                task,
+                sessions: linksBySession.keys.sorted { $0.description < $1.description },
+                projectName: task.projectKey.map {
+                    TaskProject.displayName(forKey: $0, in: board)
+                },
+                pendingClaims: pendingClaims
+            ),
+            readiness: .init(
+                ready: blocking.isEmpty,
+                dependencies: dependencies,
+                blocking: blocking
+            ),
+            pendingClaims: pendingClaims.map(TaskClaimRequestPayload.init),
+            attempts: history
+                .filter { ["claimed", "released", "finished"].contains($0.kind) }
+                .map(TaskDetailPayload.Attempt.init),
+            history: history.map(TaskLogPayload.Entry.init),
+            sessions: linked
         ))
     }
 
@@ -519,27 +589,61 @@ public actor AuspexMCPServer {
             field: "role", tool: AuspexMCPTools.Name.tasksClaim
         )
         let scope = MCPTextSanitizer.clean(try arguments.optionalString("scope"))
-        let caller = try await caller(arguments)
-        guard let session = caller.session else {
-            throw MCPToolFailure(
-                "A claim has to name a session, and Auspex could not work out which one you are "
-                    + "(\(caller.evidence)). Call sessions.self, or pass 'session_id'."
-            )
-        }
+        let reason = MCPTextSanitizer.clean(try arguments.optionalString("reason"))
+        let expectedVersion = try Self.expectedVersion(arguments)
+        let caller = try await requireAttributedCaller(arguments, action: "claim a task")
+        let session = caller.session!
         // The claimer's own project, applied only if the task has none — a task
         // inherits its project from whoever first takes it.
         let board = await host.boardSnapshot()
-        let task = try ledger.claimTask(
-            id: id, role: role, scope: scope, by: session,
+        let outcome = try ledger.claimOrRequestTask(
+            id: id, role: role, scope: scope, reason: reason, by: session,
             projectKey: TaskProject.resolve(explicit: nil, session: session, board: board),
+            expectedVersion: expectedVersion,
             now: now()
         )
+        let task: AuspexTask
+        let claimOutcome: String
+        switch outcome {
+        case .claimed(let claimed):
+            task = claimed
+            claimOutcome = "claimed"
+        case .pending(let unchanged, _):
+            task = unchanged
+            claimOutcome = "pending_takeover"
+        }
         await host.didChangeLedger()
         let sessions = try ledger.links(taskID: id).map(\.session)
         return Self.success(TaskPayload(
             task,
             sessions: sessions,
-            projectName: task.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+            projectName: task.projectKey.map { TaskProject.displayName(forKey: $0, in: board) },
+            pendingClaims: try ledger.claimRequests(taskID: id),
+            claimOutcome: claimOutcome
+        ))
+    }
+
+    private func tasksRelease(_ arguments: MCPArguments) async throws -> MCPJSON {
+        let ledger = try await requireLedger()
+        let id = try requiredTaskID(arguments)
+        let reason = try MCPTextSanitizer.require(
+            try arguments.requiredString("reason"),
+            field: "reason", tool: AuspexMCPTools.Name.tasksRelease
+        )
+        let caller = try await requireAttributedCaller(
+            arguments, action: "release a task"
+        )
+        let session = caller.session!
+        let task = try ledger.releaseTask(
+            id: id, by: session, reason: reason, requireHolder: true,
+            expectedVersion: try Self.expectedVersion(arguments), now: now()
+        )
+        await host.didChangeLedger()
+        return Self.success(TaskPayload(
+            task,
+            sessions: try ledger.links(taskID: id).map(\.session),
+            projectName: await projectName(task.projectKey),
+            pendingClaims: try ledger.claimRequests(taskID: id)
         ))
     }
 
@@ -547,6 +651,11 @@ public actor AuspexMCPServer {
         let ledger = try await requireLedger()
         let id = try requiredTaskID(arguments)
         let status = try arguments.optionalEnum("status", AuspexTaskStatus.self)
+        if status == .done {
+            throw MCPToolFailure(
+                "An agent cannot close its own task. Use tasks.complete to move it into Review."
+            )
+        }
         let title = MCPTextSanitizer.clean(try arguments.optionalString("title"), limit: 200)
         let body = MCPTextSanitizer.clean(try arguments.optionalString("body"), limit: 4_000)
         let priority = try Self.priority(arguments)
@@ -560,8 +669,14 @@ public actor AuspexMCPServer {
             }
             planID = .some(plan.id)
         }
-        let caller = try await caller(arguments)
-        var task = try ledger.updateTask(
+        let caller = try await requireAttributedCaller(arguments, action: "update a task")
+        let targetProject: String?
+        if try arguments.optionalString("project") != nil {
+            targetProject = try await projectKey(arguments, caller: caller)
+        } else {
+            targetProject = nil
+        }
+        let task = try ledger.updateTask(
             id: id,
             title: title,
             body: body.map { Optional($0) },
@@ -571,31 +686,28 @@ public actor AuspexMCPServer {
             kind: kind,
             labels: labels,
             dependsOn: dependsOn,
+            projectKey: targetProject,
             actor: caller.session,
+            expectedVersion: try Self.expectedVersion(arguments),
             now: now()
         )
-        // Re-filing is its own statement, because it writes a line into the
-        // task's history: a task that changed project silently is a task
-        // somebody will spend an afternoon looking for.
-        if try arguments.optionalString("project") != nil {
-            task = try ledger.moveTask(
-                id: id,
-                toProjectKey: try await projectKey(arguments, caller: caller),
-                actor: caller.session,
-                now: now()
-            )
-        }
         await host.didChangeLedger()
-        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
+        return Self.success(TaskPayload(
+            task,
+            projectName: await projectName(task.projectKey),
+            pendingClaims: try ledger.claimRequests(taskID: id)
+        ))
     }
 
     private func tasksComplete(_ arguments: MCPArguments) async throws -> MCPJSON {
         let ledger = try await requireLedger()
         let id = try requiredTaskID(arguments)
         let result = MCPTextSanitizer.clean(try arguments.optionalString("result"))
-        let caller = try await caller(arguments)
+        let caller = try await requireAttributedCaller(arguments, action: "finish a task")
         let task = try ledger.completeTask(
-            id: id, result: result, by: caller.session, now: now()
+            id: id, result: result, by: caller.session,
+            requireHolder: true,
+            expectedVersion: try Self.expectedVersion(arguments), now: now()
         )
         // Finishing a task *is* reporting done, and a worker that has to say so
         // twice is a worker that says it once. The board's `done` bucket counts
@@ -612,7 +724,11 @@ public actor AuspexMCPServer {
             await host.didRecordNotice(notice)
         }
         await host.didChangeLedger()
-        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
+        return Self.success(TaskPayload(
+            task,
+            projectName: await projectName(task.projectKey),
+            pendingClaims: try ledger.claimRequests(taskID: id)
+        ))
     }
 
     private func tasksLog(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -624,17 +740,19 @@ public actor AuspexMCPServer {
         )
         let kind = try arguments.optionalEnum("kind", TaskNoteKind.self) ?? .note
         let ref = MCPTextSanitizer.clean(try arguments.optionalString("ref"), limit: 300)
-        let caller = try await caller(arguments)
+        let caller = try await requireAttributedCaller(arguments, action: "write a task note")
         guard try ledger.task(id: id) != nil else {
             throw TaskLedgerError.notFound("task \(id)")
         }
         try ledger.appendLog(
             taskID: id, actor: caller.session, kind: kind.rawValue, message: message,
-            ref: ref, now: now()
+            ref: ref, expectedVersion: try Self.expectedVersion(arguments), now: now()
         )
         await host.didChangeLedger()
+        let task = try ledger.task(id: id)
         return Self.success(TaskLogPayload(
             taskID: id,
+            version: task?.version,
             entries: try ledger.log(taskID: id, limit: 20).map(TaskLogPayload.Entry.init)
         ))
     }
@@ -679,250 +797,30 @@ public actor AuspexMCPServer {
         guard let items = value.arrayValue else {
             throw MCPToolFailure("'depends_on' takes an array of task ids.")
         }
-        return items.compactMap { $0.intValue.map(Int64.init) }
+        var ids: [Int64] = []
+        for item in items {
+            guard let value = item.intValue, value > 0 else {
+                throw MCPToolFailure("'depends_on' contains a value that is not a positive task id.")
+            }
+            ids.append(Int64(value))
+        }
+        return ids
     }
 
-    // MARK: - Sessions
-
-    private func sessionsSelf(_ arguments: MCPArguments) async throws -> MCPJSON {
-        let caller = try await caller(arguments)
-        let board = await host.boardSnapshot()
-        let ledger = await host.ledger()
-        let notices = (try? ledger?.liveNotices()) ?? [:]
-
-        guard let key = caller.session, let session = board.session(for: key) else {
-            return Self.success(SelfPayload(
-                resolved: false,
-                session: nil,
-                evidence: caller.evidence,
-                clientPID: caller.pid,
-                tasks: []
-            ))
-        }
-        let tasks = (try? ledger?.tasks(linkedTo: key)) ?? []
-        return Self.success(SelfPayload(
-            resolved: true,
-            session: SessionPayload(
-                session,
-                project: board.projectKey(for: session).map(BoardGrouping.projectName(forPath:)),
-                notice: notices[key]
-            ),
-            // The key, not the name: this is the answer an agent passes back as
-            // `project` on tasks.create, and a name is the one spelling of a
-            // project that two of them can share.
-            projectKey: board.projectKey(for: session),
-            evidence: caller.evidence,
-            clientPID: caller.pid,
-            tasks: tasks.map {
-                TaskPayload(
-                    $0,
-                    projectName: $0.projectKey.map {
-                        TaskProject.displayName(forKey: $0, in: board)
-                    }
-                )
-            }
-        ))
-    }
-
-    private func sessionsList(_ arguments: MCPArguments) async throws -> MCPJSON {
-        let board = await host.boardSnapshot()
-        let harnesses = try arguments.optionalEnumList("harness", Harness.self) ?? []
-        let activeOnly = try arguments.optionalBool("active_only") ?? true
-        let limit = try arguments.optionalInt("limit", minimum: 1, maximum: 500) ?? 50
-        let notices = (try? await host.ledger()?.liveNotices()) ?? [:]
-
-        var sessions = board.sessions
-        if !harnesses.isEmpty {
-            let wanted = Set(harnesses)
-            sessions = sessions.filter { wanted.contains($0.key.harness) }
-        }
-        if activeOnly { sessions = sessions.filter { !$0.state.isEnded } }
-        let total = sessions.count
-        return Self.success(SessionListPayload(
-            sessions: sessions.prefix(limit).map { session in
-                SessionPayload(
-                    session,
-                    project: board.projectKey(for: session).map(BoardGrouping.projectName(forPath:)),
-                    notice: notices[session.key]
-                )
-            },
-            total: total
-        ))
-    }
-
-    private func sessionsTree(_ arguments: MCPArguments) async throws -> MCPJSON {
-        let board = await host.boardSnapshot()
-        let limit = try arguments.optionalInt("limit", minimum: 1, maximum: 500) ?? 50
-        var index: [SessionKey: SessionSnapshot] = [:]
-        for session in board.sessions { index[session.key] = session }
-
-        func payload(_ node: SessionTree.Node) -> TreeNodePayload {
-            let session = index[node.key]
-            return TreeNodePayload(
-                key: node.key.description,
-                harness: node.key.harness.rawValue,
-                title: session?.identity.title,
-                state: session?.state.columnValue ?? "unknown",
-                children: node.children.map(payload)
-            )
-        }
-
-        if let raw = try arguments.optionalString("session_key") {
-            guard let key = SessionKey(string: raw), let node = board.tree.node(for: key) else {
-                throw MCPToolFailure("No session on the board is '\(raw)'.")
-            }
-            return Self.success(TreePayload(roots: [payload(node)], sessionCount: board.tree.count))
-        }
-        return Self.success(TreePayload(
-            roots: board.tree.roots.prefix(limit).map(payload),
-            sessionCount: board.tree.count
-        ))
-    }
-
-    private func peersStatus(_ arguments: MCPArguments) async throws -> MCPJSON {
-        _ = arguments
-        let board = await host.boardSnapshot()
-        let notices = (try? await host.ledger()?.liveNotices()) ?? [:]
-        let counts = board.counts
-        let onBoard = Set(board.sessions.map(\.key))
-        let callers = notices.values
-            .filter { $0.kind.wantsPerson && onBoard.contains($0.session) }
-            .sorted { $0.createdAt > $1.createdAt }
-        // A session that a harness reports as blocked *and* that called
-        // `notify` is one session needing one person, not two.
-        let alreadyBlocked = Set(
-            board.sessions.filter { if case .waitingPermission = $0.state { true } else { false } }
-                .map(\.key)
-        )
-        let extra = callers.count { !alreadyBlocked.contains($0.session) }
-        return Self.success(PeersPayload(
-            working: counts.thinking + counts.tooling + counts.delegating,
-            idle: counts.idle,
-            ended: counts.ended,
-            needsYou: counts.waitingPermission + extra,
-            calling: callers.map {
-                PeersPayload.Caller(
-                    session: $0.session.description,
-                    kind: $0.kind.rawValue,
-                    message: $0.message,
-                    at: $0.createdAt
-                )
-            },
-            total: board.sessions.count
-        ))
-    }
-
-    // MARK: - Projects
-
-    /// The project a call is about: the one the caller named, or the one the
-    /// caller is working in.
-    ///
-    /// The second half is the whole of why there is no "unfiled" any more. A
-    /// worker filing a task says nothing about projects and its task lands
-    /// where its session is, resolved by the same
-    /// ``BoardSnapshot/projectKey(for:)`` the wall groups by — so the card and
-    /// the task are in the same place on two different pages without anybody
-    /// typing a path.
-    ///
-    /// A named project that nothing answers to is a failure rather than a
-    /// silent fallback: an orchestrator that misspelled a path would otherwise
-    /// file a dozen tasks in its own project and find out tomorrow.
-    private func projectKey(_ arguments: MCPArguments, caller: Caller) async throws -> String {
-        let board = await host.boardSnapshot()
-        if let raw = try arguments.optionalString("project") {
-            guard let cleaned = MCPTextSanitizer.clean(raw, limit: 1_000),
-                  let key = TaskProject.key(named: cleaned, in: board)
-            else {
-                throw MCPToolFailure(
-                    "No project on the board is '\(raw)'. Pass an absolute path, or a name "
-                        + "sessions.list shows — or leave 'project' out to file it where you are."
-                )
-            }
-            return key
-        }
-        return TaskProject.resolve(explicit: nil, session: caller.session, board: board)
-    }
-
-    /// What a project key is called, for a payload a person will read.
-    private func projectName(_ key: String?) async -> String? {
-        guard let key else { return nil }
-        return TaskProject.displayName(forKey: key, in: await host.boardSnapshot())
-    }
-
-    // MARK: - Identity
-
-    /// Who is calling, and how that was worked out.
-    struct Caller {
-        let session: SessionKey?
-        let pid: pid_t?
-        let evidence: String
-    }
-
-    /// Resolves the calling session: the explicit override first, then the pid
-    /// on the socket, then the pid a bridge declared for itself.
-    ///
-    /// The override wins because an agent that passes `session_id` is stating
-    /// a fact about itself that nothing else in the room knows better. It is
-    /// still checked against the board — a key that names no session is a
-    /// typo, and attributing work to a row that does not exist would be worse
-    /// than saying so.
-    private func caller(_ arguments: MCPArguments) async throws -> Caller {
-        let board = await host.boardSnapshot()
-
-        if let raw = try arguments.optionalString("session_id"),
-           let cleaned = MCPTextSanitizer.clean(raw, limit: 200) {
-            if let key = SessionKey(string: cleaned), board.session(for: key) != nil {
-                return Caller(session: key, pid: nil, evidence: "you named '\(cleaned)'")
-            }
-            // The bare id, without the harness prefix, is what a harness's own
-            // environment variable holds — so it is what an agent reaches for.
-            let matches = board.sessions.filter { $0.key.sessionID == cleaned }
-            if matches.count == 1 {
-                return Caller(
-                    session: matches[0].key,
-                    pid: nil,
-                    evidence: "you named session id '\(cleaned)'"
-                )
-            }
-            if matches.count > 1 {
-                throw MCPToolFailure(
-                    "'\(cleaned)' matches \(matches.count) sessions. "
-                        + "Pass '<harness>:<session id>' instead."
-                )
-            }
-            throw MCPToolFailure("No session on the board is '\(cleaned)'.")
-        }
-
-        let identities = board.sessions.map(\.identity)
-        let table = await host.processTable()
-        let clientPIDs = await host.clientPIDs()
-
-        for pid in clientPIDs {
-            if let resolution = resolver.resolve(pid: pid, identities: identities, table: table) {
-                return Caller(session: resolution.session, pid: pid, evidence: resolution.evidence)
-            }
-        }
-        for pid in declaredPIDs.reversed() {
-            if let resolution = resolver.resolve(pid: pid, identities: identities, table: table) {
-                return Caller(
-                    session: resolution.session,
-                    pid: pid,
-                    evidence: resolution.evidence + ", from the pid this bridge declared"
-                )
-            }
-        }
-        return Caller(
-            session: nil,
-            pid: clientPIDs.first,
-            evidence: clientPIDs.isEmpty
-                ? "nothing is attached to the Auspex socket that Auspex can attribute"
-                : "no session on the board owns process \(clientPIDs[0]) or any of its ancestors"
-        )
+    private static func expectedVersion(_ arguments: MCPArguments) throws -> Int64? {
+        try arguments.optionalInt("expected_version", minimum: 1, maximum: Int.max)
+            .map(Int64.init)
     }
 
     // MARK: - Plumbing
 
-    private func requireLedger() async throws -> TaskRepository {
+    /// MCP reads are deliberate, low-frequency snapshots rather than a live UI
+    /// path. This is a practical ceiling that keeps a corrupt or future store
+    /// from producing an unbounded tool response while remaining far above any
+    /// task ledger a person can scan.
+    static let ledgerReadLimit = 100_000
+
+    func requireLedger() async throws -> TaskRepository {
         guard let ledger = await host.ledger() else {
             throw MCPToolFailure(
                 "Auspex could not open its store, so it has no task board to answer with."

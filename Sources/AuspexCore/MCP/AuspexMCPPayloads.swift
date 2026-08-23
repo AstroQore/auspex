@@ -50,6 +50,8 @@ struct PlanPayload: Encodable {
 
 struct TaskPayload: Encodable {
     let id: Int64
+    /// Compare-and-swap token for the next agent-authored mutation.
+    let version: Int64
     /// The handle a person reads and says out loud. Sent so an agent writing a
     /// brief can quote the same string the board shows.
     let shortID: String
@@ -81,9 +83,19 @@ struct TaskPayload: Encodable {
     let createdAt: Date
     let updatedAt: Date
     let sessions: [String]?
+    let pendingClaims: [TaskClaimRequestPayload]?
+    /// Present on tasks.claim so a success cannot be mistaken for ownership.
+    let claimOutcome: String?
 
-    init(_ task: AuspexTask, sessions: [SessionKey]? = nil, projectName: String? = nil) {
+    init(
+        _ task: AuspexTask,
+        sessions: [SessionKey]? = nil,
+        projectName: String? = nil,
+        pendingClaims: [TaskClaimRequest] = [],
+        claimOutcome: String? = nil
+    ) {
         self.id = task.id
+        self.version = task.version
         self.shortID = task.shortID
         self.importance = task.importance.rawValue
         self.kind = task.kind?.rawValue
@@ -105,6 +117,35 @@ struct TaskPayload: Encodable {
         self.createdAt = task.createdAt
         self.updatedAt = task.updatedAt
         self.sessions = sessions?.map(\.description)
+        self.pendingClaims = pendingClaims.isEmpty
+            ? nil : pendingClaims.map(TaskClaimRequestPayload.init)
+        self.claimOutcome = claimOutcome
+    }
+}
+
+struct TaskClaimRequestPayload: Encodable {
+    let id: Int64
+    let requester: String
+    let holder: String?
+    let role: String
+    let scope: String?
+    let reason: String?
+    let taskVersion: Int64
+    let status: String
+    let requestedAt: Date
+    let resolvedAt: Date?
+
+    init(_ request: TaskClaimRequest) {
+        self.id = request.id
+        self.requester = request.requester.description
+        self.holder = request.holder?.description
+        self.role = request.role
+        self.scope = request.scope
+        self.reason = request.reason
+        self.taskVersion = request.taskVersion
+        self.status = request.status.rawValue
+        self.requestedAt = request.requestedAt
+        self.resolvedAt = request.resolvedAt
     }
 }
 
@@ -125,8 +166,38 @@ struct TaskListPayload: Encodable {
     let note: String?
 }
 
+/// The compact task shape used by a project overview and a session capsule.
+/// The body and result stay on `tasks.get`; a situation report should remain a
+/// situation report rather than turning into a second task detail page.
+struct TaskSummaryPayload: Encodable {
+    let id: Int64
+    let shortID: String
+    let title: String
+    let status: String
+    let importance: String
+    let claimedBy: String?
+    let claimRole: String?
+    let claimScope: String?
+    let waitingOn: [Int64]?
+    let updatedAt: Date
+
+    init(_ task: AuspexTask, waitingOn: [Int64] = []) {
+        self.id = task.id
+        self.shortID = task.shortID
+        self.title = task.title
+        self.status = task.status.rawValue
+        self.importance = task.importance.rawValue
+        self.claimedBy = task.claimedBy?.description
+        self.claimRole = task.claimRole
+        self.claimScope = task.claimScope
+        self.waitingOn = waitingOn.isEmpty ? nil : waitingOn
+        self.updatedAt = task.updatedAt
+    }
+}
+
 struct TaskLogPayload: Encodable {
     let taskID: Int64
+    let version: Int64?
     let entries: [Entry]
 
     struct Entry: Encodable {
@@ -147,6 +218,52 @@ struct TaskLogPayload: Encodable {
     }
 }
 
+struct TaskDetailPayload: Encodable {
+    let task: TaskPayload
+    let readiness: Readiness
+    let pendingClaims: [TaskClaimRequestPayload]
+    /// Claim/release/finish is an execution-attempt audit, not task identity.
+    let attempts: [Attempt]
+    let history: [TaskLogPayload.Entry]
+    let sessions: [LinkedSession]
+
+    struct Readiness: Encodable {
+        let ready: Bool
+        let dependencies: [Dependency]
+        let blocking: [Int64]
+    }
+
+    struct Dependency: Encodable {
+        let id: Int64
+        let shortID: String?
+        let title: String?
+        let status: String?
+        let satisfied: Bool
+    }
+
+    struct LinkedSession: Encodable {
+        let key: String
+        let linkKinds: [String]
+        let linkedAt: Date
+        let availability: String
+        let session: SessionCapsulePayload?
+    }
+
+    struct Attempt: Encodable {
+        let event: String
+        let session: String?
+        let at: Date
+        let detail: String?
+
+        init(_ entry: AuspexTaskLogEntry) {
+            self.event = entry.kind
+            self.session = entry.actor?.description
+            self.at = entry.timestamp
+            self.detail = entry.message
+        }
+    }
+}
+
 // MARK: - Notices and reports
 
 struct NotifyPayload: Encodable {
@@ -159,8 +276,8 @@ struct NotifyPayload: Encodable {
     let bucket: String
     /// The tasks this notice moved into review, when it was a `done`.
     var reviewing: [Int64]? = nil
-    /// Whether Auspex could tell which session this was, and how. An agent
-    /// that reads `resolved: false` knows to pass `session_id` next time.
+    /// Whether Auspex could tell which session this was, and how. A session id
+    /// can corroborate the process evidence but cannot replace it.
     let resolved: Bool
     let evidence: String?
     let clearsWhen: String
@@ -172,6 +289,26 @@ struct ReportPayload: Encodable {
     let progress: String?
     let at: Date
     let resolved: Bool
+}
+
+/// A persisted self-report as a reader sees it. Reports are not deleted when
+/// prose supersedes them: the freshness field makes that distinction explicit
+/// without pretending the old line is still the session's present focus.
+struct SessionReportPayload: Encodable {
+    let focus: String
+    let progress: String?
+    let reportedAt: Date
+    let freshness: String
+    let provenance: String
+
+    init(_ report: AgentReport, session: SessionSnapshot) {
+        self.focus = report.focus
+        self.progress = report.progress
+        self.reportedAt = report.createdAt
+        self.freshness = report.isSuperseded(byAssistantAt: session.brief.lastAssistantAt)
+            ? "superseded" : "current"
+        self.provenance = "self_reported"
+    }
 }
 
 // MARK: - Sessions
@@ -194,11 +331,15 @@ struct SessionPayload: Encodable {
     let assignment: String?
     /// What it is calling for, when it is.
     let notice: NoticePayload?
+    /// The last line the agent deliberately filed, even when later prose has
+    /// superseded it. `freshness` says which it is.
+    let report: SessionReportPayload?
 
     init(
         _ session: SessionSnapshot,
         project: String?,
-        notice: AgentNotice?
+        notice: AgentNotice?,
+        report: AgentReport? = nil
     ) {
         self.key = session.key.description
         self.harness = session.key.harness.rawValue
@@ -215,6 +356,7 @@ struct SessionPayload: Encodable {
         self.lastEventAt = session.lastEventAt
         self.assignment = session.brief.firstPrompt
         self.notice = notice.map(NoticePayload.init)
+        self.report = report.map { SessionReportPayload($0, session: session) }
     }
 }
 
@@ -233,8 +375,208 @@ struct NoticePayload: Encodable {
 }
 
 struct SessionListPayload: Encodable {
-    let sessions: [SessionPayload]
+    let sessions: [SessionCapsulePayload]
     let total: Int
+}
+
+/// Safe context another agent may read about a peer.
+///
+/// No prompt, assistant message, cwd, source path, argv or tool output is in
+/// this type. The strings it does carry are names, structured task linkage, or
+/// words the session explicitly filed through report/notify.
+struct SessionCapsulePayload: Encodable {
+    let key: String
+    let harness: String
+    let title: String?
+    let branch: String?
+    let startedAt: Date?
+    let lastEventAt: Date?
+    let activity: Activity
+    let attention: Attention?
+    let project: Project?
+    let report: SessionReportPayload?
+    let relationship: Relationship?
+    let linkedTasks: LinkedTasks?
+
+    struct Activity: Encodable {
+        let state: String
+        let detail: String?
+        let isAlive: Bool
+        let isStale: Bool
+        let provenance: String
+    }
+
+    struct Attention: Encodable {
+        let state: String
+        let message: String
+        let source: String
+        let signalledAt: Date?
+        let provenance: String
+    }
+
+    struct Project: Encodable {
+        let key: String
+        let name: String
+        let provenance: String
+    }
+
+    struct Relationship: Encodable {
+        let parent: String?
+        let children: [String]?
+        let evidence: String?
+        let provenance: String
+    }
+
+    struct LinkedTasks: Encodable {
+        let ids: [Int64]
+        let provenance: String
+    }
+
+    init(
+        _ session: SessionSnapshot,
+        board: BoardSnapshot,
+        notice: AgentNotice?,
+        report: AgentReport?,
+        linkedTaskIDs: [Int64] = []
+    ) {
+        self.key = session.key.description
+        self.harness = session.key.harness.rawValue
+        self.title = session.identity.title
+        self.branch = session.identity.gitBranch
+        self.startedAt = session.startedAt
+        self.lastEventAt = session.lastEventAt
+        self.activity = Activity(
+            state: session.state.columnValue,
+            detail: Self.safeActivityDetail(session.state),
+            isAlive: session.isAlive,
+            isStale: session.isStale,
+            // Activity is a reducer's interpretation of observed events. It is
+            // useful, but it is not something the agent asserted as truth.
+            provenance: "inferred"
+        )
+
+        let attention = TaskLedger.attention(
+            of: session, notice: notice, acknowledgedAt: nil, now: board.generatedAt
+        )
+        switch attention {
+        case .none:
+            self.attention = nil
+        case .needsYou(let message, let source):
+            self.attention = Attention(
+                state: "needs_you", message: message, source: source.rawValue,
+                signalledAt: source == .agent ? notice?.createdAt : session.lastEventAt,
+                provenance: source == .agent ? "self_reported" : "observed"
+            )
+        case .doneReported(let message, let source):
+            self.attention = Attention(
+                state: "done_reported", message: message, source: source.rawValue,
+                signalledAt: source == .agent ? notice?.createdAt : session.lastEventAt,
+                provenance: source == .agent ? "self_reported" : "observed"
+            )
+        }
+
+        if let key = board.projectKey(for: session) {
+            self.project = Project(
+                key: key,
+                name: TaskProject.displayName(forKey: key, in: board),
+                provenance: "inferred"
+            )
+        } else {
+            self.project = nil
+        }
+        self.report = report.map { SessionReportPayload($0, session: session) }
+
+        let children = board.tree.node(for: session.key)?.children.map { $0.key.description } ?? []
+        if session.identity.parent != nil || !children.isEmpty {
+            let link = session.identity.parentLink
+            self.relationship = Relationship(
+                parent: session.identity.parent?.description,
+                children: children.isEmpty ? nil : children,
+                evidence: link.map(Self.parentEvidence),
+                provenance: Self.parentProvenance(link)
+            )
+        } else {
+            self.relationship = nil
+        }
+        let taskIDs = Array(Set(linkedTaskIDs)).sorted()
+        self.linkedTasks = taskIDs.isEmpty
+            ? nil : LinkedTasks(ids: taskIDs, provenance: "observed")
+    }
+
+    /// The store's state detail is not a peer-safe payload: writingFile keeps
+    /// the complete absolute source path. Capsules retain useful activity
+    /// shape while stripping directories and bounding agent-authored labels.
+    private static func safeActivityDetail(_ state: SessionState) -> String? {
+        switch state {
+        case .idle, .thinking:
+            return nil
+        case .toolCalling(let name):
+            return MCPTextSanitizer.clean(name, limit: 120)
+        case .writingFile(let path):
+            guard let path else { return "file" }
+            let basename = (path as NSString).lastPathComponent
+            return MCPTextSanitizer.clean(basename, limit: 200) ?? "file"
+        case .waitingPermission(let name):
+            return MCPTextSanitizer.clean(name, limit: 120)
+        case .delegating(let children):
+            return "\(children) subagent\(children == 1 ? "" : "s")"
+        case .ended(let reason):
+            return reason.rawValue
+        }
+    }
+
+    private static func parentEvidence(_ link: ParentLink) -> String {
+        switch link {
+        case .manual: "manual"
+        case .subagent: "recorded_subagent"
+        case .envInherited: "inherited_environment"
+        case .spawnedProcess: "process_ancestry"
+        }
+    }
+
+    private static func parentProvenance(_ link: ParentLink?) -> String {
+        switch link {
+        case .manual?, .subagent?: "observed"
+        case .envInherited?, .spawnedProcess?, nil: "inferred"
+        }
+    }
+}
+
+struct SessionDetailPayload: Encodable {
+    let session: SessionCapsulePayload
+    let tasks: [TaskSummaryPayload]
+}
+
+struct OverviewPayload: Encodable {
+    let project: Project
+    let generatedAt: Date
+    /// Each array is capped at this many rows; counts remain complete.
+    let perSectionLimit: Int
+    let `self`: SessionCapsulePayload?
+    let doing: [TaskSummaryPayload]
+    let blocked: [TaskSummaryPayload]
+    let review: [TaskSummaryPayload]
+    /// Ready means unclaimed Todo work whose dependencies are closed.
+    let ready: [TaskSummaryPayload]
+    let orphanedClaims: [TaskSummaryPayload]
+    let needsYou: [SessionCapsulePayload]
+    let counts: Counts
+
+    struct Project: Encodable {
+        let key: String
+        let name: String
+    }
+
+    struct Counts: Encodable {
+        let sessions: Int
+        let tasks: Int
+        let doing: Int
+        let blocked: Int
+        let review: Int
+        let ready: Int
+        let orphanedClaims: Int
+        let needsYou: Int
+    }
 }
 
 struct SelfPayload: Encodable {

@@ -42,7 +42,20 @@ struct TasksPageView: View {
 
     var body: some View {
         BoardScroll {
-            LazyVStack(alignment: .leading, spacing: 16) {
+            // Deliberately eager. Roost rows have dynamic heights, nested
+            // columns, drag targets and native controls. On macOS 26.5.2 a
+            // `LazyVStack` enters a self-sustaining prefetch/update cycle after
+            // a short scroll: LazyLayoutViewCache.signalPrefetch asks the
+            // hosting view for another transaction while the current one is
+            // still placing task cards. The real failure holds the main thread
+            // at 100% CPU and grows memory until the window stops answering.
+            //
+            // `VStack` has no prefetch cache to feed back. The page is already
+            // bounded by the ledger read and groups rows by project; more
+            // importantly, one project lane eagerly builds its task columns
+            // even under a lazy outer stack, so the lazy container never
+            // provided a meaningful per-card saving here.
+            VStack(alignment: .leading, spacing: 16) {
                 pageBar
                 if model.isEmpty {
                     TasksEmptyState()
@@ -86,6 +99,26 @@ struct TasksPageView: View {
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
             Spacer(minLength: 8)
+            if board.reviewCount > 0 {
+                Button { board.openNextReview() } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "checklist")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Review next · \(board.reviewCount)")
+                            .font(AuspexType.pill)
+                    }
+                    .foregroundStyle(AuspexPalette.stateWriting)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(AuspexPalette.stateWriting.opacity(0.08))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.auspex(cornerRadius: 6))
+                .help("Open the first task waiting for review")
+            }
             Button { model.showsArchived.toggle() } label: {
                 Text(model.showsArchived ? "Hide archived" : "Show archived")
                     .font(AuspexType.pill)
@@ -207,6 +240,7 @@ private struct ProjectLaneView: View {
             TextField("What is the whole piece of work?", text: $draftMilestone)
                 .textFieldStyle(.plain)
                 .font(AuspexType.body)
+                .auspexSystemControlFocus()
                 .onSubmit(commit)
             Button("Register", action: commit)
                 .buttonStyle(.auspex)
@@ -347,6 +381,7 @@ private struct MilestoneGroupView: View {
             TextField("What has to be done", text: $draftTitle)
                 .textFieldStyle(.plain)
                 .font(AuspexType.body)
+                .auspexSystemControlFocus()
                 .onSubmit(commit)
             Button("Add", action: commit)
                 .buttonStyle(.auspex)

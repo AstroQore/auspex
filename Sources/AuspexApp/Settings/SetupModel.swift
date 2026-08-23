@@ -88,7 +88,8 @@ final class SetupModel {
         let installer = HarnessInstaller(
             homeDirectory: paths.homeDirectory,
             paths: paths,
-            command: command
+            command: command,
+            coordinationSkill: CoordinationSkillResource.load()
         )
         self.installer = installer
         let store = AuspexSettingsStore(paths: paths)
