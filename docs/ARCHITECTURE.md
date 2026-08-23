@@ -603,6 +603,15 @@ writing tools by name.
 
 ## Catch-up, review, and delivery
 
+Every Auspex-owned presentation begins with no first responder. A zero-area
+AppKit probe clears `makeFirstResponder(nil)` once per presentation token and
+never changes `initialFirstResponder` or the key-view loop. Tab and arrow keys
+therefore retain native navigation and visible feedback after the person asks
+for it; passive opening alone selects nothing. Command Palette focus is
+intentional because ⌘K itself is an explicit text-entry gesture. System-owned
+panels such as `NSOpenPanel`, Sparkle and macOS permission prompts are outside
+this policy.
+
 `TaskCapsule` is the semantic compression boundary. It derives goal, phase,
 current work, last outcome, next action and risk with provenance; its material
 timestamp changes only for task rows, explicit reports/notices, turn outcomes

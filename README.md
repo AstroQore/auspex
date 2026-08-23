@@ -145,6 +145,12 @@ measured against both.
 Every screenshot below has a `-light` twin in `docs/screenshots/`, rendered by
 the same command with `appearance=light` on the end.
 
+Keyboard focus follows one small rule: a newly opened Auspex window, sheet or
+popover starts neutral — no button or field is selected on the person's
+behalf. Pressing Tab or an arrow key then enters the normal macOS key-view loop
+with visible focus feedback. The command palette is the deliberate exception:
+pressing ⌘K is already an explicit request to type, so its search field is ready.
+
 ## Four ways to read one board
 
 The picker in the header switches how the live sessions are drawn. It is a mode

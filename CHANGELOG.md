@@ -30,6 +30,9 @@ release yet. `RELEASING.md` describes how one is cut when there is.
   SQLite/WAL polling keeps its two-second correctness cadence.
 - Person-authored task writes now refresh Roost, Live Ledger and Catch-up only
   after the store accepts the transaction, avoiding stale queues and read/write races.
+- Every Auspex-owned window, sheet and popover clears only its implicit initial
+  responder; no control starts highlighted, while Tab/arrow navigation and
+  subsequent focus feedback remain intact. Native Kill alert is now an owned sheet.
 
 ### Added
 

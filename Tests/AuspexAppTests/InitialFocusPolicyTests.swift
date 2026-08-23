@@ -52,6 +52,23 @@ struct InitialFocusPolicyTests {
             $0 + $1.numberOfOccurrences(of: ".auspexNoInitialFocus()")
         }
 
+        let expectedByFile = [
+            "AuspexApp.swift": 3,
+            "RootView.swift": 3,
+            "ProjectsPageView.swift": 2,
+            "SessionControlModel.swift": 1,
+            "ContextUsagePopover.swift": 1,
+            "SessionTraceView.swift": 1,
+        ]
+        for (file, expected) in expectedByFile {
+            #expect(
+                try #require(sources[file]).numberOfOccurrences(
+                    of: ".auspexNoInitialFocus()"
+                ) == expected,
+                "\(file) presentation coverage changed"
+            )
+        }
+
         #expect(presentationCount == 8)
         #expect(sceneCount == 3)
         #expect(policyCount == presentationCount + sceneCount)
