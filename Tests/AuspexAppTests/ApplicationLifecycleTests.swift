@@ -35,4 +35,34 @@ struct ApplicationLifecycleTests {
         #expect(!ApplicationLaunchContext.isLoginItem(event))
         #expect(!ApplicationLaunchContext.isLoginItem(nil))
     }
+
+    @Test("a Finder reopen reveals the hidden login-launch window")
+    func reopenRevealsHiddenWindow() {
+        #expect(
+            ApplicationReopenPlan.resolve(
+                isAccessory: true,
+                hasHiddenMainWindow: true
+            ) == .revealHiddenMainWindow
+        )
+    }
+
+    @Test("a Finder reopen requests a window when login launch made none")
+    func reopenRequestsWindow() {
+        #expect(
+            ApplicationReopenPlan.resolve(
+                isAccessory: true,
+                hasHiddenMainWindow: false
+            ) == .requestMainWindow
+        )
+    }
+
+    @Test("ordinary foreground reopens remain AppKit's decision")
+    func ordinaryReopen() {
+        #expect(
+            ApplicationReopenPlan.resolve(
+                isAccessory: false,
+                hasHiddenMainWindow: true
+            ) == .appKitDefault
+        )
+    }
 }

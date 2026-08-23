@@ -1,5 +1,39 @@
 import Foundation
 
+/// The app bundle for which macOS last confirmed the main-app login item.
+///
+/// ServiceManagement is always the operational truth. This receipt is only
+/// enough evidence to recognise that an already-enabled registration survived
+/// an in-place app update; it is never permission to call `register()` after
+/// macOS reports the item as off.
+public struct LoginItemRegistrationReceipt: Codable, Sendable, Equatable {
+    public var bundleIdentifier: String
+    public var bundlePath: String
+    public var shortVersion: String
+    public var buildVersion: String
+
+    public init(
+        bundleIdentifier: String,
+        bundlePath: String,
+        shortVersion: String,
+        buildVersion: String
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.bundlePath = bundlePath
+        self.shortVersion = shortVersion
+        self.buildVersion = buildVersion
+    }
+
+    /// A replacement has to be an in-place update of the same application,
+    /// with a changed shipped version. Moving an app, copying another build on
+    /// top of it, or lacking an older receipt is deliberately not proof.
+    public func provesInPlaceReplacement(by current: Self) -> Bool {
+        bundleIdentifier == current.bundleIdentifier
+            && bundlePath == current.bundlePath
+            && (shortVersion != current.shortVersion || buildVersion != current.buildVersion)
+    }
+}
+
 /// `~/.auspex/settings.json` — the preferences that are not about characters.
 ///
 /// One flat object, read and written whole. It holds the ignore rules today;
@@ -101,13 +135,21 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// allowed to replace this one. See ``UpdateChannel``.
     public var updateChannel: UpdateChannel
 
-    /// Whether the person asked macOS to launch Auspex when they log in.
+    /// Whether macOS most recently reported the main-app login item as on.
     ///
-    /// The system registration is still the operational truth; this is the
-    /// durable user intent that lets a replaced app bundle repair a lost
-    /// registration on its next launch. It changes only after a person clicks
-    /// the setting and ServiceManagement accepts the corresponding action.
+    /// It becomes true after either an explicit Auspex click succeeds or
+    /// ServiceManagement reports an externally enabled item. A later
+    /// `.notRegistered` result clears it; this value is never treated as a
+    /// standing instruction to override a choice made in System Settings.
     public var launchAtLogin: Bool
+
+    /// Which installed app bundle was active when the login item was last
+    /// confirmed enabled.
+    ///
+    /// This can prove that an enabled registration survived a bundle update,
+    /// allowing the receipt itself to be refreshed. It cannot authorise a new
+    /// registration when macOS says the item is off.
+    public var loginItemRegistration: LoginItemRegistrationReceipt?
 
     /// When the person last cleared the global Catch-up inbox.
     ///
@@ -129,6 +171,7 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         translucentSidebar: Bool = true,
         updateChannel: UpdateChannel = .standard,
         launchAtLogin: Bool = false,
+        loginItemRegistration: LoginItemRegistrationReceipt? = nil,
         lastCatchUpAt: Date? = nil
     ) {
         self.showsSubagents = showsSubagents
@@ -143,13 +186,14 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         self.translucentSidebar = translucentSidebar
         self.updateChannel = updateChannel
         self.launchAtLogin = launchAtLogin
+        self.loginItemRegistration = loginItemRegistration
         self.lastCatchUpAt = lastCatchUpAt
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
         case sessionWindow, notifiesOnDone, appearance, translucentSidebar
-        case updateChannel, showsSubagents, launchAtLogin, lastCatchUpAt
+        case updateChannel, showsSubagents, launchAtLogin, loginItemRegistration, lastCatchUpAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -198,6 +242,10 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         updateChannel = (try? container.decode(UpdateChannel.self, forKey: .updateChannel))
             ?? .standard
         launchAtLogin = (try? container.decode(Bool.self, forKey: .launchAtLogin)) ?? false
+        loginItemRegistration = try? container.decodeIfPresent(
+            LoginItemRegistrationReceipt.self,
+            forKey: .loginItemRegistration
+        )
         lastCatchUpAt = try? container.decodeIfPresent(Date.self, forKey: .lastCatchUpAt)
     }
 
@@ -205,7 +253,8 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         ignoreRules.isEmpty && !showsIgnored && !didShowSetup && sceneZones == .all
             && crewLiveliness == nil && sessionWindow == .standard && notifiesOnDone
             && appearance == .standard && translucentSidebar && !showsSubagents
-            && updateChannel == .standard && !launchAtLogin && lastCatchUpAt == nil
+            && updateChannel == .standard && !launchAtLogin
+            && loginItemRegistration == nil && lastCatchUpAt == nil
     }
 }
 

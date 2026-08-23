@@ -225,12 +225,20 @@ public final class AppEnvironment {
             catalog.lastCatchUpAt ?? Date().addingTimeInterval(-4 * 60 * 60)
         )
 
-        // A repair, not a new opt-in: `launchAtLogin` can only become true
-        // after a person clicked the Settings control and ServiceManagement
-        // accepted it. Re-registering here keeps that request intact when an
-        // updater replaces the app bundle.
+        // ServiceManagement is the operational truth. Reconciliation only
+        // mirrors its state and, when an in-place update can be proven,
+        // refreshes the bundle receipt. It never calls register: a person may
+        // have switched the item off directly in System Settings.
         if mode == .live {
-            loginItem.reconcileDesiredState(catalog.launchAtLogin)
+            if let reconciliation = loginItem.reconcileDesiredState(
+                catalog.launchAtLogin,
+                registration: catalog.loginItemRegistration
+            ) {
+                catalog.setLaunchAtLogin(
+                    reconciliation.enabled,
+                    registration: reconciliation.registration
+                )
+            }
         }
 
         // After the load, so the first check already goes to the stream the

@@ -196,17 +196,28 @@ final class ProjectCatalogModel {
 
     // MARK: - Process lifecycle
 
-    /// The person's durable request. macOS's ServiceManagement status is the
-    /// operational truth shown in Settings; this value exists so replacing an
-    /// app bundle does not silently forget a request the person already made.
+    /// The last ServiceManagement state Auspex persisted. macOS remains the
+    /// operational truth and launch reconciliation may turn this off when the
+    /// person disabled the item in System Settings.
     var launchAtLogin: Bool { settings.launchAtLogin }
 
-    /// Records the choice only after the system registration action succeeds.
-    /// The caller owns that ordering; keeping the write here preserves the
+    /// The installed bundle for which macOS last confirmed the item enabled.
+    var loginItemRegistration: LoginItemRegistrationReceipt? {
+        settings.loginItemRegistration
+    }
+
+    /// Records an explicit click or a reconciled macOS state. The caller owns
+    /// the ServiceManagement ordering; keeping the write here preserves the
     /// one-writer rule for `settings.json`.
-    func setLaunchAtLogin(_ enabled: Bool) {
-        guard settings.launchAtLogin != enabled else { return }
+    func setLaunchAtLogin(
+        _ enabled: Bool,
+        registration: LoginItemRegistrationReceipt?
+    ) {
+        let registration = enabled ? registration : nil
+        guard settings.launchAtLogin != enabled
+                || settings.loginItemRegistration != registration else { return }
         settings.launchAtLogin = enabled
+        settings.loginItemRegistration = registration
         persist()
     }
 

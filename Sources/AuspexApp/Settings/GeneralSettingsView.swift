@@ -39,7 +39,10 @@ struct GeneralSettingsView: View {
                     get: { loginItem.isOn(desired: catalog.launchAtLogin) },
                     set: { enabled in
                         guard loginItem.setEnabled(enabled) else { return }
-                        catalog.setLaunchAtLogin(enabled)
+                        catalog.setLaunchAtLogin(
+                            enabled,
+                            registration: loginItem.registrationForPersistence
+                        )
                     }
                 )
             ) {
@@ -67,6 +70,13 @@ struct GeneralSettingsView: View {
                 Text("macOS did not change the login item: \(error)")
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.statePermission)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let reconciliation = loginItem.reconciliationDescription {
+                Text(reconciliation)
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

@@ -1,3 +1,4 @@
+import AuspexCore
 import Foundation
 import Testing
 
@@ -44,15 +45,86 @@ struct LoginItemControllerTests {
         #expect(!controller.isOn(desired: true))
     }
 
-    @Test("a durable request repairs a lost registration after replacement")
-    func reconcileReplacement() {
-        let service = LoginItemServiceDouble(status: .notFound)
-        service.statusAfterRegister = .enabled
-        let controller = LoginItemController(service: service)
+    @Test("launch reconciliation respects a macOS-off state")
+    func reconciliationDoesNotOverrideSystemOff() {
+        let service = LoginItemServiceDouble(status: .notRegistered)
+        let controller = LoginItemController(
+            service: service,
+            currentRegistration: currentReceipt
+        )
 
-        controller.reconcileDesiredState(true)
-        #expect(service.registerCount == 1)
-        #expect(controller.status == .enabled)
+        let result = controller.reconcileDesiredState(
+            true,
+            registration: previousReceipt
+        )
+        #expect(service.registerCount == 0)
+        #expect(service.unregisterCount == 0)
+        #expect(result == LoginItemReconciliation(enabled: false, registration: nil))
+        #expect(controller.reconciliationDescription?.contains("left it off") == true)
+    }
+
+    @Test("an enabled in-place replacement refreshes only its receipt")
+    func reconcileReplacementReceipt() {
+        let service = LoginItemServiceDouble(status: .enabled)
+        let controller = LoginItemController(
+            service: service,
+            currentRegistration: currentReceipt
+        )
+
+        let result = controller.reconcileDesiredState(
+            true,
+            registration: previousReceipt
+        )
+        #expect(service.registerCount == 0)
+        #expect(service.unregisterCount == 0)
+        #expect(
+            result == LoginItemReconciliation(
+                enabled: true,
+                registration: currentReceipt
+            )
+        )
+        #expect(controller.reconciliationDescription?.contains("updated") == true)
+    }
+
+    @Test("a moved or unrelated receipt is not rewritten as an update")
+    func unprovenReplacementIsNotAdopted() {
+        let service = LoginItemServiceDouble(status: .enabled)
+        let controller = LoginItemController(
+            service: service,
+            currentRegistration: currentReceipt
+        )
+        let movedReceipt = LoginItemRegistrationReceipt(
+            bundleIdentifier: previousReceipt.bundleIdentifier,
+            bundlePath: "/Applications/Utilities/Auspex.app",
+            shortVersion: previousReceipt.shortVersion,
+            buildVersion: previousReceipt.buildVersion
+        )
+
+        let result = controller.reconcileDesiredState(
+            true,
+            registration: movedReceipt
+        )
+        #expect(result == nil)
+        #expect(service.registerCount == 0)
+        #expect(controller.reconciliationDescription == nil)
+    }
+
+    @Test("an unavailable service never attempts speculative repair")
+    func noSpeculativeRepair() {
+        let service = LoginItemServiceDouble(status: .notFound)
+        let controller = LoginItemController(
+            service: service,
+            currentRegistration: currentReceipt
+        )
+
+        let result = controller.reconcileDesiredState(
+            true,
+            registration: previousReceipt
+        )
+        #expect(result == nil)
+        #expect(service.registerCount == 0)
+        #expect(service.unregisterCount == 0)
+        #expect(!controller.isOn(desired: true))
     }
 
     @Test("launch reconciliation never invents an opt-in")
@@ -60,7 +132,8 @@ struct LoginItemControllerTests {
         let service = LoginItemServiceDouble(status: .notRegistered)
         let controller = LoginItemController(service: service)
 
-        controller.reconcileDesiredState(false)
+        let result = controller.reconcileDesiredState(false, registration: nil)
+        #expect(result == nil)
         #expect(service.registerCount == 0)
         #expect(service.unregisterCount == 0)
     }
@@ -85,6 +158,20 @@ struct LoginItemControllerTests {
         #expect(service.openSettingsCount == 1)
     }
 }
+
+private let previousReceipt = LoginItemRegistrationReceipt(
+    bundleIdentifier: "com.example.Auspex",
+    bundlePath: "/Applications/Auspex.app",
+    shortVersion: "1.0.0",
+    buildVersion: "10"
+)
+
+private let currentReceipt = LoginItemRegistrationReceipt(
+    bundleIdentifier: "com.example.Auspex",
+    bundlePath: "/Applications/Auspex.app",
+    shortVersion: "1.1.0",
+    buildVersion: "11"
+)
 
 @MainActor
 private final class LoginItemServiceDouble: LoginItemServicing {

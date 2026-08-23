@@ -1,3 +1,4 @@
+import AuspexCore
 import Foundation
 import Observation
 import ServiceManagement
@@ -17,6 +18,32 @@ enum LoginItemStatus: Equatable, Sendable {
     }
 }
 
+/// What launch reconciliation asks the settings owner to persist. It contains
+/// no command: registration remains reachable only through `setEnabled`, the
+/// explicit person-click path.
+struct LoginItemReconciliation: Equatable, Sendable {
+    var enabled: Bool
+    var registration: LoginItemRegistrationReceipt?
+}
+
+enum LoginItemBundleReceipt {
+    static func current(bundle: Bundle = .main) -> LoginItemRegistrationReceipt? {
+        guard let identifier = bundle.bundleIdentifier,
+              let shortVersion = bundle.object(
+                  forInfoDictionaryKey: "CFBundleShortVersionString"
+              ) as? String,
+              let buildVersion = bundle.object(
+                  forInfoDictionaryKey: "CFBundleVersion"
+              ) as? String else { return nil }
+        return LoginItemRegistrationReceipt(
+            bundleIdentifier: identifier,
+            bundlePath: bundle.bundleURL.standardizedFileURL.path,
+            shortVersion: shortVersion,
+            buildVersion: buildVersion
+        )
+    }
+}
+
 @MainActor
 protocol LoginItemServicing {
     var status: LoginItemStatus { get }
@@ -26,8 +53,7 @@ protocol LoginItemServicing {
 }
 
 /// The only type that talks to ServiceManagement. Registration and removal
-/// are reached solely from a Settings click, except for repairing a durable
-/// request the person already made before an app bundle was replaced.
+/// are reached solely from a Settings click.
 @MainActor
 struct SystemLoginItemService: LoginItemServicing {
     var status: LoginItemStatus {
@@ -60,27 +86,32 @@ private struct PreviewLoginItemService: LoginItemServicing {
 @Observable
 final class LoginItemController {
     @ObservationIgnored private let service: any LoginItemServicing
+    @ObservationIgnored private let currentRegistration: LoginItemRegistrationReceipt?
 
     private(set) var status: LoginItemStatus
     private(set) var errorDescription: String?
+    private(set) var reconciliationDescription: String?
 
-    init(service: any LoginItemServicing = SystemLoginItemService()) {
+    init(
+        service: any LoginItemServicing = SystemLoginItemService(),
+        currentRegistration: LoginItemRegistrationReceipt? = LoginItemBundleReceipt.current()
+    ) {
         self.service = service
+        self.currentRegistration = currentRegistration
         self.status = service.status
     }
 
     static func preview() -> LoginItemController {
-        LoginItemController(service: PreviewLoginItemService())
+        LoginItemController(service: PreviewLoginItemService(), currentRegistration: nil)
     }
 
     /// What the toggle draws. macOS is authoritative whenever it has an
-    /// answer; a broken/unavailable registration keeps showing the durable
-    /// request so the UI does not silently erase what the person asked for.
+    /// answer. Unknown/unavailable states fail closed instead of drawing a
+    /// stale durable value as though macOS had accepted it.
     func isOn(desired: Bool) -> Bool {
         switch status {
         case .enabled, .requiresApproval: true
-        case .notRegistered: false
-        case .notFound, .unknown: desired
+        case .notRegistered, .notFound, .unknown: false
         }
     }
 
@@ -94,6 +125,7 @@ final class LoginItemController {
     @discardableResult
     func setEnabled(_ enabled: Bool) -> Bool {
         refresh()
+        reconciliationDescription = nil
         do {
             if enabled {
                 guard !status.isRequestedOrEnabled else {
@@ -118,15 +150,63 @@ final class LoginItemController {
         }
     }
 
-    /// Repairs a registration lost when the signed app bundle was replaced.
-    /// It never creates a new permission request unless the durable setting
-    /// proves the person previously clicked "Launch at login". A false value
-    /// is left alone: external Login Items state is not silently removed on
-    /// launch.
-    func reconcileDesiredState(_ enabled: Bool) {
+    /// Reconciles the persisted mirror with macOS without changing the login
+    /// item itself.
+    ///
+    /// `.notRegistered` is authoritative even if the old settings file says
+    /// on: the person may have disabled Auspex in System Settings, so launch
+    /// must never turn it back on. When the service is still enabled after an
+    /// in-place bundle update, the changed version plus the same identifier
+    /// and path prove replacement and allow only the receipt to be refreshed.
+    func reconcileDesiredState(
+        _ enabled: Bool,
+        registration previousRegistration: LoginItemRegistrationReceipt?
+    ) -> LoginItemReconciliation? {
         refresh()
-        guard enabled, !status.isRequestedOrEnabled else { return }
-        _ = setEnabled(true)
+        reconciliationDescription = nil
+
+        switch status {
+        case .notRegistered:
+            guard enabled || previousRegistration != nil else { return nil }
+            reconciliationDescription =
+                "macOS has Launch at Login turned off. Auspex left it off."
+            return LoginItemReconciliation(enabled: false, registration: nil)
+
+        case .enabled, .requiresApproval:
+            // A current enabled state is itself authority to mirror `true`.
+            // Refreshing an existing receipt after replacement additionally
+            // requires evidence that the bundle changed in place.
+            let registration: LoginItemRegistrationReceipt?
+            if let previousRegistration,
+               let currentRegistration,
+               previousRegistration.provesInPlaceReplacement(by: currentRegistration) {
+                registration = currentRegistration
+                reconciliationDescription =
+                    "Auspex was updated and macOS kept Launch at Login enabled."
+            } else if previousRegistration == nil || !enabled {
+                registration = currentRegistration
+            } else {
+                registration = previousRegistration
+            }
+
+            let result = LoginItemReconciliation(
+                enabled: true,
+                registration: registration
+            )
+            guard !enabled || previousRegistration != registration else { return nil }
+            return result
+
+        case .notFound, .unknown:
+            // There is no trustworthy state to adopt and no supported repair
+            // operation. Keep the old receipt as inert history, draw the
+            // toggle off, and wait for an explicit click or a later valid
+            // ServiceManagement result.
+            return nil
+        }
+    }
+
+    var registrationForPersistence: LoginItemRegistrationReceipt? {
+        status.isRequestedOrEnabled ? currentRegistration : nil
     }
 
     func openSystemSettings() {
@@ -140,7 +220,7 @@ final class LoginItemController {
         case .requiresApproval:
             "Waiting for approval in System Settings → General → Login Items."
         case .notRegistered:
-            "Off. Auspex starts only when you open it."
+            "Off in macOS. Auspex will not turn it back on unless you click this switch."
         case .notFound:
             "Unavailable in this copy. Move the packaged Auspex.app to Applications and open it once."
         case .unknown:
