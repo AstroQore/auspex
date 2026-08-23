@@ -26,7 +26,7 @@ public enum AuspexVersion {
     static let fallbackMarketingVersion = "0.1.0"
 
     /// What `CFBundleVersion` says, for a build with no bundle. Same deal.
-    static let fallbackBuildNumber = "2"
+    static let fallbackBuildNumber = "3"
 
     /// Semantic version shown in the UI and reported over MCP.
     public static let marketingVersion = string(
