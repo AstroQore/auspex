@@ -709,9 +709,9 @@ public enum AuspexMCPTools {
     private static let projectFilterProperty: MCPJSON = .object([
         "type": "string",
         "description": """
-            An absolute path, project name, or project key. overview.get uses \
-            this session's project when omitted; sessions.list leaves the \
-            filter off when omitted.
+            An absolute path, project name, or project key. Both overview.get \
+            and sessions.list use this session's project when omitted; an \
+            unattributed sessions.list caller must name one explicitly.
             """
     ])
 

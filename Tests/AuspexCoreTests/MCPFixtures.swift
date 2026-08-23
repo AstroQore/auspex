@@ -18,6 +18,7 @@ actor TestMCPHost: AuspexMCPHost {
     private var pids: [pid_t]
     private var connectionCount: Int
     private var readOnly: Bool
+    private var noticeInterceptor: (@Sendable (AgentNotice) -> Void)?
 
     private(set) var notices: [AgentNotice] = []
     private(set) var reports: [AgentReport] = []
@@ -48,7 +49,10 @@ actor TestMCPHost: AuspexMCPHost {
     func clientRoster() -> MCPClientRoster {
         MCPClientRoster(connectionCount: connectionCount, processIDs: pids)
     }
-    func didRecordNotice(_ notice: AgentNotice) { notices.append(notice) }
+    func didRecordNotice(_ notice: AgentNotice) {
+        notices.append(notice)
+        noticeInterceptor?(notice)
+    }
     func didRecordReport(_ report: AgentReport) { reports.append(report) }
     func didChangeLedger() { ledgerChanges += 1 }
     func didObserve(_ events: [AgentEvent]) { observed.append(contentsOf: events) }
@@ -57,6 +61,9 @@ actor TestMCPHost: AuspexMCPHost {
     func setClientPIDs(_ pids: [pid_t]) {
         self.pids = pids
         self.connectionCount = pids.count
+    }
+    func setNoticeInterceptor(_ action: (@Sendable (AgentNotice) -> Void)?) {
+        noticeInterceptor = action
     }
 }
 

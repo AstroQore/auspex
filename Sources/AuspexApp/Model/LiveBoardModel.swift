@@ -352,7 +352,8 @@ final class LiveBoardModel {
                     frame: TaskLedgerFrame(
                         tasks: (try? ledger.tasks(limit: 1_000)) ?? [],
                         links: (try? ledger.allLinks()) ?? [],
-                        plans: (try? ledger.plans(includingArchived: true)) ?? []
+                        plans: (try? ledger.plans(includingArchived: true)) ?? [],
+                        pendingClaims: (try? ledger.claimRequests()) ?? []
                     )
                 )
             }.value

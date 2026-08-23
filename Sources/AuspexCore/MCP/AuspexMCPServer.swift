@@ -270,7 +270,12 @@ public actor AuspexMCPServer {
             for task in (try? ledger.tasks(linkedTo: session)) ?? []
             where task.claimedBy == session && task.status != .done && task.status != .review {
                 guard let moved = try? ledger.completeTask(
-                    id: task.id, result: message, by: session, now: now()
+                    id: task.id,
+                    result: message,
+                    by: session,
+                    requireHolder: true,
+                    expectedVersion: task.version,
+                    now: now()
                 ) else { continue }
                 reviewed.append(moved.id)
             }

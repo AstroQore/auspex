@@ -62,6 +62,8 @@ struct TaskCapsuleTests {
         result: String? = nil,
         waitingOn: [TaskUnit.Dependency] = [],
         orphaned: Bool = false,
+        pendingTakeovers: Int = 0,
+        pendingAt: TimeInterval? = nil,
         importance: TaskImportance = .normal,
         created: TimeInterval = 10,
         updated: TimeInterval = 50
@@ -80,6 +82,8 @@ struct TaskCapsuleTests {
             importance: importance,
             waitingOn: waitingOn,
             isClaimOrphaned: orphaned,
+            pendingTakeoverCount: pendingTakeovers,
+            pendingTakeoverAt: pendingAt.map(Fixtures.date),
             lead: lead,
             members: [lead],
             attention: lead.attention,
@@ -131,6 +135,28 @@ struct TaskCapsuleTests {
         #expect(snapshot.review == 1)
         #expect(snapshot.items.first?.capsule.nextAction?.text == "Review, then close or reopen")
         #expect(snapshot.items.first?.capsule.recentOutcome?.source == .selfReported)
+    }
+
+    @Test("pending takeover is persistent human work and opens the approval task")
+    func takeoverIsHumanWork() {
+        let takeover = unit(
+            pendingTakeovers: 2,
+            pendingAt: 70,
+            created: 5,
+            updated: 10
+        )
+        let snapshot = CatchUpSnapshot(
+            units: [takeover], since: Fixtures.date(100), generatedAt: Fixtures.date(110)
+        )
+        #expect(snapshot.takeovers == 1)
+        #expect(snapshot.items.first?.kind == .takeover)
+        #expect(
+            snapshot.items.first?.capsule.nextAction?.text
+                == "Approve or reject 2 takeover requests"
+        )
+        let queue = HumanWorkQueue(units: [takeover])
+        #expect(queue.items.first?.reason == .takeover)
+        #expect(queue.items.first?.orderingReason.contains("2 takeover requests") == true)
     }
 
     @Test("quiet old work is omitted")
@@ -231,6 +257,7 @@ struct TaskCapsuleTests {
             ),
             importance: .important
         )
+        let takeover = unit(id: 6, pendingTakeovers: 1, pendingAt: 25, updated: 10)
         let review = unit(id: 2, status: .review, updated: 30)
         let orphan = unit(id: 3, orphaned: true, updated: 10)
         let dependency = TaskUnit.Dependency(id: 1, shortID: "AUX-1", title: "Needs")
@@ -238,9 +265,9 @@ struct TaskCapsuleTests {
         let downstreamB = unit(id: 5, status: .todo, waitingOn: [dependency])
 
         let queue = HumanWorkQueue(
-            units: [review, downstreamA, orphan, needs, downstreamB]
+            units: [review, downstreamA, orphan, needs, downstreamB, takeover]
         )
-        #expect(queue.items.map(\.reason) == [.needsYou, .review, .orphanedClaim])
+        #expect(queue.items.map(\.reason) == [.needsYou, .takeover, .review, .orphanedClaim])
         #expect(queue.items.first?.unlocks == 2)
         #expect(queue.items.first?.orderingReason.contains("unlocks 2 downstream tasks") == true)
     }

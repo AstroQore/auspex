@@ -301,7 +301,7 @@ it named on the card.
 
 **Catch up** is the answer to opening a board after six agents have been moving
 without you. It compresses the interval since the last explicit checkpoint into
-three small lists: work that needs a person, material task/report/outcome
+three small lists: work that needs a person (including takeover approvals), material task/report/outcome
 changes, and amber watch signals such as overlapping checkouts or branches,
 stale sessions, long tools, and context pressure. Tool and token churn never
 counts as a material change; watch signals never pretend to be notifications.

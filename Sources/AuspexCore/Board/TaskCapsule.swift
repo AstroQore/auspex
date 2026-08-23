@@ -113,6 +113,13 @@ public struct TaskCapsule: Identifiable, Sendable, Equatable {
     }
 
     private static func nextLine(_ unit: TaskUnit) -> Line? {
+        if unit.pendingTakeoverCount > 0 {
+            let noun = unit.pendingTakeoverCount == 1 ? "request" : "requests"
+            return Line(
+                "Approve or reject \(unit.pendingTakeoverCount) takeover \(noun)",
+                source: .recorded
+            )
+        }
         if unit.isClaimOrphaned {
             return Line("Release or reassign the orphaned claim", source: .derived)
         }
@@ -153,7 +160,7 @@ public struct TaskCapsule: Identifiable, Sendable, Equatable {
     }
 
     private static func changedAt(_ unit: TaskUnit) -> Date? {
-        var candidates = [unit.createdAt, unit.updatedAt, unit.endedAt]
+        var candidates = [unit.createdAt, unit.updatedAt, unit.endedAt, unit.pendingTakeoverAt]
         candidates.reserveCapacity(3 + unit.members.count * 3)
         for member in unit.members {
             candidates.append(member.reportedFocusAt)
@@ -180,6 +187,7 @@ public struct CatchUpSnapshot: Sendable, Equatable {
     public struct Item: Identifiable, Sendable, Equatable {
         public enum Kind: String, Sendable, Equatable, Codable, CaseIterable {
             case needsYou = "needs_you"
+            case takeover
             case review
             case orphanedClaim = "orphaned_claim"
             case completed
@@ -189,11 +197,12 @@ public struct CatchUpSnapshot: Sendable, Equatable {
             fileprivate var rank: Int {
                 switch self {
                 case .needsYou: 0
-                case .review: 1
-                case .orphanedClaim: 2
-                case .completed: 3
-                case .started: 4
-                case .changed: 5
+                case .takeover: 1
+                case .review: 2
+                case .orphanedClaim: 3
+                case .completed: 4
+                case .started: 5
+                case .changed: 6
                 }
             }
         }
@@ -214,6 +223,9 @@ public struct CatchUpSnapshot: Sendable, Equatable {
         items = units.compactMap { unit in
             let capsule = TaskCapsule(unit: unit)
             if unit.needsPerson { return Item(capsule: capsule, kind: .needsYou) }
+            if unit.pendingTakeoverCount > 0 {
+                return Item(capsule: capsule, kind: .takeover)
+            }
             if unit.isInReview { return Item(capsule: capsule, kind: .review) }
             if unit.isClaimOrphaned { return Item(capsule: capsule, kind: .orphanedClaim) }
             guard let changed = capsule.changedAt, changed > since else { return nil }
@@ -232,8 +244,9 @@ public struct CatchUpSnapshot: Sendable, Equatable {
     }
 
     public var needsYou: Int { items.count { $0.kind == .needsYou } }
+    public var takeovers: Int { items.count { $0.kind == .takeover } }
     public var review: Int { items.count { $0.kind == .review } }
-    public var changed: Int { items.count - needsYou - review }
+    public var changed: Int { items.count - needsYou - takeovers - review }
 
     /// `generatedAt` records when this value was derived. It is deliberately
     /// not a cursor for the person's "Mark caught up" gesture: reconciliation

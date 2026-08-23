@@ -69,6 +69,10 @@ struct AuspexApp: App {
                     environment.board.catchUp.items.isEmpty
                         && environment.board.watchSignals.isEmpty
                 )
+                Button("Review Next") {
+                    environment.board.openNextReview()
+                }
+                .disabled(environment.board.reviewCount == 0)
                 Divider()
                 // The one shortcut this window did not have and every board of
                 // this shape eventually grows: a field that reaches anything on

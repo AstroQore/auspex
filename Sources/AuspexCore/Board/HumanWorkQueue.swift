@@ -9,14 +9,16 @@ public struct HumanWorkQueue: Sendable, Equatable {
     public struct Item: Identifiable, Sendable, Equatable {
         public enum Reason: String, Sendable, Equatable, Codable, CaseIterable {
             case needsYou = "needs_you"
+            case takeover
             case review
             case orphanedClaim = "orphaned_claim"
 
             fileprivate var rank: Int {
                 switch self {
                 case .needsYou: 0
-                case .review: 1
-                case .orphanedClaim: 2
+                case .takeover: 1
+                case .review: 2
+                case .orphanedClaim: 3
                 }
             }
         }
@@ -47,6 +49,8 @@ public struct HumanWorkQueue: Sendable, Equatable {
             let reason: Item.Reason
             if unit.needsPerson {
                 reason = .needsYou
+            } else if unit.pendingTakeoverCount > 0 {
+                reason = .takeover
             } else if unit.isInReview {
                 reason = .review
             } else if unit.isClaimOrphaned {
@@ -70,6 +74,8 @@ public struct HumanWorkQueue: Sendable, Equatable {
         switch reason {
         case .needsYou:
             return unit.lead.notice?.at ?? unit.lastEventAt
+        case .takeover:
+            return unit.pendingTakeoverAt ?? unit.updatedAt
         case .review:
             return unit.updatedAt ?? unit.lastEventAt
         case .orphanedClaim:
@@ -86,6 +92,9 @@ public struct HumanWorkQueue: Sendable, Equatable {
         switch reason {
         case .needsYou:
             base = unit.attention.message ?? "Waiting for a person"
+        case .takeover:
+            let noun = unit.pendingTakeoverCount == 1 ? "request" : "requests"
+            base = "\(unit.pendingTakeoverCount) takeover \(noun) waiting for approval"
         case .review:
             base = "Finished work is waiting for review"
         case .orphanedClaim:

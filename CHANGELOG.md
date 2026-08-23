@@ -26,8 +26,8 @@ describes how one is cut when there is.
 
 ### Added
 
-- A 30-second Catch-up panel with a ranked human queue, semantic changes and
-  non-notifying amber watch signals.
+- A 30-second Catch-up panel with a ranked human queue (including takeover
+  approvals), semantic changes and non-notifying amber watch signals.
 - Carbon-inspired task integrity: monotonic versions and `expected_version`,
   atomic dependency validation, durable human-approved takeover requests,
   holder-only completion into Review, and attempt context in `tasks.get`.

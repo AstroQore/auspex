@@ -20,6 +20,7 @@ public struct TaskLedgerFrame: Sendable, Equatable {
     public let tasks: [AuspexTask]
     public let links: [AuspexTaskLink]
     public let plans: [AuspexPlan]
+    public let pendingClaims: [TaskClaimRequest]
 
     /// Tasks by id.
     public let taskByID: [Int64: AuspexTask]
@@ -33,11 +34,19 @@ public struct TaskLedgerFrame: Sendable, Equatable {
     /// The ids of the tasks that are closed, for the readiness question.
     public let closedTaskIDs: Set<Int64>
     public let knownTaskIDs: Set<Int64>
+    public let pendingClaimCountByTask: [Int64: Int]
+    public let latestPendingClaimAtByTask: [Int64: Date]
 
-    public init(tasks: [AuspexTask] = [], links: [AuspexTaskLink] = [], plans: [AuspexPlan] = []) {
+    public init(
+        tasks: [AuspexTask] = [],
+        links: [AuspexTaskLink] = [],
+        plans: [AuspexPlan] = [],
+        pendingClaims: [TaskClaimRequest] = []
+    ) {
         self.tasks = tasks
         self.links = links
         self.plans = plans
+        self.pendingClaims = pendingClaims
 
         var byID: [Int64: AuspexTask] = [:]
         byID.reserveCapacity(tasks.count)
@@ -50,6 +59,10 @@ public struct TaskLedgerFrame: Sendable, Equatable {
         self.closedTaskIDs = closed
         self.knownTaskIDs = Set(byID.keys)
         self.planByID = Dictionary(plans.map { ($0.id, $0) }) { first, _ in first }
+        self.pendingClaimCountByTask = Dictionary(grouping: pendingClaims, by: \.taskID)
+            .mapValues(\.count)
+        self.latestPendingClaimAtByTask = Dictionary(grouping: pendingClaims, by: \.taskID)
+            .compactMapValues { $0.map(\.requestedAt).max() }
 
         var bySession: [SessionKey: Int64] = [:]
         var claimed: Set<SessionKey> = []
@@ -74,6 +87,7 @@ public struct TaskLedgerFrame: Sendable, Equatable {
     /// assembler does eight times a second.
     public static func == (lhs: TaskLedgerFrame, rhs: TaskLedgerFrame) -> Bool {
         lhs.tasks == rhs.tasks && lhs.links == rhs.links && lhs.plans == rhs.plans
+            && lhs.pendingClaims == rhs.pendingClaims
     }
 
     public var isEmpty: Bool { tasks.isEmpty && links.isEmpty }
@@ -313,6 +327,8 @@ public enum TaskUnitBuilder {
             waitingOn: waitingOn,
             claim: claim,
             isClaimOrphaned: isClaimOrphaned,
+            pendingTakeoverCount: task.map { ledger.pendingClaimCountByTask[$0.id] ?? 0 } ?? 0,
+            pendingTakeoverAt: task.flatMap { ledger.latestPendingClaimAtByTask[$0.id] },
             lead: lead,
             members: rows,
             attention: attention,

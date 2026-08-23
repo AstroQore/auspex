@@ -131,6 +131,10 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
     /// beside it.
     public let isClaimOrphaned: Bool
 
+    /// Claim conflicts awaiting an explicit person decision.
+    public let pendingTakeoverCount: Int
+    public let pendingTakeoverAt: Date?
+
     /// The session the card is *about*: whoever claimed the task, or the root
     /// of the family.
     public let lead: BoardRow
@@ -240,6 +244,8 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         waitingOn: [Dependency] = [],
         claim: Claim? = nil,
         isClaimOrphaned: Bool = false,
+        pendingTakeoverCount: Int = 0,
+        pendingTakeoverAt: Date? = nil,
         lead: BoardRow,
         members: [BoardRow],
         attention: AttentionState = .none,
@@ -272,6 +278,8 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
         self.waitingOn = waitingOn
         self.claim = claim
         self.isClaimOrphaned = isClaimOrphaned
+        self.pendingTakeoverCount = pendingTakeoverCount
+        self.pendingTakeoverAt = pendingTakeoverAt
         self.lead = lead
         self.members = members
         self.attention = attention

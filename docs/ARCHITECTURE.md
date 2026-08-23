@@ -588,7 +588,9 @@ writing tools by name.
 `TaskCapsule` is the semantic compression boundary. It derives goal, phase,
 current work, last outcome, next action and risk with provenance; its material
 timestamp changes only for task rows, explicit reports/notices, turn outcomes
-or process endings, never for ordinary token/tool churn. `CatchUpSnapshot`
+or process endings, never for ordinary token/tool churn. Pending takeover
+requests enter the ledger frame only when the ledger changes and become a
+first-class human-queue item that opens the approval detail. `CatchUpSnapshot`
 compares those stable values off-main-actor. `HumanWorkQueue` orders things the
 person can act on; `CollaborationSignals` carries amber observations and does
 not notify. Orphan claims live only in the human queue, and branch collisions

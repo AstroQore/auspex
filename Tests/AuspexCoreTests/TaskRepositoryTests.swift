@@ -512,6 +512,49 @@ struct TaskRepositoryTests {
         #expect(rejected.task.claimedBy == holder)
     }
 
+    @Test("rejecting one takeover does not expire another for the same holder")
+    func takeoverDecisionOrderDoesNotChooseTheWinner() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder-many")
+        let first = Fixtures.key(.claudeCode, "requester-first")
+        let second = Fixtures.key(.cursor, "requester-second")
+        let task = try repository.createTask(title: "Choose one reviewer")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: holder
+        )
+        let firstOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "first", reason: nil,
+            by: first, expectedVersion: held.version
+        )
+        guard case let .pending(firstTask, firstRequest) = firstOutcome else {
+            Issue.record("expected first pending takeover")
+            return
+        }
+        let secondOutcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "second", reason: nil,
+            by: second, expectedVersion: firstTask.version
+        )
+        guard case let .pending(secondTask, secondRequest) = secondOutcome else {
+            Issue.record("expected second pending takeover")
+            return
+        }
+        let synchronized = try repository.claimRequests(taskID: task.id)
+        #expect(synchronized.allSatisfy { $0.taskVersion == secondTask.version })
+
+        let rejected = try repository.resolveClaimRequest(
+            id: firstRequest.id, approve: false
+        )
+        let remaining = try #require(
+            try repository.claimRequests(taskID: task.id).first { $0.id == secondRequest.id }
+        )
+        #expect(remaining.taskVersion == rejected.task.version)
+
+        let approved = try repository.resolveClaimRequest(id: remaining.id, approve: true)
+        #expect(approved.request.status == .approved)
+        #expect(approved.task.claimedBy == second)
+        #expect(approved.task.claimScope == "second")
+    }
+
     // MARK: - Kind, labels, notes
 
     @Test("a task carries what kind of work it is and whatever labels were put on it")

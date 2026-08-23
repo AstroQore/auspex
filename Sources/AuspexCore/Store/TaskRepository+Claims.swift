@@ -166,6 +166,13 @@ extension TaskRepository {
                     ]
                 )
             }
+            // A second requester changes the review queue, not the holder the
+            // person is deciding about. Keep every request from this same
+            // claim epoch approvable at the new task version; a real task or
+            // holder mutation still leaves them stale.
+            try Self.refreshPendingClaimVersions(
+                taskID: id, holder: holder, to: nextVersion, in: db
+            )
             try db.execute(
                 sql: "UPDATE tasks SET updated_at = ?, version = ? WHERE id = ?",
                 arguments: [now.timeIntervalSince1970, nextVersion, id]
@@ -299,9 +306,18 @@ extension TaskRepository {
                         """,
                     arguments: [now.timeIntervalSince1970, requestID]
                 )
+                let nextVersion = existing.version + 1
                 try db.execute(
-                    sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
-                    arguments: [now.timeIntervalSince1970, request.taskID]
+                    sql: "UPDATE tasks SET updated_at = ?, version = ? WHERE id = ?",
+                    arguments: [now.timeIntervalSince1970, nextVersion, request.taskID]
+                )
+                // Expiring an old holder's request must not invalidate a
+                // newer holder's already-reviewed pending requests.
+                try Self.refreshPendingClaimVersions(
+                    taskID: request.taskID,
+                    holder: existing.claimedBy,
+                    to: nextVersion,
+                    in: db
                 )
                 try Self.appendLog(
                     taskID: request.taskID,
@@ -362,9 +378,19 @@ extension TaskRepository {
                     kind: .claim, at: now, in: db
                 )
             } else {
+                let nextVersion = existing.version + 1
                 try db.execute(
-                    sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
-                    arguments: [now.timeIntervalSince1970, request.taskID]
+                    sql: "UPDATE tasks SET updated_at = ?, version = ? WHERE id = ?",
+                    arguments: [now.timeIntervalSince1970, nextVersion, request.taskID]
+                )
+                // Rejecting one candidate changes the queue, not the claim.
+                // Keep the remaining candidates for the current holder in
+                // the same approvable epoch regardless of decision order.
+                try Self.refreshPendingClaimVersions(
+                    taskID: request.taskID,
+                    holder: existing.claimedBy,
+                    to: nextVersion,
+                    in: db
                 )
             }
             try Self.appendLog(
@@ -388,6 +414,22 @@ extension TaskRepository {
             else { throw TaskLedgerError.notFound("claim request \(requestID)") }
             return (task, resolved)
         }
+    }
+
+    private static func refreshPendingClaimVersions(
+        taskID: Int64,
+        holder: SessionKey?,
+        to version: Int64,
+        in db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+                UPDATE task_claim_requests
+                   SET task_version = ?
+                 WHERE task_id = ? AND status = 'pending' AND holder_key IS ?
+                """,
+            arguments: [version, taskID, holder?.description]
+        )
     }
 
     // MARK: - Shared claim statements

@@ -447,7 +447,7 @@ struct SessionCapsulePayload: Encodable {
         self.lastEventAt = session.lastEventAt
         self.activity = Activity(
             state: session.state.columnValue,
-            detail: session.state.detailColumnValue,
+            detail: Self.safeActivityDetail(session.state),
             isAlive: session.isAlive,
             isStale: session.isStale,
             // Activity is a reducer's interpretation of observed events. It is
@@ -501,6 +501,28 @@ struct SessionCapsulePayload: Encodable {
         let taskIDs = Array(Set(linkedTaskIDs)).sorted()
         self.linkedTasks = taskIDs.isEmpty
             ? nil : LinkedTasks(ids: taskIDs, provenance: "observed")
+    }
+
+    /// The store's state detail is not a peer-safe payload: writingFile keeps
+    /// the complete absolute source path. Capsules retain useful activity
+    /// shape while stripping directories and bounding agent-authored labels.
+    private static func safeActivityDetail(_ state: SessionState) -> String? {
+        switch state {
+        case .idle, .thinking:
+            return nil
+        case .toolCalling(let name):
+            return MCPTextSanitizer.clean(name, limit: 120)
+        case .writingFile(let path):
+            guard let path else { return "file" }
+            let basename = (path as NSString).lastPathComponent
+            return MCPTextSanitizer.clean(basename, limit: 200) ?? "file"
+        case .waitingPermission(let name):
+            return MCPTextSanitizer.clean(name, limit: 120)
+        case .delegating(let children):
+            return "\(children) subagent\(children == 1 ? "" : "s")"
+        case .ended(let reason):
+            return reason.rawValue
+        }
     }
 
     private static func parentEvidence(_ link: ParentLink) -> String {

@@ -38,7 +38,7 @@ struct BoardHeader: View {
                 if showsCatchUpInHeader {
                     catchUpButton.fixedSize()
                 }
-                if model.reviewCount > 0 { reviewNext.fixedSize() }
+                if showsReviewInHeader { reviewNext.fixedSize() }
                 Spacer(minLength: 8)
                 if model.ignoredCount > 0 {
                     ignoredToggle.fixedSize()
@@ -119,7 +119,7 @@ struct BoardHeader: View {
         reserved += 150  // the search field
         if model.ignoredCount > 0 { reserved += 96 }
         if showsCatchUpInHeader { reserved += 82 }
-        if model.reviewCount > 0 { reserved += 78 }
+        if showsReviewInHeader { reserved += 78 }
         let free = width - reserved
         guard free > 0 else { return (0, false) }
         // A chip is a mark, two or three digits, and a word: 86 points covers
@@ -134,10 +134,15 @@ struct BoardHeader: View {
         model.catchUp.items.count + model.watchSignals.count
     }
 
-    /// The command menu remains available below this width; the header gives
-    /// the space back to the controls that have no second home.
+    /// Catch-up is the primary entry back into a busy board and stays visible
+    /// at the default window width. Review Next is its focused shortcut and
+    /// joins it only when the centre column is wide enough for both.
     private var showsCatchUpInHeader: Bool {
-        catchUpCount > 0 && (width == 0 || width >= 1_280)
+        catchUpCount > 0
+    }
+
+    private var showsReviewInHeader: Bool {
+        model.reviewCount > 0 && (width == 0 || width >= 1_000)
     }
 
     private var catchUpButton: some View {

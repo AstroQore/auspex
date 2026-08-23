@@ -29,9 +29,7 @@ struct CatchUpPanel: View {
                                 capsule: item.capsule,
                                 eyebrow: queueLabel(item),
                                 explanation: item.orderingReason,
-                                tone: item.reason == .needsYou
-                                    ? AuspexPalette.statePermission
-                                    : AuspexPalette.stateWriting,
+                                tone: queueTone(item.reason),
                                 onOpen: { onOpen(item.capsule.id, item.capsule.leadSession) }
                             )
                         }
@@ -121,6 +119,7 @@ struct CatchUpPanel: View {
     private func queueLabel(_ item: HumanWorkQueue.Item) -> String {
         switch item.reason {
         case .needsYou: "Needs you"
+        case .takeover: "Takeover approval"
         case .review: "Review"
         case .orphanedClaim: "Orphaned claim"
         }
@@ -129,11 +128,20 @@ struct CatchUpPanel: View {
     private func changeLabel(_ kind: CatchUpSnapshot.Item.Kind) -> String {
         switch kind {
         case .needsYou: "Needs you"
+        case .takeover: "Takeover approval"
         case .review: "Review"
         case .orphanedClaim: "Orphaned claim"
         case .completed: "Completed"
         case .started: "Started"
         case .changed: "Changed"
+        }
+    }
+
+    private func queueTone(_ reason: HumanWorkQueue.Item.Reason) -> Color {
+        switch reason {
+        case .needsYou, .takeover: AuspexPalette.statePermission
+        case .review: AuspexPalette.stateWriting
+        case .orphanedClaim: AuspexPalette.stateStale
         }
     }
 }

@@ -493,6 +493,30 @@ struct AuspexMCPServerTests {
         #expect(stored.result == "fenced writer plus 9 tests")
     }
 
+    @Test("a done notice cannot finish a task released during the notice callback")
+    func notifyDoneCannotFinishTransferredWork() async throws {
+        let (server, host, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let task = try ledger.createTask(title: "Do not finish stale ownership")
+        _ = try ledger.claimTask(
+            id: task.id, role: "implementer", scope: nil, by: Self.sessionKey
+        )
+        await host.setNoticeInterceptor { _ in
+            _ = try? ledger.releaseTask(
+                id: task.id, by: Self.sessionKey, requireHolder: true
+            )
+        }
+
+        let notice = try RPC.structured(await server.answer(line: RPC.call("auspex.notify", [
+            "kind": "done", "message": "the old holder finished"
+        ])))
+        #expect(notice["reviewing"] == nil)
+        let stored = try #require(try ledger.task(id: task.id))
+        #expect(stored.status == .todo)
+        #expect(stored.claimedBy == nil)
+        #expect(stored.result == nil)
+    }
+
     // MARK: - Projects contain tasks
 
     @Test("a task filed by an agent lands in the project that agent is working in")
@@ -802,7 +826,13 @@ struct AuspexMCPServerTests {
 
     @Test("sessions.get returns safe metadata and linked task context")
     func sessionDetailIsSafe() async throws {
-        let (server, _, store) = try makeServer()
+        var writing = makeBoard().sessions[0]
+        writing.state = .writingFile(path: "/Users/example/private/secret.swift")
+        let safeBoard = BoardSnapshot(
+            generatedAt: makeBoard().generatedAt,
+            sessions: [writing]
+        )
+        let (server, _, store) = try makeServer(board: safeBoard)
         let ledger = TaskRepository(store: store)
         let task = try ledger.createTask(title: "Context work")
         try ledger.claimTask(
@@ -823,6 +853,8 @@ struct AuspexMCPServerTests {
         #expect(capsule["assignment"] == nil)
         #expect(capsule["cwd"] == nil)
         #expect(capsule["latestAssistant"] == nil)
+        #expect(capsule["activity"]?["detail"]?.stringValue == "secret.swift")
+        #expect(capsule["activity"]?["detail"]?.stringValue?.contains("/Users/") == false)
     }
 
     @Test("unattributed callers may create Scratch work but cannot author later mutations")
