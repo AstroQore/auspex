@@ -31,8 +31,8 @@ Codex、ChatGPT Work、Cursor、Grok Build、Grok Bot、AntiGravity —— 并�
 出它需要什么。
 
 > **状态：pre-alpha。** 它能跑，它在 tail 真实的存储，作者每天在用。现在已有一个
-> Dev 预览版，但还没有 Stable 或公证过的构建，版本之间也不承诺升级路径 —— 数据库
-> schema 还在变。把「下载」当作实验预览；要用当前源码则是两条命令：
+> Stable 0.1.0 和一个 Dev 预览版；构建尚未公证，版本之间也不承诺升级路径 —— 数据库
+> schema 还在变。把「下载」当作 pre-alpha 版本；要用当前源码则是两条命令：
 >
 > ```sh
 > git clone https://github.com/AstroQore/auspex.git && cd auspex
@@ -110,9 +110,9 @@ ad-hoc 签名的阶段这一点尤其重要，Gatekeeper 会让你手动放行�
 这个选择和其它设置一样写在 `~/.auspex/settings.json` 里，你可以直接读它、改它，或者
 不开 app 就撤销它。
 
-> **仍是 pre-alpha。** Dev feed 里已有预览版，但没有 Stable，也没有 notarization。
-> 需要当前分支时请从源码构建（见上）；`RELEASING.md` 写了一次发布是怎么切出来、签名
-> 并发布的。
+> **仍是 pre-alpha。** Stable 0.1.0 和一个 Dev 预览版已经发布；两者仍是 ad-hoc 签名，
+> 没有 notarization。需要当前分支时请从源码构建（见上）；`RELEASING.md` 写了一次发布
+> 是怎么切出来、签名并发布的。
 
 ## 跟随系统外观
 
