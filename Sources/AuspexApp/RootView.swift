@@ -99,6 +99,8 @@ struct RootView: View {
         )) {
             SetupSheet(
                 model: environment.setup,
+                catalog: environment.catalog,
+                loginItem: environment.loginItem,
                 detected: environment.harnesses.detected,
                 socketPath: environment.mcp?.socketPath,
                 onClose: { environment.setup.markShown() }

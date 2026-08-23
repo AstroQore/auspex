@@ -18,6 +18,8 @@ import SwiftUI
 /// no is what teaches people to dismiss dialogs without reading them.
 struct SetupSheet: View {
     @Bindable var model: SetupModel
+    let catalog: ProjectCatalogModel
+    let loginItem: LoginItemController
     let detected: Set<Harness>
     let socketPath: String?
     let onClose: () -> Void
@@ -28,6 +30,7 @@ struct SetupSheet: View {
             Divider().overlay(AuspexPalette.line)
             BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    StartupSetupRow(catalog: catalog, loginItem: loginItem)
                     ForEach(model.groups) { group in
                         SetupGroupView(group: group, model: model, detected: detected)
                     }
@@ -45,6 +48,7 @@ struct SetupSheet: View {
         .frame(width: 640)
         .frame(minHeight: 340, idealHeight: 540, maxHeight: 620)
         .background(AuspexPalette.bg0)
+        .onAppear { loginItem.refresh() }
     }
 
     private var header: some View {
@@ -121,6 +125,66 @@ struct SetupSheet: View {
             }
         }
         .padding(16)
+    }
+}
+
+/// Login launch sits beside the harness integrations because a monitoring
+/// board is only useful after restart if it is already there. Unlike the
+/// batched config installs below, this Toggle is itself the person's explicit
+/// ServiceManagement gesture and takes effect immediately.
+private struct StartupSetupRow: View {
+    let catalog: ProjectCatalogModel
+    let loginItem: LoginItemController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Toggle(
+                isOn: Binding(
+                    get: { loginItem.isOn(desired: catalog.launchAtLogin) },
+                    set: { enabled in
+                        guard loginItem.setEnabled(enabled) else { return }
+                        catalog.setLaunchAtLogin(enabled)
+                    }
+                )
+            ) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Keep Auspex watching after restart")
+                        .font(AuspexType.body)
+                        .foregroundStyle(AuspexPalette.text)
+                    Text(loginItem.statusDescription)
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.checkbox)
+
+            Text(
+                "Uses macOS Login Items to start the signed main app quietly. "
+                    + "No helper, LaunchAgent, or additional disk access is installed."
+            )
+            .font(AuspexType.caption)
+            .foregroundStyle(AuspexPalette.text3)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if loginItem.status == .requiresApproval {
+                Button("Open Login Items", systemImage: "gear") {
+                    loginItem.openSystemSettings()
+                }
+                .buttonStyle(.auspex)
+                .controlSize(.small)
+            }
+
+            if let error = loginItem.errorDescription {
+                Text("macOS did not change the login item: \(error)")
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.statePermission)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .panelChrome()
     }
 }
 
