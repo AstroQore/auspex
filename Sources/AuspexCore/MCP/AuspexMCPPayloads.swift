@@ -375,7 +375,7 @@ struct NoticePayload: Encodable {
 }
 
 struct SessionListPayload: Encodable {
-    let sessions: [SessionPayload]
+    let sessions: [SessionCapsulePayload]
     let total: Int
 }
 

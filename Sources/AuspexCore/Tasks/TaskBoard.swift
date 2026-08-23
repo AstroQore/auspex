@@ -474,6 +474,9 @@ public struct TaskClaimRequest: Identifiable, Hashable, Sendable, Codable {
         case pending
         case approved
         case rejected
+        /// The task or its holder changed after this request was recorded.
+        /// It remains in the audit trail but can no longer transfer ownership.
+        case expired
     }
 
     public let id: Int64

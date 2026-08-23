@@ -16,6 +16,7 @@ actor TestMCPHost: AuspexMCPHost {
     private let store: AuspexStore?
     private let table: any ProcessTableReading
     private var pids: [pid_t]
+    private var connectionCount: Int
     private var readOnly: Bool
 
     private(set) var notices: [AgentNotice] = []
@@ -29,12 +30,14 @@ actor TestMCPHost: AuspexMCPHost {
         store: AuspexStore? = nil,
         table: any ProcessTableReading = FakeProcessTable(),
         clientPIDs: [pid_t] = [],
+        connectionCount: Int? = nil,
         isReadOnly: Bool = false
     ) {
         self.board = board
         self.store = store
         self.table = table
         self.pids = clientPIDs
+        self.connectionCount = connectionCount ?? clientPIDs.count
         self.readOnly = isReadOnly
     }
 
@@ -42,14 +45,19 @@ actor TestMCPHost: AuspexMCPHost {
     func boardSnapshot() -> BoardSnapshot { board }
     func ledger() -> TaskRepository? { store.map(TaskRepository.init(store:)) }
     func processTable() -> any ProcessTableReading { table }
-    func clientPIDs() -> [pid_t] { pids }
+    func clientRoster() -> MCPClientRoster {
+        MCPClientRoster(connectionCount: connectionCount, processIDs: pids)
+    }
     func didRecordNotice(_ notice: AgentNotice) { notices.append(notice) }
     func didRecordReport(_ report: AgentReport) { reports.append(report) }
     func didChangeLedger() { ledgerChanges += 1 }
     func didObserve(_ events: [AgentEvent]) { observed.append(contentsOf: events) }
 
     func setBoard(_ board: BoardSnapshot) { self.board = board }
-    func setClientPIDs(_ pids: [pid_t]) { self.pids = pids }
+    func setClientPIDs(_ pids: [pid_t]) {
+        self.pids = pids
+        self.connectionCount = pids.count
+    }
 }
 
 /// A fixed process tree, with environments the test wrote.
@@ -93,6 +101,10 @@ enum RPC {
             "name": .string(tool),
             "arguments": .object(arguments)
         ])
+    }
+
+    static func attributed(_ line: Data, peerPID: pid_t) -> Data {
+        MCPTransportEnvelope.attributing(line, to: Int32(peerPID))
     }
 
     static func decode(_ data: Data?) throws -> MCPJSON {

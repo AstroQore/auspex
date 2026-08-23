@@ -48,6 +48,15 @@ struct TaskDetailView: View {
                     )
                     properties
                     if !unit.waitingOn.isEmpty || !unit.dependsOn.isEmpty { dependencies }
+                    if let message = tasks.takeoverResolutionMessage {
+                        Text(message)
+                            .font(AuspexType.body)
+                            .foregroundStyle(AuspexPalette.statePermission)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .panelChrome()
+                    }
                     if !pendingTakeovers.isEmpty { takeoverRequests }
                     members
                     if unit.origin.taskID != nil {

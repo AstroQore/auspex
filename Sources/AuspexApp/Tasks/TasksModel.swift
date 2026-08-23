@@ -594,12 +594,17 @@ final class TasksModel {
     }
 
     /// The human-only side of takeover. There is no matching MCP tool.
+    private(set) var takeoverResolutionMessage: String?
+
     func resolveTakeover(requestID: Int64, approve: Bool) {
         guard let repository else { return }
         Task { [weak self] in
-            _ = await Task.detached(priority: .userInitiated) {
+            let outcome = await Task.detached(priority: .userInitiated) {
                 try? repository.resolveClaimRequest(id: requestID, approve: approve)
             }.value
+            self?.takeoverResolutionMessage = outcome?.request.status == .expired
+                ? "That takeover request expired because the task or its holder changed. Review the current claim before deciding again."
+                : nil
             self?.reload()
             try? await Task.sleep(for: .milliseconds(80))
             self?.refreshLog()

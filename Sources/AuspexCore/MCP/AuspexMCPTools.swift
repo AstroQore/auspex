@@ -590,9 +590,9 @@ public enum AuspexMCPTools {
         name: Name.sessionsList,
         title: "List sessions",
         description: """
-            Every agent session Auspex can see on this machine, across every \
-            harness — what each is doing, what it was asked to do, and whether \
-            it is calling for the user. Read-only.
+            Safe metadata capsules for agent sessions in the caller's project \
+            by default, or an explicitly named project. Never returns prompts, \
+            cwd, full assistant prose, argv, or tool output. Read-only.
             """,
         inputSchema: .object([
             "type": "object",

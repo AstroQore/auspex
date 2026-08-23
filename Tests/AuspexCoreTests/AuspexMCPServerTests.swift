@@ -42,6 +42,7 @@ struct AuspexMCPServerTests {
         readOnly: Bool = false,
         table: (any ProcessTableReading)? = nil,
         clientPIDs: [pid_t] = [bridgePID],
+        connectionCount: Int? = nil,
         board: BoardSnapshot? = nil
     ) throws -> (AuspexMCPServer, TestMCPHost, AuspexStore) {
         let store = try AuspexStore(inMemory: true)
@@ -50,6 +51,7 @@ struct AuspexMCPServerTests {
             store: store,
             table: table ?? makeTable(),
             clientPIDs: clientPIDs,
+            connectionCount: connectionCount,
             isReadOnly: readOnly
         )
         let server = AuspexMCPServer(host: host, now: { Fixtures.date(100) })
@@ -209,17 +211,16 @@ struct AuspexMCPServerTests {
         #expect(uncorroborated.contains("cannot identify its caller by itself"))
     }
 
-    @Test("the hello a bridge sends is used when the socket reports no pid")
-    func helloIsTheFallback() async throws {
+    @Test("a legacy hello never becomes global identity evidence")
+    func helloIsNotIdentity() async throws {
         let (server, _, _) = try makeServer(clientPIDs: [])
         _ = await server.answer(
             line: RPC.line("auspex/hello", params: ["pid": .int(Int64(Self.harnessPID))])
         )
-        let structured = try RPC.structured(await server.answer(line: RPC.call("auspex.notify", [
+        let failure = try RPC.failureText(await server.answer(line: RPC.call("auspex.notify", [
             "kind": "needs_review", "message": "please look at the diff"
         ])))
-        #expect(structured["session"]?.stringValue == Self.sessionKey.description)
-        #expect(structured["evidence"]?.stringValue?.contains("declared") == true)
+        #expect(failure.contains("process-attributed session"))
     }
 
     @Test("a session id in the environment identifies a harness with no pid on the board")
@@ -740,7 +741,7 @@ struct AuspexMCPServerTests {
         #expect(structured["evidence"]?.stringValue?.isEmpty == false)
     }
 
-    @Test("sessions.list carries the notice a session filed")
+    @Test("sessions.list carries safe attention without prompt or cwd")
     func sessionsListShowsNotices() async throws {
         let (server, _, _) = try makeServer()
         _ = await server.answer(line: RPC.call("auspex.notify", [
@@ -748,8 +749,10 @@ struct AuspexMCPServerTests {
         ]))
         let structured = try RPC.structured(await server.answer(line: RPC.call("sessions.list")))
         let first = try #require(structured["sessions"]?.arrayValue?.first)
-        #expect(first["notice"]?["kind"]?.stringValue == "needs_review")
-        #expect(first["notice"]?["message"]?.stringValue == "look at the diff")
+        #expect(first["attention"]?["state"]?.stringValue == "needs_you")
+        #expect(first["attention"]?["message"]?.stringValue == "look at the diff")
+        #expect(first["assignment"] == nil)
+        #expect(first["cwd"] == nil)
     }
 
     @Test("sessions.list filters by project and returns persisted report freshness")
@@ -784,6 +787,17 @@ struct AuspexMCPServerTests {
         #expect(session["report"]?["reportedAt"] != nil)
         #expect(session["report"]?["freshness"]?.stringValue == "superseded")
         #expect(session["report"]?["provenance"]?.stringValue == "self_reported")
+        #expect(session["assignment"] == nil)
+        #expect(session["cwd"] == nil)
+
+        let defaultScoped = try RPC.structured(
+            await server.answer(line: RPC.call("sessions.list"))
+        )
+        #expect(defaultScoped["total"]?.intValue == 1)
+        #expect(
+            defaultScoped["sessions"]?.arrayValue?.first?["key"]?.stringValue
+                == Self.sessionKey.description
+        )
     }
 
     @Test("sessions.get returns safe metadata and linked task context")
@@ -831,15 +845,49 @@ struct AuspexMCPServerTests {
         #expect(log.contains("process-attributed session"))
     }
 
-    @Test("identity resolution never skips an unresolvable active peer to another client")
-    func callerUsesOnlyTheActivePeer() async throws {
+    @Test("multiple unlabelled connections fail closed instead of using activity order")
+    func ambiguousConnectionsFailClosed() async throws {
         let (server, _, store) = try makeServer(clientPIDs: [9_999, Self.bridgePID])
         let task = try TaskRepository(store: store).createTask(title: "Do not misattribute")
         let failure = try RPC.failureText(await server.answer(line: RPC.call("tasks.claim", [
             "task_id": .int(task.id), "role": "implementer"
         ])))
-        #expect(failure.contains("process 9999"))
+        #expect(failure.contains("2 connections are attached without request-scoped identity"))
         #expect(try TaskRepository(store: store).task(id: task.id)?.claimedBy == nil)
+    }
+
+    @Test("request-scoped bridge identity selects the exact peer among live connections")
+    func attributedRequestSelectsExactPeer() async throws {
+        let (server, _, store) = try makeServer(clientPIDs: [9_999, Self.bridgePID])
+        let task = try TaskRepository(store: store).createTask(title: "Exact caller")
+        let line = RPC.attributed(RPC.call("tasks.claim", [
+            "task_id": .int(task.id), "role": "implementer", "expected_version": 1
+        ]), peerPID: Self.bridgePID)
+        let claimed = try RPC.structured(await server.answer(line: line))
+        #expect(claimed["claimedBy"]?.stringValue == Self.sessionKey.description)
+        #expect(
+            try TaskRepository(store: store).task(id: task.id)?.claimedBy == Self.sessionKey
+        )
+    }
+
+    @Test("request attribution not present in the kernel roster is never a fallback hint")
+    func detachedAttributedPeerFailsClosed() async throws {
+        let (server, _, store) = try makeServer(clientPIDs: [Self.bridgePID])
+        let task = try TaskRepository(store: store).createTask(title: "Detached caller")
+        let line = RPC.attributed(RPC.call("tasks.claim", [
+            "task_id": .int(task.id), "role": "implementer"
+        ]), peerPID: 9_999)
+        let failure = try RPC.failureText(await server.answer(line: line))
+        #expect(failure.contains("process 9999 is not attached"))
+        #expect(try TaskRepository(store: store).task(id: task.id)?.claimedBy == nil)
+    }
+
+    @Test("two connections with unavailable kernel pids remain ambiguous")
+    func unknownPeerRosterFailsClosed() async throws {
+        let (server, _, _) = try makeServer(clientPIDs: [], connectionCount: 2)
+        let result = try RPC.structured(await server.answer(line: RPC.call("sessions.self")))
+        #expect(result["resolved"]?.boolValue == false)
+        #expect(result["evidence"]?.stringValue?.contains("2 connections") == true)
     }
 
     @Test("peers.status counts a notify as somebody needing you")

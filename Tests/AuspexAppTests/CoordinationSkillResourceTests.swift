@@ -8,7 +8,7 @@ struct CoordinationSkillResourceTests {
     @Test("the shipped resource is complete, versioned, and teaches the three roles")
     func bundledPackageLoads() throws {
         let package = try CoordinationSkillResource.package()
-        #expect(package.version == "1.0.0")
+        #expect(package.version == "1.1.0")
         #expect(package.contentHash.count == 64)
         #expect(package.files.map(\.relativePath) == ["SKILL.md"])
 
@@ -23,6 +23,8 @@ struct CoordinationSkillResourceTests {
         #expect(text.contains("tasks.claim"))
         #expect(text.contains("tasks.release"))
         #expect(text.contains("tasks.complete"))
+        #expect(text.contains("expected_version"))
+        #expect(text.contains("pending_takeover"))
         #expect(text.contains("do not create or claim an explicit task"))
         #expect(text.contains("MCP unavailable"))
     }

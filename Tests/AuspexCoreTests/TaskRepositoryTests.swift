@@ -451,15 +451,41 @@ struct TaskRepositoryTests {
         #expect(stillReleased.version == released.version)
         #expect(sameRequest.id == request.id)
 
+        let expired = try repository.resolveClaimRequest(id: request.id, approve: true)
+        #expect(expired.request.status == .expired)
+        #expect(expired.task.version == released.version + 1)
+        #expect(expired.task.claimedBy == nil)
+        #expect(try repository.claimRequests(taskID: task.id).count == 1)
+        let resolved = try repository.claimRequests(taskID: task.id, status: nil)
+        #expect(resolved.count { $0.status == .expired } == 1)
+        #expect(try repository.log(taskID: task.id).map(\.kind).contains("takeover_expired"))
+    }
+
+    @Test("approving a current takeover atomically transfers the exact reviewed claim")
+    func approvingCurrentTakeoverTransfersClaim() throws {
+        let repository = try makeRepository()
+        let holder = Fixtures.key(.codex, "holder-current")
+        let requester = Fixtures.key(.claudeCode, "requester-current")
+        let task = try repository.createTask(title: "Transfer this exact claim")
+        let held = try repository.claimTask(
+            id: task.id, role: "implementer", scope: "old scope", by: holder
+        )
+        let outcome = try repository.claimOrRequestTask(
+            id: task.id, role: "reviewer", scope: "new scope", reason: "handoff",
+            by: requester, expectedVersion: held.version
+        )
+        guard case let .pending(requestedTask, request) = outcome else {
+            Issue.record("expected a pending takeover")
+            return
+        }
+
         let approved = try repository.resolveClaimRequest(id: request.id, approve: true)
         #expect(approved.request.status == .approved)
-        #expect(approved.task.version == released.version + 1)
+        #expect(approved.task.version == requestedTask.version + 1)
         #expect(approved.task.claimedBy == requester)
         #expect(approved.task.claimRole == "reviewer")
+        #expect(approved.task.claimScope == "new scope")
         #expect(try repository.claimRequests(taskID: task.id).isEmpty)
-        let resolved = try repository.claimRequests(taskID: task.id, status: nil)
-        #expect(resolved.count { $0.status == .approved } == 1)
-        #expect(resolved.count { $0.status == .rejected } == 1)
         #expect(try repository.log(taskID: task.id).map(\.kind).contains("takeover_approved"))
     }
 

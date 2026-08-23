@@ -9,10 +9,9 @@ import Foundation
 /// stdio into that socket — and knows nothing about tools. This is the half
 /// that knows what the lines mean, and it is the only half Auspex writes.
 ///
-/// An actor because two things mutate here from different places: the map of
-/// pids a bridge declared for itself, and the per-connection bookkeeping that
-/// stands in for a connection label. Neither is hot — a handful of messages per
-/// agent per minute — so a serial actor is the right shape rather than a lock.
+/// An actor because hook routing and ledger operations are serialized here.
+/// Request attribution is task-local, so overlapping connections cannot
+/// overwrite one another while this actor is re-entered at an `await`.
 ///
 /// ## What it will not do
 ///
@@ -28,15 +27,9 @@ public actor AuspexMCPServer {
     private let resolver: MCPSelfResolver
     private let now: @Sendable () -> Date
 
-    /// The pids bridges have declared for themselves in `auspex/hello`,
-    /// newest last.
-    ///
-    /// A fallback, not the primary answer: the socket's own `LOCAL_PEERPID` is
-    /// what identifies a client, and this only matters when the kernel would
-    /// not give one. Bounded, because a long-lived Auspex sees a bridge per
-    /// agent invocation and this must not become a pid log.
-    private var declaredPIDs: [pid_t] = []
-    private static let declaredPIDLimit = 32
+    private enum RequestScope {
+        @TaskLocal static var attribution: MCPTransportAttribution = .absent
+    }
 
     /// Turns harness hook payloads into board events, and remembers which
     /// sessions are blocked on a permission so the resolution can close the one
@@ -57,6 +50,13 @@ public actor AuspexMCPServer {
 
     /// Answers one framed line. `nil` for a notification.
     public func answer(line: Data) async -> Data? {
+        let attribution = MCPTransportEnvelope.attribution(in: line)
+        return await RequestScope.$attribution.withValue(attribution) {
+            await answerAttributed(line: line)
+        }
+    }
+
+    private func answerAttributed(line: Data) async -> Data? {
         let request: MCPRequest
         do {
             request = try MCPRequest.decode(line: line)
@@ -83,20 +83,13 @@ public actor AuspexMCPServer {
         }
     }
 
-    /// Notifications: `notifications/initialized`, Auspex's own hello, and the
-    /// hook ingress.
+    /// Notifications: initialization, legacy bridge hello, and hook ingress.
+    /// Hello is accepted for wire compatibility but is never identity evidence:
+    /// it was global to the server and could cross two live connections.
     private func handleNotification(_ request: MCPRequest) async {
         switch request.method {
         case "auspex/hello":
-            guard let pid = request.params?["pid"]?.intValue, pid > 0, pid < Int(Int32.max) else {
-                return
-            }
-            let declared = pid_t(pid)
-            declaredPIDs.removeAll { $0 == declared }
-            declaredPIDs.append(declared)
-            if declaredPIDs.count > Self.declaredPIDLimit {
-                declaredPIDs.removeFirst(declaredPIDs.count - Self.declaredPIDLimit)
-            }
+            return
         case HookEvent.method:
             await handleHook(request.params)
         default:
@@ -974,25 +967,38 @@ public actor AuspexMCPServer {
         let ledger = await host.ledger()
         let notices = (try? ledger?.liveNotices()) ?? [:]
         let reports = (try? ledger?.allReports()) ?? [:]
+        let links = (try? ledger?.allLinks()) ?? []
+        let taskIDsBySession = Dictionary(grouping: links, by: \.session)
+            .mapValues { $0.map(\.taskID) }
 
         var sessions = board.sessions
         if !harnesses.isEmpty {
             let wanted = Set(harnesses)
             sessions = sessions.filter { wanted.contains($0.key.harness) }
         }
+        let calling = try await caller(arguments)
+        let selected: String
         if try arguments.optionalString("project") != nil {
-            let selected = try await projectKey(arguments, caller: try await caller(arguments))
-            sessions = sessions.filter { board.projectKey(for: $0) == selected }
+            selected = try await projectKey(arguments, caller: calling)
+        } else if let key = calling.session,
+                  let session = board.session(for: key),
+                  let project = board.projectKey(for: session) {
+            selected = project
+        } else {
+            throw MCPToolFailure(
+                "Auspex cannot infer your project from this connection. Pass an explicit "
+                    + "project from overview.get; sessions.list never defaults to every project."
+            )
         }
+        sessions = sessions.filter { board.projectKey(for: $0) == selected }
         if activeOnly { sessions = sessions.filter { !$0.state.isEnded } }
         let total = sessions.count
         return Self.success(SessionListPayload(
             sessions: sessions.prefix(limit).map { session in
-                SessionPayload(
-                    session,
-                    project: board.projectKey(for: session).map(BoardGrouping.projectName(forPath:)),
-                    notice: notices[session.key],
-                    report: reports[session.key]
+                SessionCapsulePayload(
+                    session, board: board, notice: notices[session.key],
+                    report: reports[session.key],
+                    linkedTaskIDs: taskIDsBySession[session.key] ?? []
                 )
             },
             total: total
@@ -1133,14 +1139,11 @@ public actor AuspexMCPServer {
         let evidence: String
     }
 
-    /// Resolves the calling session from the most recently active kernel peer.
-    ///
-    /// The kit does not yet pass a connection id into `MCPLineHandler`, so the
-    /// host cannot hand this actor an exact connection label. It does record
-    /// activity immediately before dispatch, however, and exposes the peers in
-    /// that order. We trust only the head. Walking on to another live client,
-    /// as the old implementation did, could turn an unresolvable caller into a
-    /// completely different agent that happened to be connected.
+    /// Resolves the calling session from the peer stamped by Auspex's official
+    /// stdio bridge and corroborated against the kernel's live socket roster.
+    /// Old clients without the stamp remain compatible only when exactly one
+    /// socket is attached; multiple connections without request attribution
+    /// fail closed instead of choosing whoever happened to speak last.
     ///
     /// `session_id` is now a corroborating hint, never an override. It must
     /// resolve to the same session as the process evidence. This makes a typo
@@ -1150,27 +1153,48 @@ public actor AuspexMCPServer {
         let board = await host.boardSnapshot()
         let identities = board.sessions.map(\.identity)
         let table = await host.processTable()
-        let clientPIDs = await host.clientPIDs()
+        let roster = await host.clientRoster()
+        let candidatePID: pid_t?
+        let attributionEvidence: String?
+        switch RequestScope.attribution {
+        case .peer(let reported):
+            let peer = pid_t(reported)
+            if roster.processIDs.contains(peer) {
+                candidatePID = peer
+                attributionEvidence = "request-scoped bridge pid corroborated by the kernel roster"
+            } else {
+                candidatePID = nil
+                attributionEvidence = "request-scoped bridge process \(reported) is not attached"
+            }
+        case .invalid:
+            candidatePID = nil
+            attributionEvidence = "the request carried malformed transport attribution"
+        case .absent:
+            if roster.connectionCount == 1, roster.processIDs.count == 1 {
+                candidatePID = roster.processIDs[0]
+                attributionEvidence = "single-connection compatibility fallback"
+            } else {
+                candidatePID = nil
+                attributionEvidence = roster.connectionCount == 0
+                    ? "nothing is attached to the Auspex socket"
+                    : "\(roster.connectionCount) connections are attached without request-scoped identity"
+            }
+        }
         let automatic: Caller
-        if let pid = clientPIDs.first,
+        if let pid = candidatePID,
            let resolution = resolver.resolve(pid: pid, identities: identities, table: table) {
-            automatic = Caller(
-                session: resolution.session, pid: pid, evidence: resolution.evidence
-            )
-        } else if clientPIDs.isEmpty, let pid = declaredPIDs.last,
-                  let resolution = resolver.resolve(pid: pid, identities: identities, table: table) {
             automatic = Caller(
                 session: resolution.session,
                 pid: pid,
-                evidence: resolution.evidence + ", from the pid this bridge declared"
+                evidence: resolution.evidence + "; " + (attributionEvidence ?? "socket peer")
             )
         } else {
             automatic = Caller(
                 session: nil,
-                pid: clientPIDs.first,
-                evidence: clientPIDs.isEmpty
-                    ? "nothing is attached to the Auspex socket that Auspex can attribute"
-                    : "no session on the board owns process \(clientPIDs[0]) or any of its ancestors"
+                pid: candidatePID,
+                evidence: candidatePID.map {
+                    "no session on the board owns process \($0) or any of its ancestors"
+                } ?? attributionEvidence ?? "the socket caller is not attributable"
             )
         }
 

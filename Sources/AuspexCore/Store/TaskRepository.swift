@@ -700,6 +700,43 @@ public struct TaskRepository: Sendable {
                 throw TaskLedgerError.notFound("task \(request.taskID)")
             }
 
+            // Approval is a compare-and-swap against the exact claim the
+            // person reviewed. A release, another claim, or any intervening
+            // task mutation makes the old request historical evidence, never
+            // authority to displace the current holder.
+            if approve,
+               existing.version != request.taskVersion || existing.claimedBy != request.holder {
+                try db.execute(
+                    sql: """
+                        UPDATE task_claim_requests
+                           SET status = 'expired', resolved_at = ?
+                         WHERE id = ? AND status = 'pending'
+                        """,
+                    arguments: [now.timeIntervalSince1970, requestID]
+                )
+                try db.execute(
+                    sql: "UPDATE tasks SET updated_at = ?, version = version + 1 WHERE id = ?",
+                    arguments: [now.timeIntervalSince1970, request.taskID]
+                )
+                try Self.appendLog(
+                    taskID: request.taskID,
+                    actor: nil,
+                    kind: "takeover_expired",
+                    message: "request v\(request.taskVersion) no longer matches current v\(existing.version)",
+                    at: now,
+                    in: db
+                )
+                try Self.touchPlan(existing.planID, at: now, in: db)
+                guard let task = try Self.task(id: request.taskID, in: db),
+                      let expired = try Row.fetchOne(
+                        db,
+                        sql: "SELECT * FROM task_claim_requests WHERE id = ?",
+                        arguments: [requestID]
+                      ).flatMap(TaskClaimRequest.init(row:))
+                else { throw TaskLedgerError.notFound("claim request \(requestID)") }
+                return (task, expired)
+            }
+
             let resolution: TaskClaimRequest.Status = approve ? .approved : .rejected
             try db.execute(
                 sql: """

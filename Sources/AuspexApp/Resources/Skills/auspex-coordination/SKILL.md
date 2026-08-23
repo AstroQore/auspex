@@ -2,7 +2,7 @@
 name: auspex-coordination
 description: Coordinate Supervisor, Worker, and Reviewer work through Auspex when a brief names an Auspex task, when handing work to another agent, or when reviewing shared task progress. Auspex remains the task state source; this skill is only the operating playbook.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
 ---
 
 # Auspex Coordination
@@ -37,6 +37,10 @@ Auspex has two layers:
 7. If MCP is unavailable or `sessions.self` cannot resolve this process,
    continue the user's work. State the degraded coordination honestly; never
    report a claim, notification, or update that the server rejected.
+8. Treat a task's `version` as a compare-and-swap token. Pass the latest value
+   as `expected_version` on every task write that accepts it. If it conflicts,
+   re-read `tasks.get`, understand what changed, and decide again; never retry
+   a stale mutation blindly.
 
 ## Start a tracked turn
 
@@ -46,10 +50,12 @@ When the brief names a task id:
 2. Call `overview.get` for the current project to see active tasks, attention,
    roles, scopes, conflicts, and orphaned claims.
 3. Call `tasks.get(task_id)` to read the objective, dependencies, acceptance
-   conditions, notes, evidence, and current members.
+   conditions, notes, evidence, current members, and task `version`.
 4. If the task is ready and unclaimed, call
-   `tasks.claim(task_id, role, scope)`. Keep `scope` concrete enough for another
-   agent to detect overlap.
+   `tasks.claim(task_id, role, scope, expected_version=version)`. Keep `scope`
+   concrete enough for another agent to detect overlap. Inspect
+   `claimOutcome`: `claimed` grants the work; `pending_takeover` does not. A
+   pending request waits for a person and must never be treated as ownership.
 5. Call `auspex.report` with the immediate focus and progress only when those
    facts are useful to a person scanning the board.
 
@@ -71,6 +77,9 @@ the user explicitly asks for project coordination.
   - `evidence`: a checkable commit, URL, file path, test, or readback; include
     its `ref`.
   - `risk`: a concrete unresolved concern or caveat.
+- Carry the newest returned task `version` through `tasks.update`, `tasks.log`,
+  `tasks.release`, and `tasks.complete`. On a version conflict, call
+  `tasks.get` and reconcile the newer state before choosing a new write.
 - If blocked, first record the blocker with `tasks.update`, then call
   `auspex.notify(kind="blocked")` with one sentence saying what human action or
   external change is required. Do not go quiet while waiting.
@@ -80,6 +89,9 @@ the user explicitly asks for project coordination.
   was finished. This moves the task to Review; it does not certify acceptance.
 - If abandoning assigned work, record why and use `tasks.release` when the
   connected server provides it. Do not leave a knowingly stale claim behind.
+- If `tasks.claim` returns `pending_takeover`, do not edit the claimed scope.
+  Call `auspex.notify(kind="needs_input")` when a human decision is blocking
+  progress, or continue only with clearly non-overlapping read-only work.
 
 ## Supervisor playbook
 
@@ -123,6 +135,8 @@ Auspex coordination must never become a prerequisite for useful work.
   continue without claim/report/notify calls that require identity.
 - A write is rejected: respect the server state, do not retry by impersonating
   another session or supplying a guessed session id.
+- A version is stale: re-read the task and make a fresh decision from the new
+  holder, dependencies, notes, and pending requests.
 - A tool from this playbook is absent: follow the server's advertised
   capabilities and use the nearest safe read-only alternative.
 
