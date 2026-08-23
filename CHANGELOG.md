@@ -10,6 +10,8 @@ release yet. `RELEASING.md` describes how one is cut when there is.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-23
+
 ### Fixed
 
 - Packaged apps now resolve SwiftPM resources from `Contents/Resources`, so a
