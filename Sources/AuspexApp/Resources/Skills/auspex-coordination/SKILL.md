@@ -60,9 +60,10 @@ the user explicitly asks for project coordination.
 ## Worker playbook
 
 - Read before writing. If another session is related, use `sessions.get` for
-  its safe context capsule: role, scope, focus, progress, material event,
-  decisions, evidence, and risks. Do not request its raw transcript through
-  task coordination.
+  its safe activity, attention, project, branch, report, relationship, and
+  linked-task context. Use `tasks.get` for that task's role/scope, decisions,
+  evidence, and risks. Do not request a peer's raw transcript through task
+  coordination.
 - Call `auspex.report` at phase changes, not after every tool call. Good phases
   are investigating, planning, implementing, validating, and wrapping up.
 - Use `tasks.log` sparingly:
