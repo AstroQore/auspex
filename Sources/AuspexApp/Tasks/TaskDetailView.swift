@@ -48,7 +48,8 @@ struct TaskDetailView: View {
                     )
                     properties
                     if !unit.waitingOn.isEmpty || !unit.dependsOn.isEmpty { dependencies }
-                    if let message = tasks.takeoverResolutionMessage {
+                    if let taskID = unit.origin.taskID,
+                       let message = tasks.takeoverResolutionMessage(taskID: taskID) {
                         Text(message)
                             .font(AuspexType.body)
                             .foregroundStyle(AuspexPalette.statePermission)

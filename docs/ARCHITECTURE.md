@@ -567,10 +567,9 @@ until it finds a process the board already owns, or a session-id environment
 variable the harness handed down. Old unstamped clients work only when exactly
 one socket is attached; with two they fail closed instead of using activity
 order. The socket is a local-user trust boundary, not authentication against a
-different process running as that same user. A connection-context API is
-prepared in agent-session-kit for the next dependency release, at which point
-the bridge stamp can be replaced by the kernel peer attached directly to each
-handler call.
+different process running as that same user. The next agent-session-kit API
+must attach its frozen connection id and kernel peer directly to each handler
+call; once Auspex pins that release, the bridge stamp can disappear.
 `sessions.self` says which pid it used and what convinced it. An optional
 `session_id` is only a corroborating hint: it must agree with the process
 evidence and cannot identify a caller by itself. Anonymous task/milestone
