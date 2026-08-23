@@ -285,6 +285,7 @@ private struct ProjectCard: View {
                     .textFieldStyle(.plain)
                     .font(AuspexType.cardTitle)
                     .foregroundStyle(AuspexPalette.text)
+                    .auspexSystemControlFocus()
                     .onSubmit { catalog.rename(project, to: name) }
                     .frame(maxWidth: 260, alignment: .leading)
 
@@ -393,6 +394,7 @@ private struct ProjectCard: View {
             }
             .controlSize(.small)
             .buttonStyle(.borderless)
+            .auspexSystemControlFocus()
             .font(AuspexType.caption)
         }
     }

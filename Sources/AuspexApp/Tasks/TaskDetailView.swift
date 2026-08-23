@@ -529,10 +529,12 @@ struct TaskDetailView: View {
                 TextField("Write it down", text: $draftNote)
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
+                    .auspexSystemControlFocus()
                 TextField("ref", text: $draftRef)
                     .textFieldStyle(.plain)
                     .font(AuspexType.monoSmall)
                     .frame(width: 96)
+                    .auspexSystemControlFocus()
                 Button("Add") { commitNote() }
                     .buttonStyle(.auspex)
                     .disabled(draftNote.trimmingCharacters(in: .whitespaces).isEmpty)

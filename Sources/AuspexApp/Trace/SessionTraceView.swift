@@ -278,6 +278,7 @@ struct SessionTraceView: View {
                     model.traceFilter = Set(TraceEntry.Category.allCases)
                 }
                 .buttonStyle(.link)
+                .auspexSystemControlFocus()
             }
         }
         .frame(maxWidth: .infinity)
@@ -504,6 +505,7 @@ struct SessionHeaderView: View {
                         showsWholeTask.toggle()
                     }
                     .buttonStyle(.link)
+                    .auspexSystemControlFocus()
                     .font(AuspexType.caption)
                 }
             }
@@ -914,6 +916,7 @@ private struct FamilyChip: View {
                         onExpandInBoard()
                     }
                     .buttonStyle(.link)
+                    .auspexSystemControlFocus()
                     .font(AuspexType.caption)
                     .help("Divide the board along the delegation tree, so this family reads as one")
                 }

@@ -38,6 +38,7 @@ struct SessionWindowMenu<Label: View>: View {
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
+                .auspexSystemControlFocus()
             }
             if let hint {
                 Divider()

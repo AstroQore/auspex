@@ -362,6 +362,7 @@ struct BoardHeader: View {
             }
             .pickerStyle(.inline)
             .labelsHidden()
+            .auspexSystemControlFocus()
             Divider()
             // The wall's one density switch. A card folds its subagents into a
             // strip of dots, which is what makes twelve pieces of work
@@ -443,6 +444,7 @@ struct BoardHeader: View {
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text)
+                    .auspexSystemControlFocus()
             }
         }
         .padding(.horizontal, 10)

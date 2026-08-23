@@ -87,16 +87,27 @@ struct InitialFocusPolicyTests {
     @Test("forms presented from hand-drawn columns restore native Tab feedback")
     func inheritedFocusEffectsAreRestored() throws {
         let sources = try appSources()
-        #expect(try #require(sources["ProjectsPageView.swift"])
-            .numberOfOccurrences(of: ".auspexSystemControlFocus()") == 2)
-        #expect(try #require(sources["ContextUsagePopover.swift"])
-            .numberOfOccurrences(of: ".auspexSystemControlFocus()") == 1)
-        #expect(try #require(sources["SessionTraceView.swift"])
-            .numberOfOccurrences(of: ".auspexSystemControlFocus()") == 1)
-        // The in-board Settings page already had, and must keep, the same
-        // restoration for its native controls.
-        #expect(try #require(sources["RootView.swift"])
-            .numberOfOccurrences(of: ".auspexSystemControlFocus()") == 1)
+        let expectedByFile = [
+            "RootView.swift": 1, // in-board Settings
+            "BoardHeader.swift": 2,
+            "CommandPalette.swift": 1,
+            "SessionWindowMenu.swift": 1,
+            "ProjectsPageView.swift": 4, // two sheets, rename, folder picker
+            "TaskDetailView.swift": 2,
+            "TasksPageView.swift": 2,
+            "ContextUsagePopover.swift": 2, // opener and presented content
+            "SessionTraceView.swift": 4, // three links and Family popover
+            "TrajectoryInspector.swift": 1,
+            "TrajectoryView.swift": 3,
+        ]
+        for (file, expected) in expectedByFile {
+            #expect(
+                try #require(sources[file]).numberOfOccurrences(
+                    of: ".auspexSystemControlFocus()"
+                ) == expected,
+                "\(file) native focus restoration changed"
+            )
+        }
     }
 
     @Test("the policy clears only the responder and leaves the key-view loop intact")
