@@ -5,8 +5,8 @@ All notable changes to Auspex are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Auspex is pre-alpha; nothing has been released yet. `RELEASING.md`
-describes how one is cut when there is.
+Auspex is pre-alpha; Dev previews may be published, but there is no Stable
+release yet. `RELEASING.md` describes how one is cut when there is.
 
 ## [Unreleased]
 
@@ -23,6 +23,10 @@ describes how one is cut when there is.
   duplicate orphan rows, and scopes branch collisions to a project.
 - Login launch respects a user disabling the item in macOS and a later
   Finder/Dock reopen restores the normal main window.
+- Liveness probes exclude retained ended history instead of re-running every
+  harness filesystem check over thousands of sessions every three seconds.
+- Person-authored task writes now refresh Roost, Live Ledger and Catch-up only
+  after the store accepts the transaction, avoiding stale queues and read/write races.
 
 ### Added
 

@@ -496,11 +496,10 @@ final class TasksModel {
     /// person's decision and the board should show it on the same frame.
     func move(taskID: Int64, to status: AuspexTaskStatus) {
         guard let repository else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = try? repository.updateTask(id: taskID, status: status)
-        }
         optimistically { $0.id == taskID ? $0.moved(to: status) : $0 }
-        reload()
+        performWrite {
+            try? repository.updateTask(id: taskID, status: status)
+        }
     }
 
     /// Closes a task. The one gesture only a person makes.
@@ -516,16 +515,8 @@ final class TasksModel {
 
     func close(taskID id: Int64) {
         guard let repository, id > 0 else { return }
-        Task { [weak self] in
-            let didWrite = await Task.detached(priority: .userInitiated) {
-                (try? repository.closeTask(id: id)) != nil
-            }.value
-            guard didWrite else {
-                self?.reload()  // replace the optimistic row with the stored one
-                return
-            }
-            self?.reload()
-            self?.onLedgerChange?()
+        performWrite {
+            try? repository.closeTask(id: id)
         }
         optimistically { $0.id == id ? $0.moved(to: .done) : $0 }
     }
@@ -538,16 +529,8 @@ final class TasksModel {
 
     func reopen(taskID id: Int64) {
         guard let repository, id > 0 else { return }
-        Task { [weak self] in
-            let didWrite = await Task.detached(priority: .userInitiated) {
-                (try? repository.updateTask(id: id, status: .doing)) != nil
-            }.value
-            guard didWrite else {
-                self?.reload()  // replace the optimistic row with the stored one
-                return
-            }
-            self?.reload()
-            self?.onLedgerChange?()
+        performWrite {
+            try? repository.updateTask(id: id, status: .doing)
         }
         optimistically { $0.id == id ? $0.moved(to: .doing) : $0 }
     }
@@ -565,27 +548,26 @@ final class TasksModel {
         let projectKey = unit.projectKey
         let session = unit.lead.key
         let role = unit.lead.harness.displayName
-        Task.detached(priority: .userInitiated) {
+        performWrite(operation: { () -> AuspexTask? in
             guard let task = try? repository.createTask(
                 title: title, projectKey: projectKey, source: "ui"
-            ) else { return }
+            ) else { return nil }
             // Claimed by the session that was already doing it, so the card
             // gains a claim chip rather than reading as unclaimed work that
             // somebody is mysteriously doing.
             _ = try? repository.claimTask(
                 id: task.id, role: role, scope: nil, by: session, projectKey: projectKey
             )
-        }
-        reload()
+            return task
+        })
     }
 
     /// Lets go of a claim whose session did not live to finish it.
     func releaseClaim(taskID: Int64) {
         guard let repository else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = try? repository.releaseTask(id: taskID, by: nil)
+        performWrite {
+            try? repository.releaseTask(id: taskID, by: nil)
         }
-        reload()
     }
 
     /// The takeover requests a person can decide from one task's detail page.
@@ -603,10 +585,9 @@ final class TasksModel {
 
     func resolveTakeover(requestID: Int64, approve: Bool) {
         guard let repository else { return }
-        Task { [weak self] in
-            let outcome = await Task.detached(priority: .userInitiated) {
-                try? repository.resolveClaimRequest(id: requestID, approve: approve)
-            }.value
+        performWrite(refreshesLog: true, operation: {
+            try? repository.resolveClaimRequest(id: requestID, approve: approve)
+        }, completion: { [weak self] outcome in
             if let outcome, outcome.request.status == .expired {
                 self?.takeoverResolutionNotice = (
                     outcome.task.id,
@@ -615,10 +596,7 @@ final class TasksModel {
             } else {
                 self?.takeoverResolutionNotice = nil
             }
-            self?.reload()
-            try? await Task.sleep(for: .milliseconds(80))
-            self?.refreshLog()
-        }
+        })
     }
 
     // MARK: - One task's history
@@ -665,84 +643,109 @@ final class TasksModel {
     /// Writes one line into a task's history.
     func log(taskID: Int64, kind: TaskNoteKind, message: String, ref: String?) {
         guard let repository, !message.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        Task.detached(priority: .userInitiated) {
-            try? repository.appendLog(
-                taskID: taskID, actor: nil, kind: kind.rawValue, message: message, ref: ref
-            )
-        }
-        reload()
-        // The page the person is looking at, not only the board behind it.
-        Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(80))
-            self?.refreshLog()
+        performWrite(refreshesLog: true) {
+            do {
+                try repository.appendLog(
+                    taskID: taskID, actor: nil, kind: kind.rawValue,
+                    message: message, ref: ref
+                )
+                return true
+            } catch { return nil }
         }
     }
 
     /// Sets what a task waits on.
     func setDependencies(_ ids: [Int64], of taskID: Int64) {
         guard let repository else { return }
-        Task.detached(priority: .userInitiated) {
-            try? repository.setDependencies(ids, of: taskID)
+        performWrite {
+            do {
+                try repository.setDependencies(ids, of: taskID)
+                return true
+            } catch { return nil }
         }
-        reload()
     }
 
     /// Re-files a task into another project — the "File under…" menu.
     func move(taskID: Int64, toProjectKey key: String) {
         guard let repository else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = try? repository.moveTask(id: taskID, toProjectKey: key)
+        performWrite {
+            try? repository.moveTask(id: taskID, toProjectKey: key)
         }
-        reload()
     }
 
     /// Attaches a session to a task — the drop target for a card, and the
     /// "Link to task…" menu item.
     func link(session: SessionKey, to taskID: Int64) {
         guard let repository else { return }
-        Task.detached(priority: .userInitiated) {
-            try? repository.link(taskID: taskID, session: session, kind: .manual)
+        performWrite {
+            do {
+                try repository.link(taskID: taskID, session: session, kind: .manual)
+                return true
+            } catch { return nil }
         }
-        reload()
     }
 
     /// Detaches a session a person attached. A claim is released, not
     /// unlinked — see ``TaskRepository/unlink(taskID:session:)``.
     func unlink(session: SessionKey, from taskID: Int64) {
         guard let repository else { return }
-        Task.detached(priority: .userInitiated) {
-            try? repository.unlink(taskID: taskID, session: session)
+        performWrite {
+            do {
+                try repository.unlink(taskID: taskID, session: session)
+                return true
+            } catch { return nil }
         }
-        reload()
     }
 
     /// Files a task by hand, in a project.
     func createTask(title: String, projectKey: String, planID: Int64?) {
         guard let repository, !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = try? repository.createTask(
+        performWrite {
+            try? repository.createTask(
                 title: title, planID: planID, projectKey: projectKey, source: "ui"
             )
         }
-        reload()
     }
 
     /// Registers a milestone inside a project, by hand.
     func createMilestone(title: String, projectKey: String) {
         guard let repository, !title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = try? repository.createPlan(title: title, projectKey: projectKey)
+        performWrite {
+            try? repository.createPlan(title: title, projectKey: projectKey)
         }
-        reload()
     }
 
     /// Files a milestone away.
     func archivePlan(id: Int64) {
         guard let repository else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = try? repository.archivePlan(id: id)
+        performWrite {
+            try? repository.archivePlan(id: id)
         }
-        reload()
+    }
+
+    /// One ordering for every person-authored ledger mutation: finish the
+    /// transaction off-main-actor, then refresh both the Roost model and the
+    /// live board from the accepted state. Reading before the write completed
+    /// was a race that could leave Catch-up stale until an unrelated MCP call.
+    private func performWrite<Result: Sendable>(
+        refreshesLog: Bool = false,
+        operation: @escaping @Sendable () -> Result?,
+        completion: ((Result?) -> Void)? = nil
+    ) {
+        Task { [weak self] in
+            let result = await Task.detached(
+                priority: .userInitiated,
+                operation: operation
+            ).value
+            guard let self else { return }
+            completion?(result)
+            reload()
+            if result != nil { onLedgerChange?() }
+            if refreshesLog {
+                try? await Task.sleep(for: .milliseconds(80))
+                refreshLog()
+            }
+        }
     }
 
     /// Redraws from an edited copy of the ledger, so a drag lands on the frame

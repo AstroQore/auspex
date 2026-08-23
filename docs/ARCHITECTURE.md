@@ -222,6 +222,12 @@ feeds the answers back in through `SessionRegistry.applyPlacements(_:)` and
 `ProcessTable`, whose three-second cache then serves one read per tick instead
 of two.
 
+The liveness loop receives only sessions whose state is not already `ended`.
+Retained history can number in the thousands and cannot become more ended from
+another process probe; a new transcript event reactivates a resumed session
+before the next snapshot. This keeps the three-second tick proportional to
+live/resumable work rather than retention depth.
+
 ### What the UI does with both
 
 Neither axis is a view's to compute. `ProjectTree` and `BoardGrouping` are in
