@@ -229,6 +229,11 @@ killed sessions, and old process-gone history, cannot benefit from another
 probe. This keeps the three-second tick proportional to live/resumable work
 rather than retention depth without losing transient-failure recovery.
 
+Database-backed tailers follow the same mechanism/safety-net split. FSEvents
+routes a changed database or WAL to its one adapter and coalesces it for 250 ms;
+the periodic SQLite poll runs every 30 seconds only to recover a missed event.
+It is not the freshness path and must not be shortened to simulate one.
+
 ### What the UI does with both
 
 Neither axis is a view's to compute. `ProjectTree` and `BoardGrouping` are in

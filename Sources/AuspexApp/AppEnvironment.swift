@@ -33,6 +33,14 @@ import Observation
 @MainActor
 @Observable
 public final class AppEnvironment {
+    /// FSEvents plus the 250 ms database debounce are the live mechanism.
+    /// Reopening every SQLite/WAL source is only a missed-event safety net;
+    /// doing that every two seconds dominated idle CPU on a retained store
+    /// with thousands of sessions while adding no normal-path freshness.
+    static let liveIngestConfiguration = IngestConfiguration(
+        sqlitePollEvery: .seconds(30)
+    )
+
     /// How this launch was asked to behave.
     public enum Mode: String, Sendable {
         /// Tail the real harness stores under the user's home.
@@ -527,7 +535,8 @@ public final class AppEnvironment {
         let coordinator = IngestCoordinator(
             adapters: AuspexAdapters.all,
             home: home,
-            cursorStore: store.sourceCursors
+            cursorStore: store.sourceCursors,
+            configuration: Self.liveIngestConfiguration
         )
         self.coordinator = coordinator
 
