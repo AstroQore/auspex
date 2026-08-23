@@ -882,9 +882,12 @@ final class LiveBoardModel {
         endedUnits = frame.endedUnits
         let unitsMoved = units != frame.units
         units = frame.units
-        catchUp = frame.catchUp
-        humanWorkQueue = frame.humanQueue
-        watchSignals = frame.watchSignals
+        // These are observed by the header and Catch-up sheet. Observation
+        // invalidates on any write, even an equal value, so the assembler's
+        // semantic reconciliation only saves work if the model preserves it.
+        if catchUp != frame.catchUp { catchUp = frame.catchUp }
+        if humanWorkQueue != frame.humanQueue { humanWorkQueue = frame.humanQueue }
+        if watchSignals != frame.watchSignals { watchSignals = frame.watchSignals }
         unitIndex = frame.unitIndex
         if unitsMoved {
             reviewOrdering.reconcile(units: frame.units)

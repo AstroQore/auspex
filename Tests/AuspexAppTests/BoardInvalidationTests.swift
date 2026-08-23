@@ -130,6 +130,29 @@ struct BoardInvalidationTests {
         )
     }
 
+    @Test("A fresh frame instant does not republish semantic catch-up state")
+    func idempotentFrameDoesNotTouchCatchUp() async {
+        let model = LiveBoardModel()
+        let sessions = sessions
+        model.apply(frame(sessions))
+        await model.settle()
+
+        let later = BoardSnapshot(
+            generatedAt: instant.addingTimeInterval(5),
+            sessions: sessions
+        )
+        #expect(
+            await !invalidates(
+                reading: {
+                    _ = model.catchUp
+                    _ = model.humanWorkQueue
+                    _ = model.watchSignals
+                },
+                during: { model.apply(later); await model.settle() }
+            )
+        )
+    }
+
     @Test("A frame that changes a session does re-lay its section out")
     func changedSessionTouchesTheWall() async {
         let model = LiveBoardModel()
