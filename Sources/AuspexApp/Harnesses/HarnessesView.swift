@@ -89,7 +89,10 @@ struct MCPServerPanel: View {
                         .buttonStyle(.auspex)
                         .font(AuspexType.pill)
                         .foregroundStyle(AuspexPalette.stateThinking)
-                        .help("Register Auspex with each harness, and install the task-protocol note")
+                        .help(
+                            "Register Auspex with each harness, install the short protocol note, "
+                                + "and add the optional coordination skill"
+                        )
                 }
             }
             Text(mcp?.summary ?? "Not running in this process.")
@@ -162,9 +165,10 @@ struct HarnessesPanel: View {
         Text(
             "The rack is read-only: Auspex tails each store's own files and never writes "
                 + "into a harness directory on its own. The one exception is the setup "
-                + "above — registering the MCP server and installing the task-protocol "
-                + "note — which happens only when you click it, only inside a fenced "
-                + "block, and can be undone from the same place."
+                + "above — registering MCP, installing the short note or versioned skill, "
+                + "and hooks. It happens only when you click. Config edits stay fenced; "
+                + "the skill has one hashed, Auspex-owned directory and modified content "
+                + "is never overwritten or removed."
         )
         .font(AuspexType.caption)
         .foregroundStyle(AuspexPalette.text3)

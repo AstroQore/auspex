@@ -143,9 +143,10 @@ struct AgentsSettingsView: View {
         Text(
             "Auspex writes into a harness's own files only from here, only in a region "
                 + "it owns — a block marked `>>> auspex >>>`, one `auspex` entry in a "
-                + "JSON config, or the hook entries that run the Auspex binary — and "
-                + "only after backing the file up to ~/.auspex/backups/. Removing takes "
-                + "back exactly those and leaves everything else as it was."
+                + "JSON config, hook entries that run the Auspex binary, or the exclusive "
+                + "auspex-coordination skill directory. The skill carries an ownership "
+                + "marker, version and content hash; Auspex refuses to replace or remove "
+                + "it after any outside edit. Updates are backed up to ~/.auspex/backups/."
         )
         .font(AuspexType.caption)
         .foregroundStyle(AuspexPalette.text3)
@@ -248,7 +249,7 @@ private struct AgentsSettingsGroup: View {
             .disabled(model.isWorking)
             .fixedSize()
         case .installedElsewhere:
-            Button("Replace") {
+            Button(row.piece == .coordinationSkill ? "Update" : "Replace") {
                 Task { await model.install(row, detected: detected) }
             }
             .buttonStyle(.auspex)
@@ -256,6 +257,16 @@ private struct AgentsSettingsGroup: View {
             .foregroundStyle(AuspexPalette.stateStale)
             .disabled(model.isWorking)
             .fixedSize()
+            if row.piece == .coordinationSkill {
+                Button("Remove") {
+                    Task { await model.uninstall(row, detected: detected) }
+                }
+                .buttonStyle(.auspex)
+                .font(AuspexType.pill)
+                .foregroundStyle(AuspexPalette.text3)
+                .disabled(model.isWorking)
+                .fixedSize()
+            }
         case .absent:
             Button("Install") {
                 Task { await model.install(row, detected: detected) }

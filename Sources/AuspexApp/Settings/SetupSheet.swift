@@ -57,19 +57,20 @@ struct SetupSheet: View {
             }
             Text(
                 "Auspex already watches every agent session on this Mac by reading "
-                    + "the files they write. These add the two parts reading cannot do: "
-                    + "an MCP server, so an agent can call you when it needs you and "
-                    + "claim the task it was given — and hooks, so a harness can say it "
-                    + "is waiting for your permission, which none of them write down."
+                    + "the files they write. These add explicit coordination: an MCP "
+                    + "server for task truth and human attention, a versioned skill that "
+                    + "teaches Supervisor/Worker/Reviewer handoffs, and hooks for states "
+                    + "such as permission waits that transcripts do not record."
             )
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
             .fixedSize(horizontal: false, vertical: true)
             Text(
                 "Every box is off until you tick it. Each one names the file it "
-                    + "writes to, writes only inside a fenced block Auspex owns, backs "
-                    + "the file up to ~/.auspex/backups/ first, and can be undone from "
-                    + "the Harnesses page."
+                    + "writes to. Config edits stay inside an Auspex-owned fence; the "
+                    + "skill gets one exclusive directory with an ownership marker and "
+                    + "content hash. Existing or modified directories are left alone. "
+                    + "Updates are backed up to ~/.auspex/backups/ and can be undone."
             )
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.text3)
@@ -240,7 +241,10 @@ private struct SetupRowView: View {
     private var stateNote: String? {
         switch row.state {
         case .installed: "Installed."
-        case let .installedElsewhere(what): "Already there, pointing at \(what). Ticking this replaces it."
+        case let .installedElsewhere(what):
+            row.piece == .coordinationSkill
+                ? "An owned \(what) is installed. Ticking this updates it after backup."
+                : "Already there, pointing at \(what). Ticking this replaces it."
         case let .unavailable(reason): reason
         case let .unreadable(reason): reason
         case .absent: nil

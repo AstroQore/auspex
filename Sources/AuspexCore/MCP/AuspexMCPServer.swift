@@ -176,20 +176,22 @@ public actor AuspexMCPServer {
 
     /// What a client shows the model before it has called anything.
     ///
-    /// The same three sentences the installed protocol snippet carries, for the
-    /// harness that reads server instructions and the one whose config file
-    /// Auspex was never allowed to touch.
+    /// The same invariants as the installed short note, for a harness that
+    /// reads server instructions and one whose config Auspex never touches.
+    /// The versioned skill carries the detailed role playbooks.
     static let instructions = """
-        Auspex is watching every AI agent session on this Mac. Read overview.get \
-        when you join work already in flight; it gives the current project's \
-        tasks, peers, blockers, review, and ready work without exposing their \
-        transcripts. Call auspex.notify the moment you need the person — a \
-        question, a review, a blocker, or a finished piece of work — instead of \
-        going quiet. Keep the task board honest by claiming the task id your \
-        brief named (or reading tasks.list when it named none), releasing it with \
-        a reason when you stop, and finishing into Review rather than closing \
-        your own work. Tasks belong to projects and are filed where the caller \
-        is working unless it explicitly names another.
+        Auspex passively watches every AI agent session on this Mac; MCP adds \
+        explicit coordination. Read overview.get when you join work already in \
+        flight; it gives the current project's tasks, peers, blockers, review, \
+        and ready work without exposing transcripts. When a brief names an \
+        Auspex task id, load the auspex-coordination skill and follow its role \
+        playbook, using this server's capabilities as truth. Call auspex.notify \
+        the moment you need the person instead of going quiet; release a task \
+        with a reason when you stop, and finish into Review rather than closing \
+        your own work. With no task id, keep the implicit session task instead \
+        of creating one merely for the protocol. If MCP or session identity is \
+        unavailable, continue the user's work and report which updates were not \
+        recorded.
         """
 
     // MARK: - tools/call

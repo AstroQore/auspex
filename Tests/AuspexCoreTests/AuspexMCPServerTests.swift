@@ -66,6 +66,9 @@ struct AuspexMCPServerTests {
         #expect(result?["serverInfo"]?["name"]?.stringValue == "auspex")
         let instructions = try #require(result?["instructions"]?.stringValue)
         #expect(instructions.contains("auspex.notify"))
+        #expect(instructions.contains("auspex-coordination"))
+        #expect(instructions.contains("implicit session task"))
+        #expect(instructions.contains("Completion enters Review"))
     }
 
     @Test("a notification is answered with silence")

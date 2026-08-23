@@ -39,12 +39,29 @@ struct HarnessInstallerTests {
         }
 
         var installer: HarnessInstaller {
+            installer(skill: nil)
+        }
+
+        func installer(skill: CoordinationSkillPackage?) -> HarnessInstaller {
             HarnessInstaller(
                 homeDirectory: home,
                 paths: AuspexPaths(homeDirectory: home),
-                command: "/Users/example/Applications/Auspex.app/Contents/MacOS/Auspex"
+                command: "/Users/example/Applications/Auspex.app/Contents/MacOS/Auspex",
+                coordinationSkill: skill
             )
         }
+    }
+
+    private func skill(
+        version: String = "1.0.0",
+        body: String = "---\nname: auspex-coordination\n---\n\n# Coordination\n"
+    ) throws -> CoordinationSkillPackage {
+        try CoordinationSkillPackage(
+            version: version,
+            files: [
+                .init(relativePath: "SKILL.md", contents: Data(body.utf8))
+            ]
+        )
     }
 
     // MARK: - JSON
@@ -272,7 +289,10 @@ struct HarnessInstallerTests {
         #expect(after.hasPrefix(original))
         #expect(after.contains("<!-- >>> auspex >>> -->"))
         #expect(after.contains("auspex.notify"))
-        #expect(after.contains("tasks.claim"))
+        #expect(after.contains("auspex-coordination"))
+        #expect(after.contains("sessions.self"))
+        #expect(after.contains("implicit session task"))
+        #expect(!after.contains("tasks.create"))
         // The fence is an HTML comment, not a heading: `# >>> auspex >>>` in a
         // Markdown file would be an H1 in whatever the harness feeds its model.
         #expect(!after.contains("\n# >>> auspex"))
@@ -345,6 +365,171 @@ struct HarnessInstallerTests {
         #expect(!sandbox.exists(".claude.json"))
         #expect(!sandbox.exists(".codex/config.toml"))
         #expect(!sandbox.exists(".claude/CLAUDE.md"))
+    }
+
+    // MARK: - The coordination skill
+
+    @Test("the skill is offered only at the verified Claude Code and Codex roots")
+    func skillRootsAreExplicit() throws {
+        let sandbox = try Sandbox()
+        let installer = sandbox.installer(skill: try skill())
+
+        #expect(
+            installer.offer(.claudeCode, .coordinationSkill).path
+                == sandbox.home.appendingPathComponent(
+                    ".claude/skills/auspex-coordination"
+                ).path
+        )
+        #expect(
+            installer.offer(.codex, .coordinationSkill).path
+                == sandbox.home.appendingPathComponent(
+                    ".codex/skills/auspex-coordination"
+                ).path
+        )
+        #expect(installer.offer(.chatgptWork, .coordinationSkill).path == nil)
+        #expect(installer.offer(.cursor, .coordinationSkill).path == nil)
+    }
+
+    @Test("install writes the entrypoint and a versioned ownership hash")
+    func skillInstallWritesOwnedPackage() throws {
+        let sandbox = try Sandbox()
+        let package = try skill()
+        let installer = sandbox.installer(skill: package)
+
+        #expect(installer.offer(.claudeCode, .coordinationSkill).state == .absent)
+        let report = installer.install(.claudeCode, .coordinationSkill)
+        #expect(report.succeeded, "\(report.failure ?? "")")
+        #expect(report.didChange)
+        #expect(report.backupPath == nil)
+        #expect(
+            try sandbox.read(".claude/skills/auspex-coordination/SKILL.md")
+                == String(decoding: package.files[0].contents, as: UTF8.self)
+        )
+
+        let markerData = try Data(
+            contentsOf: sandbox.home.appendingPathComponent(
+                ".claude/skills/auspex-coordination/.auspex-owned.json"
+            )
+        )
+        let marker = try #require(
+            try JSONSerialization.jsonObject(with: markerData) as? [String: Any]
+        )
+        #expect(marker["owner"] as? String == "com.astroqore.auspex")
+        #expect(marker["name"] as? String == "auspex-coordination")
+        #expect(marker["version"] as? String == "1.0.0")
+        #expect(marker["content_hash"] as? String == package.contentHash)
+        #expect(marker["files"] as? [String] == ["SKILL.md"])
+        #expect(installer.offer(.claudeCode, .coordinationSkill).state == .installed)
+        #expect(!installer.install(.claudeCode, .coordinationSkill).didChange)
+    }
+
+    @Test("an owned older skill is backed up before an exact package update")
+    func skillUpdateBacksUpFirst() throws {
+        let sandbox = try Sandbox()
+        let old = try skill(version: "1.0.0", body: "# Old playbook\n")
+        let current = try skill(version: "1.1.0", body: "# Current playbook\n")
+        #expect(
+            sandbox.installer(skill: old).install(.codex, .coordinationSkill).succeeded
+        )
+
+        let installer = sandbox.installer(skill: current)
+        #expect(
+            installer.offer(.codex, .coordinationSkill).state
+                == .installedElsewhere("coordination skill v1.0.0")
+        )
+        let report = installer.install(.codex, .coordinationSkill)
+        #expect(report.succeeded, "\(report.failure ?? "")")
+        #expect(report.didChange)
+        let backupPath = try #require(report.backupPath)
+        #expect(backupPath.hasPrefix(sandbox.home.appendingPathComponent(".auspex/backups").path))
+        #expect(
+            try String(
+                contentsOf: URL(fileURLWithPath: backupPath).appendingPathComponent("SKILL.md"),
+                encoding: .utf8
+            ) == "# Old playbook\n"
+        )
+        #expect(
+            try sandbox.read(".codex/skills/auspex-coordination/SKILL.md")
+                == "# Current playbook\n"
+        )
+        #expect(installer.offer(.codex, .coordinationSkill).state == .installed)
+    }
+
+    @Test("a foreign skill directory is never adopted, overwritten, or removed")
+    func foreignSkillFailsClosed() throws {
+        let sandbox = try Sandbox()
+        let original = "# This belongs to the user\n"
+        try sandbox.write(original, to: ".claude/skills/auspex-coordination/SKILL.md")
+        let installer = sandbox.installer(skill: try skill())
+
+        guard case let .unreadable(reason) = installer.offer(
+            .claudeCode, .coordinationSkill
+        ).state else {
+            Issue.record("A foreign skill directory must be refused")
+            return
+        }
+        #expect(reason.contains("not owned by Auspex"))
+        #expect(!installer.install(.claudeCode, .coordinationSkill).succeeded)
+        #expect(!installer.uninstall(.claudeCode, .coordinationSkill).succeeded)
+        #expect(
+            try sandbox.read(".claude/skills/auspex-coordination/SKILL.md") == original
+        )
+    }
+
+    @Test("a hand edit or extra file disables both update and uninstall")
+    func modifiedSkillFailsClosed() throws {
+        let sandbox = try Sandbox()
+        let installer = sandbox.installer(skill: try skill())
+        #expect(installer.install(.claudeCode, .coordinationSkill).succeeded)
+
+        let edited = "# Person changed this playbook\n"
+        try sandbox.write(edited, to: ".claude/skills/auspex-coordination/SKILL.md")
+        guard case let .unreadable(reason) = installer.offer(
+            .claudeCode, .coordinationSkill
+        ).state else {
+            Issue.record("A modified skill must be refused")
+            return
+        }
+        #expect(reason.contains("modified"))
+        #expect(!installer.install(.claudeCode, .coordinationSkill).succeeded)
+        #expect(!installer.uninstall(.claudeCode, .coordinationSkill).succeeded)
+        #expect(
+            try sandbox.read(".claude/skills/auspex-coordination/SKILL.md") == edited
+        )
+
+        // Restore the package, then prove an unrecorded file closes the same
+        // gate. Neither case can be distinguished safely from a user edit.
+        let clean = String(decoding: try skill().files[0].contents, as: UTF8.self)
+        try sandbox.write(clean, to: ".claude/skills/auspex-coordination/SKILL.md")
+        try sandbox.write("mine\n", to: ".claude/skills/auspex-coordination/NOTES.md")
+        guard case let .unreadable(extraReason) = installer.offer(
+            .claudeCode, .coordinationSkill
+        ).state else {
+            Issue.record("An extra skill file must be refused")
+            return
+        }
+        #expect(extraReason.contains("added, removed, or renamed"))
+        #expect(!installer.uninstall(.claudeCode, .coordinationSkill).succeeded)
+        #expect(sandbox.exists(".claude/skills/auspex-coordination/NOTES.md"))
+    }
+
+    @Test("uninstall removes only an unchanged owned package and keeps a backup")
+    func skillUninstallIsHashedAndReversible() throws {
+        let sandbox = try Sandbox()
+        let installer = sandbox.installer(skill: try skill())
+        #expect(installer.install(.codex, .coordinationSkill).succeeded)
+
+        let report = installer.uninstall(.codex, .coordinationSkill)
+        #expect(report.succeeded, "\(report.failure ?? "")")
+        #expect(report.didChange)
+        #expect(!sandbox.exists(".codex/skills/auspex-coordination"))
+        let backupPath = try #require(report.backupPath)
+        #expect(
+            FileManager.default.fileExists(
+                atPath: URL(fileURLWithPath: backupPath).appendingPathComponent("SKILL.md").path
+            )
+        )
+        #expect(installer.offer(.codex, .coordinationSkill).state == .absent)
     }
 }
 
