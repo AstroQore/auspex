@@ -223,18 +223,24 @@ args = ["--mcp-stdio"]
   自动清除。`tasks.complete` 自己就会记一条 `done`，所以 worker 不用说两遍。
 - **`auspex.report(focus, progress)`** —— 用会话自己的一句话替换 Auspex 对它在做
   什么的推断。
+- **`overview.get(project?)`** —— 一次拿到当前项目的自己、Doing、Blocked、Review、
+  可认领任务、孤儿 claim 和所有明确在等人的会话。
 - **`tasks.*`** —— 共享任务看板。**每条任务都属于某个项目**，项目由调用方所在的
   会话解析出来：agent 调 `tasks.create` 时不用说自己在哪里工作，任务会落在看板
   给这个 agent 的卡片分组用的同一个项目下。派活的人为每个 worker 建一条任务并把
   id 写进 brief；每个 worker 调用 `tasks.claim(task_id, role, scope)`，卡住时
-  `tasks.update`，做完时 `tasks.complete`。
+  `tasks.update`，做完时 `tasks.complete`。每条任务带单调递增的 `version`，新版
+  caller 在写入时回传 `expected_version`；过期写入、缺失/自指/成环依赖都会原子拒绝。
+  Claim 冲突会成为待真人批准的接管请求，不会偷走当前持有人的任务。
 - **`plans.*`** —— 里程碑：项目**内部**可选的一层标题，用来给值得命名的拆解分组。
   沿用旧名字，这样已经发出去的 brief 仍然有效。
-- **`sessions.self` / `sessions.list` / `sessions.tree` / `peers.status`** ——
-  只读。agent 永远不需要知道自己的 session id：Auspex 从 socket 另一端的进程推出来。
+- **`sessions.self` / `sessions.list` / `sessions.get` / `sessions.tree` /
+  `peers.status`** —— 只读。agent 永远不需要知道自己的 session id。`sessions.list`
+  默认只列当前项目，并和 `sessions.get` 一样只给安全 capsule：活动、注意、关系、任务链接
+  和主动 report，不给 prompt、cwd、原始转录、完整回复、argv 或工具输出。
 
-一共十六个工具。`auspex --mcp-stdio` 是给只会说 stdio 的客户端用的轻量桥接 —— 它连
-上 socket 并转发字节，Auspex 没在跑时以 1 退出并打印一行，所以这套协议只是增益，
+一共二十个工具。`auspex --mcp-stdio` 是给只会说 stdio 的客户端用的轻量桥接 —— 它连
+上 socket，把每条请求绑定到这个 bridge 进程后再转发；Auspex 没在跑时以 1 退出并打印一行，所以这套协议只是增益，
 永远不是依赖。同一次注册还会给有 hook 机制的 harness 装上 **hook**：
 `auspex --hook <harness>` 把生命周期事件原样转发到同一个 socket，并且无论发生什么都
 在 200 ms 内以 0 退出 —— 因为 hook 是正在干活的 agent 的同步子进程，绝不能卡住它，
@@ -244,6 +250,26 @@ args = ["--mcp-stdio"]
 里程碑在项目内部，每条任务按状态排列，卡片上写着是谁认领的。
 
 ![Roost：每个项目一条泳道，里程碑在项目内部，以及每条任务被谁认领](docs/screenshots/tasks.png)
+
+## 三十秒重新进入现场
+
+**Catch up** 把你离开后的变化压成三组：需要真人处理的队列、任务/report/结果等实质变化，
+以及琥珀色观察信号（工作区或分支重叠、陈旧会话、长工具调用、上下文压力）。普通 token 和
+工具事件不算实质变化；观察信号也不会冒充通知。「Mark caught up」只在你点击时推进游标。
+
+Review 有独立的 **Review Next** 队列。任务详情把三种事实分开：agent 自报、任务记录里的
+证据/决策/风险，以及本地 Git 当前观察。Git 只在打开详情或点 Refresh 时读取，不 fetch，
+不进入常驻帧循环。**Copy handoff** 会生成有来源标签的有界交接包，包含团队状态、交付、
+证据和 resume 提示；只复制，不自动发送。
+
+首次设置和 **Settings → Agents** 可以在 MCP/hook 之外安装版本化的
+`auspex-coordination` Skill，教 Supervisor/Worker/Reviewer 读取安全上下文、携带任务版本、
+区分待批准接管与真正 ownership，并留下可核验证据。它只占一个带 hash 的 Auspex 专属目录，
+可备份、可精确卸载；遇到外来或被修改的文件会 fail closed。
+
+**Settings → General → Launch at login** 使用 macOS ServiceManagement 启动签名主程序，
+没有 helper、没有 LaunchAgent。登录启动时只显示菜单栏并开始观察；若用户在系统设置里关闭，
+macOS 状态优先，不会被下次启动偷偷打开。从 Finder 或 Dock 再打开则恢复普通主窗口。
 
 ## 项目、委派树，以及你不想看到的会话
 
@@ -346,17 +372,16 @@ manifest 加上每个姿势一条帧带 —— 放进 `~/.auspex/characters/` �
 
 ## 设置
 
-五个面板，每一个都只写 `~/.auspex/settings.json`，不写别处，所以凡是能设的都能不开
-app 直接读、改、撤销。
+八个面板。Auspex 自己的偏好都在 `~/.auspex/settings.json`；只有明确点击的 Agent 集成
+和 macOS Login Item 会离开这个文件，单纯打开设置页不会写它们。
 
+- **Agents** —— 各 harness 的 MCP、hook、协议说明和版本化 Skill，可备份并精确撤销。
+- **General** —— 通过 macOS ServiceManagement 开机登录启动。
 - **Appearance** —— 浅色、深色，或跟随系统；侧栏用哪种材质；以及这个选择最终解析出的
   三个颜色。切换不重启。
 - **Characters** —— Aviary 和 Flock 里每个 harness 穿哪个角色包。
-- **Harnesses** —— 把 Auspex 的 MCP server（以及有 hook 机制的 harness 的 hook）注册
-  进那个 harness 自己的配置。可选、带围栏、先备份、可撤销；这是 Auspex 唯一一处写到
-  自己目录之外的地方。
-- **Projects** —— 你自己的项目认领，让本属同一件事的目录被读成一个项目；以及把其余
-  会话挡在看板外的忽略规则。
+- **Scene / Crew** —— 空间布局与动画预算。
+- **Ignore** —— 项目认领与隐藏无关会话的规则。
 - **Updates** —— Stable 还是 Dev，以及这份拷贝上次检查是什么时候。
 
 ## 它是怎么工作的

@@ -279,14 +279,16 @@ args = ["--mcp-stdio"]
 - **`sessions.self` / `sessions.list` / `sessions.get` / `sessions.tree` /
   `peers.status`** —
   read-only. An agent never has to know its own session id: Auspex resolves it
-  from the process on the other end of the socket. `sessions.list` can be
-  project-filtered; `sessions.get` returns structured metadata, task links, and
-  self-reports, never raw transcript, full assistant text, argv, or tool output.
+  from the process on the other end of the socket. `sessions.list` defaults to
+  the caller's project and returns the same safe capsules as `sessions.get`:
+  structured activity, attention, task links, relationships and self-reports,
+  never prompts, cwd, raw transcript, full assistant text, argv, or tool output.
 
 Twenty tools in all. `auspex --mcp-stdio` is a thin bridge for clients that
-speak stdio — it connects to the socket and pumps bytes, and exits 1 with one
-line when Auspex is not running, so the protocol is enrichment and never a
-dependency. The same registration installs **hooks** where a harness has them:
+speak stdio — it connects to the socket, attributes each request to that exact
+bridge process, and exits 1 with one line when Auspex is not running, so the
+protocol is enrichment and never a dependency. The same registration installs
+**hooks** where a harness has them:
 `auspex --hook <harness>` forwards a lifecycle payload over the same socket and
 exits 0 within 200 ms whatever happens, because a hook is a synchronous child
 of a working agent and must never be able to block or veto it.
@@ -296,6 +298,44 @@ the milestones inside it, and every task sorted by status with whoever claimed
 it named on the card.
 
 ![The Roost: one lane per project, milestones inside them, and who claimed each task](docs/screenshots/tasks.png)
+
+## Thirty seconds back into the room
+
+**Catch up** is the answer to opening a board after six agents have been moving
+without you. It compresses the interval since the last explicit checkpoint into
+three small lists: work that needs a person, material task/report/outcome
+changes, and amber watch signals such as overlapping checkouts or branches,
+stale sessions, long tools, and context pressure. Tool and token churn never
+counts as a material change; watch signals never pretend to be notifications.
+"Mark caught up" advances one explicit cursor at the moment you click it.
+
+Review work has its own **Review Next** queue. A task detail keeps three claims
+separate: what the worker reported, what the ledger recorded as evidence/risk/
+decision, and what local Git currently shows. Git is read only when the detail
+opens or Refresh is clicked, never fetches, and never enters the live frame
+loop. From the same page, **Copy handoff** makes a bounded, provenance-labelled
+packet with team state, delivery, evidence and resume hints; it copies nothing
+automatically and sends nothing.
+
+Claim conflicts are visible work, not last-writer-wins. The second agent creates
+a pending takeover; only a person can approve it. Approval is fenced to the
+exact task version and holder that were reviewed, so an old request expires
+instead of displacing somebody who took the task later.
+
+## Setup that survives a restart
+
+First-run setup and **Settings → Agents** can install a versioned
+`auspex-coordination` Skill beside the MCP registration and hooks. The Skill is
+an on-demand Supervisor/Worker/Reviewer playbook: read safe context, carry task
+versions through writes, distinguish a pending takeover from ownership, and
+leave checkable evidence. It occupies one Auspex-owned directory with a content
+hash, backup and exact uninstall; foreign or locally modified files fail closed.
+
+**Settings → General → Launch at login** uses macOS ServiceManagement for the
+signed main app — no helper and no LaunchAgent. A login launch starts quietly
+with the menu bar and observer active. macOS remains authoritative if the user
+turns the item off in System Settings, and opening Auspex later from Finder or
+the Dock restores the normal window.
 
 ## Projects, trees, and the sessions you do not want to see
 
@@ -417,20 +457,20 @@ specification; Settings → Characters is where they are chosen per harness.
 
 ## Settings
 
-Five panes, and every one of them writes to `~/.auspex/settings.json` and
-nowhere else, so anything you can set you can also read, edit, or undo without
-opening the app.
+Eight panes. Auspex-owned preferences live in `~/.auspex/settings.json`; the
+two explicit integrations that leave that directory are named below and are
+never triggered by merely opening a pane.
 
+- **Agents** — the fenced MCP, hook, protocol-note and versioned Skill pieces
+  installed into each harness, with exact removal and backup state.
+- **General** — Launch at login through macOS ServiceManagement.
 - **Appearance** — Light, Dark, or follow the Mac; the sidebar's material; and
   the three resolved colours the choice produced. Nothing relaunches.
 - **Characters** — which character folder each harness wears in the Aviary and
   the Flock.
-- **Harnesses** — registers Auspex's MCP server, and its hooks where a harness
-  has them, into that harness's own config. Opt-in, fenced, backed up, and
-  reversible; it is the one place Auspex writes outside its own directory.
-- **Projects** — your own project claims, so directories that are one piece of
-  work read as one project, and the ignore rules that keep the rest off the
-  board.
+- **Scene** and **Crew** — the spatial layout and animation budgets.
+- **Ignore** — project claims and the rules that keep unrelated sessions off
+  the board.
 - **Updates** — Stable or Dev, and when this copy last looked.
 
 ## How it works

@@ -498,6 +498,12 @@ complete assistant prose, argv, source path, or tool output. Activity and
 project placement are marked `inferred`, agent reports `self_reported`, and
 harness attention `observed` so a reader can distinguish the evidence.
 
+`sessions.list` is project-scoped by default and uses the safe capsule too.
+An unattributed caller must name a project; no read silently expands to every
+session on the machine. The richer `SessionPayload` with prompt and cwd is
+reserved for `sessions.self`, where process attribution proves the session is
+asking about itself.
+
 **Projects contain tasks, and the project is resolved rather than asked for.**
 `tasks.create` with no `project` argument files the task under the project of
 the session on the other end of the socket — the same string
@@ -553,13 +559,18 @@ ways: a person clicked, only inside a region Auspex owns, backed up into
 bytes somebody else wrote are never re-serialised. See `AGENTS.md` § 6 for all
 five and for what "a region Auspex owns" means in a hook table.
 
-**Identity.** An agent never has to know its own session id. The kernel reports
-the socket's peer pid; `MCPSelfResolver` walks up from it until it finds a
-process the board already owns, or one of the session-id environment variables
-harnesses hand down to everything they spawn. The kit's current line-handler
-API does not carry a connection id, so the host orders peers by activity
-immediately before dispatch and the server trusts only the head. It never walks
-on to some other connected client when that process is unresolvable.
+**Identity.** An agent never has to know its own session id. The official stdio
+bridge stamps every JSON-RPC object with its own pid; the server keeps that
+attribution request-scoped and accepts it only while the kernel's live socket
+roster contains the same process. `MCPSelfResolver` then walks its ancestry
+until it finds a process the board already owns, or a session-id environment
+variable the harness handed down. Old unstamped clients work only when exactly
+one socket is attached; with two they fail closed instead of using activity
+order. The socket is a local-user trust boundary, not authentication against a
+different process running as that same user. A connection-context API is
+prepared in agent-session-kit for the next dependency release, at which point
+the bridge stamp can be replaced by the kernel peer attached directly to each
+handler call.
 `sessions.self` says which pid it used and what convinced it. An optional
 `session_id` is only a corroborating hint: it must agree with the process
 evidence and cannot identify a caller by itself. Anonymous task/milestone
@@ -572,6 +583,39 @@ characters, bidirectional overrides and zero-width formatters, collapses
 whitespace and caps length before any value reaches the store. Unknown
 argument keys are refused rather than ignored. A demo replay refuses the ten
 writing tools by name.
+
+## Catch-up, review, and delivery
+
+`TaskCapsule` is the semantic compression boundary. It derives goal, phase,
+current work, last outcome, next action and risk with provenance; its material
+timestamp changes only for task rows, explicit reports/notices, turn outcomes
+or process endings, never for ordinary token/tool churn. `CatchUpSnapshot`
+compares those stable values off-main-actor. `HumanWorkQueue` orders things the
+person can act on; `CollaborationSignals` carries amber observations and does
+not notify. Orphan claims live only in the human queue, and branch collisions
+are keyed by project plus branch.
+
+Delivery is deliberately pull-based. Opening one task detail asks
+`GitDeliveryReader` for a bounded local snapshot; Refresh asks again. The
+reader invokes fixed `/usr/bin/git` arguments without a shell, disables hooks,
+textconv and optional locks, caps time/output/files, and never fetches. A
+`HandoffPacket` combines only the task capsule, recorded evidence/decisions/
+risks, that observed snapshot and bounded resume hints. It writes nowhere and
+sends nothing; the human copies it explicitly.
+
+## Installed coordination playbook and login lifecycle
+
+The optional `auspex-coordination` Skill is an app resource and an owned
+directory, not another mutable prompt fragment. Its manifest carries a version,
+file list and SHA-256; install/update/uninstall requires a click, backs up first,
+verifies after, refuses symlinks/foreign/modified content, and is currently
+offered only for harnesses with a stable Skill directory contract.
+
+Login launch uses `SMAppService.mainApp`. Registration is an explicit toggle;
+launch-time reconciliation mirrors macOS and never re-enables an item the user
+disabled in System Settings. Login events suppress the initial board window
+while still starting the observer/menu bar. A later Finder/Dock reopen restores
+regular activation and the main window.
 
 ## Non-Goals
 

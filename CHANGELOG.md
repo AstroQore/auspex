@@ -10,6 +10,41 @@ describes how one is cut when there is.
 
 ## [Unreleased]
 
+### Fixed
+
+- Packaged apps now resolve SwiftPM resources from `Contents/Resources`, so a
+  GitHub-downloaded build no longer crashes in `Bundle.module` when the CI
+  checkout fallback path is absent. Release CI smoke-tests the copied archive.
+- MCP writes no longer infer identity from the most recently active socket;
+  official bridge requests carry request-scoped, kernel-roster-corroborated
+  process attribution, while ambiguous legacy connections fail closed.
+- Takeover approval expires when the reviewed task version or holder changed,
+  and Catch-up ignores tool/token churn, uses a fresh click-time cursor, avoids
+  duplicate orphan rows, and scopes branch collisions to a project.
+- Login launch respects a user disabling the item in macOS and a later
+  Finder/Dock reopen restores the normal main window.
+
+### Added
+
+- A 30-second Catch-up panel with a ranked human queue, semantic changes and
+  non-notifying amber watch signals.
+- Carbon-inspired task integrity: monotonic versions and `expected_version`,
+  atomic dependency validation, durable human-approved takeover requests,
+  holder-only completion into Review, and attempt context in `tasks.get`.
+- Review Next navigation, on-demand bounded local-Git Delivery evidence, and
+  copy-only provenance-labelled Handoff Packets.
+- Safe `overview.get`, `tasks.get`, `tasks.release`, `sessions.get`, and
+  project-scoped `sessions.list` context without peer transcripts or prompts.
+- An installable, versioned `auspex-coordination` Supervisor/Worker/Reviewer
+  Skill with owned-directory hashing, backups and exact reversal.
+- Explicit Launch at login controls in first-run setup and General Settings,
+  implemented with ServiceManagement and a quiet login launch.
+
+### Changed
+
+- The bundled coordination Skill now carries task versions through writes and
+  treats `pending_takeover` as a request rather than ownership.
+
 ## [0.1.0-dev.2] - 2026-08-21
 
 ### Changed
