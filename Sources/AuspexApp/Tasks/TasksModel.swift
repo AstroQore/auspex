@@ -86,6 +86,11 @@ final class TasksModel {
     private var claims: ProjectClaims = .empty
     private var reloadTask: Task<Void, Never>?
 
+    /// Hands a completed UI write back to the live task wall. The Tasks page
+    /// owns its own rows; the Ledger owns a separately cached frame, and both
+    /// have to be refreshed only after SQLite accepted the change.
+    var onLedgerChange: (() -> Void)?
+
     /// What a task row knows about a session attached to it.
     ///
     /// Read off the same ``BoardRow`` the wall drew, so a task row and the
@@ -511,9 +516,18 @@ final class TasksModel {
 
     func close(taskID id: Int64) {
         guard let repository, id > 0 else { return }
-        Task.detached(priority: .userInitiated) { _ = try? repository.closeTask(id: id) }
+        Task { [weak self] in
+            let didWrite = await Task.detached(priority: .userInitiated) {
+                (try? repository.closeTask(id: id)) != nil
+            }.value
+            guard didWrite else {
+                self?.reload()  // replace the optimistic row with the stored one
+                return
+            }
+            self?.reload()
+            self?.onLedgerChange?()
+        }
         optimistically { $0.id == id ? $0.moved(to: .done) : $0 }
-        reload()
     }
 
     /// Puts a closed task back in flight.
@@ -524,11 +538,18 @@ final class TasksModel {
 
     func reopen(taskID id: Int64) {
         guard let repository, id > 0 else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = try? repository.updateTask(id: id, status: .doing)
+        Task { [weak self] in
+            let didWrite = await Task.detached(priority: .userInitiated) {
+                (try? repository.updateTask(id: id, status: .doing)) != nil
+            }.value
+            guard didWrite else {
+                self?.reload()  // replace the optimistic row with the stored one
+                return
+            }
+            self?.reload()
+            self?.onLedgerChange?()
         }
         optimistically { $0.id == id ? $0.moved(to: .doing) : $0 }
-        reload()
     }
 
     /// Turns a unit the board derived into a task somebody filed.

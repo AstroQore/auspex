@@ -86,6 +86,26 @@ struct TasksPageView: View {
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
             Spacer(minLength: 8)
+            if board.reviewCount > 0 {
+                Button { board.openNextReview() } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "checklist")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Review next · \(board.reviewCount)")
+                            .font(AuspexType.pill)
+                    }
+                    .foregroundStyle(AuspexPalette.stateWriting)
+                    .padding(.horizontal, 8)
+                    .frame(height: 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(AuspexPalette.stateWriting.opacity(0.08))
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.auspex(cornerRadius: 6))
+                .help("Open the first task waiting for review")
+            }
             Button { model.showsArchived.toggle() } label: {
                 Text(model.showsArchived ? "Hide archived" : "Show archived")
                     .font(AuspexType.pill)

@@ -38,6 +38,7 @@ struct BoardHeader: View {
                 if showsCatchUpInHeader {
                     catchUpButton.fixedSize()
                 }
+                if model.reviewCount > 0 { reviewNext.fixedSize() }
                 Spacer(minLength: 8)
                 if model.ignoredCount > 0 {
                     ignoredToggle.fixedSize()
@@ -118,6 +119,7 @@ struct BoardHeader: View {
         reserved += 150  // the search field
         if model.ignoredCount > 0 { reserved += 96 }
         if showsCatchUpInHeader { reserved += 82 }
+        if model.reviewCount > 0 { reserved += 78 }
         let free = width - reserved
         guard free > 0 else { return (0, false) }
         // A chip is a mark, two or three digits, and a word: 86 points covers
@@ -197,6 +199,35 @@ struct BoardHeader: View {
             }
         }
         .fixedSize()
+    }
+
+    /// Opens the review queue from whichever whole-board view is on screen.
+    /// The count is already one of the summary facts; this is the action beside
+    /// it, and it changes no task until the person chooses Close or Reopen.
+    private var reviewNext: some View {
+        Button { model.openNextReview() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("Review \(model.reviewCount)")
+                    .font(AuspexType.caption)
+                    .auspexTabularDigits()
+            }
+            .foregroundStyle(AuspexPalette.stateWriting)
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(AuspexPalette.stateWriting.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(AuspexPalette.stateWriting.opacity(0.24), lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 8))
+        .help("Review next — open the first task waiting for your judgement")
     }
 
     /// The number beside the heading, when the heading is about a number of

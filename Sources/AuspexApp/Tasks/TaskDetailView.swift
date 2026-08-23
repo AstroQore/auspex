@@ -31,6 +31,7 @@ struct TaskDetailView: View {
     @State private var draftNote = ""
     @State private var draftRef = ""
     @State private var noteKind = TaskNoteKind.note
+    @State private var delivery = TaskDeliveryModel()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +41,11 @@ struct TaskDetailView: View {
                     title
                     if let body = unit.body { bodyText(body) }
                     if unit.isInReview, let result = unit.result { reviewBox(result) }
+                    TaskDeliverySection(unit: unit, board: board, model: delivery)
+                    if unit.isInReview { TaskReviewRecordSection(log: tasks.openLog) }
+                    TaskHandoffSection(
+                        unit: unit, board: board, log: tasks.openLog, delivery: delivery
+                    )
                     properties
                     if !unit.waitingOn.isEmpty || !unit.dependsOn.isEmpty { dependencies }
                     if !pendingTakeovers.isEmpty { takeoverRequests }
@@ -59,7 +65,10 @@ struct TaskDetailView: View {
         // The page has a fact on it that copies, so it has to be able to say
         // so — see ``CopyToast``.
         .auspexCopyToast()
-        .task(id: unit.origin.taskID) { tasks.loadLog(taskID: unit.origin.taskID) }
+        .task(id: unit.id) {
+            tasks.loadLog(taskID: unit.origin.taskID)
+            await delivery.load(unit: unit, board: board)
+        }
     }
 
     // MARK: Header
@@ -107,25 +116,67 @@ struct TaskDetailView: View {
     @ViewBuilder
     private var actions: some View {
         if unit.isInReview {
+            let previous = board.reviewNeighbor(of: unit, direction: .previous)
+            let next = board.reviewNeighbor(of: unit, direction: .next)
+            reviewNavigationButton("chevron.left", help: "Previous review") {
+                board.openUnitID = previous?.id
+            }
+            .disabled(previous == nil)
+            reviewNavigationButton("chevron.right", help: "Next review") {
+                board.openUnitID = next?.id
+            }
+            .disabled(next == nil)
+            actionButton("Defer") { board.deferReview(unit) }
+            actionButton("Reopen", tint: AuspexPalette.stateStale) {
+                let replacement = board.reviewReplacement(after: unit)
+                tasks.reopen(unit: unit)
+                board.openUnitID = replacement?.id
+            }
             actionButton("Close", tint: AuspexPalette.stateWriting) {
+                let replacement = board.reviewReplacement(after: unit)
                 tasks.close(unit: unit)
-                board.openUnitID = nil
+                board.openUnitID = replacement?.id
             }
         } else if unit.status == .done {
-            actionButton("Reopen") { tasks.reopen(unit: unit) }
+            actionButton("Reopen") {
+                tasks.reopen(unit: unit)
+            }
         }
         if unit.isClaimOrphaned, let id = unit.origin.taskID {
             actionButton("Release claim", tint: AuspexPalette.stateStale) {
                 tasks.releaseClaim(taskID: id)
             }
         }
-        if unit.counts.live > 0 {
+        // Review already has five compact controls in this bar. A member row
+        // below still opens Flight in one click, so duplicating it here would
+        // make the minimum-width task page overflow for no added capability.
+        if unit.counts.live > 0, !unit.isInReview {
             actionButton("Open flight") {
                 board.selectedKey = unit.lead.key
                 board.openUnitID = nil
                 board.openTrajectory()
             }
         }
+    }
+
+    private func reviewNavigationButton(
+        _ systemName: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(AuspexPalette.text2)
+                .frame(width: 24, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 7))
+        .help(help)
     }
 
     private func actionButton(
@@ -176,7 +227,7 @@ struct TaskDetailView: View {
     /// is here to read.
     private func reviewBox(_ result: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Finished, waiting on you")
+            Text("Agent report · self-reported")
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.stateWriting)
             Text(result)

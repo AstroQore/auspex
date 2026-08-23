@@ -264,6 +264,7 @@ public final class AppEnvironment {
         if mode == .demo { try? DemoTaskLedger.seed(into: TaskRepository(store: store)) }
         board.startLedger(repository: TaskRepository(store: store))
         tasks.start(repository: TaskRepository(store: store))
+        tasks.onLedgerChange = { [weak board] in board?.reloadLedger() }
         projects.start(repository: ProjectRepository(store: store))
         // A demo reads no harness store — and no harness *config* either. The
         // page (and any offscreen render of it) would otherwise show this
@@ -379,7 +380,10 @@ public final class AppEnvironment {
                 await MainActor.run { self?.board.apply(report: report) }
             },
             onLedgerChange: { [weak self] in
-                await MainActor.run { self?.tasks.reload() }
+                await MainActor.run {
+                    self?.tasks.reload()
+                    self?.board.reloadLedger()
+                }
             },
             // A hook's events join the stream the tailers feed, so a permission
             // prompt and a tool call are folded by the same reducer in the

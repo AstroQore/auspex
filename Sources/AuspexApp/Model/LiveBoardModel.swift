@@ -589,6 +589,47 @@ final class LiveBoardModel {
     /// The unit whose detail page is open, if any.
     var openUnitID: String?
 
+    /// Review ordering that exists only for this launch.
+    ///
+    /// Kept out of observation: deferring immediately navigates away from the
+    /// current page, and every value the next page draws comes from ``units``.
+    /// Publishing this set would make a local queue preference invalidate the
+    /// task wall even though no task changed.
+    @ObservationIgnored private var reviewOrdering = ReviewQueue()
+
+    /// Work currently waiting for a person's judgement.
+    ///
+    /// Stored as one scalar when units move. The header reads it several times
+    /// per layout, and filtering every unit there would put queue work on the
+    /// always-on render path for a button that is clicked occasionally.
+    private(set) var reviewCount = 0
+
+    /// Opens the first non-deferred Review item, then the oldest deferred one
+    /// only when everything left has been deferred.
+    func openNextReview() {
+        openUnitID = reviewOrdering.first(units: units)?.id
+    }
+
+    /// The adjacent item without wrapping, for the arrow buttons in the review
+    /// page. No task or attention state changes.
+    func reviewNeighbor(of unit: TaskUnit, direction: ReviewQueue.Direction) -> TaskUnit? {
+        reviewOrdering.neighbor(of: unit.id, direction: direction, units: units)
+    }
+
+    /// The item to show after the current review is resolved. Wraps once to the
+    /// front, but never returns the task being closed or reopened.
+    func reviewReplacement(after unit: TaskUnit) -> TaskUnit? {
+        reviewOrdering.neighbor(of: unit.id, direction: .next, units: units)
+            ?? reviewOrdering.first(units: units, excluding: unit.id)
+    }
+
+    /// Moves one Review item to the end of this launch's queue and advances.
+    /// Nothing is written to the ledger and the task stays in Review.
+    func deferReview(_ unit: TaskUnit) {
+        reviewOrdering.deferReview(id: unit.id)
+        openUnitID = reviewOrdering.first(units: units, excluding: unit.id)?.id
+    }
+
     /// Whether the command palette is on screen. ⌘K.
     var isPaletteOpen = false
 
@@ -845,6 +886,11 @@ final class LiveBoardModel {
         humanWorkQueue = frame.humanQueue
         watchSignals = frame.watchSignals
         unitIndex = frame.unitIndex
+        if unitsMoved {
+            reviewOrdering.reconcile(units: frame.units)
+            let nextReviewCount = frame.units.count { $0.isInReview }
+            if reviewCount != nextReviewCount { reviewCount = nextReviewCount }
+        }
         filterOptions = frame.filterOptions
         unitBySession = frame.unitBySession
         endedRows = frame.endedRows
