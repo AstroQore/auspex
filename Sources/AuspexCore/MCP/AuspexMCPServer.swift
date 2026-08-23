@@ -189,7 +189,8 @@ public actor AuspexMCPServer {
         the moment you need the person instead of going quiet; release a task \
         with a reason when you stop. Completion enters Review rather than \
         closing your own work. With no task id, keep the implicit session task instead \
-        of creating one merely for the protocol. If MCP or session identity is \
+        of creating one merely for the protocol. Explicit tasks remain inside \
+        their observed projects. If MCP or session identity is \
         unavailable, continue the user's work and report which updates were not \
         recorded.
         """
