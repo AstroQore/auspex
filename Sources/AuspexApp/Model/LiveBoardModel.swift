@@ -182,6 +182,7 @@ final class LiveBoardModel {
             // frame's is what stops a switch to the crew showing an empty wall
             // until the next frame lands.
             if viewMode == .crew, let previousFrame { groups = previousFrame.groups }
+            if viewMode == .map { map.apply(units: units) }
             guard viewMode.requiresSelection else {
                 // Leaving the trajectory stops its reads. The fold is kept:
                 // coming back to the same session should not re-read a
@@ -212,6 +213,16 @@ final class LiveBoardModel {
     /// letting the window close, does not throw away a reader's place in a
     /// five-thousand-step session.
     let trajectory = TrajectoryModel()
+
+    /// The user-owned spatial surface. It holds only flat card values and
+    /// persists through a mode switch so every board returns to its camera and
+    /// positions rather than rebuilding a picture the person already arranged.
+    let map = MapModel()
+
+    func startMap(repository: MapRepository) {
+        map.start(repository: repository)
+        map.apply(units: units)
+    }
 
     /// Opens the Trajectory on the selected session, from wherever the reader
     /// was. Does nothing with no session selected: there would be nothing to
@@ -883,6 +894,7 @@ final class LiveBoardModel {
         endedUnits = frame.endedUnits
         let unitsMoved = units != frame.units
         units = frame.units
+        if unitsMoved, viewMode == .map { map.apply(units: frame.units) }
         // These are observed by the header and Catch-up sheet. Observation
         // invalidates on any write, even an equal value, so the assembler's
         // semantic reconciliation only saves work if the model preserves it.

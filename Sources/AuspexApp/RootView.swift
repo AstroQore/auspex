@@ -277,6 +277,7 @@ struct RootView: View {
                     case .board: BoardView(model: model)
                     case .scene: SceneContainerView(model: model)
                     case .crew: CrewView(model: model, liveliness: environment.catalog.crewLiveliness)
+                    case .map: MapView(board: model, map: model.map)
                     case .trajectory: TrajectoryView(model: model)
                     }
                 } else {

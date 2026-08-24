@@ -62,6 +62,14 @@ struct SessionTraceView: View {
                 family: family(besides: session),
                 isTaskFamily: model.selectedUnit != nil
             )
+            if model.viewMode == .map,
+               let card = model.map.cards.first(where: { $0.leadKey == session.key }) {
+                MapInspectorContext(
+                    card: card,
+                    boardName: model.map.selectedBoard?.name ?? "All boards",
+                    family: model.selectedUnit?.members ?? []
+                )
+            }
             tabBar
             traceList
         }
@@ -293,6 +301,70 @@ struct SessionTraceView: View {
             detail: "Its prompts, tool calls, and turns appear here as they happen."
         )
         .centredInPane()
+    }
+}
+
+/// The two facts the live trace cannot answer by itself: where the selected
+/// task sits in the user's spatial memory, and which sessions are folded into
+/// that card. Recent activity remains the trace immediately below it.
+private struct MapInspectorContext: View {
+    let card: MapCardValue
+    let boardName: String
+    let family: [BoardRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("LINEAGE").auspexLabel(AuspexType.labelSmall)
+                Spacer()
+                if family.count > 1 {
+                    Text("\(family.count - 1) subagents")
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                }
+            }
+            ForEach(family.prefix(4)) { member in
+                HStack(spacing: 7) {
+                    Text(member.key == card.leadKey ? "●" : "↳")
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(
+                            member.key == card.leadKey
+                                ? member.harness.style.accent : AuspexPalette.text3
+                        )
+                    Text(member.title)
+                        .font(AuspexType.caption)
+                        .foregroundStyle(AuspexPalette.text2)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(member.shortID)
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                }
+            }
+            Divider().overlay(AuspexPalette.line)
+            Text("ON THE MAP").auspexLabel(AuspexType.labelSmall)
+            HStack(spacing: 7) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(AuspexPalette.text3)
+                Text("Pinned in \(boardName)")
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text2)
+                Spacer()
+                Text("\(Int(card.position.x)), \(Int(card.position.y))")
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+            Text("Double-click the card to open its Flight. Resume stays an explicit action above.")
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .background(AuspexPalette.bg0)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(AuspexPalette.line).frame(height: 1)
+        }
     }
 }
 

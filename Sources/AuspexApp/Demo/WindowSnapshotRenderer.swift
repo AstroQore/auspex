@@ -188,6 +188,8 @@ private struct WindowSnapshot: View {
                             model: environment.board,
                             liveliness: environment.catalog.crewLiveliness
                         )
+                    case .map:
+                        MapView(board: environment.board, map: environment.board.map)
                     case .trajectory: TrajectoryView(model: environment.board)
                     }
                 }

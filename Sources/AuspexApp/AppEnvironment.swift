@@ -280,6 +280,7 @@ public final class AppEnvironment {
         // itself and never into `~/.auspex/`.
         if mode == .demo { try? DemoTaskLedger.seed(into: TaskRepository(store: store)) }
         board.startLedger(repository: TaskRepository(store: store))
+        board.startMap(repository: MapRepository(store: store))
         tasks.start(repository: TaskRepository(store: store))
         tasks.onLedgerChange = { [weak board] in board?.reloadLedger() }
         projects.start(repository: ProjectRepository(store: store))
