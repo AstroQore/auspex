@@ -135,6 +135,126 @@ public struct MapRepository: Sendable {
         }
     }
 
+    /// Reorders every active custom board in one transaction. `All boards`
+    /// remains protected at sort order zero and deleted boards keep their
+    /// archival position.
+    public func reorderBoards(_ orderedIDs: [String], now: Date = Date()) throws {
+        try dbWriter.write { db in
+            let active = try Row.fetchAll(
+                db,
+                sql: """
+                    SELECT * FROM map_boards
+                     WHERE kind = 'custom' AND deleted_at IS NULL
+                     ORDER BY sort_order, created_at, id
+                    """
+            ).compactMap(Self.board(row:))
+            guard Set(active.map(\.id)) == Set(orderedIDs), active.count == orderedIDs.count else {
+                throw MapRepositoryError.invalidBoardOrder
+            }
+            let byID = Dictionary(uniqueKeysWithValues: active.map { ($0.id, $0) })
+            for (offset, id) in orderedIDs.enumerated() {
+                guard var board = byID[id] else { throw MapRepositoryError.invalidBoardOrder }
+                let nextOrder = offset + 1
+                guard board.sortOrder != nextOrder else { continue }
+                board.sortOrder = nextOrder
+                board.updatedAt = now
+                try Self.update(board, in: db)
+                try Self.appendHistory(
+                    kind: .boardUpdated,
+                    boardID: board.id,
+                    payload: board,
+                    at: now,
+                    in: db
+                )
+            }
+        }
+    }
+
+    /// Creates an editable view branch from one historical layout. Only Map
+    /// membership, placement and rules are copied; tasks and agent execution
+    /// remain the live control-plane records they already are.
+    @discardableResult
+    public func forkBoard(
+        source: MapBoard,
+        state: MapPlaybackState,
+        through historyID: Int64,
+        name: String,
+        now: Date = Date()
+    ) throws -> MapBoard {
+        let title = try Self.validatedName(name)
+        return try dbWriter.write { db in
+            let order = try Int.fetchOne(
+                db,
+                sql: "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM map_boards"
+            ) ?? 1
+            let fork = MapBoard(
+                id: UUID().uuidString.lowercased(),
+                name: title,
+                kind: .custom,
+                rule: source.rule,
+                rulesPaused: true,
+                sortOrder: order,
+                createdAt: now,
+                updatedAt: now,
+                parentBoardID: source.id,
+                forkEventID: historyID,
+                mergeBaseEventID: historyID
+            )
+            try Self.insert(fork, in: db)
+            try Self.appendHistory(
+                kind: .boardCreated,
+                boardID: fork.id,
+                payload: fork,
+                at: now,
+                in: db
+            )
+            for membership in state.memberships.values
+            where membership.boardID == source.id && membership.isVisible {
+                let copy = MapMembership(
+                    boardID: fork.id,
+                    nodeID: membership.nodeID,
+                    ruleMatches: membership.ruleMatches,
+                    override: membership.override,
+                    updatedAt: now
+                )
+                try Self.upsert(copy, in: db)
+                try Self.appendHistory(
+                    kind: .membershipChanged,
+                    boardID: fork.id,
+                    nodeID: copy.nodeID,
+                    payload: copy,
+                    at: now,
+                    in: db
+                )
+                if let placement = state.placement(
+                    boardID: source.id,
+                    nodeID: membership.nodeID
+                ) {
+                    let placed = MapPlacement(
+                        boardID: fork.id,
+                        nodeID: placement.nodeID,
+                        x: placement.x,
+                        y: placement.y,
+                        zIndex: placement.zIndex,
+                        isDormant: false,
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                    try Self.upsert(placed, in: db)
+                    try Self.appendHistory(
+                        kind: .placementChanged,
+                        boardID: fork.id,
+                        nodeID: placed.nodeID,
+                        payload: placed,
+                        at: now,
+                        in: db
+                    )
+                }
+            }
+            return fork
+        }
+    }
+
     private func updateBoard(
         id: String,
         historyKind: MapHistoryKind = .boardUpdated,
@@ -275,27 +395,53 @@ public struct MapRepository: Sendable {
             // remain; they simply stop being active on this board.
             let stale = try Self.memberships(boardID: boardID, in: db)
                 .filter { !seen.contains($0.nodeID) && $0.ruleMatches }
-            for var membership in stale {
-                membership.ruleMatches = false
-                membership.updatedAt = now
-                try Self.upsert(membership, in: db)
-                if var placement = try Self.placement(
-                    boardID: boardID,
-                    nodeID: membership.nodeID,
-                    in: db
-                ) {
-                    placement.isDormant = true
-                    placement.updatedAt = now
-                    try Self.upsert(placement, in: db)
+            if board.rulesPaused {
+                // A fork begins paused so its historical membership is a
+                // faithful view, even when the current live frame no longer
+                // contains a session that existed at the playhead.
+                for membership in stale where membership.isVisible {
+                    guard let row = try Row.fetchOne(
+                        db,
+                        sql: "SELECT * FROM map_nodes WHERE id = ?",
+                        arguments: [membership.nodeID]
+                    ), let node = Self.node(row: row)
+                    else { continue }
+                    synchronized.append(
+                        MapSynchronizedNode(
+                            sourceID: Self.sourceID(for: node),
+                            node: node,
+                            membership: membership,
+                            placement: try Self.placement(
+                                boardID: boardID,
+                                nodeID: membership.nodeID,
+                                in: db
+                            )
+                        )
+                    )
                 }
-                try Self.appendHistory(
-                    kind: .membershipChanged,
-                    boardID: boardID,
-                    nodeID: membership.nodeID,
-                    payload: membership,
-                    at: now,
-                    in: db
-                )
+            } else {
+                for var membership in stale {
+                    membership.ruleMatches = false
+                    membership.updatedAt = now
+                    try Self.upsert(membership, in: db)
+                    if var placement = try Self.placement(
+                        boardID: boardID,
+                        nodeID: membership.nodeID,
+                        in: db
+                    ) {
+                        placement.isDormant = true
+                        placement.updatedAt = now
+                        try Self.upsert(placement, in: db)
+                    }
+                    try Self.appendHistory(
+                        kind: .membershipChanged,
+                        boardID: boardID,
+                        nodeID: membership.nodeID,
+                        payload: membership,
+                        at: now,
+                        in: db
+                    )
+                }
             }
 
             synchronized.sort {
@@ -390,6 +536,30 @@ public struct MapRepository: Sendable {
         }
     }
 
+    /// Every active board a node is currently visible on, in board order.
+    public func visibleBoardsByNode() throws -> [String: [String]] {
+        try dbWriter.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT m.node_id, m.board_id, m.rule_matches, m.override
+                  FROM map_memberships m
+                  JOIN map_boards b ON b.id = m.board_id
+                 WHERE b.deleted_at IS NULL
+                 ORDER BY b.sort_order, b.created_at, b.id
+                """)
+            var result: [String: [String]] = [:]
+            for row in rows {
+                guard let nodeID = row["node_id"] as String?,
+                      let boardID = row["board_id"] as String?
+                else { continue }
+                let matches = row["rule_matches"] as Bool? ?? false
+                let override = (row["override"] as String?).flatMap(MapMembershipOverride.init(rawValue:))
+                let visible = override == .include || (override == nil && matches)
+                if visible { result[nodeID, default: []].append(boardID) }
+            }
+            return result
+        }
+    }
+
     public func save(viewport: MapViewport) throws {
         var value = viewport
         value.zoom = min(4, max(0.25, value.zoom))
@@ -423,13 +593,249 @@ public struct MapRepository: Sendable {
             var sql = "SELECT * FROM board_history WHERE id > ?"
             var arguments: StatementArguments = [id]
             if let boardID {
-                sql += " AND (board_id = ? OR board_id IS NULL)"
+                sql += " AND (board_id = ? OR board_id IS NULL OR kind = 'baseline')"
                 arguments += [boardID]
             }
             sql += " ORDER BY id ASC LIMIT ?"
             arguments += [limit]
             return try Row.fetchAll(db, sql: sql, arguments: arguments)
                 .compactMap(Self.history(row:))
+        }
+    }
+
+    /// Reads the complete append-only history without a silent UI cutoff.
+    public func allHistory(
+        boardID: String? = nil,
+        pageSize: Int = 10_000
+    ) throws -> [MapHistoryEntry] {
+        guard pageSize > 0 else { return [] }
+        var result: [MapHistoryEntry] = []
+        var cursor: Int64 = 0
+        while true {
+            let page = try history(boardID: boardID, after: cursor, limit: pageSize)
+            guard !page.isEmpty else { return result }
+            result.append(contentsOf: page)
+            cursor = page[page.count - 1].id
+            if page.count < pageSize { return result }
+        }
+    }
+
+    // MARK: Branch merge
+
+    public func prepareMerge(branchID: String) throws -> MapMergePlan {
+        try dbWriter.read { db in
+            guard let branch = try Self.board(id: branchID, in: db),
+                  let parentID = branch.parentBoardID,
+                  let baseID = branch.mergeBaseEventID
+            else { throw MapRepositoryError.notABranch(branchID) }
+            let parent = try Self.currentLayout(boardID: parentID, in: db)
+            var branchLayout = try Self.currentLayout(boardID: branchID, in: db)
+            var base = try Self.historicalLayout(
+                boardID: parentID,
+                through: baseID,
+                fallbackRule: parent.rule,
+                in: db
+            )
+            // A historical fork pauses its own automation so the snapshot
+            // stays still. That operational pause is local to the branch and
+            // is never a rule-tree edit to merge into its parent.
+            base.rule = MapRuleValue(rule: base.rule.rule, paused: parent.rule.paused)
+            branchLayout.rule = MapRuleValue(
+                rule: branchLayout.rule.rule,
+                paused: parent.rule.paused
+            )
+            if parentID == MapBoard.allID {
+                base.rule = parent.rule
+                return MapMergePlanner.plan(
+                    base: base,
+                    parent: parent,
+                    branch: MapLayoutSnapshot(
+                        boardID: branchLayout.boardID,
+                        rule: parent.rule,
+                        memberships: branchLayout.memberships,
+                        placements: branchLayout.placements
+                    )
+                )
+            }
+            return MapMergePlanner.plan(base: base, parent: parent, branch: branchLayout)
+        }
+    }
+
+    /// Applies all non-conflicting changes and the person's explicit choice
+    /// for every conflict, then advances the branch's merge base. Real tasks
+    /// and dependencies are not part of this operation.
+    public func applyMerge(
+        branchID: String,
+        plan: MapMergePlan,
+        choices: [String: MapMergeChoice],
+        now: Date = Date()
+    ) throws {
+        try dbWriter.write { db in
+            guard var branch = try Self.board(id: branchID, in: db),
+                  let parentID = branch.parentBoardID,
+                  let parentBoard = try Self.board(id: parentID, in: db)
+            else { throw MapRepositoryError.notABranch(branchID) }
+            guard !parentBoard.isDeleted else {
+                throw MapRepositoryError.boardNotFound(parentID)
+            }
+            let currentParent = try Self.currentLayout(boardID: parentID, in: db)
+            var currentBranch = try Self.currentLayout(boardID: branchID, in: db)
+            // Rule automation is intentionally paused on a historical fork
+            // and intentionally excluded from merge. Compare the branch under
+            // the normalized pause state the planner used.
+            currentBranch.rule = MapRuleValue(
+                rule: currentBranch.rule.rule,
+                paused: plan.branch.rule.paused
+            )
+            guard currentParent.same(as: plan.parent), currentBranch.same(as: plan.branch) else {
+                throw MapRepositoryError.mergeStale
+            }
+            for conflict in plan.conflicts where choices[conflict.id] == nil {
+                throw MapRepositoryError.unresolvedConflict(conflict.id)
+            }
+
+            var memberships = plan.automaticMemberships
+            var placements = plan.automaticPlacements
+            var rule = plan.automaticRule ?? plan.parent.rule
+            for conflict in plan.conflicts {
+                let side = choices[conflict.id] ?? .parent
+                switch conflict.field {
+                case .membership:
+                    guard let nodeID = conflict.nodeID else { continue }
+                    let value = side == .parent
+                        ? plan.parent.memberships[nodeID]
+                        : plan.branch.memberships[nodeID]
+                    memberships[nodeID] = value.map(MapMergeValue.set) ?? .remove
+                case .position:
+                    guard let nodeID = conflict.nodeID else { continue }
+                    let value = side == .parent
+                        ? plan.parent.placements[nodeID]
+                        : plan.branch.placements[nodeID]
+                    placements[nodeID] = value.map(MapMergeValue.set) ?? .remove
+                case .rules:
+                    rule = side == .parent ? plan.parent.rule : plan.branch.rule
+                }
+            }
+
+            for (nodeID, value) in memberships {
+                let previous = try Self.membership(boardID: parentID, nodeID: nodeID, in: db)
+                switch value {
+                case .set(let next):
+                    let record = MapMembership(
+                        boardID: parentID,
+                        nodeID: nodeID,
+                        ruleMatches: next.ruleMatches,
+                        override: next.override,
+                        updatedAt: now
+                    )
+                    if previous.map(MapMembershipValue.init) != next {
+                        try Self.upsert(record, in: db)
+                        try Self.appendHistory(
+                            kind: .membershipChanged,
+                            boardID: parentID,
+                            nodeID: nodeID,
+                            payload: record,
+                            at: now,
+                            in: db
+                        )
+                    }
+                case .remove:
+                    if previous != nil {
+                        try db.execute(
+                            sql: "DELETE FROM map_memberships WHERE board_id = ? AND node_id = ?",
+                            arguments: [parentID, nodeID]
+                        )
+                        try Self.appendHistory(
+                            kind: .membershipChanged,
+                            boardID: parentID,
+                            nodeID: nodeID,
+                            payload: MapMembership(
+                                boardID: parentID,
+                                nodeID: nodeID,
+                                ruleMatches: false,
+                                override: .exclude,
+                                updatedAt: now
+                            ),
+                            at: now,
+                            in: db
+                        )
+                    }
+                }
+            }
+
+            for (nodeID, value) in placements {
+                let previous = try Self.placement(boardID: parentID, nodeID: nodeID, in: db)
+                switch value {
+                case .set(let next):
+                    let record = MapPlacement(
+                        boardID: parentID,
+                        nodeID: nodeID,
+                        x: next.x,
+                        y: next.y,
+                        zIndex: next.zIndex,
+                        isDormant: next.isDormant,
+                        createdAt: previous?.createdAt ?? now,
+                        updatedAt: now
+                    )
+                    if previous.map(MapPlacementValue.init) != next {
+                        try Self.upsert(record, in: db)
+                        try Self.appendHistory(
+                            kind: .placementChanged,
+                            boardID: parentID,
+                            nodeID: nodeID,
+                            payload: record,
+                            at: now,
+                            in: db
+                        )
+                    }
+                case .remove:
+                    if previous != nil {
+                        try db.execute(
+                            sql: "DELETE FROM map_placements WHERE board_id = ? AND node_id = ?",
+                            arguments: [parentID, nodeID]
+                        )
+                        try Self.appendHistory(
+                            kind: .placementRemoved,
+                            boardID: parentID,
+                            nodeID: nodeID,
+                            payload: ["nodeID": nodeID],
+                            at: now,
+                            in: db
+                        )
+                    }
+                }
+            }
+
+            if !parentBoard.isProtected,
+               plan.parent.rule != rule,
+               var updatedParent = try Self.board(id: parentID, in: db) {
+                updatedParent.rule = rule.rule
+                updatedParent.rulesPaused = rule.paused
+                updatedParent.updatedAt = now
+                try Self.update(updatedParent, in: db)
+                try Self.appendHistory(
+                    kind: .rulesChanged,
+                    boardID: parentID,
+                    payload: updatedParent,
+                    at: now,
+                    in: db
+                )
+            }
+
+            try Self.appendHistory(
+                kind: .mergeApplied,
+                boardID: parentID,
+                payload: MergeAudit(
+                    branchID: branchID,
+                    baseEventID: branch.mergeBaseEventID,
+                    conflictChoices: choices
+                ),
+                at: now,
+                in: db
+            )
+            branch.mergeBaseEventID = db.lastInsertedRowID
+            branch.updatedAt = now
+            try Self.update(branch, in: db)
         }
     }
 
@@ -760,6 +1166,66 @@ public struct MapRepository: Sendable {
         }
     }
 
+    private static func currentLayout(boardID: String, in db: Database) throws -> MapLayoutSnapshot {
+        guard let board = try board(id: boardID, in: db) else {
+            throw MapRepositoryError.boardNotFound(boardID)
+        }
+        let memberships = try memberships(boardID: boardID, in: db)
+        let placements = try Row.fetchAll(
+            db,
+            sql: "SELECT * FROM map_placements WHERE board_id = ?",
+            arguments: [boardID]
+        ).compactMap(placement(row:))
+        return MapLayoutSnapshot(
+            boardID: boardID,
+            rule: MapRuleValue(rule: board.rule, paused: board.rulesPaused),
+            memberships: Dictionary(
+                uniqueKeysWithValues: memberships.map { ($0.nodeID, MapMembershipValue($0)) }
+            ),
+            placements: Dictionary(
+                uniqueKeysWithValues: placements.map { ($0.nodeID, MapPlacementValue($0)) }
+            )
+        )
+    }
+
+    private static func historicalLayout(
+        boardID: String,
+        through historyID: Int64,
+        fallbackRule: MapRuleValue,
+        in db: Database
+    ) throws -> MapLayoutSnapshot {
+        let entries = try Row.fetchAll(
+            db,
+            sql: """
+                SELECT * FROM board_history
+                 WHERE id <= ?
+                   AND (board_id = ? OR board_id IS NULL OR kind = 'baseline')
+                 ORDER BY id ASC
+                """,
+            arguments: [historyID, boardID]
+        ).compactMap(history(row:))
+        let archive = MapPlaybackArchive(sessionEvents: [], boardEvents: entries)
+        guard let state = archive.moment(at: max(0, archive.count - 1))?.state else {
+            return MapLayoutSnapshot(
+                boardID: boardID,
+                rule: fallbackRule,
+                memberships: [:],
+                placements: [:]
+            )
+        }
+        let board = state.boards[boardID]
+        return MapLayoutSnapshot(
+            boardID: boardID,
+            rule: board.map { MapRuleValue(rule: $0.rule, paused: $0.rulesPaused) } ?? fallbackRule,
+            memberships: Dictionary(uniqueKeysWithValues: state.memberships.values
+                .filter { $0.boardID == boardID }
+                .map { ($0.nodeID, MapMembershipValue($0)) }),
+            placements: Dictionary(uniqueKeysWithValues: state.placements.values
+                .filter { $0.boardID == boardID }
+                .map { ($0.nodeID, MapPlacementValue($0)) })
+        )
+    }
+
     private static func board(row: Row) -> MapBoard? {
         guard let id = row["id"] as String?,
               let name = row["name"] as String?,
@@ -785,6 +1251,12 @@ public struct MapRepository: Sendable {
             forkEventID: row["fork_event_id"],
             mergeBaseEventID: row["merge_base_event_id"]
         )
+    }
+
+    private static func sourceID(for node: MapNode) -> String {
+        if let taskID = node.taskID { return "task:\(taskID)" }
+        if let root = node.rootSessionKey { return "implicit:\(root)" }
+        return node.id
     }
 
     private static func node(row: Row) -> MapNode? {
@@ -877,6 +1349,12 @@ public struct MapRepository: Sendable {
         guard !name.isEmpty, name.count <= 80 else { throw MapRepositoryError.invalidName }
         return name
     }
+
+    private struct MergeAudit: Codable {
+        let branchID: String
+        let baseEventID: Int64?
+        let conflictChoices: [String: MapMergeChoice]
+    }
 }
 
 public enum MapRepositoryError: Error, Equatable, LocalizedError, Sendable {
@@ -884,6 +1362,10 @@ public enum MapRepositoryError: Error, Equatable, LocalizedError, Sendable {
     case nodeNotFound(String)
     case protectedBoard
     case invalidName
+    case invalidBoardOrder
+    case notABranch(String)
+    case unresolvedConflict(String)
+    case mergeStale
 
     public var errorDescription: String? {
         switch self {
@@ -891,6 +1373,19 @@ public enum MapRepositoryError: Error, Equatable, LocalizedError, Sendable {
         case .nodeNotFound(let id): "Map node \(id) was not found."
         case .protectedBoard: "All boards is protected."
         case .invalidName: "A board name must contain 1–80 characters."
+        case .invalidBoardOrder: "Map board order must name every active custom board once."
+        case .notABranch(let id): "Map board \(id) is not a history branch."
+        case .unresolvedConflict(let id): "Map merge conflict \(id) has no choice."
+        case .mergeStale: "The parent or branch changed while the merge was being reviewed."
         }
+    }
+}
+
+private extension MapLayoutSnapshot {
+    func same(as other: MapLayoutSnapshot) -> Bool {
+        boardID == other.boardID
+            && rule == other.rule
+            && memberships == other.memberships
+            && placements == other.placements
     }
 }

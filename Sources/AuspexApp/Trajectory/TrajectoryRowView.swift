@@ -69,6 +69,7 @@ struct TrajectoryRowView: View, Equatable {
     let marker: TrajectoryRowMarker
     let isSelected: Bool
     let isDimmed: Bool
+    let isPlayhead: Bool
     /// Which lane of a merged flight this row belongs to, or `nil` when the
     /// flight is about one session and every row is the same lane.
     var lane: Int?
@@ -86,6 +87,7 @@ struct TrajectoryRowView: View, Equatable {
             && lhs.marker == rhs.marker
             && lhs.isSelected == rhs.isSelected
             && lhs.isDimmed == rhs.isDimmed
+            && lhs.isPlayhead == rhs.isPlayhead
             && lhs.lane == rhs.lane
     }
 
@@ -105,6 +107,15 @@ struct TrajectoryRowView: View, Equatable {
             }
             TrajectoryRoleChip(role: step.role, isError: step.isError)
                 .frame(width: Self.chipWidth, alignment: .leading)
+            if isPlayhead {
+                Text("PLAYHEAD")
+                    .auspexLabel(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.accent)
+                    .padding(.horizontal, 5)
+                    .frame(height: 17)
+                    .background(AuspexPalette.accent.opacity(0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            }
             content
             Spacer(minLength: 6)
             trailing
@@ -119,8 +130,10 @@ struct TrajectoryRowView: View, Equatable {
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(
-                    isSelected ? AuspexPalette.text.opacity(0.22) : .clear,
-                    lineWidth: 1
+                    isPlayhead
+                        ? AuspexPalette.accent
+                        : (isSelected ? AuspexPalette.text.opacity(0.22) : .clear),
+                    lineWidth: isPlayhead ? 1.5 : 1
                 )
         )
         .opacity(isDimmed ? 0.4 : 1)

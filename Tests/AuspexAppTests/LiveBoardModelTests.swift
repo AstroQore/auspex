@@ -167,7 +167,7 @@ struct LiveBoardModelTests {
         let model = LiveBoardModel()
         var sessions: [SessionSnapshot] = []
         // Fifty frames, each one session longer, applied without yielding —
-        // exactly what an ingest burst looks like after the 120 ms coalescing
+        // exactly what an ingest burst looks like after the half-second coalescing
         // has already thinned it.
         for index in 1...50 {
             sessions.append(session("\(index)", cwd: "/Users/example/Code/auspex"))

@@ -220,6 +220,31 @@ struct BoardInvalidationTests {
         #expect(model.selectedSession?.turnCount == 9)
     }
 
+    @Test("Another session changing leaves the selected detail values alone")
+    func unrelatedSessionDoesNotTouchTheTracePane() async {
+        let model = LiveBoardModel()
+        var sessions = sessions
+        model.apply(frame(sessions))
+        await model.settle()
+        model.selectedKey = sessions[0].key
+
+        sessions[1].toolCallCount = 9
+        #expect(
+            await !invalidates(
+                reading: {
+                    _ = model.selectedSession
+                    _ = model.selectedParent
+                    _ = model.selectedChildren
+                    _ = model.selectedProjectName
+                    _ = model.selectedProjectKey
+                    _ = model.selectedUnit
+                    _ = model.selectedAttention
+                },
+                during: applying(frame(sessions), to: model)
+            )
+        )
+    }
+
     @Test("A frame that changes nothing leaves the sidebar's tree alone")
     func idempotentFrameDoesNotTouchTheTree() async {
         let projects = ProjectsModel()

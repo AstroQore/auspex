@@ -10,8 +10,8 @@ import Foundation
 /// The live board re-reads a session's event window on every frame that moved
 /// it, and rebuilding a five-thousand-step trajectory four times a second is
 /// the kind of cost that shows up as a warm laptop rather than as a dropped
-/// frame. So this is a *resumable* fold: ``append(_:)`` takes only the events
-/// after ``lastEventID`` and patches what is already there — a tool call's
+/// frame. So this is a *resumable* fold: ``append(_:)`` takes only events it
+/// has not seen and patches what is already there — a tool call's
 /// finish reaches back into the step its start opened, a `usage` record lands
 /// on the request it belongs to, and everything before the open turn is never
 /// touched again.
@@ -38,6 +38,9 @@ public struct TrajectoryBuilder: Sendable {
     /// The highest event row id folded in so far, so a caller knows what to
     /// ask the store for next. `nil` before the first event.
     public private(set) var lastEventID: Int64?
+    /// Durable ids already folded. Playback order is source-time order, so ids
+    /// are not necessarily monotonic inside a batch spanning one task.
+    private var seenEventIDs: Set<Int64> = []
 
     // MARK: Fold state
 
@@ -78,16 +81,15 @@ public struct TrajectoryBuilder: Sendable {
         return builder
     }
 
-    /// Folds the next run of events. They must be in row-id order and must not
-    /// repeat anything already folded; anything at or below ``lastEventID`` is
-    /// skipped rather than double-counted, so a caller that re-reads an
-    /// overlapping window is safe.
+    /// Folds the next run of events in the order the presentation uses.
+    /// Repeated durable ids are skipped, while ``lastEventID`` remains the
+    /// highest persisted id so a caller can still tail the database by index.
     public mutating func append(_ events: [StoredEvent]) {
         guard !events.isEmpty else { return }
         steps.reserveCapacity(steps.count + events.count)
         for event in events {
-            if let last = lastEventID, event.id <= last { continue }
-            lastEventID = event.id
+            guard seenEventIDs.insert(event.id).inserted else { continue }
+            lastEventID = max(lastEventID ?? event.id, event.id)
             fold(event)
         }
         publishTurn()

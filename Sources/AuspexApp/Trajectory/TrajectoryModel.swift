@@ -1,8 +1,42 @@
 import AgentSessionKit
 import AgentSessionLive
 import AuspexCore
+import CoreGraphics
 import Foundation
 import Observation
+
+enum FlightPresentation: String, CaseIterable, Identifiable {
+    case graph
+    case trace
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+enum FlightGraphCamera: String, CaseIterable, Identifiable {
+    case overview
+    case follow
+    case manual
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+struct FlightGraphAfterglow: Identifiable, Hashable, Sendable {
+    let id: String
+    let session: SessionKey
+    let name: String
+    let kind: ToolKind
+    var count: Int
+    var isError: Bool
+    var elapsed: TimeInterval
+    var resumedAt: Date?
+    var lastCompletionAt: Date
+
+    var ttl: TimeInterval { isError ? 4 : 2.5 }
+
+    func age(at now: Date) -> TimeInterval {
+        elapsed + (resumedAt.map { max(0, now.timeIntervalSince($0)) } ?? 0)
+    }
+}
 
 /// Which face of the inspector is showing.
 enum TrajectoryTab: String, CaseIterable, Identifiable {
@@ -89,6 +123,25 @@ final class TrajectoryModel {
         }
     }
 
+    var presentation = FlightPresentation.graph {
+        didSet {
+            guard oldValue != presentation else { return }
+            if presentation == .trace, let selectedAgentKey {
+                selectedID = steps.last { $0.session == selectedAgentKey }?.id
+            }
+        }
+    }
+    var graphCamera = FlightGraphCamera.overview
+    var selectedAgentKey: SessionKey?
+    var graphPan: CGSize = .zero
+    var graphZoom: CGFloat = 1
+    private(set) var graphFrame: FlightGraphFrame?
+    private(set) var graphAfterglows: [FlightGraphAfterglow] = []
+    /// Live graph motion expires ten seconds after the newest loaded event.
+    /// Active state remains visible; only ambient dashes/chips stop repainting.
+    private(set) var graphLiveMotionActive = false
+    private var graphMotionExpiryTask: Task<Void, Never>?
+
     var scope: Scope = .session {
         didSet {
             guard oldValue != scope else { return }
@@ -129,6 +182,13 @@ final class TrajectoryModel {
         guard scope == .task, !members.isEmpty else { return key.map { [$0] } ?? [] }
         return members
     }
+    /// Every stored event behind the fold. Steps are a presentation subset;
+    /// playback indexes the source facts themselves, including usage and
+    /// finishes that patch an earlier row.
+    private(set) var events: [StoredEvent] = []
+    /// Canonical playback index for an event id. Row ids are durable cursors,
+    /// not media time, so playhead comparisons go through this map.
+    private var playbackEventIndexByID: [Int64: Int] = [:]
     /// Every step, oldest first.
     private(set) var steps: [TrajectoryStep] = []
     private(set) var turns: [TrajectoryTurn] = []
@@ -183,6 +243,21 @@ final class TrajectoryModel {
     /// Whether the list scrolls to the newest step as steps arrive.
     var followsTail = true
 
+    private(set) var playbackPosition = PlaybackPosition.live
+    private(set) var playbackSpeed = PlaybackSpeed.normal
+    private(set) var isPlaying = false
+    private(set) var playbackMoment: MapPlaybackMoment?
+    private(set) var playheadStepID: TrajectoryStep.ID?
+
+    var isHistory: Bool { playbackPosition.historyIndex != nil }
+    var historyIndex: Int { playbackPosition.historyIndex ?? max(0, events.count - 1) }
+    var historyCount: Int { events.count }
+    var eventsAhead: Int { playbackMoment?.eventsAhead ?? 0 }
+    var playheadFraction: Double? {
+        guard let index = playbackPosition.historyIndex, !events.isEmpty else { return nil }
+        return Double(index + 1) / Double(events.count)
+    }
+
     /// The step the inspector is about.
     var selectedID: TrajectoryStep.ID? {
         didSet { if oldValue != selectedID { selectionChanged() } }
@@ -207,6 +282,13 @@ final class TrajectoryModel {
     private var isAlive = false
     private var loadTask: Task<Void, Never>?
     private var rawTask: Task<Void, Never>?
+    private var playbackBuildTask: Task<Void, Never>?
+    private var graphBuildTask: Task<Void, Never>?
+    private var playbackTask: Task<Void, Never>?
+    private var playbackArchive: MapPlaybackArchive?
+    private var graphArchive: FlightGraphArchive?
+    private var graphBuildGeneration: UInt64 = 0
+    private var graphToolStarts: [String: (session: SessionKey, name: String, kind: ToolKind)] = [:]
     /// Step id → index into ``steps``, so the selection is a lookup rather
     /// than a scan of five thousand values per render.
     private var indexByID: [TrajectoryStep.ID: Int] = [:]
@@ -241,7 +323,7 @@ final class TrajectoryModel {
     private func move(by offset: Int) {
         guard !rows.isEmpty else { return }
         guard let current = selectedID,
-              let position = rows.firstIndex(where: { $0.id == current })
+            let position = rows.firstIndex(where: { $0.id == current })
         else {
             selectedID = offset > 0 ? rows.first?.id : rows.last?.id
             return
@@ -251,6 +333,7 @@ final class TrajectoryModel {
     }
 
     private func selectionChanged() {
+        if let session = selectedStep?.session { selectedAgentKey = session }
         raw = nil
         rawTask?.cancel()
         rawTask = nil
@@ -286,6 +369,8 @@ final class TrajectoryModel {
         rawTask?.cancel()
         rawTask = nil
         builder = TrajectoryBuilder()
+        events = []
+        playbackEventIndexByID = [:]
         steps = []
         contextLine = .empty
         turns = []
@@ -306,6 +391,25 @@ final class TrajectoryModel {
         isTruncated = false
         loadedEventCount = 0
         followsTail = true
+        playbackPosition = .live
+        playbackMoment = nil
+        playheadStepID = nil
+        isPlaying = false
+        playbackArchive = nil
+        graphArchive = nil
+        graphFrame = nil
+        graphAfterglows = []
+        graphLiveMotionActive = false
+        graphMotionExpiryTask?.cancel()
+        graphMotionExpiryTask = nil
+        graphToolStarts = [:]
+        selectedAgentKey = nil
+        graphCamera = .overview
+        graphPan = .zero
+        graphZoom = 1
+        playbackBuildTask?.cancel()
+        graphBuildTask?.cancel()
+        playbackTask?.cancel()
         isLoading = key != nil
         lanes = []
         load()
@@ -343,6 +447,7 @@ final class TrajectoryModel {
         guard loadTask == nil else { return }
 
         let after = builder.lastEventID ?? 0
+        let existingEvents = events
         let limit = Self.eventWindow - loadedEventCount
         guard limit > 0 else {
             isTruncated = true
@@ -356,8 +461,13 @@ final class TrajectoryModel {
             try? await Task.sleep(for: .milliseconds(60))
             guard !Task.isCancelled else { return }
 
-            let events = await Task.detached(priority: .userInitiated) { () -> [StoredEvent] in
-                (try? repository.events(keys: keys, after: after, limit: limit)) ?? []
+            let loaded = await Task.detached(priority: .userInitiated) {
+                let fetched =
+                    (try? repository.events(keys: keys, after: after, limit: limit)) ?? []
+                let orderedFetched = StoredEvent.orderedForPlayback(fetched)
+                let merged = StoredEvent.orderedForPlayback(existingEvents + orderedFetched)
+                let canAppend = Array(merged.prefix(existingEvents.count)) == existingEvents
+                return (orderedFetched, merged, canAppend)
             }.value
 
             guard !Task.isCancelled else { return }
@@ -365,11 +475,35 @@ final class TrajectoryModel {
                 guard let self, self.key == key else { return }
                 self.loadTask = nil
                 self.isLoading = false
-                guard !events.isEmpty else { return }
-                self.loadedEventCount += events.count
+                let (newEvents, mergedEvents, canAppend) = loaded
+                guard !newEvents.isEmpty else { return }
+                let retainedHistoryEventID = self.playbackPosition.historyIndex.flatMap { index in
+                    existingEvents.indices.contains(index) ? existingEvents[index].id : nil
+                }
+                let animatesCompletions = self.loadedEventCount > 0 && !self.isHistory
+                self.loadedEventCount = mergedEvents.count
                 if self.loadedEventCount >= Self.eventWindow { self.isTruncated = true }
-                self.builder.append(events)
+                self.recordGraphEvents(newEvents, animatesCompletions: animatesCompletions)
+                if !self.isHistory { self.armGraphLiveMotion() }
+                self.events = mergedEvents
+                self.playbackEventIndexByID = Dictionary(
+                    uniqueKeysWithValues: mergedEvents.enumerated().map {
+                        ($0.element.id, $0.offset)
+                    }
+                )
+                if canAppend {
+                    self.builder.append(newEvents)
+                } else {
+                    self.builder = TrajectoryBuilder.build(from: mergedEvents)
+                }
                 self.adopt()
+                self.rebuildGraphArchive()
+                if self.isHistory {
+                    self.rebuildPlaybackArchive(
+                        preserving: self.historyIndex,
+                        eventID: retainedHistoryEventID
+                    )
+                }
             }
         }
     }
@@ -404,8 +538,19 @@ final class TrajectoryModel {
     /// clock meet.
     private func relayout() {
         let now = isAlive ? Date() : nil
-        spans = TrajectoryLayout.spans(for: steps, scale: scale, now: now)
-        ticks = TrajectoryLayout.ticks(for: steps, scale: scale, now: now)
+        let eventIDs = events.map(\.id)
+        spans = TrajectoryLayout.spans(
+            for: steps,
+            scale: scale,
+            now: now,
+            eventIDs: eventIDs
+        )
+        ticks = TrajectoryLayout.ticks(
+            for: steps,
+            scale: scale,
+            now: now,
+            eventCount: events.count
+        )
         cursor = TrajectoryLayout.cursor(for: steps, scale: scale, now: now)
         // Against the spans, not against the clock: the readings are anchored
         // to step indices precisely so they land in the right place under all
@@ -494,6 +639,284 @@ final class TrajectoryModel {
         rawTask?.cancel()
         loadTask = nil
         rawTask = nil
+        playbackBuildTask?.cancel()
+        graphBuildTask?.cancel()
+        playbackTask?.cancel()
+        graphMotionExpiryTask?.cancel()
+        playbackBuildTask = nil
+        graphBuildTask = nil
+        playbackTask = nil
+        graphMotionExpiryTask = nil
+        graphLiveMotionActive = false
+        isPlaying = false
+    }
+
+    // MARK: - Event playback
+
+    func setPlaybackSpeed(_ speed: PlaybackSpeed) {
+        playbackSpeed = speed
+        if isPlaying { startPlaybackLoop() }
+    }
+
+    func enterHistory(at index: Int? = nil) {
+        guard !events.isEmpty else { return }
+        scale = .events
+        graphAfterglows = []
+        pauseGraphMotion()
+        rebuildPlaybackArchive(preserving: index ?? events.count - 1)
+    }
+
+    func togglePlayback() {
+        if !isHistory {
+            enterHistory()
+            return
+        }
+        isPlaying.toggle()
+        if isPlaying {
+            resumeGraphMotion()
+            startPlaybackLoop()
+        } else {
+            pauseGraphMotion()
+            playbackTask?.cancel()
+        }
+    }
+
+    func seek(to requested: Int) {
+        seek(to: requested, animating: false)
+    }
+
+    private func seek(to requested: Int, animating: Bool) {
+        guard let archive = playbackArchive, !archive.isEmpty else {
+            rebuildPlaybackArchive(preserving: requested)
+            return
+        }
+        let index = min(max(0, requested), archive.count - 1)
+        if !animating {
+            graphAfterglows = []
+            isPlaying = false
+            playbackTask?.cancel()
+            pauseGraphMotion()
+        } else if events.indices.contains(index) {
+            recordGraphCompletion(events[index])
+        }
+        playbackPosition = .history(index: index)
+        guard let moment = archive.moment(at: index) else { return }
+        playbackMoment = moment
+        graphFrame = graphArchive?.frame(at: index, root: key)
+        playheadStepID = steps.last {
+            (playbackEventIndexByID[$0.id] ?? .max) <= index
+        }?.id
+    }
+
+    func jumpToLive() {
+        playbackTask?.cancel()
+        playbackTask = nil
+        isPlaying = false
+        playbackPosition = .live
+        playbackMoment = nil
+        playheadStepID = nil
+        graphAfterglows = []
+        graphFrame = graphArchive.flatMap { $0.frame(at: $0.count - 1, root: key) }
+    }
+
+    func isAfterPlayhead(_ step: TrajectoryStep) -> Bool {
+        guard let index = playbackPosition.historyIndex,
+            events.indices.contains(index)
+        else { return false }
+        return (playbackEventIndexByID[step.id] ?? .max) > index
+    }
+
+    func seek(to step: TrajectoryStep) {
+        guard let index = events.firstIndex(where: { $0.id == step.id }) else { return }
+        seek(to: index)
+    }
+
+    func setGraphCamera(_ camera: FlightGraphCamera) {
+        graphCamera = camera
+        if camera != .manual {
+            graphPan = .zero
+            if camera == .overview { graphZoom = 1 }
+        }
+    }
+
+    func updateGraphViewport(pan: CGSize, zoom: CGFloat, becomesManual: Bool = true) {
+        graphPan = pan
+        graphZoom = min(2.5, max(0.35, zoom))
+        if becomesManual { graphCamera = .manual }
+    }
+
+    func selectGraphAgent(_ key: SessionKey) {
+        selectedAgentKey = key
+    }
+
+    func moveGraphSelection(by offset: Int) {
+        guard let nodes = graphFrame?.nodes, !nodes.isEmpty else { return }
+        guard let selectedAgentKey,
+            let current = nodes.firstIndex(where: { $0.key == selectedAgentKey })
+        else {
+            self.selectedAgentKey = offset >= 0 ? nodes.first?.key : nodes.last?.key
+            return
+        }
+        self.selectedAgentKey = nodes[min(max(0, current + offset), nodes.count - 1)].key
+    }
+
+    func activeGraphAfterglows(at now: Date) -> [(FlightGraphAfterglow, Double)] {
+        graphAfterglows.compactMap { item in
+            let age = item.age(at: now)
+            guard age < item.ttl else { return nil }
+            return (item, max(0, 1 - age / item.ttl))
+        }
+    }
+
+    private func rebuildGraphArchive() {
+        let events = self.events
+        let root = key
+        graphBuildGeneration &+= 1
+        let request = graphBuildGeneration
+        graphBuildTask?.cancel()
+        graphBuildTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            let archive = await Task.detached(priority: .userInitiated) {
+                FlightGraphArchive(events: events)
+            }.value
+            guard !Task.isCancelled, let self, graphBuildGeneration == request else { return }
+            graphArchive = archive
+            graphBuildTask = nil
+            let index = isHistory ? historyIndex : max(0, archive.count - 1)
+            graphFrame = archive.frame(at: index, root: root)
+        }
+    }
+
+    private func recordGraphEvents(
+        _ events: [StoredEvent],
+        animatesCompletions: Bool
+    ) {
+        for event in events {
+            guard let kind = event.kind else { continue }
+            switch kind {
+            case .toolCallStarted(let id, let name, let kind, _):
+                graphToolStarts[graphToolKey(event.session, id)] = (event.session, name, kind)
+            case .toolCallFinished:
+                if animatesCompletions { recordGraphCompletion(event) }
+            default:
+                break
+            }
+        }
+    }
+
+    private func recordGraphCompletion(_ event: StoredEvent) {
+        guard case .toolCallFinished(let id, let isError) = event.kind,
+            let call = graphToolStarts[graphToolKey(event.session, id)]
+        else { return }
+        let now = Date()
+        if let index = graphAfterglows.lastIndex(where: {
+            $0.session == call.session
+                && $0.name.caseInsensitiveCompare(call.name) == .orderedSame
+                && event.timestamp.timeIntervalSince($0.lastCompletionAt) <= 2.5
+        }) {
+            var item = graphAfterglows[index]
+            item.count += 1
+            item.isError = item.isError || isError
+            item.elapsed = 0
+            item.resumedAt = now
+            item.lastCompletionAt = event.timestamp
+            graphAfterglows[index] = item
+        } else {
+            graphAfterglows.append(
+                FlightGraphAfterglow(
+                    id: "\(call.session.description)/\(event.id)",
+                    session: call.session,
+                    name: call.name,
+                    kind: call.kind,
+                    count: 1,
+                    isError: isError,
+                    elapsed: 0,
+                    resumedAt: now,
+                    lastCompletionAt: event.timestamp
+                ))
+        }
+        let grouped = Dictionary(
+            grouping: graphAfterglows.indices,
+            by: {
+                graphAfterglows[$0].session
+            })
+        let keep = Set(
+            grouped.values.flatMap { indices in
+                indices.sorted {
+                    graphAfterglows[$0].lastCompletionAt > graphAfterglows[$1].lastCompletionAt
+                }
+                .prefix(3)
+            })
+        graphAfterglows = graphAfterglows.indices.compactMap {
+            keep.contains($0) ? graphAfterglows[$0] : nil
+        }
+    }
+
+    private func pauseGraphMotion() {
+        let now = Date()
+        for index in graphAfterglows.indices {
+            guard let resumed = graphAfterglows[index].resumedAt else { continue }
+            graphAfterglows[index].elapsed += max(0, now.timeIntervalSince(resumed))
+            graphAfterglows[index].resumedAt = nil
+        }
+    }
+
+    private func resumeGraphMotion() {
+        let now = Date()
+        for index in graphAfterglows.indices where graphAfterglows[index].resumedAt == nil {
+            graphAfterglows[index].resumedAt = now
+        }
+    }
+
+    private func graphToolKey(_ session: SessionKey, _ id: String) -> String {
+        session.description + "\u{1f}" + id
+    }
+
+    private func armGraphLiveMotion() {
+        graphLiveMotionActive = true
+        graphMotionExpiryTask?.cancel()
+        graphMotionExpiryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            graphLiveMotionActive = false
+            graphMotionExpiryTask = nil
+        }
+    }
+
+    private func rebuildPlaybackArchive(preserving index: Int, eventID: Int64? = nil) {
+        let events = self.events
+        playbackBuildTask?.cancel()
+        playbackBuildTask = Task { [weak self] in
+            let archive = await Task.detached(priority: .userInitiated) {
+                MapPlaybackArchive(sessionEvents: events, boardEvents: [])
+            }.value
+            guard !Task.isCancelled, let self else { return }
+            playbackArchive = archive
+            playbackBuildTask = nil
+            let restored = eventID.flatMap { id in events.firstIndex { $0.id == id } }
+            seek(to: restored ?? min(index, max(0, archive.count - 1)))
+        }
+    }
+
+    private func startPlaybackLoop() {
+        playbackTask?.cancel()
+        guard isPlaying else { return }
+        let speed = playbackSpeed
+        playbackTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: speed.interval)
+                guard !Task.isCancelled, let self,
+                    let index = playbackPosition.historyIndex
+                else { return }
+                let next = index + 1
+                if next >= events.count {
+                    jumpToLive()
+                    return
+                }
+                seek(to: next, animating: true)
+            }
+        }
     }
 
     // MARK: - Facts for the header

@@ -150,17 +150,17 @@ struct WindowCostTests {
 
     // MARK: - How often a frame is applied
 
-    @Test("a small board still runs at 8 Hz")
-    func smallBoardsKeepTheirFrameRate() {
-        #expect(LiveBoardModel.frameInterval(forSessions: 0) == .milliseconds(120))
-        #expect(LiveBoardModel.frameInterval(forSessions: 12) == .milliseconds(120))
-        #expect(LiveBoardModel.frameInterval(forSessions: 40) == .milliseconds(120))
+    @Test("small boards coalesce bursts at the half-second freshness budget")
+    func smallBoardsCoalesceBursts() {
+        #expect(LiveBoardModel.frameInterval(forSessions: 0) == .milliseconds(500))
+        #expect(LiveBoardModel.frameInterval(forSessions: 12) == .milliseconds(500))
+        #expect(LiveBoardModel.frameInterval(forSessions: 40) == .milliseconds(500))
     }
 
     @Test("a big board is paced, and never slower than half a second")
     func bigBoardsArePaced() {
         // The size the report was made at.
-        #expect(LiveBoardModel.frameInterval(forSessions: 81) > .milliseconds(120))
+        #expect(LiveBoardModel.frameInterval(forSessions: 81) == .milliseconds(500))
         #expect(LiveBoardModel.frameInterval(forSessions: 170) == .milliseconds(500))
         // `AGENTS.md` 4.1: the board updates within half a second during a
         // burst. Whatever the size, the pacing may not break that.

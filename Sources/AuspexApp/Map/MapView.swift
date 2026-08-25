@@ -9,6 +9,7 @@ struct MapView: View {
     @State private var commands = MapCanvasCommands()
     @State private var createsBoard = false
     @State private var editsBoard = false
+    @State private var showsMerge = false
     @Environment(AppEnvironment.self) private var environment
 
     var body: some View {
@@ -22,7 +23,13 @@ struct MapView: View {
                 map: map,
                 selectedUnitID: board.selectedUnit?.id,
                 onCreate: { createsBoard = true },
-                onEdit: { editsBoard = true }
+                onEdit: { editsBoard = true },
+                onFork: { map.forkAtPlayhead() },
+                onMerge: {
+                    showsMerge = true
+                    map.prepareMerge()
+                },
+                taskError: environment.tasks.writeErrorDescription
             )
             ZStack {
                 MapCanvasRepresentable(
@@ -30,16 +37,26 @@ struct MapView: View {
                     frames: visibleFrames,
                     dependencies: visibleDependencies,
                     selectedNodeID: selectedNodeID,
+                    expandedNodeIDs: map.expandedNodeIDs,
                     viewport: map.viewport,
+                    isReadOnly: map.isHistory,
                     commands: commands,
                     onSelect: { board.selectedKey = $0 },
                     onOpenFlight: { key in
                         board.selectedKey = key
                         board.openTrajectory()
                     },
-                    onMove: { map.move(nodeID: $0, to: $1) },
-                    onSetDependencies: { taskID, ids in
-                        environment.tasks.setDependencies(ids, of: taskID)
+                    onEscape: { board.viewMode = .board },
+                    onMove: { if !map.isHistory { map.move(nodeID: $0, to: $1) } },
+                    onToggleExpanded: { map.toggleExpanded(nodeID: $0) },
+                    onSetDependencies: { taskID, ids, version in
+                        if !map.isHistory {
+                            environment.tasks.setDependencies(
+                                ids,
+                                of: taskID,
+                                expectedVersion: version
+                            )
+                        }
                     },
                     onViewport: { map.saveViewport(center: $0, zoom: $1) }
                 )
@@ -47,7 +64,7 @@ struct MapView: View {
                 controls
                 minimap
             }
-            MapLiveStrip(cards: visibleCards)
+            MapPlaybackStrip(map: map, cards: visibleCards)
         }
         .background(AuspexPalette.canvas)
         .sheet(isPresented: $createsBoard) {
@@ -60,6 +77,11 @@ struct MapView: View {
                     .auspexNoInitialFocus()
             }
         }
+        .sheet(isPresented: $showsMerge, onDismiss: { map.cancelMerge() }) {
+            MapMergeSheet(map: map, isPresented: $showsMerge)
+                .auspexNoInitialFocus()
+        }
+        .onDisappear { map.pausePlayback() }
     }
 
     private var visibleCards: [MapCardValue] {
@@ -136,7 +158,7 @@ struct MapView: View {
 
     private var emptyState: some View {
         EmptyStateView(
-            symbol: BoardViewMode.map.systemImage,
+            symbol: BoardViewMode.perch.systemImage,
             title: map.isLoading ? "Placing the map…" : "This board is empty",
             detail: map.selectedBoard?.isProtected == true
                 ? "A card appears for every piece of work Auspex can see."
@@ -152,6 +174,9 @@ private struct MapToolbar: View {
     let selectedUnitID: String?
     let onCreate: () -> Void
     let onEdit: () -> Void
+    let onFork: () -> Void
+    let onMerge: () -> Void
+    let taskError: String?
 
     var body: some View {
         HStack(spacing: 10) {
@@ -167,8 +192,18 @@ private struct MapToolbar: View {
                         }
                     }
                 }
-                Divider()
-                Button("New board…", systemImage: "plus", action: onCreate)
+                if !map.isHistory, !map.deletedBoards.isEmpty {
+                    Divider()
+                    Menu("Recently deleted") {
+                        ForEach(map.deletedBoards) { board in
+                            Button("Restore \(board.name)") { map.restoreBoard(board.id) }
+                        }
+                    }
+                }
+                if !map.isHistory {
+                    Divider()
+                    Button("New board…", systemImage: "plus", action: onCreate)
+                }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "square.on.square")
@@ -193,7 +228,20 @@ private struct MapToolbar: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
 
-            if let board = map.selectedBoard, !board.isProtected {
+            if map.isHistory {
+                Button(action: onFork) {
+                    Label("Fork board here", systemImage: "arrow.triangle.branch")
+                        .font(AuspexType.caption)
+                }
+                .buttonStyle(.auspex)
+            } else if let board = map.selectedBoard, !board.isProtected {
+                if map.canMergeSelectedBoard {
+                    Button(action: onMerge) {
+                        Label("Merge to parent", systemImage: "arrow.triangle.merge")
+                            .font(AuspexType.caption)
+                    }
+                    .buttonStyle(.auspex)
+                }
                 if let selectedUnitID {
                     Button {
                         if let node = map.cards.first(where: { $0.unitID == selectedUnitID }) {
@@ -241,6 +289,11 @@ private struct MapToolbar: View {
                     .foregroundStyle(AuspexPalette.statePermission)
                     .help(error)
                     .accessibilityLabel(error)
+            } else if let taskError {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(AuspexPalette.statePermission)
+                    .help(taskError)
+                    .accessibilityLabel(taskError)
             }
         }
         .padding(.horizontal, 14)
@@ -252,46 +305,225 @@ private struct MapToolbar: View {
     }
 }
 
-private struct MapLiveStrip: View {
+private struct MapMergeSheet: View {
+    @Bindable var map: MapModel
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Merge Perch branch").font(AuspexType.paneTitle)
+            Text(
+                "Only positions, membership overrides, and the rule tree are merged. Tasks, dependencies, agents, board names, and cameras are untouched."
+            )
+            .font(AuspexType.body)
+            .foregroundStyle(AuspexPalette.text2)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if map.isPreparingMerge {
+                ProgressView("Comparing the fork base, parent, and branch…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let plan = map.mergePlan {
+                HStack(spacing: 14) {
+                    MetaField(
+                        key: "automatic memberships", value: "\(plan.automaticMemberships.count)")
+                    MetaField(
+                        key: "automatic positions", value: "\(plan.automaticPlacements.count)")
+                    MetaField(key: "conflicts", value: "\(plan.conflicts.count)")
+                }
+                if plan.conflicts.isEmpty {
+                    EmptyStateView(
+                        symbol: "arrow.triangle.merge",
+                        title: "No conflicts",
+                        detail: "The branch can be merged without replacing later parent edits."
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(plan.conflicts) { conflict in
+                                conflictRow(conflict)
+                            }
+                        }
+                    }
+                    .frame(minHeight: 240, maxHeight: 420)
+                }
+            } else {
+                EmptyStateView(title: "The merge comparison could not be prepared.")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            HStack {
+                Button("Cancel", role: .cancel) { isPresented = false }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Merge") {
+                    map.applyMerge()
+                    isPresented = false
+                }
+                .disabled(!canApply)
+            }
+        }
+        .padding(20)
+        .frame(width: 620)
+        .frame(minHeight: 440)
+    }
+
+    private var canApply: Bool {
+        guard let plan = map.mergePlan else { return false }
+        return plan.conflicts.allSatisfy { map.mergeChoices[$0.id] != nil }
+    }
+
+    private func conflictRow(_ conflict: MapMergeConflict) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(conflict.field.rawValue.uppercased())
+                    .auspexLabel(AuspexType.labelSmall)
+                    .foregroundStyle(AuspexPalette.stateStale)
+                if let nodeID = conflict.nodeID {
+                    Text(String(nodeID.prefix(8)))
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                }
+                Spacer()
+                Picker(
+                    "Resolution",
+                    selection: Binding(
+                        get: { map.mergeChoices[conflict.id] },
+                        set: { if let value = $0 { map.choose(value, for: conflict.id) } }
+                    )
+                ) {
+                    Text("Choose…").tag(MapMergeChoice?.none)
+                    Text("Keep parent").tag(MapMergeChoice?.some(.parent))
+                    Text("Take branch").tag(MapMergeChoice?.some(.branch))
+                }
+                .labelsHidden()
+                .frame(width: 130)
+                .auspexSystemControlFocus()
+            }
+            HStack(spacing: 8) {
+                comparison("Parent", conflict.parentSummary)
+                comparison("Branch", conflict.branchSummary)
+            }
+        }
+        .padding(10)
+        .background(AuspexPalette.bg2)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func comparison(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).auspexLabel(AuspexType.labelSmall)
+            Text(value).font(AuspexType.caption).foregroundStyle(AuspexPalette.text2)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AuspexPalette.bg1)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+private struct MapPlaybackStrip: View {
+    @Bindable var map: MapModel
     let cards: [MapCardValue]
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "pause.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(AuspexPalette.text2)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(AuspexPalette.bg1))
-            HStack(spacing: 5) {
-                StateDot(color: AuspexPalette.stateWriting, glows: true)
-                Text("Live").font(AuspexType.pill).foregroundStyle(AuspexPalette.text)
-                Text("following").font(AuspexType.caption).foregroundStyle(AuspexPalette.text3)
+            Button {
+                map.togglePlayback()
+            } label: {
+                Image(systemName: map.isHistory && !map.isPlaying ? "play.fill" : "pause.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(AuspexPalette.text2)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(AuspexPalette.bg1))
             }
-            GeometryReader { geometry in
-                Canvas { context, size in
-                    let sorted = cards.compactMap(\.lastEventAt).sorted()
-                    guard let first = sorted.first, let last = sorted.last else { return }
-                    let span = max(1, last.timeIntervalSince(first))
-                    for (index, date) in sorted.enumerated() {
-                        let fraction = sorted.count == 1
-                            ? 1
-                            : date.timeIntervalSince(first) / span
-                        let height = CGFloat(5 + (index % 4) * 3)
-                        let rect = CGRect(
-                            x: fraction * max(0, size.width - 2),
-                            y: size.height - height,
-                            width: 2,
-                            height: height
-                        )
-                        context.fill(Path(rect), with: .color(AuspexPalette.stateTool.opacity(0.65)))
-                    }
+            .buttonStyle(.auspex)
+            .accessibilityLabel(map.isPlaying ? "Pause playback" : "Play history")
+            Menu {
+                ForEach(PlaybackSpeed.allCases, id: \.self) { speed in
+                    Button(speed.label) { map.setPlaybackSpeed(speed) }
                 }
-                .frame(width: geometry.size.width, height: 28)
+            } label: {
+                Text(map.playbackSpeed.label)
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text2)
+                    .frame(width: 28, height: 22)
             }
-            .frame(height: 28)
-            Text(cards.compactMap(\.lastEventAt).max().map(Self.time) ?? "—")
-                .font(AuspexType.monoSmall)
-                .foregroundStyle(AuspexPalette.text2)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            HStack(spacing: 5) {
+                StateDot(
+                    color: map.isHistory ? AuspexPalette.stateStale : AuspexPalette.stateWriting,
+                    glows: !map.isHistory
+                )
+                Text(map.isHistory ? "History" : "Live")
+                    .font(AuspexType.pill)
+                    .foregroundStyle(map.isHistory ? AuspexPalette.stateStale : AuspexPalette.text)
+                if map.isHistoryLoading {
+                    Text("indexing…").font(AuspexType.caption).foregroundStyle(AuspexPalette.text3)
+                } else if map.isHistory {
+                    Text("event \(map.historyIndex + 1) / \(map.historyCount)")
+                        .font(AuspexType.monoSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                } else {
+                    Text("following").font(AuspexType.caption).foregroundStyle(AuspexPalette.text3)
+                }
+            }
+            if map.historyCount > 1 {
+                Slider(
+                    value: Binding(
+                        get: { Double(map.historyIndex) },
+                        set: { map.seek(to: Int($0.rounded())) }
+                    ),
+                    in: 0...Double(map.historyCount - 1),
+                    step: 1
+                )
+                .tint(AuspexPalette.accent)
+                .auspexSystemControlFocus()
+                .accessibilityLabel("Perch history playhead")
+                .accessibilityValue("Event \(map.historyIndex + 1) of \(map.historyCount)")
+            } else {
+                GeometryReader { geometry in
+                    Canvas { context, size in
+                        let sorted = cards.compactMap(\.lastEventAt).sorted()
+                        guard let first = sorted.first, let last = sorted.last else { return }
+                        let span = max(1, last.timeIntervalSince(first))
+                        for (index, date) in sorted.enumerated() {
+                            let fraction =
+                                sorted.count == 1
+                                ? 1
+                                : date.timeIntervalSince(first) / span
+                            let height = CGFloat(5 + (index % 4) * 3)
+                            let rect = CGRect(
+                                x: fraction * max(0, size.width - 2),
+                                y: size.height - height,
+                                width: 2,
+                                height: height
+                            )
+                            context.fill(
+                                Path(rect),
+                                with: .color(AuspexPalette.stateTool.opacity(0.65))
+                            )
+                        }
+                    }
+                    .frame(width: geometry.size.width, height: 28)
+                }
+                .frame(height: 28)
+            }
+            Text(
+                map.playbackMoment.map { Self.time($0.event.timestamp) }
+                    ?? cards.compactMap(\.lastEventAt).max().map(Self.time) ?? "—"
+            )
+            .font(AuspexType.monoSmall)
+            .foregroundStyle(AuspexPalette.text2)
+            if map.isHistory {
+                Text("\(map.eventsAhead) ahead")
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                Button("Jump to Live") { map.jumpToLive() }
+                    .font(AuspexType.pill)
+                    .buttonStyle(.auspex(cornerRadius: 7))
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: 48)
@@ -330,7 +562,8 @@ private struct MapMinimap: View {
                     let origin = point(frame.rect.origin)
                     let rect = CGRect(
                         origin: origin,
-                        size: CGSize(width: frame.rect.width * scale, height: frame.rect.height * scale)
+                        size: CGSize(
+                            width: frame.rect.width * scale, height: frame.rect.height * scale)
                     )
                     context.stroke(
                         Path(roundedRect: rect, cornerRadius: 2),
@@ -359,10 +592,11 @@ private struct MapMinimap: View {
             .gesture(
                 DragGesture(minimumDistance: 0).onChanged { value in
                     let scale = min(size.width / world.width, size.height / world.height)
-                    onCenter(CGPoint(
-                        x: world.minX + value.location.x / scale,
-                        y: world.minY + value.location.y / scale
-                    ))
+                    onCenter(
+                        CGPoint(
+                            x: world.minX + value.location.x / scale,
+                            y: world.minY + value.location.y / scale
+                        ))
                 }
             )
             .help("The whole board. Click or drag to move the camera.")
@@ -387,7 +621,7 @@ private struct MapBoardCreateSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Map board").font(AuspexType.paneTitle)
+            Text("New Perch board").font(AuspexType.paneTitle)
             TextField("Board name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .auspexSystemControlFocus()
@@ -429,12 +663,26 @@ private struct MapBoardEditorSheet: View {
             TextField("Board name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .auspexSystemControlFocus()
-            MapRuleEditor(rule: Binding(
-                get: { map.selectedBoard?.rule },
-                set: { map.setRule($0) }
-            ))
+            MapRuleEditor(
+                rule: Binding(
+                    get: { map.selectedBoard?.rule },
+                    set: { map.setRule($0) }
+                ))
             Divider()
             HStack {
+                Button {
+                    map.moveSelectedBoard(by: -1)
+                } label: {
+                    Label("Move earlier", systemImage: "arrow.up")
+                }
+                .disabled(!map.canMoveSelectedBoardUp)
+                Button {
+                    map.moveSelectedBoard(by: 1)
+                } label: {
+                    Label("Move later", systemImage: "arrow.down")
+                }
+                .disabled(!map.canMoveSelectedBoardDown)
+                Divider().frame(height: 18)
                 if confirmsDelete {
                     Text("Delete this board?")
                         .font(AuspexType.caption)

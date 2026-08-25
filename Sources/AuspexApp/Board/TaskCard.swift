@@ -89,7 +89,6 @@ struct TaskCard: View, Equatable {
         .panelChrome(
             isSelected: isSelected,
             isHighlighted: attentionColour != nil,
-            breathes: AttentionStyle.breathes(unit.attention),
             highlightColor: attentionColour ?? style.color
         )
         .overlay(alignment: .leading) { rail(isOver: isOver) }

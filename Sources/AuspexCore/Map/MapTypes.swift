@@ -387,6 +387,8 @@ public enum MapHistoryKind: String, Codable, Sendable {
     case placementChanged
     case placementRemoved
     case taskSnapshot
+    case taskLinkChanged
+    case taskDependencyChanged
     case noticeSnapshot
     case noticeCleared
     case reportSnapshot
@@ -431,7 +433,9 @@ public struct MapHistoryEntry: Identifiable, Hashable, Sendable {
 public enum MapPlacementPlanner {
     private static let horizontalPitch: CGFloat = 320
     private static let verticalPitch: CGFloat = 148
-    private static let projectGap: CGFloat = 480
+    // Four full cards occupy 1,240 pt. Leave one card gutter between project
+    // origins so the derived frames do not overlap at their default density.
+    private static let projectPitch = CGSize(width: 1_440, height: 720)
 
     public struct Existing: Hashable, Sendable {
         public let point: CGPoint
@@ -449,8 +453,17 @@ public enum MapPlacementPlanner {
         let origin: CGPoint
         if let minX = project.map(\.point.x).min(), let minY = project.map(\.point.y).min() {
             origin = CGPoint(x: minX, y: minY)
-        } else if let maxX = existing.map({ $0.point.x }).max() {
-            origin = CGPoint(x: snap(maxX + projectGap), y: 0)
+        } else if !existing.isEmpty {
+            var projects: [String] = []
+            for item in existing {
+                let key = item.projectKey ?? "scratch"
+                if !projects.contains(key) { projects.append(key) }
+            }
+            let slot = projects.count
+            origin = CGPoint(
+                x: CGFloat(slot % 3) * projectPitch.width,
+                y: CGFloat(slot / 3) * projectPitch.height
+            )
         } else {
             origin = .zero
         }

@@ -41,7 +41,7 @@ struct SessionTraceView: View {
                 notice: model.notices[session.key].map(BoardRow.RowNotice.init),
                 // The board's own answer, not a second derivation: the banner
                 // here and the ring on the card are one claim.
-                attention: model.attention[session.key] ?? .none,
+                attention: model.selectedAttention,
                 reportedFocus: model.reports[session.key]
                     .flatMap { $0.isSuperseded(byAssistantAt: session.brief.lastAssistantAt) ? nil : $0 }?
                     .line,
@@ -62,11 +62,12 @@ struct SessionTraceView: View {
                 family: family(besides: session),
                 isTaskFamily: model.selectedUnit != nil
             )
-            if model.viewMode == .map,
+            if model.viewMode == .perch,
                let card = model.map.cards.first(where: { $0.leadKey == session.key }) {
                 MapInspectorContext(
                     card: card,
                     boardName: model.map.selectedBoard?.name ?? "All boards",
+                    mirrors: model.map.mirrorNamesByNode[card.id] ?? [],
                     family: model.selectedUnit?.members ?? []
                 )
             }
@@ -195,9 +196,7 @@ struct SessionTraceView: View {
             }
             .onChange(of: model.traceTailID) { _, tail in
                 guard model.followsTail, let tail else { return }
-                withAnimation(.easeOut(duration: 0.18)) {
-                    proxy.scrollTo(tail, anchor: .bottom)
-                }
+                proxy.scrollTo(tail, anchor: .bottom)
             }
         }
     }
@@ -310,6 +309,7 @@ struct SessionTraceView: View {
 private struct MapInspectorContext: View {
     let card: MapCardValue
     let boardName: String
+    let mirrors: [String]
     let family: [BoardRow]
 
     var body: some View {
@@ -342,7 +342,7 @@ private struct MapInspectorContext: View {
                 }
             }
             Divider().overlay(AuspexPalette.line)
-            Text("ON THE MAP").auspexLabel(AuspexType.labelSmall)
+            Text("ON THE PERCH").auspexLabel(AuspexType.labelSmall)
             HStack(spacing: 7) {
                 Image(systemName: "mappin.and.ellipse")
                     .font(.system(size: 10, weight: .medium))
@@ -354,6 +354,12 @@ private struct MapInspectorContext: View {
                 Text("\(Int(card.position.x)), \(Int(card.position.y))")
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
+            }
+            if mirrors.count > 1 {
+                Text("Mirrored on " + mirrors.joined(separator: " · "))
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(2)
             }
             Text("Double-click the card to open its Flight. Resume stays an explicit action above.")
                 .font(AuspexType.caption)

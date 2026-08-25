@@ -1,4 +1,5 @@
 import AgentSessionKit
+import AgentSessionLive
 import Foundation
 import Testing
 
@@ -158,5 +159,74 @@ struct MapRepositoryTests {
         _ = try repository.restoreBoard(id: board.id)
         #expect((try repository.boards()).contains { $0.id == board.id })
         #expect(try repository.history(boardID: board.id).count >= 3)
+    }
+
+    @Test("paused board keeps historical members missing from the live frame")
+    func pausedBoardKeepsMissingMembers() throws {
+        let repository = try repository()
+        let board = try repository.createBoard(
+            name: "Paused fork",
+            rule: .predicate(.harness(.codex))
+        )
+        let initial = try repository.synchronize(
+            boardID: board.id,
+            descriptors: [descriptor(source: "implicit:a", root: "codex:a")]
+        )
+        let node = try #require(initial.nodes.first)
+        _ = try repository.setRulesPaused(boardID: board.id, paused: true)
+
+        let paused = try repository.synchronize(boardID: board.id, descriptors: [])
+        let kept = try #require(paused.nodes.first { $0.node.id == node.node.id })
+        #expect(kept.membership.isVisible)
+        #expect(kept.placement?.point == node.placement?.point)
+    }
+
+    @Test("custom boards reorder atomically below All boards")
+    func reorderBoards() throws {
+        let repository = try repository()
+        let first = try repository.createBoard(name: "First")
+        let second = try repository.createBoard(name: "Second")
+        try repository.reorderBoards([second.id, first.id])
+        #expect(try repository.boards().map(\.id) == [MapBoard.allID, second.id, first.id])
+        #expect(throws: MapRepositoryError.invalidBoardOrder) {
+            try repository.reorderBoards([first.id])
+        }
+    }
+
+    @Test("complete history pagination reads through the tail")
+    func completeHistoryPagination() throws {
+        let repository = try repository()
+        let board = try repository.createBoard(name: "History pages")
+        _ = try repository.renameBoard(id: board.id, name: "History pages 2")
+        _ = try repository.renameBoard(id: board.id, name: "History pages 3")
+        let paged = try repository.allHistory(boardID: board.id, pageSize: 2)
+        let direct = try repository.history(boardID: board.id)
+        #expect(paged.count == direct.count)
+        #expect(paged.map(\.id) == paged.map(\.id).sorted())
+    }
+
+    @Test("task and attention writes enter board history in the same store")
+    func coordinationHistoryTriggers() throws {
+        let store = try AuspexStore(inMemory: true)
+        let tasks = TaskRepository(store: store)
+        let maps = MapRepository(store: store)
+        let key = Fixtures.key(.codex, "history")
+        let task = try tasks.createTask(
+            title: "Record history",
+            projectKey: "/Users/example/Code/auspex",
+            createdBy: key
+        )
+        _ = try tasks.recordNotice(
+            session: key,
+            kind: .needsReview,
+            message: "Check the Map"
+        )
+        _ = try tasks.recordReport(session: key, focus: "Building history", progress: "1/2")
+        try SessionRepository(store: store).acknowledge(key: key, reason: .opened)
+        let history = try maps.history()
+        #expect(history.contains { $0.kind == .taskSnapshot && $0.taskID == task.id })
+        #expect(history.contains { $0.kind == .noticeSnapshot && $0.sessionKey == key.description })
+        #expect(history.contains { $0.kind == .reportSnapshot && $0.sessionKey == key.description })
+        #expect(history.contains { $0.kind == .acknowledgementSnapshot && $0.sessionKey == key.description })
     }
 }

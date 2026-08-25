@@ -18,19 +18,25 @@ struct MapCanvasRepresentable: NSViewRepresentable {
     let frames: [MapProjectFrame]
     let dependencies: [MapDependencyValue]
     let selectedNodeID: String?
+    let expandedNodeIDs: Set<String>
     let viewport: MapViewport
+    let isReadOnly: Bool
     let commands: MapCanvasCommands
     let onSelect: (SessionKey) -> Void
     let onOpenFlight: (SessionKey) -> Void
+    let onEscape: () -> Void
     let onMove: (String, CGPoint) -> Void
-    let onSetDependencies: (Int64, [Int64]) -> Void
+    let onToggleExpanded: (String) -> Void
+    let onSetDependencies: (Int64, [Int64], Int64?) -> Void
     let onViewport: (CGPoint, CGFloat) -> Void
 
     func makeNSView(context: Context) -> MapCanvasNSView {
         let view = MapCanvasNSView(frame: .zero)
         view.onSelect = onSelect
         view.onOpenFlight = onOpenFlight
+        view.onEscape = onEscape
         view.onMove = onMove
+        view.onToggleExpanded = onToggleExpanded
         view.onSetDependencies = onSetDependencies
         view.onViewport = onViewport
         wire(commands, to: view)
@@ -40,7 +46,9 @@ struct MapCanvasRepresentable: NSViewRepresentable {
     func updateNSView(_ view: MapCanvasNSView, context: Context) {
         view.onSelect = onSelect
         view.onOpenFlight = onOpenFlight
+        view.onEscape = onEscape
         view.onMove = onMove
+        view.onToggleExpanded = onToggleExpanded
         view.onSetDependencies = onSetDependencies
         view.onViewport = onViewport
         view.update(
@@ -48,6 +56,8 @@ struct MapCanvasRepresentable: NSViewRepresentable {
             frames: frames,
             dependencies: dependencies,
             selectedNodeID: selectedNodeID,
+            expandedNodeIDs: expandedNodeIDs,
+            isReadOnly: isReadOnly,
             viewport: viewport
         )
         wire(commands, to: view)
@@ -72,7 +82,9 @@ struct MapCanvasRepresentable: NSViewRepresentable {
 /// views alive offscreen.
 @MainActor
 final class MapCanvasNSView: NSView {
-    static let worldInset: CGFloat = 640
+    /// Enough breathing room to pan past the first card without making a new
+    /// board open in the lower-right quadrant of an otherwise empty window.
+    static let worldInset: CGFloat = 120
     static let minimumWorld = CGSize(width: 6_000, height: 4_000)
     static let prefetch: CGFloat = 420
 
@@ -81,15 +93,21 @@ final class MapCanvasNSView: NSView {
 
     var onSelect: (SessionKey) -> Void = { _ in }
     var onOpenFlight: (SessionKey) -> Void = { _ in }
+    var onEscape: () -> Void = {}
     var onMove: (String, CGPoint) -> Void = { _, _ in }
-    var onSetDependencies: (Int64, [Int64]) -> Void = { _, _ in }
+    var onToggleExpanded: (String) -> Void = { _ in }
+    var onSetDependencies: (Int64, [Int64], Int64?) -> Void = { _, _, _ in }
     var onViewport: (CGPoint, CGFloat) -> Void = { _, _ in }
 
     private var boundsObserver: NSObjectProtocol?
     private var magnifyObserver: NSObjectProtocol?
     private var lastBoardID: String?
     private var lastViewportStamp: Date?
+    private var isReadOnly = false
     private var isApplyingViewport = false
+    private var keyboardCards: [MapCardValue] = []
+    private var keyboardSelectedNodeID: String?
+    private(set) var viewportApplyCount = 0
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -108,6 +126,7 @@ final class MapCanvasNSView: NSView {
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
+        scrollView.focusRingType = .none
         scrollView.contentView.postsBoundsChangedNotifications = true
         scrollView.canvas = self
         document.canvas = self
@@ -140,14 +159,21 @@ final class MapCanvasNSView: NSView {
         frames: [MapProjectFrame],
         dependencies: [MapDependencyValue],
         selectedNodeID: String?,
+        expandedNodeIDs: Set<String>,
+        isReadOnly: Bool,
         viewport: MapViewport
     ) {
+        self.isReadOnly = isReadOnly
+        keyboardCards = cards
+        keyboardSelectedNodeID = selectedNodeID
         resizeWorld(for: cards)
         document.update(
             cards: cards,
             frames: frames,
             dependencies: dependencies,
             selectedNodeID: selectedNodeID,
+            expandedNodeIDs: expandedNodeIDs,
+            isReadOnly: isReadOnly,
             zoom: scrollView.magnification
         )
         if lastBoardID != viewport.boardID || lastViewportStamp != viewport.updatedAt {
@@ -199,6 +225,78 @@ final class MapCanvasNSView: NSView {
         viewportMoved()
     }
 
+    func selectForKeyboard() {
+        guard keyboardSelectedNodeID == nil,
+            let first = keyboardCards.sorted(by: Self.readingOrder).first
+        else { return }
+        keyboardSelectedNodeID = first.id
+        onSelect(first.leadKey)
+    }
+
+    func moveKeyboardSelection(horizontal: Int, vertical: Int) {
+        guard !keyboardCards.isEmpty else { return }
+        guard let currentID = keyboardSelectedNodeID,
+            let current = keyboardCards.first(where: { $0.id == currentID })
+        else {
+            selectForKeyboard()
+            return
+        }
+        let origin = CGPoint(
+            x: current.position.x + MapPlacement.cardSize.width / 2,
+            y: current.position.y + MapPlacement.cardSize.height / 2
+        )
+        let candidates = keyboardCards.filter { card in
+            guard card.id != current.id else { return false }
+            let dx = card.position.x + MapPlacement.cardSize.width / 2 - origin.x
+            let dy = card.position.y + MapPlacement.cardSize.height / 2 - origin.y
+            if horizontal < 0 { return dx < 0 }
+            if horizontal > 0 { return dx > 0 }
+            if vertical < 0 { return dy < 0 }
+            return dy > 0
+        }
+        let next = candidates.min { lhs, rhs in
+            Self.navigationScore(lhs, from: origin, horizontal: horizontal)
+                < Self.navigationScore(rhs, from: origin, horizontal: horizontal)
+        }
+        guard let next else { return }
+        keyboardSelectedNodeID = next.id
+        onSelect(next.leadKey)
+        center(on: CGPoint(
+            x: next.position.x + MapPlacement.cardSize.width / 2,
+            y: next.position.y + MapPlacement.cardSize.height / 2
+        ))
+    }
+
+    func openKeyboardSelection() {
+        guard let id = keyboardSelectedNodeID,
+            let card = keyboardCards.first(where: { $0.id == id })
+        else { return }
+        onOpenFlight(card.leadKey)
+    }
+
+    func confirmKeyboardSelection() {
+        guard let id = keyboardSelectedNodeID,
+            let card = keyboardCards.first(where: { $0.id == id })
+        else { return }
+        onSelect(card.leadKey)
+    }
+
+    private static func readingOrder(_ lhs: MapCardValue, _ rhs: MapCardValue) -> Bool {
+        if lhs.position.y != rhs.position.y { return lhs.position.y < rhs.position.y }
+        if lhs.position.x != rhs.position.x { return lhs.position.x < rhs.position.x }
+        return lhs.id < rhs.id
+    }
+
+    private static func navigationScore(
+        _ card: MapCardValue,
+        from origin: CGPoint,
+        horizontal: Int
+    ) -> CGFloat {
+        let dx = abs(card.position.x + MapPlacement.cardSize.width / 2 - origin.x)
+        let dy = abs(card.position.y + MapPlacement.cardSize.height / 2 - origin.y)
+        return horizontal == 0 ? dy * 2 + dx : dx * 2 + dy
+    }
+
     func worldPoint(_ documentPoint: CGPoint) -> CGPoint {
         CGPoint(
             x: max(0, documentPoint.x - Self.worldInset),
@@ -223,6 +321,7 @@ final class MapCanvasNSView: NSView {
 
     private func apply(_ viewport: MapViewport) {
         guard bounds.width > 0, bounds.height > 0 else { return }
+        viewportApplyCount += 1
         isApplyingViewport = true
         let zoom = min(4, max(0.25, CGFloat(viewport.zoom)))
         scrollView.magnification = zoom
@@ -247,6 +346,42 @@ final class MapCanvasNSView: NSView {
 final class MapScrollView: NSScrollView {
     weak var canvas: MapCanvasNSView?
 
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        canvas?.selectForKeyboard()
+        return true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "t" {
+            canvas?.openKeyboardSelection()
+            return
+        }
+        switch event.keyCode {
+        case 36, 76:
+            canvas?.confirmKeyboardSelection()
+        case 53:
+            canvas?.onEscape()
+        case 123:
+            canvas?.moveKeyboardSelection(horizontal: -1, vertical: 0)
+        case 124:
+            canvas?.moveKeyboardSelection(horizontal: 1, vertical: 0)
+        case 125:
+            canvas?.moveKeyboardSelection(horizontal: 0, vertical: 1)
+        case 126:
+            canvas?.moveKeyboardSelection(horizontal: 0, vertical: -1)
+        default:
+            super.keyDown(with: event)
+        }
+    }
+
     override func magnify(with event: NSEvent) {
         super.magnify(with: event)
         if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
@@ -267,9 +402,14 @@ final class MapDocumentView: NSView {
     private var frames: [MapProjectFrame] = []
     private var dependencies: [MapDependencyValue] = []
     private var selectedNodeID: String?
+    private var expandedNodeIDs: Set<String> = []
+    private var isReadOnly = false
     private var zoom: CGFloat = 1
     private var hosts: [String: NSHostingView<MapCardSurface>] = [:]
     private var visibleIDs: Set<String> = []
+
+    var hostedCardCount: Int { hosts.count }
+    private(set) var hostedSurfaceUpdateCount = 0
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { true }
@@ -287,18 +427,35 @@ final class MapDocumentView: NSView {
         frames: [MapProjectFrame],
         dependencies: [MapDependencyValue],
         selectedNodeID: String?,
+        expandedNodeIDs: Set<String>,
+        isReadOnly: Bool,
         zoom: CGFloat
     ) {
-        let changed = self.cards != cards || self.frames != frames
-            || self.dependencies != dependencies || self.selectedNodeID != selectedNodeID
+        let previousByID = byID
+        let changedIDs = Set(cards.compactMap { card in
+            previousByID[card.id] == card ? nil : card.id
+        })
+        let surfaceContextChanged = self.selectedNodeID != selectedNodeID
+            || self.expandedNodeIDs != expandedNodeIDs
+            || self.isReadOnly != isReadOnly
+        let backdropCardsChanged = self.cards.count != cards.count
+            || zip(self.cards, cards).contains { previous, current in
+                previous.id != current.id
+                    || previous.position != current.position
+                    || previous.subagents != current.subagents
+            }
+        let backdropChanged = backdropCardsChanged || self.frames != frames
+            || self.dependencies != dependencies || self.expandedNodeIDs != expandedNodeIDs
         self.cards = cards
         byID = Dictionary(uniqueKeysWithValues: cards.map { ($0.id, $0) })
         self.frames = frames
         self.dependencies = dependencies
         self.selectedNodeID = selectedNodeID
+        self.expandedNodeIDs = expandedNodeIDs
+        self.isReadOnly = isReadOnly
         self.zoom = zoom
-        if changed { needsDisplay = true }
-        refreshVisibleCards(force: changed)
+        if backdropChanged { needsDisplay = true }
+        refreshVisibleCards(force: surfaceContextChanged, changedIDs: changedIDs)
     }
 
     func stop() {
@@ -307,7 +464,7 @@ final class MapDocumentView: NSView {
         visibleIDs.removeAll()
     }
 
-    func refreshVisibleCards(force: Bool) {
+    func refreshVisibleCards(force: Bool, changedIDs: Set<String> = []) {
         guard let canvas else { return }
         zoom = canvas.scrollView.magnification
         let visible = canvas.scrollView.documentVisibleRect.insetBy(
@@ -315,22 +472,25 @@ final class MapDocumentView: NSView {
             dy: -MapCanvasNSView.prefetch
         )
         let wanted = Set(cards.lazy.filter { self.cardRect($0).intersects(visible) }.map(\.id))
-        guard force || wanted != visibleIDs else { return }
+        guard force || wanted != visibleIDs || !wanted.isDisjoint(with: changedIDs) else { return }
 
         for id in visibleIDs.subtracting(wanted) {
             hosts.removeValue(forKey: id)?.removeFromSuperview()
         }
         for id in wanted {
             guard let card = byID[id] else { continue }
-            let root = surface(card)
             if let host = hosts[id] {
-                host.rootView = root
-                host.frame = cardRect(card)
+                if force || changedIDs.contains(id) {
+                    host.rootView = surface(card)
+                    host.frame = cardRect(card)
+                    hostedSurfaceUpdateCount += 1
+                }
             } else {
-                let host = NSHostingView(rootView: root)
+                let host = NSHostingView(rootView: surface(card))
                 host.frame = cardRect(card)
                 addSubview(host)
                 hosts[id] = host
+                hostedSurfaceUpdateCount += 1
             }
         }
         visibleIDs = wanted
@@ -343,6 +503,7 @@ final class MapDocumentView: NSView {
         drawGrid(dirtyRect, appearance: appearance)
         drawProjectFrames(appearance: appearance)
         drawDependencies(appearance: appearance)
+        drawLineage(appearance: appearance)
     }
 
     private func drawGrid(_ dirty: CGRect, appearance: NSAppearance) {
@@ -456,15 +617,69 @@ final class MapDocumentView: NSView {
             onSelect: { [weak self] in self?.canvas?.onSelect(card.leadKey) },
             onOpenFlight: { [weak self] in self?.canvas?.onOpenFlight(card.leadKey) },
             onMove: { [weak self] point in self?.canvas?.onMove(card.id, point) },
+            isReadOnly: isReadOnly,
+            isExpanded: expandedNodeIDs.contains(card.id),
+            onToggleExpanded: { [weak self] in self?.canvas?.onToggleExpanded(card.id) },
             dependencyTargets: cards.compactMap { target in
                 guard let taskID = target.taskID, taskID != card.taskID else { return nil }
                 return MapDependencyTarget(id: taskID, title: target.title)
             },
             onSetDependencies: { [weak self] ids in
                 guard let taskID = card.taskID else { return }
-                self?.canvas?.onSetDependencies(taskID, ids)
+                self?.canvas?.onSetDependencies(taskID, ids, card.taskVersion)
+            },
+            onAddDependency: { [weak self] sourceTaskID in
+                guard let self, let targetTaskID = card.taskID,
+                    sourceTaskID != targetTaskID,
+                    let source = cards.first(where: { $0.taskID == sourceTaskID })
+                else { return false }
+                var next = source.dependencyIDs.filter { $0 != targetTaskID }
+                next.append(targetTaskID)
+                canvas?.onSetDependencies(sourceTaskID, next.sorted(), source.taskVersion)
+                return true
             }
         )
+    }
+
+    private func drawLineage(appearance: NSAppearance) {
+        let text = AuspexPalette.resolve(AuspexPalette.text3, for: appearance)
+        for card in cards where expandedNodeIDs.contains(card.id) {
+            let root = cardRect(card)
+            for (index, child) in card.subagents.enumerated() {
+                let childRect = CGRect(
+                    x: root.maxX + 76,
+                    y: root.minY + CGFloat(index) * 38,
+                    width: 220,
+                    height: 30
+                )
+                let path = NSBezierPath()
+                path.move(to: CGPoint(x: root.maxX, y: root.midY))
+                path.curve(
+                    to: CGPoint(x: childRect.minX, y: childRect.midY),
+                    controlPoint1: CGPoint(x: root.maxX + 34, y: root.midY),
+                    controlPoint2: CGPoint(x: childRect.minX - 28, y: childRect.midY)
+                )
+                path.setLineDash([4, 4], count: 2, phase: 0)
+                path.lineWidth = 1
+                text.setStroke()
+                path.stroke()
+                let box = NSBezierPath(roundedRect: childRect, xRadius: 7, yRadius: 7)
+                AuspexPalette.resolve(AuspexPalette.bg1, for: appearance).setFill()
+                box.fill()
+                text.withAlphaComponent(0.5).setStroke()
+                box.stroke()
+                let accent = AuspexPalette.resolve(child.harness.style.accent, for: appearance)
+                accent.setFill()
+                NSBezierPath(ovalIn: CGRect(x: childRect.minX + 9, y: childRect.midY - 3, width: 6, height: 6)).fill()
+                child.title.draw(
+                    at: CGPoint(x: childRect.minX + 22, y: childRect.minY + 8),
+                    withAttributes: [
+                        .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                        .foregroundColor: text,
+                    ]
+                )
+            }
+        }
     }
 }
 
@@ -480,8 +695,12 @@ private struct MapCardSurface: View {
     let onSelect: () -> Void
     let onOpenFlight: () -> Void
     let onMove: (CGPoint) -> Void
+    let isReadOnly: Bool
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
     let dependencyTargets: [MapDependencyTarget]
     let onSetDependencies: ([Int64]) -> Void
+    let onAddDependency: (Int64) -> Bool
 
     @State private var isHovering = false
 
@@ -511,6 +730,7 @@ private struct MapCardSurface: View {
         .gesture(
             DragGesture(minimumDistance: 3)
                 .onEnded { value in
+                    guard !isReadOnly else { return }
                     onMove(CGPoint(
                         x: max(0, card.position.x + value.translation.width),
                         y: max(0, card.position.y + value.translation.height)
@@ -518,8 +738,30 @@ private struct MapCardSurface: View {
                 }
         )
         .onHover { isHovering = $0 }
+        .overlay(alignment: .trailing) {
+            if !isReadOnly, let taskID = card.taskID {
+                Circle()
+                    .fill(AuspexPalette.accent)
+                    .frame(width: 10, height: 10)
+                    .padding(.trailing, 5)
+                    .draggable("auspex-task:\(taskID)")
+                    .help("Drag to another task to add a dependency")
+                    .accessibilityLabel("Dependency handle")
+            }
+        }
+        .dropDestination(for: String.self) { values, _ in
+            guard !isReadOnly else { return false }
+            return values.contains { value in
+                guard value.hasPrefix("auspex-task:"),
+                    let sourceID = Int64(value.dropFirst("auspex-task:".count))
+                else { return false }
+                return onAddDependency(sourceID)
+            }
+        }
         .contextMenu {
-            if card.taskID != nil, !dependencyTargets.isEmpty {
+            if isReadOnly {
+                Text("History is read-only · Jump to Live to edit")
+            } else if card.taskID != nil, !dependencyTargets.isEmpty {
                 Text("Depends on")
                 ForEach(dependencyTargets) { target in
                     let isOn = card.dependencyIDs.contains(target.id)
@@ -560,7 +802,14 @@ private struct MapCardSurface: View {
             HStack(spacing: 6) {
                 Text(card.shortID)
                 if card.isImplicit { Text("AUTO") }
-                if card.memberCount > 1 { Text("↳ \(card.memberCount - 1)") }
+                if card.memberCount > 1 {
+                    Button(action: onToggleExpanded) {
+                        Text(isExpanded ? "↳ collapse" : "↳ \(card.memberCount - 1)")
+                            .font(AuspexType.monoSmall)
+                    }
+                    .buttonStyle(.auspex)
+                    .accessibilityLabel(isExpanded ? "Collapse subagents" : "Expand subagents")
+                }
             }
             .font(AuspexType.monoSmall)
             .foregroundStyle(AuspexPalette.text3)

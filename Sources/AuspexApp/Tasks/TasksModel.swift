@@ -42,6 +42,8 @@ final class TasksModel {
     /// on screen always and reading the lanes would invalidate it every time
     /// any task moved.
     private(set) var openCount = 0
+    /// The last person-authored write conflict, surfaced by Perch/Tasks UI.
+    private(set) var writeErrorDescription: String?
 
     /// How much work each project is carrying, by the board's project key.
     ///
@@ -655,13 +657,31 @@ final class TasksModel {
     }
 
     /// Sets what a task waits on.
-    func setDependencies(_ ids: [Int64], of taskID: Int64) {
+    func setDependencies(
+        _ ids: [Int64],
+        of taskID: Int64,
+        expectedVersion: Int64? = nil
+    ) {
         guard let repository else { return }
-        performWrite {
-            do {
-                try repository.setDependencies(ids, of: taskID)
-                return true
-            } catch { return nil }
+        writeErrorDescription = nil
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                Result {
+                    try repository.setDependencies(
+                        ids,
+                        of: taskID,
+                        expectedVersion: expectedVersion
+                    )
+                }
+            }.value
+            guard let self else { return }
+            switch result {
+            case .success:
+                onLedgerChange?()
+            case .failure(let error):
+                writeErrorDescription = error.localizedDescription
+            }
+            reload()
         }
     }
 

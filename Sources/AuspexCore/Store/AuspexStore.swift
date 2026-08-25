@@ -131,6 +131,8 @@ public final class AuspexStore: Sendable {
 
         migrator.registerMigration("v9_map_workspaces") { db in
             try createMapWorkspaceTables(db)
+            try createBoardHistoryTriggers(db)
+            try seedBoardHistoryBaseline(db)
         }
 
         return migrator
@@ -930,6 +932,165 @@ public final class AuspexStore: Sendable {
                 """,
             arguments: [MapBoard.allID, "All boards", MapBoard.Kind.all.rawValue, now, now]
         )
+    }
+
+    /// Coordination history is written by the same SQLite transaction as the
+    /// projection it describes. Triggers cover every writer — UI, MCP and
+    /// future import paths — without teaching each repository about playback.
+    private static func createBoardHistoryTriggers(_ db: Database) throws {
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_tasks_ai AFTER INSERT ON tasks BEGIN
+                INSERT INTO board_history (ts, kind, task_id, payload_json)
+                VALUES (
+                    new.updated_at, 'taskSnapshot', new.id,
+                    json_object(
+                        'id', new.id, 'title', new.title, 'body', new.body,
+                        'status', new.status, 'priority', new.priority,
+                        'projectKey', new.project_key, 'planID', new.plan_id,
+                        'kind', new.kind, 'labels', new.labels,
+                        'claimedByKey', new.claimed_by_key,
+                        'claimRole', new.claim_role, 'claimScope', new.claim_scope,
+                        'createdAt', new.created_at, 'updatedAt', new.updated_at,
+                        'completedAt', new.completed_at, 'result', new.result,
+                        'version', new.version
+                    )
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_tasks_au AFTER UPDATE ON tasks BEGIN
+                INSERT INTO board_history (ts, kind, task_id, payload_json)
+                VALUES (
+                    new.updated_at, 'taskSnapshot', new.id,
+                    json_object(
+                        'id', new.id, 'title', new.title, 'body', new.body,
+                        'status', new.status, 'priority', new.priority,
+                        'projectKey', new.project_key, 'planID', new.plan_id,
+                        'kind', new.kind, 'labels', new.labels,
+                        'claimedByKey', new.claimed_by_key,
+                        'claimRole', new.claim_role, 'claimScope', new.claim_scope,
+                        'createdAt', new.created_at, 'updatedAt', new.updated_at,
+                        'completedAt', new.completed_at, 'result', new.result,
+                        'version', new.version
+                    )
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_task_links_ai AFTER INSERT ON task_links BEGIN
+                INSERT INTO board_history (ts, kind, task_id, session_key, payload_json)
+                VALUES (
+                    new.created_at, 'taskLinkChanged', new.task_id, new.session_key,
+                    json_object('present', 1, 'kind', new.kind, 'createdAt', new.created_at)
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_task_links_ad AFTER DELETE ON task_links BEGIN
+                INSERT INTO board_history (ts, kind, task_id, session_key, payload_json)
+                VALUES (
+                    CAST(strftime('%s','now') AS REAL), 'taskLinkChanged',
+                    old.task_id, old.session_key,
+                    json_object('present', 0, 'kind', old.kind, 'createdAt', old.created_at)
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_task_deps_ai AFTER INSERT ON task_deps BEGIN
+                INSERT INTO board_history (ts, kind, task_id, payload_json)
+                VALUES (
+                    new.created_at, 'taskDependencyChanged', new.task_id,
+                    json_object('present', 1, 'dependsOnID', new.depends_on_id)
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_task_deps_ad AFTER DELETE ON task_deps BEGIN
+                INSERT INTO board_history (ts, kind, task_id, payload_json)
+                VALUES (
+                    CAST(strftime('%s','now') AS REAL), 'taskDependencyChanged', old.task_id,
+                    json_object('present', 0, 'dependsOnID', old.depends_on_id)
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_notices_ai AFTER INSERT ON session_notices BEGIN
+                INSERT INTO board_history (ts, kind, session_key, payload_json)
+                VALUES (
+                    new.created_at, 'noticeSnapshot', new.session_key,
+                    json_object(
+                        'kind', new.kind, 'message', new.message,
+                        'urgency', new.urgency, 'createdAt', new.created_at,
+                        'clearedAt', new.cleared_at
+                    )
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_notices_au AFTER UPDATE ON session_notices BEGIN
+                INSERT INTO board_history (ts, kind, session_key, payload_json)
+                VALUES (
+                    COALESCE(new.cleared_at, new.created_at),
+                    CASE WHEN new.cleared_at IS NULL THEN 'noticeSnapshot' ELSE 'noticeCleared' END,
+                    new.session_key,
+                    json_object(
+                        'kind', new.kind, 'message', new.message,
+                        'urgency', new.urgency, 'createdAt', new.created_at,
+                        'clearedAt', new.cleared_at
+                    )
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_reports_ai AFTER INSERT ON session_reports BEGIN
+                INSERT INTO board_history (ts, kind, session_key, payload_json)
+                VALUES (
+                    new.created_at, 'reportSnapshot', new.session_key,
+                    json_object('focus', new.focus, 'progress', new.progress, 'createdAt', new.created_at)
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_reports_au AFTER UPDATE ON session_reports BEGIN
+                INSERT INTO board_history (ts, kind, session_key, payload_json)
+                VALUES (
+                    new.created_at, 'reportSnapshot', new.session_key,
+                    json_object('focus', new.focus, 'progress', new.progress, 'createdAt', new.created_at)
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_views_ai AFTER INSERT ON session_views BEGIN
+                INSERT INTO board_history (ts, kind, session_key, payload_json)
+                VALUES (
+                    COALESCE(new.acknowledged_at, new.last_seen_at),
+                    'acknowledgementSnapshot', new.session_key,
+                    json_object(
+                        'lastSeenAt', new.last_seen_at,
+                        'acknowledgedAt', new.acknowledged_at,
+                        'reason', new.ack_reason
+                    )
+                );
+            END
+            """)
+        try db.execute(sql: """
+            CREATE TRIGGER board_history_views_au AFTER UPDATE ON session_views BEGIN
+                INSERT INTO board_history (ts, kind, session_key, payload_json)
+                VALUES (
+                    COALESCE(new.acknowledged_at, new.last_seen_at),
+                    'acknowledgementSnapshot', new.session_key,
+                    json_object(
+                        'lastSeenAt', new.last_seen_at,
+                        'acknowledgedAt', new.acknowledged_at,
+                        'reason', new.ack_reason
+                    )
+                );
+            END
+            """)
+    }
+
+    private static func seedBoardHistoryBaseline(_ db: Database) throws {
+        let now = Date().timeIntervalSince1970
         try db.execute(
             sql: """
                 INSERT INTO board_history (ts, kind, board_id, payload_json)
@@ -937,6 +1098,64 @@ public final class AuspexStore: Sendable {
                 """,
             arguments: [now, MapHistoryKind.baseline.rawValue, MapBoard.allID, "{\"version\":1}"]
         )
+        // Existing rows become one baseline *now*. Their own historical
+        // timestamps stay inside the payload; using them as the history row's
+        // timestamp would put these snapshots before the baseline marker and
+        // make a playback reader correctly discard them as unknowable.
+        try db.execute(sql: """
+            INSERT INTO board_history (ts, kind, task_id, payload_json)
+            SELECT ?, 'taskSnapshot', id,
+                   json_object(
+                       'id', id, 'title', title, 'body', body,
+                       'status', status, 'priority', priority,
+                       'projectKey', project_key, 'planID', plan_id,
+                       'kind', kind, 'labels', labels,
+                       'claimedByKey', claimed_by_key,
+                       'claimRole', claim_role, 'claimScope', claim_scope,
+                       'createdAt', created_at, 'updatedAt', updated_at,
+                       'completedAt', completed_at, 'result', result,
+                       'version', version
+                   )
+              FROM tasks
+            """, arguments: [now])
+        try db.execute(sql: """
+            INSERT INTO board_history (ts, kind, session_key, payload_json)
+            SELECT ?, CASE WHEN cleared_at IS NULL THEN 'noticeSnapshot' ELSE 'noticeCleared' END,
+                   session_key,
+                   json_object(
+                       'kind', kind, 'message', message, 'urgency', urgency,
+                       'createdAt', created_at, 'clearedAt', cleared_at
+                   )
+              FROM session_notices
+            """, arguments: [now])
+        try db.execute(sql: """
+            INSERT INTO board_history (ts, kind, session_key, payload_json)
+            SELECT ?, 'reportSnapshot', session_key,
+                   json_object('focus', focus, 'progress', progress, 'createdAt', created_at)
+              FROM session_reports
+            """, arguments: [now])
+        try db.execute(sql: """
+            INSERT INTO board_history (ts, kind, session_key, payload_json)
+            SELECT ?, 'acknowledgementSnapshot', session_key,
+                   json_object(
+                       'lastSeenAt', last_seen_at,
+                       'acknowledgedAt', acknowledged_at,
+                       'reason', ack_reason
+                   )
+              FROM session_views
+            """, arguments: [now])
+        try db.execute(sql: """
+            INSERT INTO board_history (ts, kind, task_id, session_key, payload_json)
+            SELECT ?, 'taskLinkChanged', task_id, session_key,
+                   json_object('present', 1, 'kind', kind, 'createdAt', created_at)
+              FROM task_links
+            """, arguments: [now])
+        try db.execute(sql: """
+            INSERT INTO board_history (ts, kind, task_id, payload_json)
+            SELECT ?, 'taskDependencyChanged', task_id,
+                   json_object('present', 1, 'dependsOnID', depends_on_id)
+              FROM task_deps
+            """, arguments: [now])
     }
 
     // MARK: - Meta accessors

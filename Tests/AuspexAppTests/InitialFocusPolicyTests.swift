@@ -59,7 +59,7 @@ struct InitialFocusPolicyTests {
             "SessionControlModel.swift": 1,
             "ContextUsagePopover.swift": 1,
             "SessionTraceView.swift": 1,
-            "MapView.swift": 2,
+            "MapView.swift": 3,
         ]
         for (file, expected) in expectedByFile {
             #expect(
@@ -70,7 +70,7 @@ struct InitialFocusPolicyTests {
             )
         }
 
-        #expect(presentationCount == 10)
+        #expect(presentationCount == 11)
         #expect(sceneCount == 3)
         #expect(policyCount == presentationCount + sceneCount)
     }

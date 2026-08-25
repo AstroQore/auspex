@@ -280,7 +280,10 @@ public final class AppEnvironment {
         // itself and never into `~/.auspex/`.
         if mode == .demo { try? DemoTaskLedger.seed(into: TaskRepository(store: store)) }
         board.startLedger(repository: TaskRepository(store: store))
-        board.startMap(repository: MapRepository(store: store))
+        board.startMap(
+            repository: MapRepository(store: store),
+            sessions: SessionRepository(store: store)
+        )
         tasks.start(repository: TaskRepository(store: store))
         tasks.onLedgerChange = { [weak board] in board?.reloadLedger() }
         projects.start(repository: ProjectRepository(store: store))
@@ -473,12 +476,11 @@ public final class AppEnvironment {
 
     /// Starts the pass that answers where each session is and who started it.
     ///
-    /// Runs in demo mode too. The demo's directories are under
-    /// `/Users/example`, so nearly every placement resolves to "a directory in
-    /// no repository, named after itself" and every link is already recorded by
-    /// the script — which is the point: the demo exercises the same code path
-    /// the live board does, and a coordinator that only ran in one of them
-    /// would be a coordinator only tested in one of them.
+    /// Runs in demo mode too, against an empty process table. The script already
+    /// records its delegation evidence, so polling this Mac's real process tree
+    /// every three seconds adds no fabricated fact and makes an idle demo spend
+    /// CPU on unrelated programs. Process-link inference itself is covered by
+    /// the integration suite and the live run keeps the shared real table.
     ///
     /// The demo's resolver is told that `/Users/example` is the home, because
     /// one of the rules it exercises is about where a *home* is:
@@ -493,7 +495,17 @@ public final class AppEnvironment {
         let placements = mode == .demo
             ? PlacementService(resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory))
             : PlacementService()
-        let grouping = GroupingCoordinator(registry: registry, table: table, placements: placements)
+        let groupingTable: any ProcessTableReading
+        if mode == .demo {
+            groupingTable = DemoGroupingProcessTable()
+        } else {
+            groupingTable = table
+        }
+        let grouping = GroupingCoordinator(
+            registry: registry,
+            table: groupingTable,
+            placements: placements
+        )
         pipelineTasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
     }
 
@@ -630,6 +642,11 @@ public final class AppEnvironment {
     private static func describe(_ notice: IngestNotice) -> String {
         String(describing: notice)
     }
+}
+
+private struct DemoGroupingProcessTable: ProcessTableReading {
+    func processes() -> [ProcessRecord] { [] }
+    func environment(pid _: pid_t) -> [String: String]? { nil }
 }
 
 /// Top-level areas of the app.

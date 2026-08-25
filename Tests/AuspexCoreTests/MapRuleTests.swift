@@ -55,4 +55,17 @@ struct MapRuleTests {
             override: .exclude, updatedAt: now
         ).isVisible)
     }
+
+    @Test("a new project starts beyond a full four-card row")
+    func projectPlacementGutter() {
+        let existing = (0..<6).map { index in
+            MapPlacementPlanner.Existing(
+                point: CGPoint(x: (index % 4) * 320, y: (index / 4) * 148),
+                projectKey: "first"
+            )
+        }
+        let next = MapPlacementPlanner.next(projectKey: "second", existing: existing)
+        let firstProjectRightEdge = CGFloat(3 * 320) + MapPlacement.cardSize.width
+        #expect(next.x > firstProjectRightEdge)
+    }
 }

@@ -316,9 +316,9 @@ person typed it, the same string the card's `asked:` line shows — and falls
 back to the title for a session whose transcript has not been read far enough
 to have a brief yet.
 
-## The four views
+## The five views
 
-`BoardViewMode` is one enum in Core — `board`, `scene`, `crew`, `trajectory` —
+`BoardViewMode` is one enum in Core — `board`, `scene`, `crew`, `map`, `trajectory` —
 and the container in `RootView` is a plain switch over it. A mode rather than a
 destination: the selection, the grouping, the filters and the trace beside them
 all survive a switch, so adding another way of looking at the board is a case
@@ -332,6 +332,33 @@ cost rather than the board's. **Trajectory** is the odd one out: it draws the
 `requiresSelection`, and its state (the fold, the layout, the inspector's
 selection) lives on `LiveBoardModel` so that leaving and coming back does not
 re-read a transcript the model already holds.
+
+**Perch** renders the same `TaskUnit`s as a user-owned spatial memory. Its
+`NSScrollView` owns native pan, magnification, momentum and elastic edges; one
+AppKit backdrop draws project frames and edges, while only cards near the
+visible document rectangle receive an `NSHostingView`. `map_nodes` gives an
+implicit root and its later filed task one durable identity. Membership,
+placement and viewport are scoped by board, so one task can be mirrored without
+sharing a position. Existing placements are never recomputed.
+
+The v9 Perch tables are current projections over an append-only `board_history`.
+SQLite triggers record task/link/dependency/notice/report/ack changes in the
+same transaction as their source row. Perch playback merges that stream with
+stored Agent events, checkpoints every 256 relevant events and reconstructs at
+most 255 after a seek. History reconstructs membership and task state while
+the current placements and camera remain the reader's spatial memory. A fork
+copies only historical Perch state with those current placements; three-way merge
+never rewrites execution or task truth.
+
+Flight retains its incremental Trace fold and adds an Events scale plus a
+discrete playhead. Graph and Trace share the same playhead, scope, speed,
+History/Live state, and selected Agent. `FlightGraphArchive` checkpoints the
+Agent tree every 256 events; backward seek rebuilds an event prefix without
+tweening and reuses coordinates derived from the full node universe. The Graph
+clock exists only while Graph is visible and playing; it drives marching edges,
+pending-chip pulse, afterglow, and Follow camera motion. Its Moment inspector
+uses the same reducer snapshots as Perch history; its Step inspector remains
+the existing Summary/Preview/Raw reader.
 
 **Scene** is SpriteKit, and its canvas is an `NSScrollView` with an *empty,
 world-sized document view*. Everything a canvas has to do with two fingers —
