@@ -2,7 +2,7 @@ import AgentSessionLive
 import AuspexCore
 import Foundation
 
-/// Replays ``DemoScript`` against the wall clock, forever.
+/// Replays ``DemoScript`` against the wall clock once, then holds its last frame.
 ///
 /// The script says *what* happens and *when*, relative to the start of a loop.
 /// This says *now*: it sleeps until each step is due and re-stamps the event
@@ -33,11 +33,7 @@ actor DemoEventSource {
     /// which draw a bitmap and exit.
     private let lendsProcess: Bool
 
-    /// Pause between loops, so the board visibly settles before the sessions
-    /// start over rather than snapping back mid-animation.
-    private static let loopGap = Duration.seconds(5)
-
-    /// Called once per loop, a few seconds in, so the demo's agents can say
+    /// Called once, a few seconds in, so the demo's agents can say
     /// the things a board's two loud buckets are made of.
     ///
     /// A hook rather than something this type does itself, because a notice is
@@ -60,15 +56,12 @@ actor DemoEventSource {
         self.onLoop = onLoop
     }
 
-    /// Runs until the surrounding task is cancelled.
+    /// Runs one representative flight. The historical playhead remains fully
+    /// interactive after the live cast settles; replaying the compressed
+    /// bootstrap into an already populated SwiftUI window only manufactured a
+    /// periodic layout storm that no live harness produces.
     func run() async {
-        var generation = 0
-        while !Task.isCancelled {
-            await replay(generation: generation)
-            guard !Task.isCancelled else { return }
-            try? await Task.sleep(for: Self.loopGap)
-            generation += 1
-        }
+        await replay(generation: 0)
     }
 
     /// Ends the stand-in process. Called from the app's own shutdown, so a
@@ -106,7 +99,7 @@ actor DemoEventSource {
             guard !Task.isCancelled else { return }
             continuation.yield(restamped(step.event))
 
-            // Straight after the first session opens, and once per loop: the
+            // Straight after the first session opens: the
             // identity patch has to follow the `sessionStarted` it belongs to,
             // or the registry seeds the session from the patch instead.
             if lendsProcess, !lentPID, case let .sessionStarted(identity) = step.event.kind {

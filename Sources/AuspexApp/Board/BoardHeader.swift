@@ -52,7 +52,7 @@ struct BoardHeader: View {
                 .fixedSize()
                 .help(
                     "Read the same work as a ledger of cards, as an aviary, "
-                        + "as a flock, or one session as its flight"
+                        + "as a flock, on your map, or one session as its flight"
                 )
                 TaskFilterMenu(model: model).fixedSize()
                 groupMenu.fixedSize()
@@ -112,7 +112,7 @@ struct BoardHeader: View {
         var reserved: CGFloat = 40  // the bar's own padding
         reserved += 150  // the heading and its count
         reserved += 12 * 5  // the gaps between the controls
-        reserved += 196  // the mode picker
+        reserved += 246  // the five-mode picker
         reserved += 46  // the filter menu
         reserved += 108  // the grouping menu
         reserved += 92  // the window menu

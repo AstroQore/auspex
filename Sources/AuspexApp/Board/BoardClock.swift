@@ -12,7 +12,7 @@ import SwiftUI
 /// render loop has to service, and none of them is doing anything the others
 /// are not.
 ///
-/// So there is one ticker, at 1 Hz, and every stopwatch is a pure function of
+/// So there is one ticker, at 0.2 Hz, and every stopwatch is a pure function of
 /// it. They all show the same instant as a result, rather than each sampling
 /// `Date()` at whatever moment its own body happened to run.
 ///
@@ -22,7 +22,10 @@ import SwiftUI
 /// activity strip under every card was a function of it. That strip is now a
 /// `CAGradientLayer` with animations that repeat forever on the render server
 /// (see ``ActivityStrip``), so nothing on the board needs a phase, and the
-/// clock ticks once a second instead of four times.
+/// clock ticks once every five seconds instead of four times a second. The
+/// dashboard is an overview rather than a stopwatch; that cadence preserves a
+/// live elapsed reading while keeping the only recurring SwiftUI invalidation
+/// on a settled window inside the all-day CPU budget.
 ///
 /// The remaining reader is ``ElapsedLabel``, in a leaf. Reading `now` in a
 /// card's body, or in the board's, would re-evaluate every card once a second
@@ -30,7 +33,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class BoardClock {
-    /// The wall clock, republished once a second.
+    /// The wall clock, republished once every five seconds.
     private(set) var now = Date()
 
     /// Runs until the surrounding task is cancelled.
@@ -43,7 +46,7 @@ final class BoardClock {
         var next = 0
         while !Task.isCancelled {
             next += 1
-            let deadline = start.advanced(by: .seconds(next))
+            let deadline = start.advanced(by: .seconds(next * 5))
             do {
                 try await Task.sleep(until: deadline, clock: .continuous)
             } catch {

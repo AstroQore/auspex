@@ -44,5 +44,7 @@ struct BoardViewModeTests {
             #expect(BoardViewMode(rawValue: mode.rawValue) == mode)
         }
         #expect(BoardViewMode(rawValue: "office") == nil)
+        #expect(BoardViewMode(named: "map") == .perch)
+        #expect(BoardViewMode(named: "perch") == .perch)
     }
 }

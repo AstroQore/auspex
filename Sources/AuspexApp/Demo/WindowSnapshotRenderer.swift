@@ -188,6 +188,8 @@ private struct WindowSnapshot: View {
                             model: environment.board,
                             liveliness: environment.catalog.crewLiveliness
                         )
+                    case .perch:
+                        MapView(board: environment.board, map: environment.board.map)
                     case .trajectory: TrajectoryView(model: environment.board)
                     }
                 }
@@ -195,8 +197,17 @@ private struct WindowSnapshot: View {
             .frame(maxWidth: .infinity)
             if showsTrace {
                 divider
-                SessionTraceView(model: environment.board)
-                    .frame(width: 420)
+                Group {
+                    if environment.board.viewMode == .trajectory {
+                        FlightDetailView(
+                            board: environment.board,
+                            trajectory: environment.board.trajectory
+                        )
+                    } else {
+                        SessionTraceView(model: environment.board)
+                    }
+                }
+                .frame(width: 420)
             }
         }
         .frame(width: size.width, height: size.height)

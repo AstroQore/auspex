@@ -96,6 +96,7 @@ struct TrajectoryTimelineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            playbackBar
             HStack(spacing: 0) {
                 laneLabels
                 plot
@@ -142,8 +143,9 @@ struct TrajectoryTimelineView: View {
                 Canvas(opaque: false, rendersAsynchronously: false) { context, canvasSize in
                     draw(in: &context, size: canvasSize)
                 }
+                historyOverlay(in: size)
                 brushOverlay(in: size)
-                cursorLine(in: size)
+                playheadLine(in: size)
                 if let hovered, !isSnapshotRender { tooltip(for: hovered, in: size) }
             }
             .contentShape(Rectangle())
@@ -329,10 +331,10 @@ struct TrajectoryTimelineView: View {
     private func attentionX(in size: CGSize) -> CGFloat? {
         guard attention.isSignalling, !model.spans.isEmpty else { return nil }
         guard model.scale == .duration,
-              let at = attentionAt,
-              let first = model.steps.first?.start,
-              let last = model.steps.map({ $0.end ?? $0.start }).max(),
-              last > first
+            let at = attentionAt,
+            let first = model.steps.first?.start,
+            let last = model.steps.map({ $0.end ?? $0.start }).max(),
+            last > first
         else { return (model.spans.last?.end).map { CGFloat($0) * size.width } }
         let fraction = at.timeIntervalSince(first) / last.timeIntervalSince(first)
         return CGFloat(min(max(fraction, 0), 1)) * size.width
@@ -355,7 +357,8 @@ struct TrajectoryTimelineView: View {
                     span: span,
                     isSelected: span.id == selected,
                     isMatch: !hasQuery || model.matches.contains(span.id),
-                    hasQuery: hasQuery
+                    hasQuery: hasQuery,
+                    isAfterPlayhead: model.isAfterPlayhead(model.steps[span.index])
                 )
                 let x = span.start * size.width
                 let width = max(Self.minimumBar, (span.end - span.start) * size.width)
@@ -430,14 +433,82 @@ struct TrajectoryTimelineView: View {
     /// crawled towards it would be a clock drawn to say what the right-hand
     /// edge says.
     @ViewBuilder
-    private func cursorLine(in size: CGSize) -> some View {
-        if let cursor = model.cursor {
+    private func playheadLine(in size: CGSize) -> some View {
+        if let playhead = model.playheadFraction {
+            Rectangle()
+                .fill(AuspexPalette.accent)
+                .frame(width: 2, height: plotHeight)
+                .offset(x: min(size.width - 2, playhead * size.width))
+                .allowsHitTesting(false)
+        } else if let cursor = model.cursor {
             Rectangle()
                 .fill(AuspexPalette.stateWriting.opacity(0.75))
                 .frame(width: 1, height: plotHeight)
                 .offset(x: min(size.width - 1, cursor * size.width))
                 .allowsHitTesting(false)
         }
+    }
+
+    @ViewBuilder
+    private func historyOverlay(in size: CGSize) -> some View {
+        if let playhead = model.playheadFraction {
+            let x = playhead * size.width
+            Rectangle()
+                .fill(AuspexPalette.bg0.opacity(0.38))
+                .frame(width: max(0, size.width - x), height: plotHeight)
+                .offset(x: x)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var playbackBar: some View {
+        HStack(spacing: 9) {
+            Button {
+                model.togglePlayback()
+            } label: {
+                Image(systemName: model.isHistory && !model.isPlaying ? "play.fill" : "pause.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .frame(width: 22, height: 22)
+            }
+            .buttonStyle(.auspex)
+            .accessibilityLabel(model.isPlaying ? "Pause playback" : "Play history")
+            Menu {
+                ForEach(PlaybackSpeed.allCases, id: \.self) { speed in
+                    Button(speed.label) { model.setPlaybackSpeed(speed) }
+                }
+            } label: {
+                Text(model.playbackSpeed.label)
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text2)
+                    .frame(width: 28, height: 20)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            HStack(spacing: 5) {
+                StateDot(
+                    color: model.isHistory ? AuspexPalette.stateStale : AuspexPalette.stateWriting,
+                    glows: !model.isHistory
+                )
+                Text(model.isHistory ? "History" : "Live")
+                    .font(AuspexType.pill)
+                    .foregroundStyle(
+                        model.isHistory ? AuspexPalette.stateStale : AuspexPalette.text2)
+            }
+            if model.historyCount > 1 {
+                FlightEventScrubber(model: model)
+            }
+            Text("event \(model.historyIndex + 1) / \(max(1, model.historyCount))")
+                .font(AuspexType.monoSmall)
+                .foregroundStyle(AuspexPalette.text3)
+                .fixedSize()
+            if model.isHistory {
+                Button("Jump to Live") { model.jumpToLive() }
+                    .font(AuspexType.pill)
+                    .buttonStyle(.auspex(cornerRadius: 7))
+            }
+        }
+        .padding(.horizontal, Self.gutter)
+        .frame(height: 30)
     }
 
     // MARK: Axis
@@ -539,7 +610,11 @@ struct TrajectoryTimelineView: View {
         .panelChrome(cornerRadius: 8)
         .shadow(color: AuspexPalette.shade, radius: 12, y: 4)
         .fixedSize(horizontal: false, vertical: true)
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { tooltipSize = $0 }
+        .onGeometryChange(for: CGSize.self) {
+            $0.size
+        } action: {
+            tooltipSize = $0
+        }
         .offset(x: origin.x, y: origin.y)
         .allowsHitTesting(false)
     }
@@ -561,11 +636,17 @@ struct TrajectoryTimelineView: View {
         let isSelected: Bool
         let isDimmed: Bool
 
-        init(span: TrajectorySpan, isSelected: Bool, isMatch: Bool, hasQuery: Bool) {
+        init(
+            span: TrajectorySpan,
+            isSelected: Bool,
+            isMatch: Bool,
+            hasQuery: Bool,
+            isAfterPlayhead: Bool
+        ) {
             self.role = span.role
             self.isError = span.isError
             self.isSelected = isSelected
-            self.isDimmed = hasQuery && !isMatch
+            self.isDimmed = (hasQuery && !isMatch) || isAfterPlayhead
         }
 
         var color: Color {

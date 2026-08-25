@@ -58,7 +58,8 @@ struct AuspexStoreTests {
                 sql: "SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name"
             )
         }
-        #expect(triggers == ["messages_ad", "messages_ai", "messages_au"])
+        #expect(triggers.filter { $0.hasPrefix("messages_") }
+            == ["messages_ad", "messages_ai", "messages_au"])
     }
 
     @Test("the columns the board sorts and filters on exist on sessions")

@@ -37,7 +37,9 @@ struct TrajectoryView: View {
         let attention = model.attention[session.key] ?? .none
         return VStack(spacing: 0) {
             TrajectoryBar(board: model, trajectory: model.trajectory, session: session)
-            TrajectoryLanesLegend(board: model, trajectory: model.trajectory)
+            if model.trajectory.presentation == .trace {
+                TrajectoryLanesLegend(board: model, trajectory: model.trajectory)
+            }
             // Above the waterfall, because the reason a session is in front of
             // somebody is more urgent than the shape of how it got here.
             if attention.isSignalling {
@@ -48,29 +50,21 @@ struct TrajectoryView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
             }
-            TrajectoryTimelineView(
-                model: model.trajectory,
-                attention: attention,
-                attentionAt: model.notices[session.key]?.createdAt ?? session.lastEventAt
-            )
-            TrajectoryFactsBar(model: model.trajectory)
-            HStack(spacing: 0) {
-                // The rows keep a floor of 200 points, and the inspector gives
-                // way from 340 down to 260 rather than pushing them off the
-                // end: the board's column can be dragged to 460, and 460 minus
-                // a fixed 340 is a column of step rows nobody can read.
+            if model.trajectory.presentation == .graph {
+                FlightGraphView(board: model, model: model.trajectory)
+            } else {
+                TrajectoryTimelineView(
+                    model: model.trajectory,
+                    attention: attention,
+                    attentionAt: model.notices[session.key]?.createdAt ?? session.lastEventAt
+                )
+                TrajectoryFactsBar(model: model.trajectory)
+                // The selected step and the at-playhead state share the window's
+                // existing detail column. Keeping a second inspector here would
+                // turn a three-column Mac app into four narrow panes.
                 TrajectoryStepList(model: model.trajectory)
-                    .frame(minWidth: 200, maxWidth: .infinity)
-                if model.trajectory.showsInspector {
-                    Rectangle().fill(AuspexPalette.line).frame(width: 1)
-                    TrajectoryInspector(
-                        model: model.trajectory,
-                        brief: session.brief
-                    )
-                    .frame(minWidth: 260, idealWidth: 340, maxWidth: 340)
-                }
+                    .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxHeight: .infinity)
         }
     }
 
@@ -83,7 +77,6 @@ struct TrajectoryView: View {
         .centredInPane()
     }
 }
-
 
 /// Which session each colour on a merged flight belongs to.
 ///
@@ -206,6 +199,11 @@ private struct TrajectoryBar: View {
             StatePill(state: session.state, isStale: session.isStale, showsChildCount: false)
                 .fixedSize()
             Spacer(minLength: 8)
+            SegmentedPicker(
+                selection: $trajectory.presentation,
+                options: FlightPresentation.allCases.map { ($0, $0.title) }
+            )
+            .fixedSize()
             // Only when there is a family to merge. A control offering to show
             // one session's lane merged with nothing is a control that does
             // nothing, and this bar is already the busiest row in the window.
@@ -220,17 +218,29 @@ private struct TrajectoryBar: View {
                         + "on it in one waterfall, in the order things happened"
                 )
             }
-            SegmentedPicker(
-                selection: $trajectory.scale,
-                options: TrajectoryScale.allCases.map { ($0, $0.title) }
-            )
-            .fixedSize()
-            .help("What the timeline's width measures")
-            if let searchWidth {
-                searchField(width: searchWidth)
+            if trajectory.presentation == .graph {
+                SegmentedPicker(
+                    selection: Binding(
+                        get: { trajectory.graphCamera },
+                        set: { trajectory.setGraphCamera($0) }
+                    ),
+                    options: FlightGraphCamera.allCases.map { ($0, $0.title) }
+                )
+                .fixedSize()
+                .help(
+                    "Overview fits the graph; Follow glides to activity; pan or zoom enters Manual")
+            } else {
+                SegmentedPicker(
+                    selection: $trajectory.scale,
+                    options: TrajectoryScale.allCases.map { ($0, $0.title) }
+                )
+                .fixedSize()
+                .help("What the timeline's width measures")
+                if let searchWidth {
+                    searchField(width: searchWidth)
+                }
+                followToggle(showsLabel: showsFollowLabel)
             }
-            followToggle(showsLabel: showsFollowLabel)
-            inspectorToggle
         }
     }
 
@@ -240,7 +250,9 @@ private struct TrajectoryBar: View {
     }
 
     private func backButton(showsLabel: Bool) -> some View {
-        Button { board.closeTrajectory() } label: {
+        Button {
+            board.closeTrajectory()
+        } label: {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 9, weight: .bold))
@@ -301,7 +313,9 @@ private struct TrajectoryBar: View {
     }
 
     private func followToggle(showsLabel: Bool) -> some View {
-        Button { trajectory.followsTail.toggle() } label: {
+        Button {
+            trajectory.followsTail.toggle()
+        } label: {
             HStack(spacing: 5) {
                 StateDot(
                     color: trajectory.followsTail
@@ -332,19 +346,6 @@ private struct TrajectoryBar: View {
         )
     }
 
-    private var inspectorToggle: some View {
-        Button { trajectory.showsInspector.toggle() } label: {
-            Image(systemName: "sidebar.right")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(
-                    trajectory.showsInspector ? AuspexPalette.text : AuspexPalette.text3
-                )
-                .frame(width: 26, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.auspex)
-        .help(trajectory.showsInspector ? "Hide the inspector" : "Show the inspector")
-    }
 }
 
 // MARK: - The facts strip
@@ -425,10 +426,12 @@ private struct TrajectoryStepList: View {
                             step: step,
                             marker: model.markers[step.id] ?? .none,
                             isSelected: model.selectedID == step.id,
-                            isDimmed: false,
+                            isDimmed: model.isAfterPlayhead(step),
+                            isPlayhead: model.playheadStepID == step.id,
                             lane: model.lane(of: step),
                             onSelect: {
                                 model.selectedID = step.id
+                                if model.isHistory { model.seek(to: step) }
                                 model.showsInspector = true
                                 isFocused = true
                             }
@@ -457,8 +460,14 @@ private struct TrajectoryStepList: View {
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
-        .onKeyPress(.upArrow) { model.selectPrevious(); return .handled }
-        .onKeyPress(.downArrow) { model.selectNext(); return .handled }
+        .onKeyPress(.upArrow) {
+            model.selectPrevious()
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            model.selectNext()
+            return .handled
+        }
         .onKeyPress(.escape) {
             guard model.showsInspector else { return .ignored }
             model.showsInspector = false

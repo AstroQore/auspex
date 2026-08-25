@@ -60,7 +60,14 @@ struct RootView: View {
         } content: {
             boardColumn(model: model)
         } detail: {
-            SessionTraceView(model: model)
+            // The split view asks each column for an ideal size while it
+            // negotiates dividers. The detail is a live header over a lazy
+            // trace; letting that question reach the contents feeds their
+            // changing height back into NavigationStack's root geometry.
+            // Give it the viewport the split already chose instead.
+            ScrollSizeGate {
+                detailColumn(model: model)
+            }
                 .navigationSplitViewColumnWidth(min: 360, ideal: 420)
         }
         .auspexAppearance(environment.appearance)
@@ -137,6 +144,17 @@ struct RootView: View {
         // ``MainThreadMeter``, which is how this branch's before and after are
         // measured on a machine that is never quiet.
         .task { MainThreadMeter.shared?.start() }
+    }
+
+    @ViewBuilder
+    private func detailColumn(model: LiveBoardModel) -> some View {
+        if model.viewMode == .perch, model.map.isHistory {
+            MapHistoryInspector(board: model, map: model.map)
+        } else if model.viewMode == .trajectory {
+            FlightDetailView(board: model, trajectory: model.trajectory)
+        } else {
+            SessionTraceView(model: model)
+        }
     }
 
     /// The split view's binding, in the app's own vocabulary.
@@ -277,6 +295,7 @@ struct RootView: View {
                     case .board: BoardView(model: model)
                     case .scene: SceneContainerView(model: model)
                     case .crew: CrewView(model: model, liveliness: environment.catalog.crewLiveliness)
+                    case .perch: MapView(board: model, map: model.map)
                     case .trajectory: TrajectoryView(model: model)
                     }
                 } else {

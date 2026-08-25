@@ -75,13 +75,6 @@ private enum GridTile {
 struct PanelChrome: ViewModifier {
     var isSelected = false
     var isHighlighted = false
-    /// Whether the glow breathes rather than sitting still.
-    ///
-    /// Reserved for the one thing on the board that is *asking*. A still ring
-    /// is a label; a breathing one is something waiting for you, and the
-    /// difference is what a person reads from the far side of a desk without
-    /// looking directly at the window.
-    var breathes = false
     var highlightColor: Color = .clear
     var cornerRadius: CGFloat = 10
 
@@ -99,9 +92,7 @@ struct PanelChrome: ViewModifier {
             // colour is not free — it still allocates the offscreen buffer the
             // blur would need — and on a wall of forty cards that is forty
             // buffers redrawn for nothing.
-            .modifier(
-                ConditionalGlow(isOn: isHighlighted, breathes: breathes, color: highlightColor)
-            )
+            .modifier(ConditionalGlow(isOn: isHighlighted, color: highlightColor))
     }
 
     private var borderColor: Color {
@@ -111,8 +102,7 @@ struct PanelChrome: ViewModifier {
     }
 }
 
-/// A glow that exists only while it is on, and breathes only when it is
-/// asking.
+/// A glow that exists only while a card has something to say.
 ///
 /// ## The radius is constant, and that is not a detail
 ///
@@ -122,39 +112,25 @@ struct PanelChrome: ViewModifier {
 /// expensive way (see ``BreathingRing``): 14 % of a core became 100 %, pinned,
 /// with the main thread inside `LazySubviewPlacements.placeSubviews`.
 ///
-/// So the breath is in the *colour*, which is a paint change and nothing else,
-/// and only the cards that are actually shouting pay for it.
+/// The earlier implementation kept the radius constant and animated only the
+/// colour. On macOS 26 that still kept SwiftUI's display-list transaction
+/// alive, repeatedly asking the lazy grid and the split view for their sizes.
+/// A busy board eventually spent whole seconds inside `sizeThatFits`. The
+/// highlight is intentionally still now; Flight and the activity strip carry
+/// live motion without putting the window back on that render loop.
 ///
 /// ## And it is weaker in light
 ///
 /// A glow is light spilling from a lit thing, and there is far less to spill
 /// onto when the ground is already white — see ``AuspexPalette/glow(_:_:)``.
-/// The breath's two ends both scale, so an asking card still pulses; it
-/// pulses between two quieter alphas.
 private struct ConditionalGlow: ViewModifier {
     let isOn: Bool
-    var breathes = false
     let color: Color
-    @State private var isDim = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        if isOn, breathes, !reduceMotion {
-            content
-                .shadow(
-                    color: color.opacity(
-                        AuspexPalette.glow(isDim ? 0.10 : 0.34, colorScheme)
-                    ),
-                    radius: 14
-                )
-                .animation(
-                    .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
-                    value: isDim
-                )
-                .onAppear { isDim = true }
-        } else if isOn {
+        if isOn {
             content.shadow(
                 color: color.opacity(AuspexPalette.glow(0.22, colorScheme)),
                 radius: 14
@@ -170,7 +146,6 @@ extension View {
     func panelChrome(
         isSelected: Bool = false,
         isHighlighted: Bool = false,
-        breathes: Bool = false,
         highlightColor: Color = .clear,
         cornerRadius: CGFloat = 10
     ) -> some View {
@@ -178,7 +153,6 @@ extension View {
             PanelChrome(
                 isSelected: isSelected,
                 isHighlighted: isHighlighted,
-                breathes: breathes,
                 highlightColor: highlightColor,
                 cornerRadius: cornerRadius
             )

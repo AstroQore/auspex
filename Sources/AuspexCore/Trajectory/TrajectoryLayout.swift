@@ -3,7 +3,7 @@ import Foundation
 
 /// What the waterfall's horizontal axis measures.
 ///
-/// The three answers are genuinely different questions, which is why this is a
+/// The four answers are genuinely different questions, which is why this is a
 /// mode and not a zoom:
 ///
 /// - **Duration** is the truth about *time*. A session that spent four minutes
@@ -15,6 +15,10 @@ import Foundation
 /// - **Calls** gives every step the same width. It is the sequence, with time
 ///   taken out entirely: what happened, in order, and how much of it there was.
 public enum TrajectoryScale: String, CaseIterable, Identifiable, Sendable, Codable {
+    /// Every stored event receives one equal slot. This is the playback scale:
+    /// the playhead always lands on an observed fact rather than on an
+    /// arbitrary wall-clock instant.
+    case events
     case duration
     case turns
     case calls
@@ -23,6 +27,7 @@ public enum TrajectoryScale: String, CaseIterable, Identifiable, Sendable, Codab
 
     public var title: String {
         switch self {
+        case .events: "Events"
         case .duration: "Duration"
         case .turns: "Turns"
         case .calls: "Calls"
@@ -32,6 +37,7 @@ public enum TrajectoryScale: String, CaseIterable, Identifiable, Sendable, Codab
     /// What the axis is measuring, for the tooltip.
     public var axisDescription: String {
         switch self {
+        case .events: "one equal column per observed event"
         case .duration: "proportional to elapsed time"
         case .turns: "one equal column per turn"
         case .calls: "one equal column per step"
@@ -123,13 +129,38 @@ public enum TrajectoryLayout {
     public static func spans(
         for steps: [TrajectoryStep],
         scale: TrajectoryScale,
-        now: Date? = nil
+        now: Date? = nil,
+        eventIDs: [Int64] = []
     ) -> [TrajectorySpan] {
         guard !steps.isEmpty else { return [] }
         switch scale {
+        case .events: return eventSpans(steps, eventIDs: eventIDs)
         case .duration: return durationSpans(steps, now: now)
         case .turns: return turnSpans(steps, now: now)
         case .calls: return callSpans(steps)
+        }
+    }
+
+    private static func eventSpans(
+        _ steps: [TrajectoryStep],
+        eventIDs: [Int64]
+    ) -> [TrajectorySpan] {
+        guard !eventIDs.isEmpty else { return callSpans(steps) }
+        let index = Dictionary(uniqueKeysWithValues: eventIDs.enumerated().map { ($0.element, $0.offset) })
+        let count = Double(eventIDs.count)
+        return steps.enumerated().map { stepIndex, step in
+            let startIndex = index[step.id] ?? min(stepIndex, eventIDs.count - 1)
+            let nextID = steps.indices.contains(stepIndex + 1) ? steps[stepIndex + 1].id : nil
+            let endIndex = nextID.flatMap { index[$0] } ?? min(eventIDs.count, startIndex + 1)
+            return TrajectorySpan(
+                id: step.id,
+                index: stepIndex,
+                lane: step.role.lane,
+                role: step.role,
+                start: Double(startIndex) / count,
+                end: Double(max(startIndex + 1, endIndex)) / count,
+                isError: step.isError
+            )
         }
     }
 
@@ -273,10 +304,22 @@ public enum TrajectoryLayout {
         for steps: [TrajectoryStep],
         scale: TrajectoryScale,
         now: Date? = nil,
-        count: Int = 6
+        count: Int = 6,
+        eventCount: Int = 0
     ) -> [TrajectoryTick] {
         guard !steps.isEmpty, count > 1 else { return [] }
         switch scale {
+        case .events:
+            let total = max(eventCount, steps.count)
+            guard total > 0 else { return [] }
+            let stride = Swift.max(1, Int((Double(total) / Double(count)).rounded(.up)))
+            return Swift.stride(from: 0, to: total, by: stride).map { index in
+                TrajectoryTick(
+                    position: Double(index) / Double(total),
+                    label: "#\(index + 1)",
+                    isDivider: true
+                )
+            }
         case .duration:
             let bounds = self.bounds(of: steps, now: now)
             let total = bounds.end.timeIntervalSince(bounds.start)

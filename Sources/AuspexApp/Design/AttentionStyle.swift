@@ -59,14 +59,6 @@ enum AttentionStyle {
         }
     }
 
-    /// Whether the card's glow breathes.
-    ///
-    /// Only red. A breath is what makes a ring read as *a thing waiting for
-    /// you* rather than as a sticker, and a wall where the good news breathed
-    /// too would be a wall with no quiet in it for the bad news to stand out
-    /// against.
-    static func breathes(_ attention: AttentionState) -> Bool { attention.wantsPerson }
-
     /// What VoiceOver says.
     static func label(_ attention: AttentionState) -> String? {
         switch attention {

@@ -182,6 +182,7 @@ final class LiveBoardModel {
             // frame's is what stops a switch to the crew showing an empty wall
             // until the next frame lands.
             if viewMode == .crew, let previousFrame { groups = previousFrame.groups }
+            if viewMode == .perch { map.apply(units: units) }
             guard viewMode.requiresSelection else {
                 // Leaving the trajectory stops its reads. The fold is kept:
                 // coming back to the same session should not re-read a
@@ -191,6 +192,10 @@ final class LiveBoardModel {
             }
             modeBeforeTrajectory = oldValue
             guard selectedKey != nil else {
+                // A demo launch can request Flight before its fabricated first
+                // frame exists. Keep the mode; auto-selection on that frame
+                // will call `loadTrajectory()` through `selectedKey.didSet`.
+                if autoSelectsFirstSession { return }
                 viewMode = oldValue
                 return
             }
@@ -212,6 +217,16 @@ final class LiveBoardModel {
     /// letting the window close, does not throw away a reader's place in a
     /// five-thousand-step session.
     let trajectory = TrajectoryModel()
+
+    /// The user-owned spatial surface. It holds only flat card values and
+    /// persists through a mode switch so every board returns to its camera and
+    /// positions rather than rebuilding a picture the person already arranged.
+    let map = MapModel()
+
+    func startMap(repository: MapRepository, sessions: SessionRepository) {
+        map.start(repository: repository, sessions: sessions)
+        map.apply(units: units)
+    }
 
     /// Opens the Trajectory on the selected session, from wherever the reader
     /// was. Does nothing with no session selected: there would be nothing to
@@ -582,10 +597,7 @@ final class LiveBoardModel {
     private(set) var unitBySession: [SessionKey: String] = [:]
 
     /// The unit the selected session belongs to, when there is one.
-    var selectedUnit: TaskUnit? {
-        guard let key = selectedKey, let id = unitBySession[key] else { return nil }
-        return unitIndex[id]
-    }
+    private(set) var selectedUnit: TaskUnit?
 
     /// The unit whose detail page is open, if any.
     var openUnitID: String?
@@ -868,7 +880,7 @@ final class LiveBoardModel {
             adoptedBoardRevision = frame.boardRevision
             board = frame.board
         }
-        ignoredKeys = frame.ignoredKeys
+        if ignoredKeys != frame.ignoredKeys { ignoredKeys = frame.ignoredKeys }
         sessionIndex = frame.sessionIndex
         // Only the mode that reads it. `groups` carries whole
         // `SessionSnapshot`s — the value every other property here exists to
@@ -876,36 +888,41 @@ final class LiveBoardModel {
         // publishes, so assigning it is a deep comparison of every session on
         // the board, on the main actor, whether or not anything is drawing it.
         // The crew wall gets it the moment it is switched to; see `viewMode`.
-        if viewMode == .crew { groups = frame.groups }
-        if viewMode == .scene { sceneBoard = frame.sceneBoard }
-        rowGroups = frame.rowGroups
-        unitGroups = frame.unitGroups
-        endedUnits = frame.endedUnits
+        if viewMode == .crew, groups != frame.groups { groups = frame.groups }
+        if viewMode == .scene, sceneBoard != frame.sceneBoard { sceneBoard = frame.sceneBoard }
+        if rowGroups != frame.rowGroups { rowGroups = frame.rowGroups }
+        if unitGroups != frame.unitGroups { unitGroups = frame.unitGroups }
+        if endedUnits != frame.endedUnits { endedUnits = frame.endedUnits }
         let unitsMoved = units != frame.units
-        units = frame.units
+        if unitsMoved { units = frame.units }
+        if unitsMoved, viewMode == .perch { map.apply(units: frame.units) }
         // These are observed by the header and Catch-up sheet. Observation
         // invalidates on any write, even an equal value, so the assembler's
         // semantic reconciliation only saves work if the model preserves it.
         if catchUp != frame.catchUp { catchUp = frame.catchUp }
         if humanWorkQueue != frame.humanQueue { humanWorkQueue = frame.humanQueue }
         if watchSignals != frame.watchSignals { watchSignals = frame.watchSignals }
-        unitIndex = frame.unitIndex
+        if unitIndex != frame.unitIndex { unitIndex = frame.unitIndex }
         if unitsMoved {
             reviewOrdering.reconcile(units: frame.units)
             let nextReviewCount = frame.units.count { $0.isInReview }
             if reviewCount != nextReviewCount { reviewCount = nextReviewCount }
         }
-        filterOptions = frame.filterOptions
-        unitBySession = frame.unitBySession
-        endedRows = frame.endedRows
-        summary = frame.summary
-        sessionCount = frame.sessionCount
-        attention = frame.attention
-        needsYouKeys = Set(frame.attention.compactMap { $0.value.wantsPerson ? $0.key : nil })
-        doneReportedKeys = Set(
+        if filterOptions != frame.filterOptions { filterOptions = frame.filterOptions }
+        if unitBySession != frame.unitBySession { unitBySession = frame.unitBySession }
+        if endedRows != frame.endedRows { endedRows = frame.endedRows }
+        if summary != frame.summary { summary = frame.summary }
+        if sessionCount != frame.sessionCount { sessionCount = frame.sessionCount }
+        if attention != frame.attention { attention = frame.attention }
+        let nextNeedsYouKeys = Set(
+            frame.attention.compactMap { $0.value.wantsPerson ? $0.key : nil }
+        )
+        if needsYouKeys != nextNeedsYouKeys { needsYouKeys = nextNeedsYouKeys }
+        let nextDoneReportedKeys = Set(
             frame.attention.compactMap { $0.value.isDoneReported ? $0.key : nil }
         )
-        olderHidden = frame.olderHidden
+        if doneReportedKeys != nextDoneReportedKeys { doneReportedKeys = nextDoneReportedKeys }
+        if olderHidden != frame.olderHidden { olderHidden = frame.olderHidden }
         refreshSelection()
         onTree?(frame.tree)
         // Only when something the Tasks page draws actually moved: it rebuilds
@@ -915,7 +932,7 @@ final class LiveBoardModel {
         // changing a single session.
         if boardMoved || unitsMoved { onFrame?(frame.board, frame.units) }
 
-        if !board.sessions.isEmpty { hasEverSeenSession = true }
+        if !hasEverSeenSession, !board.sessions.isEmpty { hasEverSeenSession = true }
 
         if autoSelectsFirstSession, selectedKey == nil, let first = board.sessions.first {
             selectedKey = first.key
@@ -935,7 +952,7 @@ final class LiveBoardModel {
     /// Waits until every frame the model has asked for has been assigned.
     ///
     /// The app never needs it — a frame that lands a beat later is exactly what
-    /// the 120 ms coalescing already allows — but a test that applies a frame
+    /// the half-second coalescing already allows — but a test that applies a frame
     /// and then asks what the board says does, and so does anything that draws
     /// the window once and exits.
     func settle() async {
@@ -969,20 +986,32 @@ final class LiveBoardModel {
         // wall. A trace pane that went blank because the *card* is not drawn
         // would be answering "show me this session" with "no".
         let session = selectedKey.flatMap { sessionIndex[$0] ?? rawBoard.session(for: $0) }
-        selectedSession = session
-        selectedParent = session?.identity.parent.flatMap { sessionIndex[$0] }
+        if selectedSession != session { selectedSession = session }
+        let parent = session?.identity.parent.flatMap { sessionIndex[$0] }
+        if selectedParent != parent { selectedParent = parent }
 
         // Taken from the frame's own forest rather than from
         // `SessionSnapshot.children`, because that list is what the *adapter*
         // recorded — it has no way to know about a `codex exec` the process
         // table linked up three seconds ago, and the header should show both
         // kinds of child the same way.
-        selectedChildren = selectedKey
+        let children = selectedKey
             .flatMap { board.tree.node(for: $0) }?
             .children.compactMap { sessionIndex[$0.key] } ?? []
+        if selectedChildren != children { selectedChildren = children }
 
-        selectedProjectKey = session.flatMap { board.projectKey(for: $0) }
-        selectedProjectName = selectedProjectKey.map(BoardGrouping.projectName(forPath:))
+        let projectKey = session.flatMap { board.projectKey(for: $0) }
+        if selectedProjectKey != projectKey { selectedProjectKey = projectKey }
+        let projectName = projectKey.map(BoardGrouping.projectName(forPath:))
+        if selectedProjectName != projectName { selectedProjectName = projectName }
+
+        let unit = selectedKey
+            .flatMap { unitBySession[$0] }
+            .flatMap { unitIndex[$0] }
+        if selectedUnit != unit { selectedUnit = unit }
+
+        let nextAttention = selectedKey.flatMap { attention[$0] } ?? .none
+        if selectedAttention != nextAttention { selectedAttention = nextAttention }
     }
 
     /// Turns the bucket filter on, or off if it is already on this bucket.
@@ -1185,6 +1214,10 @@ final class LiveBoardModel {
     /// header's project chip binds the board to when it is clicked.
     private(set) var selectedProjectKey: String?
 
+    /// The selected session's attention without making the detail pane
+    /// subscribe to every other session's entry in the attention dictionary.
+    private(set) var selectedAttention = AttentionState.none
+
     /// The directory a session is actually working in, unabbreviated.
     ///
     /// ``BoardRow/directory`` is shortened to `~` for the card; a rule needs
@@ -1363,30 +1396,30 @@ final class LiveBoardModel {
         }
     }
 
-    /// Minimum spacing between two applied frames, for the board in hand.
+    /// Minimum spacing between two applied frames.
     private var frameInterval: Duration {
         Self.frameInterval(forSessions: sessionCount)
     }
 
-    /// How often a board of `sessions` may be applied.
+    /// How often a board may be applied.
     ///
-    /// A constant 8 Hz is right for a dozen sessions and impossible for two
-    /// hundred. Applying a frame is not free once it lands: SwiftUI re-places
+    /// Applying a frame is not free once it lands: SwiftUI re-places
     /// every lazy stack the change touched, and a lazy stack's placement is a
     /// walk of its whole view list — so the cost of an applied frame grows
     /// with the board while the interval between them did not. Past about
     /// eighty sessions the window was being asked to do more work per second
     /// than a second contains, which is what "it froze" means.
     ///
-    /// So the rate follows the size. Twelve sessions still get 8 Hz, which is
-    /// what makes a small board feel live; two hundred get 2 Hz, which is
-    /// inside the half second `AGENTS.md` § 4.1 allows a board to take during
-    /// a burst — and which is the difference between a board that is a beat
-    /// behind and a window that cannot be clicked.
+    /// The rate is two frames per second for every board size. That is the
+    /// half-second freshness budget in `AGENTS.md` § 4.1, and it makes a
+    /// compressed bootstrap or replay burst latest-wins in one frame instead
+    /// of queuing four expensive SwiftUI layouts on a small board. Motion does
+    /// not depend on this cadence: activity strips, Aviary, Flock and Flight
+    /// own their clocks outside the model.
     ///
     /// Static and pure so the curve can be asserted on rather than measured.
-    static func frameInterval(forSessions sessions: Int) -> Duration {
-        .milliseconds(min(500, max(120, sessions * 3)))
+    static func frameInterval(forSessions _: Int) -> Duration {
+        .milliseconds(500)
     }
 
     /// Stops consuming. Called when the app is shutting down.

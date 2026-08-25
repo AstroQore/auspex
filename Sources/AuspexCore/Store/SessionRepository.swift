@@ -469,6 +469,46 @@ public struct SessionRepository: Sendable {
         try events(key: key, after: 0, limit: limit)
     }
 
+    /// Relevant events across a board's current sessions, for global Map
+    /// playback. Bodies and quota samples do not change a replayable session
+    /// state and are left out before decode; everything else is ordered by the
+    /// source clock, tailer sequence and durable row id.
+    public func playbackEvents(
+        keys: [SessionKey],
+        since: Date,
+        limit: Int = 100_000
+    ) throws -> [StoredEvent] {
+        guard limit > 0, !keys.isEmpty else { return [] }
+        let unique = Array(Set(keys)).sorted { $0.description < $1.description }
+        return try dbWriter.read { db in
+            var events: [StoredEvent] = []
+            let decoder = StoreJSON.makeDecoder()
+            for start in stride(from: 0, to: unique.count, by: 400) {
+                let chunk = Array(unique[start..<min(start + 400, unique.count)])
+                let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ", ")
+                var arguments = StatementArguments(chunk.map(\.description))
+                arguments += [since.timeIntervalSince1970, limit]
+                let rows = try Row.fetchAll(db, sql: """
+                    SELECT id, session_key, ts, observed_at, seq, kind,
+                           tool_call_id, tool_name, detail_json, raw_path, raw_offset
+                      FROM events
+                     WHERE session_key IN (\(placeholders))
+                       AND ts >= ?
+                       AND kind NOT IN ('textBody', 'quota')
+                     ORDER BY ts ASC, seq ASC, id ASC
+                     LIMIT ?
+                    """, arguments: arguments)
+                events.append(contentsOf: rows.compactMap { StoredEvent(row: $0, decoder: decoder) })
+            }
+            events.sort {
+                if $0.timestamp != $1.timestamp { return $0.timestamp < $1.timestamp }
+                if $0.sequence != $1.sequence { return $0.sequence < $1.sequence }
+                return $0.id < $1.id
+            }
+            return Array(events.prefix(limit))
+        }
+    }
+
     /// How much indexed prose a session is carrying, by kind, since its last
     /// compaction.
     ///
@@ -911,6 +951,26 @@ public struct StoredEvent: Hashable, Sendable, Identifiable {
         self.toolName = row["tool_name"]
         self.rawPath = row["raw_path"]
         self.rawOffset = row["raw_offset"]
+    }
+}
+
+public extension StoredEvent {
+    /// One canonical media order for every playback surface.
+    ///
+    /// Database ids describe when Auspex persisted rows; they do not describe
+    /// when two harnesses acted. Task Flight merges several sessions, so a
+    /// late-arriving child event can have a larger row id and an earlier source
+    /// timestamp than its parent's next event. Graph, Trace, reducers and the
+    /// scrubber must all use this comparison or one playhead index names
+    /// several different moments.
+    static func playbackLessThan(_ lhs: StoredEvent, _ rhs: StoredEvent) -> Bool {
+        if lhs.timestamp != rhs.timestamp { return lhs.timestamp < rhs.timestamp }
+        if lhs.sequence != rhs.sequence { return lhs.sequence < rhs.sequence }
+        return lhs.id < rhs.id
+    }
+
+    static func orderedForPlayback(_ events: [StoredEvent]) -> [StoredEvent] {
+        events.sorted(by: playbackLessThan)
     }
 }
 

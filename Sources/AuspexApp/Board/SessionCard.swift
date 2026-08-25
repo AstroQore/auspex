@@ -98,9 +98,9 @@ struct SessionCard: View, Equatable {
             // One ring, two colours, and the source of the claim does not
             // change either: a card glows red whether the harness reported the
             // block or the agent said so, and green when an agent reported
-            // finishing. Only the red one breathes — see ``AttentionStyle``.
+            // finishing. Motion stays in the activity strip so the ring never
+            // puts the lazy wall onto a display-link layout loop.
             isHighlighted: attentionColour != nil,
-            breathes: AttentionStyle.breathes(row.attention),
             highlightColor: attentionColour ?? style.color
         )
         .overlay(alignment: .leading) {

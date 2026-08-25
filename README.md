@@ -151,7 +151,7 @@ behalf. Pressing Tab or an arrow key then enters the normal macOS key-view loop
 with visible focus feedback. The command palette is the deliberate exception:
 pressing ⌘K is already an explicit request to type, so its search field is ready.
 
-## Four ways to read one board
+## Five ways to read one board
 
 The picker in the header switches how the live sessions are drawn. It is a mode
 rather than a destination: the selection, the grouping, the filters and the
@@ -180,6 +180,22 @@ way they do in Preview, with the same momentum and the same elastic edges;
 same selection clicking a card makes. Under Reduce Motion every rhythm
 collapses to a static pose.
 
+**Perch** is the same work as spatial memory rather than an automatic room.
+Every root task owns one card; its sub-agents fold under it, dependencies are
+solid arrows, and observed lineage is dashed. Cards stay exactly where they
+were put across launches. `All boards` always contains everything, while
+custom boards can mirror the same task at a different position and populate
+themselves from nested project, harness, label, status and Attention rules.
+
+![The Perch: user-positioned task cards inside project frames, with dependencies and one selected task](docs/screenshots/map.png)
+
+The strip along the bottom is an event index, not a wall clock. Scrubbing it
+rebuilds session state, task state, board membership and rules at that observed
+event while card positions and camera remain the current spatial memory.
+History is read-only; **Fork board here** copies only the
+view, pauses its rules, and never rewinds an agent. View branches merge with a
+three-way comparison and an explicit choice for every real conflict.
+
 | State | The desk | The agent |
 | --- | --- | --- |
 | Thinking | screen breathes, blue | head bobs |
@@ -194,7 +210,7 @@ resolve itself without a person — but it is not a state. See below.
 | | |
 | --- | --- |
 | ![The Flock: one geometric avatar per session](docs/screenshots/crew.png) | ![The Flight view: a waterfall of one session's turns beside its steps](docs/screenshots/trajectory.png) |
-| **Flock** (was Crew) — one geometric avatar per session, its face and posture driven by what that session is doing. The same information as the Aviary at a tenth of the pixels. | **Flight** (was Trajectory, ⌘T) — one session opened out: a waterfall of its turns, every step it took, and an inspector on whichever one is selected. |
+| **Flock** (was Crew) — one geometric avatar per task, its face and posture driven by the sessions doing that work. The same information as the Aviary at a tenth of the pixels. | **Flight** (was Trajectory, ⌘T) — one session or whole Task opened out. **Graph** plays its Agent tree, active lineage and in-flight tool chips; **Trace** keeps the event waterfall and Summary/Preview/Raw step inspection. Both share one playhead, scope, speed and Jump to Live. |
 
 ## Two axes: what a session is doing, and whether it wants you
 

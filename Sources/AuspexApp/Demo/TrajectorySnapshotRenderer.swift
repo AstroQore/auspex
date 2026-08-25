@@ -18,10 +18,8 @@ import SwiftUI
 /// two-step session demonstrates nothing.
 @MainActor
 enum TrajectorySnapshotRenderer {
-    /// Wider than the board's artboard on purpose. The trajectory is the only
-    /// mode with four columns — sidebar, rows, inspector, trace — and 1440
-    /// points leaves the rows too narrow to say anything true about how they
-    /// read at a working width.
+    /// Wider than the board's artboard on purpose. Flight gives its rows the
+    /// centre column and the Moment/Step inspector the existing detail column.
     static let defaultSize = CGSize(width: 1_600, height: 980)
 
     static func render(
@@ -53,6 +51,14 @@ enum TrajectorySnapshotRenderer {
         trajectory.showsInspector = true
         trajectory.tab = .summary
         trajectory.selectedID = interestingStep(in: trajectory)?.id
+        // Late enough that the demo's two subagents have been born and at
+        // least one tool is still open — Graph would otherwise truthfully
+        // render one lonely root and fail to exercise the feature it documents.
+        trajectory.enterHistory(at: max(0, trajectory.events.count - 1))
+        let playbackDeadline = Date().addingTimeInterval(1)
+        while Date() < playbackDeadline, trajectory.playbackMoment == nil {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.03))
+        }
         pump(for: 0.4)
 
         let renderer = ImageRenderer(
@@ -67,9 +73,9 @@ enum TrajectorySnapshotRenderer {
         renderer.isOpaque = true
         let image = renderer.nsImage
         guard let image,
-              let tiff = image.tiffRepresentation,
-              let representation = NSBitmapImageRep(data: tiff),
-              let png = representation.representation(using: .png, properties: [:])
+            let tiff = image.tiffRepresentation,
+            let representation = NSBitmapImageRep(data: tiff),
+            let png = representation.representation(using: .png, properties: [:])
         else { throw RenderError.renderFailed }
         try png.write(to: url)
         return summary(of: trajectory, key: chosen)
@@ -101,7 +107,9 @@ enum TrajectorySnapshotRenderer {
             let trajectory = board.trajectory
             guard !trajectory.steps.isEmpty else { continue }
             var score = trajectory.steps.count * 10
-            if trajectory.steps.contains(where: { $0.role == .tool && $0.isError }) { score += 3_000 }
+            if trajectory.steps.contains(where: { $0.role == .tool && $0.isError }) {
+                score += 3_000
+            }
             if trajectory.tokens != nil { score += 3_000 }
             if trajectory.turns.count > 2 { score += 500 }
             if best == nil || score > best!.score { best = (key, score) }
@@ -146,11 +154,12 @@ enum TrajectorySnapshotRenderer {
             "\(key.harness.displayName) \(key.sessionID.prefix(8))",
             "\(model.steps.count) steps",
             "\(model.turns.count) turns",
-            "\(model.requests.count) requests"
+            "\(model.requests.count) requests",
         ]
         parts.append("\(model.errorCount) failed")
         if let tokens = model.tokens {
-            parts.append("\(TokenFormat.compact(tokens.input))/\(TokenFormat.compact(tokens.output)) tokens")
+            parts.append(
+                "\(TokenFormat.compact(tokens.input))/\(TokenFormat.compact(tokens.output)) tokens")
         } else {
             parts.append("no usage reported")
         }
@@ -163,8 +172,8 @@ enum TrajectorySnapshotRenderer {
     }
 }
 
-/// The window as it looks in Trajectory mode: the sidebar, the board column
-/// showing one session's history, and the live trace beside it.
+/// The window as it looks in Flight mode: the sidebar, the event waterfall,
+/// and the at-playhead/step detail column.
 ///
 /// An `HStack` and not the real `NavigationSplitView` for the reason
 /// ``WindowSnapshotRenderer`` gives: a split view needs a window to lay itself
@@ -195,8 +204,11 @@ private struct TrajectorySnapshot: View {
             }
             .frame(maxWidth: .infinity)
             divider
-            SessionTraceView(model: environment.board)
-                .frame(width: 380)
+            FlightDetailView(
+                board: environment.board,
+                trajectory: environment.board.trajectory
+            )
+            .frame(width: 380, height: size.height)
         }
         .frame(width: size.width, height: size.height)
         .environment(clock)

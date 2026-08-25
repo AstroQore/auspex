@@ -10,6 +10,45 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+### Added
+
+- A fifth **Perch** view: a native, user-owned spatial canvas with durable
+  multi-board placement, project frames, task dependencies, folded subagents,
+  nested automatic membership rules, semantic zoom, minimap navigation, and
+  neutral initial keyboard focus.
+- Perch supports arrow/Enter/⌘T/Escape navigation after keyboard focus,
+  dependency-handle dragging through version-checked task writes, and atomic
+  custom-board reordering.
+- Event-indexed Perch history reconstructs observed sessions, task coordination,
+  board membership, and rules from checkpoints while current positions remain
+  spatial memory. A historical view
+  can be forked into a paused view branch and merged back with explicit
+  three-way conflict choices without rewinding real agents or tasks.
+- Flight now has a shared **Graph / Trace** playback model. Graph reconstructs
+  the Agent tree, active edges, stable positions, minimap, camera modes, and
+  bounded tool-chip afterglows; Trace retains the three-lane waterfall. Flight
+  also has an Events scale, a discrete playhead, Play/Pause speeds,
+  History/Live switching, an at-playhead Agent/tool/token inspector, and a
+  one-click return to Live while retaining its existing Session/Task scopes,
+  search, brush, context lane, and raw-step inspection.
+
+### Fixed
+
+- Live bursts no longer make the selected inspector or unchanged board values
+  re-publish for another session's event. The detail column now owns a concrete
+  viewport, trace following does not queue overlapping scroll animations, and
+  attention rings stay still instead of keeping SwiftUI's whole split-view
+  layout on a display-link transaction. The fabricated demo holds its final
+  frame instead of periodically replaying bootstrap traffic, and Flight's live
+  motion clock expires ten seconds after the newest event.
+- Task Flight now uses one source-time/sequence/id order for its Graph reducer,
+  Trace steps, afterglows and event playhead, including late cross-session
+  writes whose database row ids do not match media time.
+- History rebuilds preserve the selected event identity, paused forks keep
+  playhead-only members, dependency lines come from the historical frame, and
+  board history paginates through the durable tail. Canvas-origin viewport
+  changes no longer feed back through SwiftUI into a second native scroll.
+
 ## [0.1.0] - 2026-08-23
 
 ### Fixed
