@@ -10,6 +10,8 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+## [0.2.0-dev.4] - 2026-08-25
+
 ### Added
 
 - A fifth **Perch** view: a native, user-owned spatial canvas with durable
