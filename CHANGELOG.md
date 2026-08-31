@@ -10,6 +10,25 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+### Fixed
+
+- **A departing MCP peer can no longer take Auspex down with it.** Adopting
+  agent-session-kit 0.6.3 sets `SO_NOSIGPIPE` on every MCP socket descriptor,
+  so a client that vanishes between poll and write now fails the write with
+  `EPIPE` and runs the ordinary teardown path. Before this, the same race
+  raised `SIGPIPE` and killed the process with no crash report — the shape of
+  a long-running server that is simply gone the next time you look.
+- AntiGravity turns written by `agy` ~1.1.18 are dated again. Those builds
+  replaced the per-turn wall clock with an elapsed offset; the kit resolves it
+  against the trajectory's own start time.
+
+### Changed
+
+- agent-session-kit moves to 0.7.0, which splits the kit into peer Swift and
+  Rust implementation lanes and adds a `contracts/` directory holding the facts
+  both must honour. Every product name, import, and pin form is unchanged for
+  this package — the move is invisible here apart from the version.
+
 ## [0.2.0-dev.4] - 2026-08-25
 
 ### Added
