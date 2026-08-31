@@ -26,7 +26,7 @@ let package = Package(
         //
         // To develop the two side by side, put the kit in edit mode instead of
         // editing this line — see AGENTS.md § 3.1.
-        .package(url: "https://github.com/AstroQore/agent-session-kit.git", exact: "0.6.3"),
+        .package(url: "https://github.com/AstroQore/agent-session-kit.git", exact: "0.7.0"),
         // Sparkle is the standard update framework for independently
         // distributed macOS apps. Pinned to the exact reviewed release:
         // verifying and installing an update is the one thing this app does
