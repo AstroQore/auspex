@@ -10,6 +10,8 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+## [0.2.0-dev.5] - 2026-08-31
+
 ### Fixed
 
 - **A departing MCP peer can no longer take Auspex down with it.** Adopting
