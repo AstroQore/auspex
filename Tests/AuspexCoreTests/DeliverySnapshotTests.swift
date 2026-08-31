@@ -148,12 +148,21 @@ struct DeliverySnapshotTests {
         #expect(Set(dirty.changedFiles.map(\.path)) == ["tracked.txt", "new.txt"])
     }
 
+    /// Fixture setup, not a product path: a loaded GitHub runner can spend
+    /// seconds just starting `/usr/bin/git`, and a timeout here fails with an
+    /// empty stderr that says nothing about the assertions below. The 1.5-second
+    /// bound the product actually relies on lives in `GitDeliveryReader`.
     private func git(_ arguments: [String], in directory: URL) throws {
         let result = ProcessGitCommandRunner().run(
-            in: directory, arguments: arguments, timeout: 3, maxOutputBytes: 16 * 1_024
+            in: directory, arguments: arguments, timeout: 30, maxOutputBytes: 16 * 1_024
         )
         guard result.exitCode == 0 else {
-            throw GitTestError.failed(result.stderr)
+            throw GitTestError.failed(
+                result.stderr.isEmpty
+                    ? "git \(arguments.joined(separator: " ")) produced no stderr; "
+                        + "exit \(result.exitCode), most likely the fixture timeout"
+                    : result.stderr
+            )
         }
     }
 }
