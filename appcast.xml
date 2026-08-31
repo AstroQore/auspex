@@ -4,7 +4,21 @@
         <title>Auspex</title>
         <item>
             <title>0.2.0</title>
-            <pubDate>Tue, 25 Aug 2026 05:53:58 +0000</pubDate>
+            <pubDate>Mon, 31 Aug 2026 09:41:04 +0000</pubDate>
+            <link>https://github.com/AstroQore/auspex/releases/tag/v0.2.0</link>
+            <sparkle:version>5</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Auspex 0.2.0
+
+See the [full release notes](https://github.com/AstroQore/auspex/releases/tag/v0.2.0).
+]]></description>
+            <enclosure url="https://github.com/AstroQore/auspex/releases/download/v0.2.0/Auspex-0.2.0-macOS-arm64.zip" length="10504933" type="application/octet-stream" sparkle:edSignature="RH7PWsQrKsN7zVEsO3QKXNf6nezhBjx4Zzp6F8/jXvK9OFYMoPjRaUtFvx28t4gnwiP7Ots4G79Rs+NzDK9YCA=="/>
+        </item>
+        <item>
+            <title>0.2.0</title>
+            <pubDate>Mon, 31 Aug 2026 09:41:05 +0000</pubDate>
             <link>https://github.com/AstroQore/auspex/releases/tag/v0.2.0-dev.4</link>
             <sparkle:channel>dev</sparkle:channel>
             <sparkle:version>4</sparkle:version>
@@ -16,20 +30,6 @@
 See the [full release notes](https://github.com/AstroQore/auspex/releases/tag/v0.2.0-dev.4).
 ]]></description>
             <enclosure url="https://github.com/AstroQore/auspex/releases/download/v0.2.0-dev.4/Auspex-0.2.0-dev.4-macOS-arm64.zip" length="10503471" type="application/octet-stream" sparkle:edSignature="oqydNl/hKAMASB6UZTcFZgNhS6TCHAP4CPEQBOhu70lEXBZQBp4Dq5WR/l/Im9uRgTBsB+NjIkklovyMctmfAQ=="/>
-        </item>
-        <item>
-            <title>0.1.0</title>
-            <pubDate>Tue, 25 Aug 2026 05:53:57 +0000</pubDate>
-            <link>https://github.com/AstroQore/auspex/releases/tag/v0.1.0</link>
-            <sparkle:version>3</sparkle:version>
-            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Auspex 0.1.0
-
-See the [full release notes](https://github.com/AstroQore/auspex/releases/tag/v0.1.0).
-]]></description>
-            <enclosure url="https://github.com/AstroQore/auspex/releases/download/v0.1.0/Auspex-0.1.0-macOS-arm64.zip" length="9515803" type="application/octet-stream" sparkle:edSignature="DQCZ7v1c91MVpJjbH96s+03djojoh8+/8Y1+fz7ACdPdqVp3ipRoMM1bzPNF/neReZUVbmUwgOl/axZWm4N/BQ=="/>
         </item>
     </channel>
 </rss>
