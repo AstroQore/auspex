@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # A PAT (contents:write, pull_requests:write). Without it the default
           # GITHUB_TOKEN still opens the pull request, but GitHub deliberately

@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Check out the tagged source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
