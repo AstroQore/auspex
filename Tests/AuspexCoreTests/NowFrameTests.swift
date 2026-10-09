@@ -256,6 +256,44 @@ struct NowFrameTests {
         #expect(now.mayNeedYou.isEmpty)
     }
 
+    @Test("a session a watch line is about is not listed as done as well")
+    func doneDefersToMayNeedYou() {
+        let finishing = row(
+            "fin", state: .toolCalling(name: "Bash"),
+            attention: .doneReported(summary: "Spec landed", source: .agent),
+            notice: .init(kind: .done, message: "Spec landed", urgency: .normal,
+                          at: Fixtures.date(1)),
+            elapsed: 0
+        )
+        let units = [unit("f", [finishing])]
+        let signals = CollaborationSignals.derive(units: units, now: Fixtures.date(1_000))
+        #expect(signals.contains { $0.kind == WatchSignal.Kind.longTool })
+
+        let now = NowFrame.derive(units: units, signals: signals)
+        #expect(now.mayNeedYou.map(\.row.shortID) == ["fin"])
+        #expect(now.done.isEmpty)
+        #expect(now.counts.done == 0)
+
+        // A collision claims nobody, so two finished sessions in one checkout
+        // are still each listed as done under the line about them both.
+        let shared = "/Users/example/Code/auspex"
+        let one = row(
+            "one", state: .thinking, project: "auspex", directory: shared,
+            attention: .doneReported(summary: "One", source: .agent)
+        )
+        let two = row(
+            "two", state: .thinking, project: "auspex", directory: shared,
+            attention: .doneReported(summary: "Two", source: .agent)
+        )
+        let pair = [unit("one", [one], task: 1), unit("two", [two], task: 2)]
+        let collided = NowFrame.derive(
+            units: pair,
+            signals: CollaborationSignals.derive(units: pair, now: Fixtures.date(100))
+        )
+        #expect(collided.mayNeedYou.map(\.sessionCount) == [2])
+        #expect(Set(collided.done.map(\.row.shortID)) == ["one", "two"])
+    }
+
     @Test("a collision is listed once and claims none of the sessions it names")
     func collisionClaimsNothing() {
         let shared = "/Users/example/Code/auspex"

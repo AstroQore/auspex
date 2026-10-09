@@ -385,10 +385,11 @@ public struct NowFrame: Sendable, Equatable {
         }
         claimed.formUnion(watched)
 
-        // 3. Done, unseen: the receipts, root or not.
+        // 3. Done, unseen: the receipts, root or not, from sessions no line
+        //    above is already about.
         var done: [Item] = []
         for unit in units where unit.hasSessions {
-            for row in unit.members {
+            for row in unit.members where !claimed.contains(row.key) {
                 guard case .doneReported(let summary, _) = row.attention else { continue }
                 done.append(Item(
                     id: "done:\(row.key.description)",
