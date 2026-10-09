@@ -325,6 +325,38 @@ struct NowFrameTests {
         #expect(NowFrame.compactDuration(3_840) == "1h04m")
         #expect(NowFrame.compactDuration(3 * 86_400 + 5) == "3d")
     }
+
+    @Test("a stopwatch says how long its reading holds, so nothing redraws an equal one")
+    func compactDurationHold() {
+        // Seconds are printed under ten minutes, so the reading turns over at
+        // the next whole second.
+        #expect(abs(NowFrame.compactDurationHold(40.25) - 0.75) < 0.0001)
+        #expect(abs(NowFrame.compactDurationHold(-3) - 1) < 0.0001)
+        #expect(abs(NowFrame.compactDurationHold(599.5) - 0.5) < 0.0001)
+        // Past ten minutes it is minutes, up to a day.
+        #expect(abs(NowFrame.compactDurationHold(600) - 60) < 0.0001)
+        #expect(abs(NowFrame.compactDurationHold(18 * 60 + 37) - 23) < 0.0001)
+        #expect(abs(NowFrame.compactDurationHold(3_599) - 1) < 0.0001)
+        #expect(abs(NowFrame.compactDurationHold(3_840) - 60) < 0.0001)
+        #expect(abs(NowFrame.compactDurationHold(86_399.5) - 0.5) < 0.0001)
+        // And past a day, days.
+        #expect(abs(NowFrame.compactDurationHold(3 * 86_400 + 5) - (86_400 - 5)) < 0.0001)
+
+        // Whatever the reading, it really is the same until the hold is up and
+        // different straight after.
+        for elapsed in stride(from: 0.0, to: 90_000, by: 37.3) {
+            let hold = NowFrame.compactDurationHold(elapsed)
+            #expect(hold > 0)
+            #expect(
+                NowFrame.compactDuration(elapsed + hold * 0.999)
+                    == NowFrame.compactDuration(elapsed)
+            )
+            #expect(
+                NowFrame.compactDuration(elapsed + hold + 0.001)
+                    != NowFrame.compactDuration(elapsed)
+            )
+        }
+    }
 }
 
 /// The activity line a real builder would write, for rows built by hand.

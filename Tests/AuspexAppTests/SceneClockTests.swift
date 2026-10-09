@@ -152,6 +152,36 @@ struct SceneClockTests {
         #expect(!still.hasIdleMotion)
     }
 
+    // MARK: - Balloons
+
+    @Test("A balloon's stopwatch is re-read when its words change, and no more than every few seconds")
+    func captionsTickOnlyWhenDue() {
+        let (_, scene) = Self.canvas(reduceMotion: true)
+        let key = try? #require(scene.map.slots.first { $0.isOccupied }?.session)
+        guard let key else { return }
+        let now = Date()
+
+        // Thirty seconds in: the reading has seconds in it, so it would change
+        // every second, and is re-read every five instead.
+        scene.setCaptions([key: SceneCaption(tone: .working, lead: nil, body: "Reading", since: now - 30)])
+        let first = CACurrentMediaTime()
+        scene.update(first)
+        #expect(abs(scene.nextCaptionRefresh - (first + OfficeScene.captionStep)) < 0.01)
+
+        // Twenty minutes in it is minutes, so the next re-reading is at the
+        // turn of the minute.
+        scene.setCaptions([key: SceneCaption(tone: .working, lead: nil, body: "Reading", since: now - 1_230)])
+        let second = CACurrentMediaTime()
+        scene.update(second)
+        #expect(scene.nextCaptionRefresh > second + 25)
+        #expect(scene.nextCaptionRefresh <= second + 60)
+
+        // No stopwatch, nothing to re-read.
+        scene.setCaptions([key: SceneCaption(tone: .needsYou, lead: nil, body: "Allow?", since: nil)])
+        scene.update(CACurrentMediaTime())
+        #expect(scene.nextCaptionRefresh == .infinity)
+    }
+
     // MARK: - Rates, and staying asleep
 
     @Test("Now's stage draws at half the aviary's rate, gesture or not")

@@ -298,10 +298,22 @@ final class SceneDirector {
         captioned = next
     }
 
-    /// Advances every hanging balloon's stopwatch. Called from the scene's own
-    /// clock, so a stage nobody can see advances nothing.
-    func tickCaptions(now: Date) {
-        for node in captioned.values { node.refreshCaption(now: now) }
+    /// Advances the stopwatch on every balloon the camera can see. Called from
+    /// the scene's own clock, so a stage nobody can see advances nothing; a
+    /// balloon that comes back into view is brought up to date by the cull.
+    ///
+    /// - Returns: how long until the next of those readings changes, or `nil`
+    ///   when none of them is a stopwatch — see
+    ///   ``NowFrame/compactDurationHold(_:)``.
+    func tickCaptions(now: Date) -> TimeInterval? {
+        var hold: TimeInterval?
+        for (key, node) in captioned where !node.isHidden {
+            node.refreshCaption(now: now)
+            guard let since = captions[key]?.since else { continue }
+            let next = NowFrame.compactDurationHold(now.timeIntervalSince(since))
+            hold = min(hold ?? next, next)
+        }
+        return hold
     }
 
     // MARK: Leaving
@@ -864,12 +876,20 @@ final class SceneDirector {
         }
         culledTo = rect
 
+        var revealedCaption = false
         for (id, node) in desks {
             let onScreen = deskRects[id].map(rect.intersects) ?? true
             if node.isHidden == onScreen {
                 node.isHidden = !onScreen
                 node.isPaused = !onScreen
+                if onScreen, node.hasCaption { revealedCaption = true }
             }
+        }
+        // A balloon's stopwatch only advances while it can be seen, so one
+        // coming back into view is brought up to date before it is drawn.
+        if revealedCaption {
+            let now = Date()
+            for node in captioned.values where !node.isHidden { node.refreshCaption(now: now) }
         }
         for floor in frame.floors {
             guard let node = floors[floor.id] else { continue }

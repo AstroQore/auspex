@@ -633,4 +633,24 @@ public struct NowFrame: Sendable, Equatable {
             return "\(total / 86_400)d"
         }
     }
+
+    /// How long ``compactDuration(_:)`` goes on printing the same reading for
+    /// a stopwatch that has run `interval` — the seconds until its words
+    /// change.
+    ///
+    /// What lets a balloon ask for a frame only when it has something new to
+    /// say: past ten minutes a reading holds for up to a minute, past a day
+    /// for up to a day, and a clock that redrew it every second would be
+    /// drawing the same word fifty-nine times out of sixty.
+    public static func compactDurationHold(_ interval: TimeInterval) -> TimeInterval {
+        let elapsed = max(0, interval)
+        let unit: TimeInterval
+        switch elapsed {
+        case ..<600: unit = 1
+        case ..<86_400: unit = 60
+        default: unit = 86_400
+        }
+        let next = ((elapsed / unit).rounded(.down) + 1) * unit
+        return next - elapsed
+    }
 }

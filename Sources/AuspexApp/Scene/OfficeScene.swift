@@ -188,9 +188,10 @@ final class OfficeScene: SKScene {
     ///
     /// Separate from ``update(board:selected:focusedProject:reduceMotion:theme:zones:attention:)``
     /// because the aviary never sends any, and because the balloons change on
-    /// a different rhythm from the room: their words are re-read from the
-    /// scene's own clock, once a second, while the room only moves when the
-    /// board does.
+    /// a different rhythm from the room: their stopwatches are re-read from
+    /// the scene's own clock when a reading is due to change — at most every
+    /// ``captionStep`` seconds — while the room only moves when the board
+    /// does.
     func setCaptions(_ captions: [SessionKey: SceneCaption]) {
         hasCaptions = !captions.isEmpty
         guard director.apply(captions: captions) else { return }
@@ -202,8 +203,15 @@ final class OfficeScene: SKScene {
 
     private var hasCaptions = false
     /// When the balloons' stopwatches are next re-read, in
-    /// `CACurrentMediaTime()` seconds.
+    /// `CACurrentMediaTime()` seconds. Infinite when none of them is due to
+    /// change on its own.
     private var nextCaptionTick: TimeInterval = 0
+
+    /// The shortest gap between two re-readings of the balloons'
+    /// stopwatches. Under ten minutes a reading has seconds in it and would
+    /// otherwise change — and cost a frame — every second; a balloon is read
+    /// at a glance, and a glance does not need the units digit.
+    static let captionStep: TimeInterval = 5
 
     /// Asks the view to draw, because something in the picture changed.
     ///
@@ -356,6 +364,9 @@ final class OfficeScene: SKScene {
     /// what decides whether the view keeps drawing. Likewise.
     var hasVisibleMotion: Bool { director.isAnimating() }
 
+    /// When the balloons' stopwatches are next re-read. Likewise.
+    var nextCaptionRefresh: TimeInterval { nextCaptionTick }
+
     /// When the room next stirs, if anything on screen would. Likewise.
     var nextIdleBeat: TimeInterval? { director.nextBeat }
 
@@ -398,12 +409,13 @@ final class OfficeScene: SKScene {
         let live = cameraController.viewport
         director.cull(to: live.visibleRect, margin: Self.cullMargin)
 
-        // The balloons' stopwatches, once a second and only while the scene is
+        // The balloons' stopwatches, when the next reading on screen is due
+        // and no sooner than every few seconds, and only while the scene is
         // running: a paused scene is never asked, so a hidden stage costs
         // nothing here at all.
         if hasCaptions, currentTime >= nextCaptionTick {
-            nextCaptionTick = currentTime + 1
-            director.tickCaptions(now: Date())
+            let hold = director.tickCaptions(now: Date())
+            nextCaptionTick = hold.map { currentTime + max(Self.captionStep, $0) } ?? .infinity
         }
         // After the cull, so only what is on screen stirs.
         director.beat(at: currentTime)

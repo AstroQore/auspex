@@ -895,12 +895,12 @@ final class DeskNode: SKNode {
     /// Hangs a balloon over this person, or takes it down.
     ///
     /// Returns without touching the scene graph when the caption is the one
-    /// already hanging; its stopwatch is advanced by ``refreshCaption(now:)``.
+    /// already hanging; its stopwatch is advanced by ``refreshCaption(now:)``,
+    /// which the scene calls only when the reading is due to change.
     func setCaption(_ next: SceneCaption?, now: Date) {
-        guard next != captionValue else {
-            refreshCaption(now: now)
-            return
-        }
+        // The same balloon again is a board frame passing, not news: its
+        // stopwatch is advanced on its own schedule, by the scene's clock.
+        guard next != captionValue else { return }
         let wasShown = isCaptionShown
         let toneChanged = next?.tone != captionValue?.tone
         captionValue = next
@@ -911,9 +911,12 @@ final class DeskNode: SKNode {
         if wasShown != isCaptionShown, let look { applyBubble(look: look) }
     }
 
+    /// Whether a balloon is hanging here, shown or not.
+    var hasCaption: Bool { captionValue != nil }
+
     /// Re-sets the balloon's words if its stopwatch has moved on to a new
     /// reading. At most one label write per balloon per call, and none when
-    /// the reading is the same — which, past ten minutes, is most seconds.
+    /// the reading is the same.
     func refreshCaption(now: Date) {
         guard let value = captionValue else { return }
         let text = value.text(now: now)
