@@ -553,8 +553,14 @@ public final class AppEnvironment {
         table: any ProcessTableReading,
         mode: Mode
     ) {
+        // The demo's directories are invented, so none of them is on disk:
+        // asked honestly, every one would be scratch. It says they all exist.
         let placements = mode == .demo
-            ? PlacementService(resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory))
+            ? PlacementService(
+                resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory),
+                rules: ScratchRules(home: DemoScript.homeDirectory),
+                directoryExists: { _ in true }
+            )
             : PlacementService()
         let groupingTable: any ProcessTableReading
         if mode == .demo {

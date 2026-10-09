@@ -157,6 +157,23 @@ public struct ProjectRepository: Sendable {
         return out
     }
 
+    /// Points sessions at no project, inside a caller-owned transaction.
+    ///
+    /// What a scratch placement writes: the session keeps its row and its
+    /// directory, and stops counting towards a project that it was only ever
+    /// in by accident. A row already pointing nowhere is not rewritten.
+    public func clearAssignments(of keys: some Collection<SessionKey>, in db: Database) throws {
+        guard !keys.isEmpty else { return }
+        let statement = try db.makeStatement(sql: """
+            UPDATE sessions SET project_id = NULL, worktree_id = NULL
+            WHERE key = ? AND (project_id IS NOT NULL OR worktree_id IS NOT NULL)
+            """)
+        for key in keys {
+            statement.setUncheckedArguments([key.description])
+            try statement.execute()
+        }
+    }
+
     private func apply(_ assignment: Assignment, to keys: [SessionKey], in db: Database) throws {
         guard !keys.isEmpty else { return }
         let statement = try db.makeStatement(sql: """

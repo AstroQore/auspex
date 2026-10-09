@@ -65,6 +65,9 @@ public actor SessionRegistry {
     private var pendingMessages: [IndexedMessage] = []
     private var pendingToolCalls: [ToolCallWrite] = []
     private var pendingPlacements: [SessionKey: ProjectPlacement] = [:]
+    /// Sessions placed as scratch since the last flush, whose stored
+    /// `project_id` has to be let go of. See ``applyPlacements(_:)``.
+    private var pendingUnplaced: Set<SessionKey> = []
     /// Sessions the resolver placed in a harness's own per-thread scratch,
     /// and what that thread's folder is called. Handed to every frame, because
     /// working the answer out again needs a home directory and the resolver is
@@ -414,6 +417,15 @@ public actor SessionRegistry {
             // row per desktop conversation would fill it with names nothing
             // will ever look up.
             pendingPlacements[key] = placement.isProjectless ? nil : placement
+            // And a session that *had* a project — placed before a rule
+            // existed for its folder, or before the person marked it as
+            // scratch — lets go of it, so the stored assignment says what the
+            // board says.
+            if placement.isProjectless {
+                pendingUnplaced.insert(key)
+            } else {
+                pendingUnplaced.remove(key)
+            }
             // A directory that stopped being scratch — a session that moved,
             // or a rule that changed under a rebuilt board — has to stop
             // being remembered as scratch, so this is an assignment rather
@@ -680,12 +692,14 @@ public actor SessionRegistry {
             let messages = pendingMessages
             let toolCalls = pendingToolCalls
             let placements = pendingPlacements.filter { snapshots[$0.key] != nil }
+            let unplaced = pendingUnplaced.filter { snapshots[$0] != nil }
             let roots = rootKeys(touchedBy: sessionsToWrite)
             dirtyKeys.removeAll(keepingCapacity: true)
             pendingEvents.removeAll(keepingCapacity: true)
             pendingMessages.removeAll(keepingCapacity: true)
             pendingToolCalls.removeAll(keepingCapacity: true)
             pendingPlacements.removeAll(keepingCapacity: true)
+            pendingUnplaced.removeAll(keepingCapacity: true)
 
             let repository = self.repository
             let projects = self.projects
@@ -700,6 +714,7 @@ public actor SessionRegistry {
                     // After the session rows: both of these update columns on
                     // rows that must already exist.
                     _ = try projects.assign(placements: placements, in: db)
+                    try projects.clearAssignments(of: unplaced, in: db)
                     try projects.setRootKeys(roots, in: db)
                 }
                 // The parents as written, not as they are now: an event that
@@ -761,7 +776,7 @@ public actor SessionRegistry {
     private var hasPendingWork: Bool {
         !dirtyKeys.isEmpty || !pendingEvents.isEmpty
             || !pendingMessages.isEmpty || !pendingToolCalls.isEmpty
-            || !pendingPlacements.isEmpty
+            || !pendingPlacements.isEmpty || !pendingUnplaced.isEmpty
     }
 
     private func recordFailure(_ error: any Error) {
