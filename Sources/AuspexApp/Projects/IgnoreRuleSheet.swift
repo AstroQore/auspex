@@ -47,7 +47,7 @@ struct IgnoreRuleSheet: View {
             }
 
             Picker("Match on", selection: $tag) {
-                ForEach(IgnoreRule.Kind.Tag.allCases) { tag in
+                ForEach(IgnoreRule.Kind.Tag.hidingCases) { tag in
                     Text(tag.label).tag(tag)
                 }
             }
@@ -64,7 +64,7 @@ struct IgnoreRuleSheet: View {
             } else {
                 TextField(tag.placeholder, text: $value)
                     .textFieldStyle(.roundedBorder)
-                    .font(tag == .pathPrefix ? AuspexType.monoSmall : AuspexType.body)
+                    .font(tag.takesPath ? AuspexType.monoSmall : AuspexType.body)
             }
 
             Text(tag.explanation)

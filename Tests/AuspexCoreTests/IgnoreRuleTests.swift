@@ -253,6 +253,35 @@ struct IgnoreRuleTests {
         #expect(loaded.ignoreRules[1].isEnabled == false)
     }
 
+    @Test("A scratch folder hides nothing, round-trips, and hands its folder to placement")
+    func scratchFolderIsNotAnIgnore() throws {
+        let scratch = IgnoreRule(kind: .scratchPrefix("/Users/example/Downloads"))
+        let off = IgnoreRule(kind: .scratchPrefix("/Users/example/Desktop"), isEnabled: false)
+        let rules = IgnoreRules([scratch, off])
+
+        // Not a filter: the board skips filtering, and nothing is hidden.
+        #expect(rules.isEmpty)
+        #expect(rules.active.isEmpty)
+        #expect(rules.scratchPrefixes == ["/Users/example/Downloads"])
+        let inside = session("dl", cwd: "/Users/example/Downloads/zip-1")
+        #expect(!rules.matches(inside, projectKey: "/Users/example/Downloads/zip-1"))
+        #expect(visible([inside], [scratch]).board.sessions.count == 1)
+        #expect(visible([inside], [scratch]).ignored.isEmpty)
+
+        // Made from the pane's field like a folder rule is.
+        #expect(IgnoreRule.Kind.make(tag: .scratchPrefix, value: " /Users/example/Downloads/ ")
+            == .scratchPrefix("/Users/example/Downloads"))
+        #expect(IgnoreRule.Kind.Tag.scratchPrefix.takesPath)
+        #expect(!IgnoreRule.Kind.Tag.hidingCases.contains(.scratchPrefix))
+        #expect(!scratch.kind.hides)
+
+        // And stored beside the ignore rules, under its own type.
+        let data = try JSONEncoder().encode(scratch)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["type"] as? String == "scratchPrefix")
+        #expect(try JSONDecoder().decode(IgnoreRule.self, from: data).kind == scratch.kind)
+    }
+
     @Test("A rule of a kind this build does not know costs itself, not the file")
     func unknownRuleKindIsDropped() throws {
         let home = FileManager.default.temporaryDirectory

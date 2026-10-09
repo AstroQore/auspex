@@ -131,6 +131,9 @@ public final class AppEnvironment {
     var followsVisibility = false
 
     private var registry: SessionRegistry?
+    /// The grouping pass's placement service, kept so a scratch folder the
+    /// person adds in Settings reaches it without a relaunch.
+    private var placements: PlacementService?
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
     private var eventContinuation: AsyncStream<AgentEvent>.Continuation?
@@ -228,7 +231,8 @@ public final class AppEnvironment {
         // Before the pipeline: the first frame should already be placed by the
         // person's projects and filtered by their rules, rather than showing
         // everything for a moment and then settling.
-        catalog.onChange = { [board, catalog] claims, rules, showsIgnored in
+        catalog.onChange = { [weak self, board, catalog] claims, rules, showsIgnored in
+            self?.applyScratchFolders(rules.scratchPrefixes)
             board.setUserLayer(
                 claims: claims,
                 rules: rules,
@@ -561,7 +565,8 @@ public final class AppEnvironment {
                 rules: ScratchRules(home: DemoScript.homeDirectory),
                 directoryExists: { _ in true }
             )
-            : PlacementService()
+            : PlacementService(rules: ScratchRules(userPrefixes: catalog.rules.scratchPrefixes))
+        self.placements = placements
         let groupingTable: any ProcessTableReading
         if mode == .demo {
             groupingTable = DemoGroupingProcessTable()
@@ -574,6 +579,14 @@ public final class AppEnvironment {
             placements: placements
         )
         pipelineTasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
+    }
+
+    /// Hands the person's scratch folders to the placement service. A no-op
+    /// before grouping starts — the service is built with the rules in force
+    /// then — and inside the service when nothing changed.
+    private func applyScratchFolders(_ prefixes: [String]) {
+        guard let placements else { return }
+        Task { await placements.setUserScratchPrefixes(prefixes) }
     }
 
     /// Stops every producer and flushes what the registry has buffered.
