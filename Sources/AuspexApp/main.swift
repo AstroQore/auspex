@@ -37,6 +37,20 @@ if arguments.contains("--smoke-app-resources") {
             "auspex: loaded \(resources.count) critical resources "
             + "from \(AppResourceBundle.resolution.source.rawValue)\n"
         FileHandle.standardOutput.write(Data(summary.utf8))
+        // The string catalogue, the same way: a Simplified Chinese word, out of
+        // whichever bundle the catalogue resolved, and that bundle must be this
+        // app's own rather than the build machine's.
+        L10n.localeOverride = "zh-Hans"
+        let word = L10n.ViewMode.now
+        let catalogue = L10n.bundle.bundleURL.resolvingSymlinksInPath().path
+        let app = Bundle.main.bundleURL.resolvingSymlinksInPath().path
+        guard word != "viewMode.now", L10n.resolvedLocale == "zh-Hans" else {
+            throw AppResourceBundle.VerificationError.missing("zh-Hans string table")
+        }
+        let source = catalogue.hasPrefix(app + "/") ? "application" : "elsewhere (\(catalogue))"
+        FileHandle.standardOutput.write(
+            Data("auspex: localization zh-Hans from \(source): \(word)\n".utf8)
+        )
         exit(0)
     } catch {
         FileHandle.standardError.write(Data("auspex: \(error.localizedDescription)\n".utf8))
