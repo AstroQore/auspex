@@ -457,6 +457,17 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         return view
     }
 
+    /// Whatever the container offers. The office has no size of its own to
+    /// ask for, and without this SwiftUI measures the scroll view and the
+    /// `SKView` under it through Auto Layout on every update that reaches the
+    /// representable — which is every board frame — and lays the window out
+    /// again after it.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize, nsView: SceneCanvasView, context: Context
+    ) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
     func updateNSView(_ view: SceneCanvasView, context: Context) {
         // Being asked to update is proof the scene is the mode on screen.
         view.refreshPaused()
