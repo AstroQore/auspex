@@ -3,6 +3,10 @@ import PackageDescription
 
 let package = Package(
     name: "Auspex",
+    // The language a resource without an `.lproj` is taken to be in, and the
+    // one every string falls back to. The strings themselves live in
+    // `auspex-i18n`; see the dependency below.
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v26)
     ],
@@ -31,7 +35,14 @@ let package = Package(
         // distributed macOS apps. Pinned to the exact reviewed release:
         // verifying and installing an update is the one thing this app does
         // that can replace its own binary.
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4")
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4"),
+        // Every user-facing string, authored once in its own catalogue
+        // repository and consumed through the generated `L10n` API. Pinned
+        // exactly, like the kit: `Package.resolved` is not committed, so the
+        // pin is what makes two builds of one Auspex commit show the same
+        // words. `Scripts/build_app.sh` copies its resource bundle into the
+        // app; AGENTS.md § 6 says where a new string goes.
+        .package(path: "../../../../auspex-i18n")
     ],
     targets: [
         .executableTarget(
@@ -48,7 +59,10 @@ let package = Package(
                 // Only the app links Sparkle. Core stays free of it so the
                 // update *policy* — which channel, what that means — can be
                 // tested without a framework that wants a bundle.
-                .product(name: "Sparkle", package: "Sparkle")
+                .product(name: "Sparkle", package: "Sparkle"),
+                // The strings. Core stays free of it: what Core says is read
+                // by agents over MCP and by tests, and is English by contract.
+                .product(name: "AuspexLocalization", package: "auspex-i18n")
             ],
             // The vendor marks every surface identifies a harness with.
             // `.copy` rather than `.process`: these are already the exact
@@ -88,7 +102,8 @@ let package = Package(
                 "AuspexApp",
                 "AuspexCore",
                 .product(name: "AgentSessionKit", package: "agent-session-kit"),
-                .product(name: "AgentSessionLive", package: "agent-session-kit")
+                .product(name: "AgentSessionLive", package: "agent-session-kit"),
+                .product(name: "AuspexLocalization", package: "auspex-i18n")
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
