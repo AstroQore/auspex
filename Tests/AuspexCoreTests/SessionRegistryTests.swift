@@ -134,6 +134,38 @@ struct SessionRegistryTests {
         )
     }
 
+    @Test("a liveness verdict that changes nothing is neither stored nor published")
+    func unchangedLivenessIsDropped() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store: store)
+        let repository = SessionRepository(store: store)
+        let key = Fixtures.key()
+
+        let collector = Task {
+            var frames = 0
+            for await _ in registry.boardSnapshots { frames += 1 }
+            return frames
+        }
+
+        // `sessionStarted` already makes the session alive, so every one of
+        // these confirmations is a repeat of what the board knows.
+        await registry.ingest(Fixtures.event(
+            .sessionStarted(identity: Fixtures.identity(key: key)), key: key, at: 0
+        ))
+        for second in 1...3 {
+            await registry.ingest(Fixtures.event(.liveness(alive: true), key: key, at: TimeInterval(second)))
+        }
+        // A verdict that changes the session is still news, and still recorded.
+        await registry.ingest(Fixtures.event(.liveness(alive: false), key: key, at: 4))
+        await registry.stop()
+
+        let stored = try repository.recentEvents(key: key)
+        #expect(stored.map(\.kindLabel) == ["sessionStarted", "liveness"])
+        #expect(await registry.session(for: key)?.state == .ended(reason: .processGone))
+        // One frame for the new session, one for the death, one from `stop()`.
+        #expect(await collector.value == 3)
+    }
+
     @Test("a scripted turn drives the board through the reducer's states")
     func scriptedTurnPublishesStatesInOrder() async throws {
         let store = try AuspexStore(inMemory: true)

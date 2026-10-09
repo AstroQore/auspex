@@ -365,6 +365,40 @@ public final class AppEnvironment {
         }
 
         startGrouping(registry: registry, table: table, mode: mode)
+        // A demo's store lives in memory and holds nothing older than the
+        // process; there is no history in it to trim.
+        if mode == .live { startMaintenance(store: store) }
+    }
+
+    /// How long after launch the store's housekeeping waits before it starts.
+    ///
+    /// Long enough that bootstrap, the first discovery sweep and the brief
+    /// backfill have all finished with the writer, so trimming history never
+    /// competes with the board filling in.
+    private static let maintenanceDelay = Duration.seconds(60)
+
+    /// Trims the stored history, off the main actor and at utility priority.
+    ///
+    /// Today that is one pass: removing the liveness heartbeats earlier builds
+    /// recorded. It runs once per store and is a single indexed read on every
+    /// launch after that — see ``LivenessEventPurge``.
+    private func startMaintenance(store: AuspexStore) {
+        let delay = Self.maintenanceDelay
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            do {
+                guard let removed = try await LivenessEventPurge(store: store).runIfNeeded(),
+                      removed > 0
+                else { return }
+                await self?.board.record(
+                    notice: "Auspex removed \(removed) liveness heartbeats from its event log."
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                await self?.board.record(notice: "The event log could not be trimmed: \(error).")
+            }
+        })
     }
 
     /// Brings up the MCP listener and points it at the board.

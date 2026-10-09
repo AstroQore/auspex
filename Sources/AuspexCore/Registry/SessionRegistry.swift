@@ -239,6 +239,14 @@ public actor SessionRegistry {
         let next = reducer.reduce(previous, event: event)
         let isNew = snapshots[key] == nil
 
+        // A liveness verdict that changes nothing is not news. The resolver
+        // re-confirms every live session on a timer, and recording each
+        // confirmation made three quarters of the event log a heartbeat that
+        // no surface reads — and dirtied, persisted and republished every
+        // live session for it. A verdict that *does* change the snapshot (a
+        // process went away, a stale flag flipped) still takes the full path.
+        if !isNew, case .liveness = event.kind, next == previous { return }
+
         snapshots[key] = next
         dirtyKeys.insert(key)
         pendingEvents.append(event)
