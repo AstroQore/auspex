@@ -24,6 +24,15 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   entirely, and the Ledger, Aviary, Flock, Perch and Flight move into a view
   menu in the header. The sidebar now reads Now, Tasks, Sessions, Projects,
   Harnesses.
+- **Simplified Chinese, and a Language setting.** Every word Auspex shows now
+  comes from [auspex-i18n](https://github.com/AstroQore/auspex-i18n), a
+  catalogue of about 1,100 strings in English and Simplified Chinese consumed
+  as an exact-pinned package. Settings → General gains *Language: System /
+  English / 简体中文*; the choice is kept in `~/.auspex/settings.json` and
+  takes effect at once, without a relaunch. Harness, company and product names
+  stay as their owners spell them, and what agents read — MCP tool
+  descriptions and results, the coordination skill, `--help` — stays English.
+  `swift test` now fails on a hardcoded user-facing string anywhere in the app.
 
 ### Fixed
 
