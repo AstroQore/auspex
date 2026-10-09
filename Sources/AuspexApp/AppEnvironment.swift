@@ -392,35 +392,40 @@ public final class AppEnvironment {
         if mode == .live { startMaintenance(store: store) }
     }
 
-    /// How long after launch the store's housekeeping waits before it starts.
-    ///
-    /// Long enough that bootstrap, the first discovery sweep and the brief
-    /// backfill have all finished with the writer, so trimming history never
-    /// competes with the board filling in.
-    private static let maintenanceDelay = Duration.seconds(60)
-
     /// Trims the stored history, off the main actor and at utility priority.
     ///
-    /// Today that is one pass: removing the liveness heartbeats earlier builds
-    /// recorded. It runs once per store and is a single indexed read on every
-    /// launch after that — see ``LivenessEventPurge``.
+    /// A minute after launch, then every six hours: the one-time removal of
+    /// the liveness heartbeats earlier builds recorded, and the retention
+    /// policy — both in short batches, so the registry's writes interleave.
+    /// See ``StoreMaintenance``. Only a pass that removed something says so,
+    /// and only in counts.
     private func startMaintenance(store: AuspexStore) {
-        let delay = Self.maintenanceDelay
-        pipelineTasks.append(Task.detached(priority: .utility) { [weak self] in
-            do { try await Task.sleep(for: delay) } catch { return }
-            do {
-                guard let removed = try await LivenessEventPurge(store: store).runIfNeeded(),
-                      removed > 0
-                else { return }
-                await self?.board.record(
-                    notice: "Auspex removed \(removed) liveness heartbeats from its event log."
-                )
-            } catch is CancellationError {
-                return
-            } catch {
-                await self?.board.record(notice: "The event log could not be trimmed: \(error).")
+        let maintenance = StoreMaintenance(store: store)
+        let board = board
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board] in
+            await maintenance.run { [weak board] result in
+                switch result {
+                case .success(let pass):
+                    guard pass.totalDeleted > 0 else { return }
+                    await board?.record(notice: Self.describe(pass))
+                case .failure(let error):
+                    await board?.record(notice: "The store could not be trimmed: \(error).")
+                }
             }
         })
+    }
+
+    /// One maintenance pass, as counts.
+    nonisolated private static func describe(_ pass: StoreMaintenance.Pass) -> String {
+        var parts: [String] = []
+        if let purged = pass.livenessEventsPurged, purged > 0 {
+            parts.append("\(purged) liveness heartbeats")
+        }
+        let events = pass.retention.eventsOverAgeLimit + pass.retention.eventsOverPerSessionLimit
+        if events > 0 { parts.append("\(events) old events") }
+        let messages = pass.retention.messagesOverAgeLimit + pass.retention.messagesFromExcludedHarnesses
+        if messages > 0 { parts.append("\(messages) indexed messages") }
+        return "Auspex trimmed its store: " + parts.joined(separator: ", ") + "."
     }
 
     /// Brings up the MCP listener and points it at the board.
