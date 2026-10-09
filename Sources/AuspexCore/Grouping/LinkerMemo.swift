@@ -16,18 +16,33 @@ import Synchronization
 ///   environment is fixed at `exec`, so the pair `(pid, start time)` names one
 ///   answer for as long as that process lives; it is remembered for
 ///   ``environmentLifetime`` and forgotten when the pid is reused or the
-///   process has gone.
+///   process has gone. An environment that could not be read is not an
+///   answer and is not remembered: the next inference asks again.
 /// - **The identities the last inference ran over.** The links a pass can
 ///   propose are a function of each session's key, pid, process start and
-///   parent. When none of those moved, the previous pass already proposed
-///   everything there was, and the registry already applied or refused it.
+///   parent — and of the process table it read. When none of the identities
+///   moved, the previous pass already proposed everything its table showed,
+///   and the registry already applied or refused it. That table can be a
+///   snapshot behind, though, so the answer stands for
+///   ``inferenceLifetime`` and is then asked for again.
 final class LinkerMemo: Sendable {
     /// How long one process's environment is trusted.
     static let environmentLifetime: TimeInterval = 10 * 60
 
+    /// How long an inference over unchanged identities stands.
+    ///
+    /// The first pass after a spawn can read the process table's previous
+    /// snapshot, or an environment the kernel would not hand over yet, and
+    /// find no parent. Nothing about the identities changes after that, so
+    /// without a lifetime that pass would be the last word. Ten passes at the
+    /// coordinator's three-second cadence: environments still come through
+    /// this memo, so a re-inference costs an ancestor walk per parentless
+    /// session and no `KERN_PROCARGS2` for anything already read.
+    static let inferenceLifetime: TimeInterval = 30
+
     private struct Remembered {
         let start: Date
-        let environment: [String: String]?
+        let environment: [String: String]
         let readAt: Date
     }
 
@@ -49,6 +64,7 @@ final class LinkerMemo: Sendable {
     private struct State {
         var environments: [pid_t: Remembered] = [:]
         var lastInference: Set<Signature>?
+        var inferredAt: Date?
         var environmentReads = 0
     }
 
@@ -60,12 +76,19 @@ final class LinkerMemo: Sendable {
     }
 
     /// `true` when `identities` give an inference nothing it has not already
-    /// answered; otherwise records them as the latest and returns `false`.
+    /// answered within ``inferenceLifetime``; otherwise records them as the
+    /// latest and returns `false`.
     func isUnchanged(_ identities: [SessionIdentity]) -> Bool {
         let signature = Set(identities.map(Signature.init))
+        let instant = now()
         return state.withLock { state in
-            if state.lastInference == signature { return true }
+            if state.lastInference == signature,
+               let inferredAt = state.inferredAt,
+               instant.timeIntervalSince(inferredAt) < Self.inferenceLifetime {
+                return true
+            }
             state.lastInference = signature
+            state.inferredAt = instant
             return false
         }
     }
@@ -83,19 +106,24 @@ final class LinkerMemo: Sendable {
             return table.environment(pid: pid)
         }
         let instant = now()
-        let remembered = state.withLock { state -> [String: String]?? in
+        let remembered = state.withLock { state -> [String: String]? in
             guard let entry = state.environments[pid],
                   entry.start == start,
                   instant.timeIntervalSince(entry.readAt) < Self.environmentLifetime
-            else { return .none }
-            return .some(entry.environment)
+            else { return nil }
+            return entry.environment
         }
         if let remembered { return remembered }
 
         let environment = table.environment(pid: pid)
         state.withLock { state in
             state.environmentReads += 1
-            state.environments[pid] = Remembered(start: start, environment: environment, readAt: instant)
+            // `nil` is "not readable", which the kernel can say of a process
+            // it is still setting up. Remembering it would hide the parent
+            // that variable names for the whole lifetime.
+            if let environment {
+                state.environments[pid] = Remembered(start: start, environment: environment, readAt: instant)
+            }
         }
         return environment
     }

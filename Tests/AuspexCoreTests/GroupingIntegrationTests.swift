@@ -546,10 +546,13 @@ struct LinkerMemoTests {
         await registry.ingest(started(first, pid: 100))
         await registry.ingest(started(second, pid: 200))
 
-        let table = CountingProcessTable(records: [
-            ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(-60), executablePath: "/bin/claude", argv: []),
-            ProcessRecord(pid: 200, ppid: 1, startTime: Fixtures.date(-30), executablePath: "/bin/codex", argv: []),
-        ])
+        let table = CountingProcessTable(
+            records: [
+                ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(-60), executablePath: "/bin/claude", argv: []),
+                ProcessRecord(pid: 200, ppid: 1, startTime: Fixtures.date(-30), executablePath: "/bin/codex", argv: []),
+            ],
+            environments: [100: [:], 200: [:]]
+        )
         let memo = LinkerMemo()
         let coordinator = GroupingCoordinator(registry: registry, table: table, placements: PlacementService(), memo: memo)
 
@@ -566,6 +569,78 @@ struct LinkerMemoTests {
         await coordinator.tick()
         #expect(table.environmentReads == 3)
         await registry.stop()
+    }
+
+    @Test("an environment the first pass could not read links the child once that pass goes stale")
+    func unreadableEnvironmentIsAskedAgain() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = SessionRegistry(store: store, publishInterval: 0, persistInterval: 0, tickInterval: 0)
+        let parent = Fixtures.key(.claudeCode, "parent")
+        let child = Fixtures.key(.codex, "child")
+        await registry.ingest(started(parent, pid: 100))
+        await registry.ingest(started(child, pid: 200))
+
+        // Two unrelated processes as far as the tree goes; only the child's
+        // environment names its parent, and the first read of it fails.
+        let table = ChangingProcessTable(records: [
+            ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(-60), executablePath: "/bin/claude", argv: []),
+            ProcessRecord(pid: 200, ppid: 1, startTime: Fixtures.date(-30), executablePath: "/bin/codex", argv: []),
+        ])
+        let clock = TestClock()
+        let coordinator = GroupingCoordinator(
+            registry: registry,
+            table: table,
+            placements: PlacementService(),
+            memo: LinkerMemo(now: { clock.now })
+        )
+        #expect(await coordinator.tick().links == 0)
+
+        table.setEnvironment([SessionEnvironmentVariables.claudeSessionID: parent.sessionID], for: 200)
+        // The identities have not moved, so the pass three seconds later
+        // stands on the first answer.
+        clock.advance(by: 3)
+        #expect(await coordinator.tick().links == 0)
+
+        clock.advance(by: LinkerMemo.inferenceLifetime)
+        #expect(await coordinator.tick().links == 1)
+        await registry.stop()
+        let linked = try #require(await registry.session(for: child)?.identity)
+        #expect(linked.parent == parent)
+        #expect(linked.parentLink == .envInherited)
+    }
+
+    @Test("a parent process the first snapshot did not show links the child once that pass goes stale")
+    func lateAncestorIsFound() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = SessionRegistry(store: store, publishInterval: 0, persistInterval: 0, tickInterval: 0)
+        let parent = Fixtures.key(.claudeCode, "parent")
+        let child = Fixtures.key(.codex, "child")
+        await registry.ingest(started(parent, pid: 100))
+        await registry.ingest(started(child, pid: 200))
+
+        // The snapshot the first pass reads predates the child's process.
+        let table = ChangingProcessTable(records: [
+            ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(-60), executablePath: "/bin/claude", argv: []),
+        ])
+        let clock = TestClock()
+        let coordinator = GroupingCoordinator(
+            registry: registry,
+            table: table,
+            placements: PlacementService(),
+            memo: LinkerMemo(now: { clock.now })
+        )
+        #expect(await coordinator.tick().links == 0)
+
+        table.setRecords([
+            ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(-60), executablePath: "/bin/claude", argv: []),
+            ProcessRecord(pid: 200, ppid: 100, startTime: Fixtures.date(-30), executablePath: "/bin/codex", argv: []),
+        ])
+        clock.advance(by: LinkerMemo.inferenceLifetime)
+        #expect(await coordinator.tick().links == 1)
+        await registry.stop()
+        let linked = try #require(await registry.session(for: child)?.identity)
+        #expect(linked.parent == parent)
+        #expect(linked.parentLink == .spawnedProcess)
     }
 
     @Test("a reused pid is a different process, and its environment is read again")
@@ -603,6 +678,28 @@ struct LinkerMemoTests {
         _ = memo.environment(pid: 100, in: table)
         #expect(table.environmentReads == 2)
     }
+}
+
+/// A table a test can change between passes, the way the real one changes
+/// between snapshots.
+final class ChangingProcessTable: ProcessTableReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [ProcessRecord]
+    private var environments: [pid_t: [String: String]] = [:]
+
+    init(records: [ProcessRecord]) {
+        self.records = records
+    }
+
+    func setRecords(_ records: [ProcessRecord]) { lock.withLock { self.records = records } }
+
+    func setEnvironment(_ environment: [String: String], for pid: pid_t) {
+        lock.withLock { environments[pid] = environment }
+    }
+
+    func processes() -> [ProcessRecord] { lock.withLock { records } }
+
+    func environment(pid: pid_t) -> [String: String]? { lock.withLock { environments[pid] } }
 }
 
 /// A settable clock for the memo's expiry.

@@ -87,13 +87,14 @@ public struct GroupingCoordinator: Sendable {
     /// afterwards anyway — the order is what makes that agreement visible here
     /// rather than only two files away.
     ///
-    /// The process inference runs only when an identity it reads — a key, a
-    /// pid, a process start, a parent — moved since the last pass that ran
-    /// it; on a quiet machine every pass after the first proposes exactly
-    /// what the registry already applied or refused. It still runs over every
-    /// identity when it does run, because the kit's index of candidate
-    /// parents needs all of them. Environments come through the memo either
-    /// way, so a process is read once per ``LinkerMemo/environmentLifetime``.
+    /// The process inference runs when an identity it reads — a key, a pid, a
+    /// process start, a parent — moved since the last pass that ran it, and
+    /// otherwise once per ``LinkerMemo/inferenceLifetime``: the process table
+    /// a pass reads can be a snapshot behind the spawn it is looking for. It
+    /// still runs over every identity when it does run, because the kit's
+    /// index of candidate parents needs all of them. Environments come
+    /// through the memo either way, so a process is read once per
+    /// ``LinkerMemo/environmentLifetime``.
     ///
     /// - Returns: how many placements and how many links were applied, which is
     ///   what a test asserts on and what a host can log.
