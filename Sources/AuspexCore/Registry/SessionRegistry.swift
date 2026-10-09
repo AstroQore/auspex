@@ -75,6 +75,18 @@ public actor SessionRegistry {
     /// one re-resolves every directory on the board anyway.
     private var sandboxThreads: [SessionKey: String] = [:]
 
+    /// The sessions whose rows are known to be in the store, and the parent
+    /// each was last written with.
+    ///
+    /// What lets a flush tell whether it changed the *shape* of the forest.
+    /// `root_key` only moves when a parent does, or when a session appears
+    /// that an orphan already on disk may name as its parent; every other
+    /// write — a tool call, a token count, a liveness flip — leaves every root
+    /// where it was, and rebuilding the tree of the whole live set to find
+    /// that out was a full pass over it four times a second.
+    private var persistedKeys: Set<SessionKey> = []
+    private var persistedParents: [SessionKey: SessionKey] = [:]
+
     private var lastPublishedAt: Date?
     private var publishTask: Task<Void, Never>?
     /// Whether a surface that draws the board is on screen. Starts `true` so
@@ -96,6 +108,11 @@ public actor SessionRegistry {
     /// statement but not its bound arguments, which is what keeps prompt text
     /// out of a diagnostic string.
     public private(set) var lastPersistErrorDescription: String?
+
+    /// How many flushes rebuilt the delegation forest to rewrite `root_key`.
+    /// Diagnostic, and what the suite reads to assert that a write which
+    /// cannot move a root does not pay for the rebuild.
+    public private(set) var forestRebuildCount = 0
 
     /// Creates a registry over `store`.
     ///
@@ -161,7 +178,9 @@ public actor SessionRegistry {
         guard !didBootstrap else { return }
         didBootstrap = true
         let stored = try repository.fetchForBootstrap(window: bootstrapWindow, cap: bootstrapLimit)
-        for snapshot in stored where snapshots[snapshot.key] == nil {
+        for snapshot in stored {
+            rememberPersisted(snapshot)
+            guard snapshots[snapshot.key] == nil else { continue }
             snapshots[snapshot.key] = snapshot
         }
         if !stored.isEmpty { schedulePublish() }
@@ -296,7 +315,10 @@ public actor SessionRegistry {
     /// every other field stays empty until an `identityUpdated` patch fills it
     /// in, because an invented cwd is worse than a blank one.
     private func seedSnapshot(for event: AgentEvent) -> SessionSnapshot {
-        if let stored = try? repository.fetch(key: event.session) { return stored }
+        if let stored = try? repository.fetch(key: event.session) {
+            rememberPersisted(stored)
+            return stored
+        }
         if case .sessionStarted(let identity) = event.kind, identity.key == event.session {
             return SessionStateReducer.initialSnapshot(identity: identity)
         }
@@ -654,7 +676,7 @@ public actor SessionRegistry {
             let messages = pendingMessages
             let toolCalls = pendingToolCalls
             let placements = pendingPlacements.filter { snapshots[$0.key] != nil }
-            let roots = rootKeys(touchedBy: sessionsToWrite.map(\.key))
+            let roots = rootKeys(touchedBy: sessionsToWrite)
             dirtyKeys.removeAll(keepingCapacity: true)
             pendingEvents.removeAll(keepingCapacity: true)
             pendingMessages.removeAll(keepingCapacity: true)
@@ -676,6 +698,11 @@ public actor SessionRegistry {
                     _ = try projects.assign(placements: placements, in: db)
                     try projects.setRootKeys(roots, in: db)
                 }
+                // The parents as written, not as they are now: an event that
+                // moved one while the transaction was open has already marked
+                // the session dirty again, and the next pass must see it as a
+                // change.
+                for snapshot in sessionsToWrite { rememberPersisted(snapshot) }
             } catch {
                 recordFailure(error)
             }
@@ -686,17 +713,45 @@ public actor SessionRegistry {
     /// could have changed — the rows themselves, and everything below them.
     ///
     /// A root is not a property of one row: linking a session to a parent
-    /// re-roots its whole subtree, and none of those rows is dirty. So the
-    /// forest is rebuilt from the live set — one pass over what is already in
-    /// memory, at most four times a second — and the descendants come along.
-    private func rootKeys(touchedBy written: [SessionKey]) -> [SessionKey: SessionKey] {
-        guard !written.isEmpty else { return [:] }
+    /// re-roots its whole subtree, and none of those rows is dirty. So when
+    /// the shape can have changed, the forest is rebuilt from the live set and
+    /// the descendants come along.
+    ///
+    /// The shape can only have changed if a written session is new to the
+    /// store (an orphan on disk may name it as its parent) or carries a
+    /// different parent from the one its row was last written with. Anything
+    /// else returns no updates: every root on disk is still right, and the
+    /// rebuild — a pass over the whole live set — is skipped.
+    ///
+    /// A root that itself names a parent the live set does not hold is left
+    /// alone too. Its parent finished before the bootstrap window, so the tree
+    /// can only see a fragment of the chain, and the `root_key` already stored
+    /// was worked out when the whole chain was in memory.
+    private func rootKeys(touchedBy written: [SessionSnapshot]) -> [SessionKey: SessionKey] {
+        guard written.contains(where: changesForest) else { return [:] }
+        forestRebuildCount += 1
         let tree = SessionTreeBuilder.build(Array(snapshots.values))
-        var touched = Set(written)
-        for key in written {
-            touched.formUnion(tree.descendants(of: key))
+        var touched = Set(written.map(\.key))
+        for snapshot in written {
+            touched.formUnion(tree.descendants(of: snapshot.key))
         }
-        return tree.rootKeys.filter { touched.contains($0.key) }
+        return tree.rootKeys.filter { key, root in
+            guard touched.contains(key) else { return false }
+            guard let claimed = snapshots[root]?.identity.parent, claimed != root else { return true }
+            return false
+        }
+    }
+
+    /// Whether writing `snapshot` can move any session's root.
+    private func changesForest(_ snapshot: SessionSnapshot) -> Bool {
+        guard persistedKeys.contains(snapshot.key) else { return true }
+        return persistedParents[snapshot.key] != snapshot.identity.parent
+    }
+
+    /// Records that `snapshot`'s row is in the store with its current parent.
+    private func rememberPersisted(_ snapshot: SessionSnapshot) {
+        persistedKeys.insert(snapshot.key)
+        persistedParents[snapshot.key] = snapshot.identity.parent
     }
 
     private var hasPendingWork: Bool {

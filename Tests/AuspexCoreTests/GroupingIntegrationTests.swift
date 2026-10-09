@@ -237,6 +237,79 @@ struct GroupingIntegrationTests {
         #expect(try row(store, grandchild)?["root_key"] as String? == parent.description)
     }
 
+    @Test("a write that cannot move a root does not rebuild the forest")
+    func rootsAreRebuiltOnlyWhenTheShapeChanges() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store)
+        let parent = Fixtures.key(.claudeCode, "parent")
+        let child = Fixtures.key(.codex, "child")
+
+        await registry.ingest(started(parent))
+        await registry.ingest(started(child))
+        await registry.stop()
+        let afterArrivals = await registry.forestRebuildCount
+        #expect(afterArrivals >= 1)
+
+        // A relaunch over the same rows: tool calls, prompts and liveness
+        // flips change no parent, so no flush has a root to rewrite.
+        let second = makeRegistry(store)
+        try await second.bootstrap()
+        await second.ingest(Fixtures.event(.userPrompt(preview: "go"), key: child, at: 10))
+        await second.ingest(Fixtures.event(.note("working"), key: parent, at: 11))
+        await second.ingest(Fixtures.event(.liveness(alive: false), key: child, at: 12))
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await second.forestRebuildCount == 0)
+
+        // A parent arriving is a change of shape, and the root follows it.
+        let applied = await second.applyLinks([
+            ProcessLink(child: child, parent: parent, link: .envInherited, confidence: .high, evidence: "test")
+        ])
+        #expect(applied == 1)
+        await second.stop()
+        #expect(await second.forestRebuildCount >= 1)
+        #expect(try row(store, child)?["root_key"] as String? == parent.description)
+    }
+
+    @Test("a root whose own parent is outside the live set keeps the root the store recorded")
+    func orphanOfTheWorkingSetKeepsItsStoredRoot() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let repository = SessionRepository(store: store)
+        let ancestor = Fixtures.key(.claudeCode, "finished-last-month")
+        let child = Fixtures.key(.codex, "still-running")
+
+        // Last month: the ancestor finished, and its child's row was rooted
+        // under it while both were in memory.
+        var old = SessionStateReducer.initialSnapshot(identity: Fixtures.identity(key: ancestor))
+        old.state = .ended(reason: .exited)
+        old.isAlive = false
+        old.lastEventAt = Fixtures.date(-40 * 86_400)
+        var running = SessionStateReducer.initialSnapshot(identity: Fixtures.identity(key: child))
+        running.identity.parent = ancestor
+        running.identity.parentLink = .envInherited
+        running.isAlive = true
+        running.lastEventAt = Fixtures.date(0)
+        try repository.upsert(snapshots: [old, running])
+        try ProjectRepository(store: store).setRootKeys([child: ancestor])
+
+        // Bootstrap holds the working set, so the ancestor is not loaded and
+        // the child looks like a root to a tree built from memory.
+        // Batched rather than immediate, so both writes below land in one
+        // flush — the one the newcomer makes rebuild the forest.
+        let registry = SessionRegistry(
+            store: store, publishInterval: 0, persistInterval: 0.2, tickInterval: 0
+        )
+        try await registry.bootstrap()
+        #expect(await registry.session(for: ancestor) == nil)
+
+        await registry.ingest(Fixtures.event(.note("still going"), key: child, at: 1))
+        await registry.ingest(started(Fixtures.key(.grokBuild, "newcomer"), at: 2))
+        await registry.flushPendingWrites()
+        #expect(await registry.forestRebuildCount == 1)
+        await registry.stop()
+
+        #expect(try row(store, child)?["root_key"] as String? == ancestor.description)
+    }
+
     @Test("a link is refused for a session that acquired a parent in the meantime")
     func recordedParentWins() async throws {
         let store = try AuspexStore(inMemory: true)
