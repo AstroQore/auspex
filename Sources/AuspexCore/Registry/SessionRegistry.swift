@@ -18,8 +18,12 @@ import GRDB
 /// separate valves keep that from reaching either end untouched:
 ///
 /// - **Publishing is coalesced** to at most one frame per `publishInterval`
-///   (50 ms, so ≤ 20 Hz). A board redrawn faster than that is redrawn for
-///   nobody, and each frame sorts every session.
+///   (500 ms, so ≤ 2 Hz — the board applies at most two frames a second
+///   anyway, and each published frame copies, sorts and tree-builds every
+///   session). While nobody is looking — ``setObserved(_:)`` says whether the
+///   window or the menu bar panel is on screen — the gap widens to
+///   `unobservedPublishInterval` (5 s): the menu bar's counts still move,
+///   and an idle machine stops paying for frames nobody draws.
 /// - **Persistence is batched** into one transaction per `persistInterval`
 ///   (250 ms). Committing per event would turn a burst into a hundred fsyncs.
 ///
@@ -45,6 +49,7 @@ public actor SessionRegistry {
     private let projects: ProjectRepository
     private let reducer: SessionStateReducer
     private let publishInterval: TimeInterval
+    private let unobservedPublishInterval: TimeInterval
     private let persistInterval: TimeInterval
     private let tickInterval: TimeInterval
     private let bootstrapLimit: Int?
@@ -70,8 +75,24 @@ public actor SessionRegistry {
     /// one re-resolves every directory on the board anyway.
     private var sandboxThreads: [SessionKey: String] = [:]
 
+    /// The sessions whose rows are known to be in the store, and the parent
+    /// each was last written with.
+    ///
+    /// What lets a flush tell whether it changed the *shape* of the forest.
+    /// `root_key` only moves when a parent does, or when a session appears
+    /// that an orphan already on disk may name as its parent; every other
+    /// write — a tool call, a token count, a liveness flip — leaves every root
+    /// where it was, and rebuilding the tree of the whole live set to find
+    /// that out was a full pass over it four times a second.
+    private var persistedKeys: Set<SessionKey> = []
+    private var persistedParents: [SessionKey: SessionKey] = [:]
+
     private var lastPublishedAt: Date?
     private var publishTask: Task<Void, Never>?
+    /// Whether a surface that draws the board is on screen. Starts `true` so
+    /// a host that never says otherwise — every test, every offscreen render
+    /// — gets the interval it asked for.
+    private var isObserved = true
     private var persistTask: Task<Void, Never>?
     private var tickerTask: Task<Void, Never>?
     private var isFlushing = false
@@ -88,6 +109,11 @@ public actor SessionRegistry {
     /// out of a diagnostic string.
     public private(set) var lastPersistErrorDescription: String?
 
+    /// How many flushes rebuilt the delegation forest to rewrite `root_key`.
+    /// Diagnostic, and what the suite reads to assert that a write which
+    /// cannot move a root does not pay for the rebuild.
+    public private(set) var forestRebuildCount = 0
+
     /// Creates a registry over `store`.
     ///
     /// - Parameters:
@@ -95,6 +121,9 @@ public actor SessionRegistry {
     ///     change `staleAfter`.
     ///   - publishInterval: minimum gap between published frames. `0` publishes
     ///     on every change.
+    ///   - unobservedPublishInterval: the gap while ``setObserved(_:)`` last
+    ///     said nothing is drawing the board. Never shorter than
+    ///     `publishInterval`.
     ///   - persistInterval: how long writes are batched before committing. `0`
     ///     commits on every event.
     ///   - tickInterval: how often staleness is re-evaluated while
@@ -103,15 +132,17 @@ public actor SessionRegistry {
     ///   - policy: consulted before indexing text, so an excluded harness is
     ///     never written to the search index in the first place.
     ///   - bootstrapLimit: the most stored sessions ``bootstrap()`` holds in
-    ///     memory. A budget rather than a policy — everything alive or active
-    ///     within `bootstrapWindow` is reloaded first, and the cap falls on the
-    ///     finished tail. `nil` reloads all of them.
-    ///   - bootstrapWindow: how long after its last event a stored session is
-    ///     still reloaded whatever the cap.
+    ///     memory. A budget rather than a policy: only sessions alive or
+    ///     active within `bootstrapWindow` are reloaded at all, and the cap
+    ///     only bites if that working set is larger than it. `nil` reloads the
+    ///     whole working set. See ``SessionRepository/fetchForBootstrap(now:window:cap:)``.
+    ///   - bootstrapWindow: how long after its last event a finished session
+    ///     is still reloaded. Older history stays in the store.
     public init(
         store: AuspexStore,
         reducer: SessionStateReducer = SessionStateReducer(),
-        publishInterval: TimeInterval = 0.05,
+        publishInterval: TimeInterval = 0.5,
+        unobservedPublishInterval: TimeInterval = 5,
         persistInterval: TimeInterval = 0.25,
         tickInterval: TimeInterval = 1,
         policy: RetentionPolicy = .default,
@@ -123,6 +154,7 @@ public actor SessionRegistry {
         self.projects = ProjectRepository(store: store)
         self.reducer = reducer
         self.publishInterval = publishInterval
+        self.unobservedPublishInterval = max(publishInterval, unobservedPublishInterval)
         self.persistInterval = persistInterval
         self.tickInterval = tickInterval
         self.policy = policy
@@ -146,7 +178,9 @@ public actor SessionRegistry {
         guard !didBootstrap else { return }
         didBootstrap = true
         let stored = try repository.fetchForBootstrap(window: bootstrapWindow, cap: bootstrapLimit)
-        for snapshot in stored where snapshots[snapshot.key] == nil {
+        for snapshot in stored {
+            rememberPersisted(snapshot)
+            guard snapshots[snapshot.key] == nil else { continue }
             snapshots[snapshot.key] = snapshot
         }
         if !stored.isEmpty { schedulePublish() }
@@ -239,6 +273,14 @@ public actor SessionRegistry {
         let next = reducer.reduce(previous, event: event)
         let isNew = snapshots[key] == nil
 
+        // A liveness verdict that changes nothing is not news. The resolver
+        // re-confirms every live session on a timer, and recording each
+        // confirmation made three quarters of the event log a heartbeat that
+        // no surface reads — and dirtied, persisted and republished every
+        // live session for it. A verdict that *does* change the snapshot (a
+        // process went away, a stale flag flipped) still takes the full path.
+        if !isNew, case .liveness = event.kind, next == previous { return }
+
         snapshots[key] = next
         dirtyKeys.insert(key)
         pendingEvents.append(event)
@@ -273,7 +315,10 @@ public actor SessionRegistry {
     /// every other field stays empty until an `identityUpdated` patch fills it
     /// in, because an invented cwd is worse than a blank one.
     private func seedSnapshot(for event: AgentEvent) -> SessionSnapshot {
-        if let stored = try? repository.fetch(key: event.session) { return stored }
+        if let stored = try? repository.fetch(key: event.session) {
+            rememberPersisted(stored)
+            return stored
+        }
         if case .sessionStarted(let identity) = event.kind, identity.key == event.session {
             return SessionStateReducer.initialSnapshot(identity: identity)
         }
@@ -447,8 +492,8 @@ public actor SessionRegistry {
     /// merged copy is what makes the live set the last word either way.
     ///
     /// - Returns: how many sessions changed. A brief for a session this
-    ///   registry has never seen is ignored — bootstrap loads the most recent
-    ///   few hundred, and seeding a row from a brief would put a session on the
+    ///   registry has never seen is ignored — bootstrap loads only the
+    ///   working set, and seeding a row from a brief would put a session on the
     ///   board with nothing but an instruction.
     @discardableResult
     public func applyBriefs(_ briefs: [SessionKey: SessionBrief]) -> Int {
@@ -476,8 +521,12 @@ public actor SessionRegistry {
     /// recycled, so it must not be read as a process — but its session id is
     /// still the right answer for a child that inherited it, and dropping the
     /// row entirely would lose that.
+    ///
+    /// In no particular order: every reader indexes or sorts what it is given,
+    /// and sorting the live set into board order every three seconds for them
+    /// was work nobody used.
     public func linkableIdentities() -> [SessionIdentity] {
-        sessions.map { snapshot in
+        snapshots.values.map { snapshot in
             let isRunning = snapshot.isAlive && !snapshot.state.isEnded
             guard !isRunning else { return snapshot.identity }
             var identity = snapshot.identity
@@ -528,21 +577,43 @@ public actor SessionRegistry {
 
     // MARK: - Publishing
 
+    /// Tells the registry whether anything that draws the board is on screen.
+    ///
+    /// Only the publishing rate depends on it. Persistence, liveness and the
+    /// store are exactly as they were: an unobserved board is a board drawn
+    /// less often, not one that knows less. Becoming observed publishes a
+    /// change that was waiting out the slow interval straight away, so a
+    /// window brought forward is never up to five seconds behind.
+    public func setObserved(_ observed: Bool) {
+        guard observed != isObserved else { return }
+        isObserved = observed
+        guard observed, publishTask != nil, !isStopped else { return }
+        publishTask?.cancel()
+        publishTask = nil
+        publish()
+    }
+
+    /// The gap the next publish waits for.
+    private var currentPublishInterval: TimeInterval {
+        isObserved ? publishInterval : unobservedPublishInterval
+    }
+
     private func schedulePublish() {
         guard !isStopped else { return }
-        guard publishInterval > 0, let last = lastPublishedAt else {
+        let interval = currentPublishInterval
+        guard interval > 0, let last = lastPublishedAt else {
             publish()
             return
         }
         let elapsed = Date().timeIntervalSince(last)
-        if elapsed >= publishInterval {
+        if elapsed >= interval {
             publish()
             return
         }
         // Inside the coalescing window: let the already-scheduled trailing
         // publish carry this change, or schedule one.
         guard publishTask == nil else { return }
-        let delay = publishInterval - elapsed
+        let delay = interval - elapsed
         publishTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             await self?.publishFromTimer()
@@ -550,6 +621,8 @@ public actor SessionRegistry {
     }
 
     private func publishFromTimer() {
+        // A cancelled timer has already been answered by `setObserved(_:)`.
+        guard !Task.isCancelled else { return }
         publishTask = nil
         guard !isStopped else { return }
         publish()
@@ -607,7 +680,7 @@ public actor SessionRegistry {
             let messages = pendingMessages
             let toolCalls = pendingToolCalls
             let placements = pendingPlacements.filter { snapshots[$0.key] != nil }
-            let roots = rootKeys(touchedBy: sessionsToWrite.map(\.key))
+            let roots = rootKeys(touchedBy: sessionsToWrite)
             dirtyKeys.removeAll(keepingCapacity: true)
             pendingEvents.removeAll(keepingCapacity: true)
             pendingMessages.removeAll(keepingCapacity: true)
@@ -629,6 +702,11 @@ public actor SessionRegistry {
                     _ = try projects.assign(placements: placements, in: db)
                     try projects.setRootKeys(roots, in: db)
                 }
+                // The parents as written, not as they are now: an event that
+                // moved one while the transaction was open has already marked
+                // the session dirty again, and the next pass must see it as a
+                // change.
+                for snapshot in sessionsToWrite { rememberPersisted(snapshot) }
             } catch {
                 recordFailure(error)
             }
@@ -639,17 +717,45 @@ public actor SessionRegistry {
     /// could have changed — the rows themselves, and everything below them.
     ///
     /// A root is not a property of one row: linking a session to a parent
-    /// re-roots its whole subtree, and none of those rows is dirty. So the
-    /// forest is rebuilt from the live set — one pass over what is already in
-    /// memory, at most four times a second — and the descendants come along.
-    private func rootKeys(touchedBy written: [SessionKey]) -> [SessionKey: SessionKey] {
-        guard !written.isEmpty else { return [:] }
+    /// re-roots its whole subtree, and none of those rows is dirty. So when
+    /// the shape can have changed, the forest is rebuilt from the live set and
+    /// the descendants come along.
+    ///
+    /// The shape can only have changed if a written session is new to the
+    /// store (an orphan on disk may name it as its parent) or carries a
+    /// different parent from the one its row was last written with. Anything
+    /// else returns no updates: every root on disk is still right, and the
+    /// rebuild — a pass over the whole live set — is skipped.
+    ///
+    /// A root that itself names a parent the live set does not hold is left
+    /// alone too. Its parent finished before the bootstrap window, so the tree
+    /// can only see a fragment of the chain, and the `root_key` already stored
+    /// was worked out when the whole chain was in memory.
+    private func rootKeys(touchedBy written: [SessionSnapshot]) -> [SessionKey: SessionKey] {
+        guard written.contains(where: changesForest) else { return [:] }
+        forestRebuildCount += 1
         let tree = SessionTreeBuilder.build(Array(snapshots.values))
-        var touched = Set(written)
-        for key in written {
-            touched.formUnion(tree.descendants(of: key))
+        var touched = Set(written.map(\.key))
+        for snapshot in written {
+            touched.formUnion(tree.descendants(of: snapshot.key))
         }
-        return tree.rootKeys.filter { touched.contains($0.key) }
+        return tree.rootKeys.filter { key, root in
+            guard touched.contains(key) else { return false }
+            guard let claimed = snapshots[root]?.identity.parent, claimed != root else { return true }
+            return false
+        }
+    }
+
+    /// Whether writing `snapshot` can move any session's root.
+    private func changesForest(_ snapshot: SessionSnapshot) -> Bool {
+        guard persistedKeys.contains(snapshot.key) else { return true }
+        return persistedParents[snapshot.key] != snapshot.identity.parent
+    }
+
+    /// Records that `snapshot`'s row is in the store with its current parent.
+    private func rememberPersisted(_ snapshot: SessionSnapshot) {
+        persistedKeys.insert(snapshot.key)
+        persistedParents[snapshot.key] = snapshot.identity.parent
     }
 
     private var hasPendingWork: Bool {

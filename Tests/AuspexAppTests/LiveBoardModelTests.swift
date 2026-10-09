@@ -216,6 +216,34 @@ struct LiveBoardModelTests {
         #expect(model.sessionCount == 1)
     }
 
+    @Test("A session the live set does not hold is read from the store when selected")
+    func selectionFallsBackToTheStore() async throws {
+        // What a search hit on last month's work selects: a key no frame
+        // carries, because bootstrap holds only the working set.
+        let store = try AuspexStore(inMemory: true)
+        let repository = SessionRepository(store: store)
+        let old = session("archived", cwd: "/Users/example/Code/archive", title: "Last month's work")
+        try repository.upsert(snapshot: old)
+        let registry = SessionRegistry(
+            store: store, publishInterval: 0, persistInterval: 0, tickInterval: 0
+        )
+
+        let model = LiveBoardModel()
+        model.start(registry: registry, repository: repository)
+        defer { model.stop() }
+        model.selectedKey = old.key
+        for _ in 0..<300 where model.selectedSession == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(model.selectedSession?.key == old.key)
+        #expect(model.selectedSession?.identity.title == "Last month's work")
+
+        // Moving on drops it rather than leaving it to answer for another key.
+        model.selectedKey = nil
+        #expect(model.selectedSession == nil)
+    }
+
     @Test("A filter clicked and a frame applied reach the same board")
     func uiInputMatchesTheAssembler() async {
         let (model, _) = await model()
@@ -237,7 +265,7 @@ struct LiveBoardModelTests {
         )
         #expect(model.rowGroups == expected.rowGroups)
         #expect(model.summary == expected.summary)
-        #expect(model.endedRows == expected.endedRows)
+        #expect(model.endedUnits == expected.endedUnits)
     }
 
     @Test("The crew's snapshots are kept only while the crew is on screen")
@@ -250,10 +278,28 @@ struct LiveBoardModelTests {
         #expect(model.viewMode == .board)
         #expect(model.groups.isEmpty)
 
-        // Switching to the crew hands over the frame already in hand rather
-        // than showing an empty wall until the next one lands.
+        // Switching to the crew asks for a frame that carries them; nothing
+        // else assembles them at all.
         model.viewMode = .crew
+        await model.settle()
         #expect(!model.groups.isEmpty)
         #expect(model.groups.flatMap(\.sessions).count == model.sessionCount)
+
+        // Leaving lets go of them.
+        model.viewMode = .board
+        #expect(model.groups.isEmpty)
+    }
+
+    @Test("The aviary's reduced board is assembled only while the aviary is on screen")
+    func sceneBoardIsSceneOnly() async {
+        let (model, _) = await model()
+        #expect(model.sceneBoard.sessions.isEmpty)
+
+        model.viewMode = .scene
+        await model.settle()
+        #expect(!model.sceneBoard.sessions.isEmpty)
+
+        model.viewMode = .board
+        #expect(model.sceneBoard.sessions.isEmpty)
     }
 }

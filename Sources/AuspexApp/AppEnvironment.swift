@@ -117,6 +117,19 @@ public final class AppEnvironment {
         ignoreDraft = IgnoreDraft(tag: tag, value: value)
     }
 
+    /// Whether the board is on screen anywhere — the main window or the menu
+    /// bar's panel. Fed by the ``SurfaceVisibilityProbe`` each of them
+    /// carries.
+    let visibility = SurfaceVisibility()
+
+    /// Whether the registry's publishing rate follows ``visibility``.
+    ///
+    /// Only the launched app turns it on. The offscreen renderers draw into a
+    /// bitmap, no window of theirs ever reports itself visible, and a board
+    /// that believed nobody was looking would publish at the slow rate through
+    /// the very warm-up they are waiting on.
+    var followsVisibility = false
+
     private var registry: SessionRegistry?
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
@@ -266,6 +279,15 @@ public final class AppEnvironment {
 
         let registry = SessionRegistry(store: store)
         self.registry = registry
+        if followsVisibility {
+            // In order, through one stream: two separate hops to the actor
+            // could land the other way round and leave the slow rate on with
+            // the window open.
+            let changes = visibility.changes
+            pipelineTasks.append(Task.detached {
+                for await observed in changes { await registry.setObserved(observed) }
+            })
+        }
         board.autoSelectsFirstSession = mode == .demo
         // The sidebar's tree is derived from the same frame the board is, in
         // the same pass and off the main actor; the names it is labelled with
@@ -365,6 +387,45 @@ public final class AppEnvironment {
         }
 
         startGrouping(registry: registry, table: table, mode: mode)
+        // A demo's store lives in memory and holds nothing older than the
+        // process; there is no history in it to trim.
+        if mode == .live { startMaintenance(store: store) }
+    }
+
+    /// Trims the stored history, off the main actor and at utility priority.
+    ///
+    /// A minute after launch, then every six hours: the one-time removal of
+    /// the liveness heartbeats earlier builds recorded, and the retention
+    /// policy — both in short batches, so the registry's writes interleave.
+    /// See ``StoreMaintenance``. Only a pass that removed something says so,
+    /// and only in counts.
+    private func startMaintenance(store: AuspexStore) {
+        let maintenance = StoreMaintenance(store: store)
+        let board = board
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board] in
+            await maintenance.run { [weak board] result in
+                switch result {
+                case .success(let pass):
+                    guard pass.totalDeleted > 0 else { return }
+                    await board?.record(notice: Self.describe(pass))
+                case .failure(let error):
+                    await board?.record(notice: "The store could not be trimmed: \(error).")
+                }
+            }
+        })
+    }
+
+    /// One maintenance pass, as counts.
+    nonisolated private static func describe(_ pass: StoreMaintenance.Pass) -> String {
+        var parts: [String] = []
+        if let purged = pass.livenessEventsPurged, purged > 0 {
+            parts.append("\(purged) liveness heartbeats")
+        }
+        let events = pass.retention.eventsOverAgeLimit + pass.retention.eventsOverPerSessionLimit
+        if events > 0 { parts.append("\(events) old events") }
+        let messages = pass.retention.messagesOverAgeLimit + pass.retention.messagesFromExcludedHarnesses
+        if messages > 0 { parts.append("\(messages) indexed messages") }
+        return "Auspex trimmed its store: " + parts.joined(separator: ", ") + "."
     }
 
     /// Brings up the MCP listener and points it at the board.
@@ -455,9 +516,9 @@ public final class AppEnvironment {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     // For the sessions the registry does not hold: bootstrap
-                    // loads the most recent few hundred, and one past that
-                    // limit is seeded from its next event with a brief the
-                    // store already knows better than.
+                    // loads only the working set, and one outside it is
+                    // seeded from its next event with a brief the store
+                    // already knows better than.
                     board.setDerivedBriefs(report.briefs)
                     // The pass may have decided, on the person's behalf, that
                     // sessions quiet for two days have been read. The board
@@ -782,6 +843,7 @@ extension AppEnvironment {
     @MainActor
     public static func launched(_ options: AppLaunchOptions = .current()) -> AppEnvironment {
         let environment = AppEnvironment(mode: options.mode, demoScale: options.demoScale)
+        environment.followsVisibility = true
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
         environment.appearanceOverride = options.appearance
         return environment

@@ -135,6 +135,10 @@ public final class AuspexStore: Sendable {
             try seedBoardHistoryBaseline(db)
         }
 
+        migrator.registerMigration("v10_events_observed_at") { db in
+            try addEventObservedAtIndex(db)
+        }
+
         return migrator
     }
 
@@ -1156,6 +1160,20 @@ public final class AuspexStore: Sendable {
                    json_object('present', 1, 'dependsOnID', depends_on_id)
               FROM task_deps
             """, arguments: [now])
+    }
+
+    // MARK: - v10 schema: retention by age
+
+    /// Lets retention find the events it is about to age out without reading
+    /// the whole log.
+    ///
+    /// ``RetentionJob`` deletes `events WHERE observed_at < cutoff` in batches;
+    /// without an index every batch is a scan of the table, and a store that
+    /// has never been trimmed has millions of rows to scan. Built once, here,
+    /// on the rows already stored — a sort of one column, which is the cost of
+    /// a few seconds once rather than a scan per batch forever.
+    private static func addEventObservedAtIndex(_ db: Database) throws {
+        try db.create(index: "events_on_observed_at", on: "events", columns: ["observed_at"])
     }
 
     // MARK: - Meta accessors

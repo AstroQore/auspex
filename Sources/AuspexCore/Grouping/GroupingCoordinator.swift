@@ -11,8 +11,10 @@ import Foundation
 /// ``SessionRegistry/applyLinks(_:)`` against a scripted board — and what is
 /// left here is the order they run in and the interval they run on.
 ///
-/// It is not an actor and holds no state, so ``tick()`` can be called from a
-/// test as readily as from ``run(every:)``.
+/// It is not an actor, so ``tick()`` can be called from a test as readily as
+/// from ``run(every:)``. The one thing it carries from pass to pass is a
+/// ``LinkerMemo``: which identities the last inference ran over, and the
+/// environments it has already read.
 ///
 /// ## Why it is not inside the registry
 ///
@@ -31,6 +33,8 @@ public struct GroupingCoordinator: Sendable {
     public let linker: ProcessLinker
     /// The process table both the linker and its evidence come from.
     public let table: any ProcessTableReading
+    /// What the last passes already worked out.
+    let memo: LinkerMemo
 
     /// Creates a coordinator.
     ///
@@ -47,10 +51,21 @@ public struct GroupingCoordinator: Sendable {
         placements: PlacementService = PlacementService(),
         linker: ProcessLinker = ProcessLinker()
     ) {
+        self.init(registry: registry, table: table, placements: placements, linker: linker, memo: LinkerMemo())
+    }
+
+    init(
+        registry: SessionRegistry,
+        table: any ProcessTableReading,
+        placements: PlacementService = PlacementService(),
+        linker: ProcessLinker = ProcessLinker(),
+        memo: LinkerMemo
+    ) {
         self.registry = registry
         self.table = table
         self.placements = placements
         self.linker = linker
+        self.memo = memo
     }
 
     /// One pass: resolve the directories that changed, then apply the links —
@@ -67,6 +82,14 @@ public struct GroupingCoordinator: Sendable {
     /// afterwards anyway — the order is what makes that agreement visible here
     /// rather than only two files away.
     ///
+    /// The process inference runs only when an identity it reads — a key, a
+    /// pid, a process start, a parent — moved since the last pass that ran
+    /// it; on a quiet machine every pass after the first proposes exactly
+    /// what the registry already applied or refused. It still runs over every
+    /// identity when it does run, because the kit's index of candidate
+    /// parents needs all of them. Environments come through the memo either
+    /// way, so a process is read once per ``LinkerMemo/environmentLifetime``.
+    ///
     /// - Returns: how many placements and how many links were applied, which is
     ///   what a test asserts on and what a host can log.
     @discardableResult
@@ -77,8 +100,14 @@ public struct GroupingCoordinator: Sendable {
         let resolved = await placements.placements(for: identities)
         let placed = await registry.applyPlacements(resolved)
 
-        let links = SessionRelations.links(identities: identities)
-            + linker.infer(identities: identities, table: table)
+        var links = SessionRelations.links(identities: identities)
+        if !memo.isUnchanged(identities) {
+            memo.prune()
+            links += linker.infer(
+                identities: identities,
+                table: MemoizedEnvironmentTable(base: table, memo: memo)
+            )
+        }
         let linked = await registry.applyLinks(links)
         return (placed, linked)
     }

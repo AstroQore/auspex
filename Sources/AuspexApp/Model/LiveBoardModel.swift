@@ -177,11 +177,17 @@ final class LiveBoardModel {
     var viewMode: BoardViewMode = .board {
         didSet {
             guard oldValue != viewMode else { return }
-            // The crew wall is the only reader of `groups`, and it is the only
-            // mode that pays for it — see `adopt(_:)`. Handing it the last
-            // frame's is what stops a switch to the crew showing an empty wall
-            // until the next frame lands.
-            if viewMode == .crew, let previousFrame { groups = previousFrame.groups }
+            // The crew wall's snapshot groups and the aviary's reduced board
+            // are only assembled for their own mode — see
+            // `BoardFrameInputs.viewMode`. Switching into either asks for a
+            // frame that has them; switching out lets go of what the old
+            // mode was holding.
+            if oldValue == .crew { groups = [] }
+            if oldValue == .scene { sceneBoard = .empty }
+            if Self.modesWithOwnOutput.contains(oldValue)
+                || Self.modesWithOwnOutput.contains(viewMode) {
+                scheduleAssembly()
+            }
             if viewMode == .perch { map.apply(units: units) }
             guard viewMode.requiresSelection else {
                 // Leaving the trajectory stops its reads. The fold is kept:
@@ -202,6 +208,9 @@ final class LiveBoardModel {
             loadTrajectory()
         }
     }
+
+    /// The modes the assembler builds something for that no other mode reads.
+    private static let modesWithOwnOutput: Set<BoardViewMode> = [.crew, .scene]
 
     /// The mode to go back to when the trajectory is closed.
     ///
@@ -448,9 +457,9 @@ final class LiveBoardModel {
     ///
     /// Sessions the registry already holds get theirs through
     /// ``SessionRegistry/applyBriefs(_:)``; this covers the ones it does not —
-    /// bootstrap loads the most recent few hundred, and a session past that
-    /// limit is seeded from its next event with a brief the store already knows
-    /// better than.
+    /// bootstrap loads only the working set, and a session outside it is
+    /// seeded from its next event with a brief the store already knows better
+    /// than.
     func setDerivedBriefs(_ briefs: [SessionKey: SessionBrief]) {
         guard !briefs.isEmpty else { return }
         derivedBriefs = briefs
@@ -478,6 +487,7 @@ final class LiveBoardModel {
         didSet {
             guard oldValue != selectedKey else { return }
             refreshSelection()
+            loadStoredSelectionIfNeeded()
             if let selectedKey { markSeen(selectedKey) }
             trace = []
             traceItems = []
@@ -527,15 +537,6 @@ final class LiveBoardModel {
     /// while its mode is on screen, so it keeps the snapshots for now — one
     /// mode's cost rather than the board's.
     private(set) var groups: [BoardGroup] = []
-
-    /// The finished sessions the collapsed section at the bottom draws from,
-    /// most recently finished first.
-    ///
-    /// Held apart from ``rowGroups`` rather than filtered out in the view,
-    /// because keeping them out of the grid is the board's main performance
-    /// property — see ``EndedSessions`` — and a policy that lived in a view
-    /// body would be one refactor away from being lost.
-    private(set) var endedRows: [BoardRow] = []
 
     /// The wall: sections of task cards, subagents folded into them.
     ///
@@ -731,15 +732,6 @@ final class LiveBoardModel {
     /// rows in step with the wall here.
     var onFrame: ((BoardSnapshot, [TaskUnit]) -> Void)?
 
-    /// The finished rows actually drawn, and how many are left out.
-    var visibleEndedRows: [BoardRow] {
-        showsAllEnded ? endedRows : Array(endedRows.prefix(EndedSessions.collapsedLimit))
-    }
-
-    var hiddenEndedCount: Int {
-        showsAllEnded ? 0 : max(0, endedRows.count - EndedSessions.collapsedLimit)
-    }
-
     // MARK: Assembly
 
     /// Where a frame is actually derived. One per model, so two assemblies of
@@ -755,11 +747,6 @@ final class LiveBoardModel {
 
     /// The stamp of the newest frame that has been assigned.
     private var appliedSequence: UInt64 = 0
-
-    /// The last frame actually adopted, so the crew wall can be handed the
-    /// snapshots it needs the moment it is switched to. Not observed: nothing
-    /// draws it, and it is replaced whenever anything does change.
-    @ObservationIgnored private var previousFrame: AssembledBoardFrame?
 
     /// Which version of the board is on screen — see
     /// ``AssembledBoardFrame/boardRevision``.
@@ -830,7 +817,8 @@ final class LiveBoardModel {
             ledger: ledgerFrame,
             filters: filters,
             showsSubagents: showsSubagents,
-            catchUpSince: catchUpSince
+            catchUpSince: catchUpSince,
+            viewMode: viewMode
         )
     }
 
@@ -866,7 +854,6 @@ final class LiveBoardModel {
         // of what changes never reaches the wall, and the user layer schedules
         // an assembly of its own every time somebody clicks.
         if frame.isRepeat { return }
-        previousFrame = frame
 
         // `generatedAt` moves on every frame and nothing draws it, so a board
         // whose sessions are the ones already on screen must not replace the
@@ -887,9 +874,14 @@ final class LiveBoardModel {
         // keep out of the render loop — and `@Observable` compares before it
         // publishes, so assigning it is a deep comparison of every session on
         // the board, on the main actor, whether or not anything is drawing it.
-        // The crew wall gets it the moment it is switched to; see `viewMode`.
-        if viewMode == .crew, groups != frame.groups { groups = frame.groups }
-        if viewMode == .scene, sceneBoard != frame.sceneBoard { sceneBoard = frame.sceneBoard }
+        // The assembler only builds it for a frame assembled for the crew,
+        // and switching to the crew asks for one; see `viewMode`.
+        if viewMode == .crew, frame.assembledFor == .crew, groups != frame.groups {
+            groups = frame.groups
+        }
+        if viewMode == .scene, frame.assembledFor == .scene, sceneBoard != frame.sceneBoard {
+            sceneBoard = frame.sceneBoard
+        }
         if rowGroups != frame.rowGroups { rowGroups = frame.rowGroups }
         if unitGroups != frame.unitGroups { unitGroups = frame.unitGroups }
         if endedUnits != frame.endedUnits { endedUnits = frame.endedUnits }
@@ -910,7 +902,6 @@ final class LiveBoardModel {
         }
         if filterOptions != frame.filterOptions { filterOptions = frame.filterOptions }
         if unitBySession != frame.unitBySession { unitBySession = frame.unitBySession }
-        if endedRows != frame.endedRows { endedRows = frame.endedRows }
         if summary != frame.summary { summary = frame.summary }
         if sessionCount != frame.sessionCount { sessionCount = frame.sessionCount }
         if attention != frame.attention { attention = frame.attention }
@@ -984,8 +975,11 @@ final class LiveBoardModel {
         // be reached — from a search hit, from a notification, from the menu
         // bar — while the recency window or an ignore rule keeps it off the
         // wall. A trace pane that went blank because the *card* is not drawn
-        // would be answering "show me this session" with "no".
-        let session = selectedKey.flatMap { sessionIndex[$0] ?? rawBoard.session(for: $0) }
+        // would be answering "show me this session" with "no". The store is
+        // the last resort, for a session the live set does not hold at all.
+        let session = selectedKey.flatMap {
+            sessionIndex[$0] ?? rawBoard.session(for: $0) ?? storedSelection(for: $0)
+        }
         if selectedSession != session { selectedSession = session }
         let parent = session?.identity.parent.flatMap { sessionIndex[$0] }
         if selectedParent != parent { selectedParent = parent }
@@ -1012,6 +1006,43 @@ final class LiveBoardModel {
 
         let nextAttention = selectedKey.flatMap { attention[$0] } ?? .none
         if selectedAttention != nextAttention { selectedAttention = nextAttention }
+    }
+
+    /// A selected session the live set does not hold, as the store last
+    /// recorded it.
+    ///
+    /// The registry holds the working set — what is running and what was
+    /// active this week — and the search index reaches back a month. A hit on
+    /// a session from three weeks ago selects a key nobody's frame carries, and
+    /// a detail pane that answered "show me this" with an empty column would be
+    /// the search lying about what it found. So the row is read once, off the
+    /// main actor, when such a key is selected; the frame's own copy wins the
+    /// moment the session is live again.
+    @ObservationIgnored private var storedSelection: SessionSnapshot?
+    @ObservationIgnored private var storedSelectionTask: Task<Void, Never>?
+
+    private func storedSelection(for key: SessionKey) -> SessionSnapshot? {
+        storedSelection?.key == key ? storedSelection : nil
+    }
+
+    private func loadStoredSelectionIfNeeded() {
+        storedSelectionTask?.cancel()
+        storedSelectionTask = nil
+        if let held = storedSelection, held.key != selectedKey { storedSelection = nil }
+        guard let key = selectedKey,
+              sessionIndex[key] == nil,
+              rawBoard.session(for: key) == nil,
+              storedSelection(for: key) == nil,
+              let repository
+        else { return }
+        storedSelectionTask = Task { [weak self] in
+            let stored = await Task.detached(priority: .userInitiated) { () -> SessionSnapshot? in
+                (try? repository.fetch(key: key)) ?? nil
+            }.value
+            guard !Task.isCancelled, let self, self.selectedKey == key, let stored else { return }
+            self.storedSelection = stored
+            self.refreshSelection()
+        }
     }
 
     /// Turns the bucket filter on, or off if it is already on this bucket.
@@ -1363,9 +1394,10 @@ final class LiveBoardModel {
         loadAcknowledgements()
         consumeTask?.cancel()
         consumeTask = Task { [weak self] in
-            // The registry publishes up to 20 frames a second; a wall of a few
-            // hundred cards cannot lay out that often without owning the main
-            // thread. Frames are coalesced to `frameInterval` — the newest one
+            // The registry publishes up to two frames a second (one every few
+            // seconds while nothing is on screen); a wall of a few hundred
+            // cards still cannot lay out on every one of them without owning
+            // the main thread. Frames are coalesced to `frameInterval` — the newest one
             // wins, nothing is queued — which is invisible on a live board and
             // is what keeps ingest and rendering from fighting.
             var lastApplied = ContinuousClock.now - Self.frameInterval(forSessions: 0)
@@ -1427,6 +1459,7 @@ final class LiveBoardModel {
         consumeTask?.cancel()
         traceTask?.cancel()
         searchTask?.cancel()
+        storedSelectionTask?.cancel()
         assemblyLoop?.cancel()
         consumeTask = nil
         traceTask = nil

@@ -26,6 +26,24 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   Code session that started it, and to trust the Claude session id the worker
   had inherited, so the worker's claims landed on the orchestrator's row. It
   now stops at the nearest harness process.
+- **Idle CPU and an ever-growing store.** Auspex no longer records a liveness
+  confirmation that changes nothing (these were three quarters of the event
+  log), and removes the ones earlier builds stored, once, in the background.
+  Relaunch reloads only sessions that are running or were active this week
+  instead of filling a 2,000-session budget with history. Board frames are
+  published at most twice a second, and every five seconds while neither the
+  window nor the menu bar panel is on screen.
+- The retention policy (14 days of events, 2,000 per session, 30 days of
+  search text) is finally applied: a minute after launch and every six hours,
+  in small batches that never hold the database for long.
+
+### Changed
+
+- The board's derivation skips work nobody reads: session lookups are indexed,
+  the Flock's and Aviary's own data is built only while that view is open, and
+  the delegation tree is rebuilt for the store only when a parent changes.
+- A search hit on a session older than the live set now opens its details from
+  the store instead of an empty pane.
 
 ## [0.2.0] - 2026-08-31
 

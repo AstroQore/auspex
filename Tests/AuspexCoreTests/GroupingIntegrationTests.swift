@@ -237,6 +237,79 @@ struct GroupingIntegrationTests {
         #expect(try row(store, grandchild)?["root_key"] as String? == parent.description)
     }
 
+    @Test("a write that cannot move a root does not rebuild the forest")
+    func rootsAreRebuiltOnlyWhenTheShapeChanges() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store)
+        let parent = Fixtures.key(.claudeCode, "parent")
+        let child = Fixtures.key(.codex, "child")
+
+        await registry.ingest(started(parent))
+        await registry.ingest(started(child))
+        await registry.stop()
+        let afterArrivals = await registry.forestRebuildCount
+        #expect(afterArrivals >= 1)
+
+        // A relaunch over the same rows: tool calls, prompts and liveness
+        // flips change no parent, so no flush has a root to rewrite.
+        let second = makeRegistry(store)
+        try await second.bootstrap()
+        await second.ingest(Fixtures.event(.userPrompt(preview: "go"), key: child, at: 10))
+        await second.ingest(Fixtures.event(.note("working"), key: parent, at: 11))
+        await second.ingest(Fixtures.event(.liveness(alive: false), key: child, at: 12))
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await second.forestRebuildCount == 0)
+
+        // A parent arriving is a change of shape, and the root follows it.
+        let applied = await second.applyLinks([
+            ProcessLink(child: child, parent: parent, link: .envInherited, confidence: .high, evidence: "test")
+        ])
+        #expect(applied == 1)
+        await second.stop()
+        #expect(await second.forestRebuildCount >= 1)
+        #expect(try row(store, child)?["root_key"] as String? == parent.description)
+    }
+
+    @Test("a root whose own parent is outside the live set keeps the root the store recorded")
+    func orphanOfTheWorkingSetKeepsItsStoredRoot() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let repository = SessionRepository(store: store)
+        let ancestor = Fixtures.key(.claudeCode, "finished-last-month")
+        let child = Fixtures.key(.codex, "still-running")
+
+        // Last month: the ancestor finished, and its child's row was rooted
+        // under it while both were in memory.
+        var old = SessionStateReducer.initialSnapshot(identity: Fixtures.identity(key: ancestor))
+        old.state = .ended(reason: .exited)
+        old.isAlive = false
+        old.lastEventAt = Fixtures.date(-40 * 86_400)
+        var running = SessionStateReducer.initialSnapshot(identity: Fixtures.identity(key: child))
+        running.identity.parent = ancestor
+        running.identity.parentLink = .envInherited
+        running.isAlive = true
+        running.lastEventAt = Fixtures.date(0)
+        try repository.upsert(snapshots: [old, running])
+        try ProjectRepository(store: store).setRootKeys([child: ancestor])
+
+        // Bootstrap holds the working set, so the ancestor is not loaded and
+        // the child looks like a root to a tree built from memory.
+        // Batched rather than immediate, so both writes below land in one
+        // flush — the one the newcomer makes rebuild the forest.
+        let registry = SessionRegistry(
+            store: store, publishInterval: 0, persistInterval: 0.2, tickInterval: 0
+        )
+        try await registry.bootstrap()
+        #expect(await registry.session(for: ancestor) == nil)
+
+        await registry.ingest(Fixtures.event(.note("still going"), key: child, at: 1))
+        await registry.ingest(started(Fixtures.key(.grokBuild, "newcomer"), at: 2))
+        await registry.flushPendingWrites()
+        #expect(await registry.forestRebuildCount == 1)
+        await registry.stop()
+
+        #expect(try row(store, child)?["root_key"] as String? == ancestor.description)
+    }
+
     @Test("a link is refused for a session that acquired a parent in the meantime")
     func recordedParentWins() async throws {
         let store = try AuspexStore(inMemory: true)
@@ -431,4 +504,111 @@ struct StubProcessTable: ProcessTableReading {
     func processes() -> [ProcessRecord] { records }
 
     func environment(pid: pid_t) -> [String: String]? { environments[pid] }
+}
+
+/// A table that counts how often an environment is actually read.
+final class CountingProcessTable: ProcessTableReading, @unchecked Sendable {
+    let records: [ProcessRecord]
+    let environments: [pid_t: [String: String]]
+    private let lock = NSLock()
+    private var reads = 0
+
+    init(records: [ProcessRecord], environments: [pid_t: [String: String]] = [:]) {
+        self.records = records
+        self.environments = environments
+    }
+
+    var environmentReads: Int { lock.withLock { reads } }
+
+    func processes() -> [ProcessRecord] { records }
+
+    func environment(pid: pid_t) -> [String: String]? {
+        lock.withLock { reads += 1 }
+        return environments[pid]
+    }
+}
+
+@Suite("Linker memo")
+struct LinkerMemoTests {
+    private func started(_ key: SessionKey, pid: pid_t?) -> AgentEvent {
+        var identity = Fixtures.identity(key: key, cwd: nil, pid: pid)
+        identity.gitRoot = nil
+        identity.gitBranch = nil
+        return Fixtures.event(.sessionStarted(identity: identity), key: key, at: 0)
+    }
+
+    @Test("a quiet machine reads each process's environment once, and infers once")
+    func quietPassesReadNothing() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = SessionRegistry(store: store, publishInterval: 0, persistInterval: 0, tickInterval: 0)
+        let first = Fixtures.key(.claudeCode, "first")
+        let second = Fixtures.key(.codex, "second")
+        await registry.ingest(started(first, pid: 100))
+        await registry.ingest(started(second, pid: 200))
+
+        let table = CountingProcessTable(records: [
+            ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(-60), executablePath: "/bin/claude", argv: []),
+            ProcessRecord(pid: 200, ppid: 1, startTime: Fixtures.date(-30), executablePath: "/bin/codex", argv: []),
+        ])
+        let memo = LinkerMemo()
+        let coordinator = GroupingCoordinator(registry: registry, table: table, placements: PlacementService(), memo: memo)
+
+        for _ in 0..<5 { await coordinator.tick() }
+        // Two parentless sessions with a pid each: two reads, on the first
+        // pass, and none after it.
+        #expect(table.environmentReads == 2)
+        #expect(memo.environmentReadCount == 2)
+
+        // A new session is a reason to infer again — it may be somebody's
+        // parent — but the two environments already read are not read again.
+        let third = Fixtures.key(.grokBuild, "third")
+        await registry.ingest(started(third, pid: 300))
+        await coordinator.tick()
+        #expect(table.environmentReads == 3)
+        await registry.stop()
+    }
+
+    @Test("a reused pid is a different process, and its environment is read again")
+    func reusedPIDIsReadAgain() {
+        let memo = LinkerMemo()
+        let before = CountingProcessTable(
+            records: [ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(0), executablePath: "/bin/claude", argv: [])],
+            environments: [100: ["A": "1"]]
+        )
+        #expect(memo.environment(pid: 100, in: before) == ["A": "1"])
+        #expect(memo.environment(pid: 100, in: before) == ["A": "1"])
+        #expect(before.environmentReads == 1)
+
+        let after = CountingProcessTable(
+            records: [ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(500), executablePath: "/bin/codex", argv: [])],
+            environments: [100: ["B": "2"]]
+        )
+        #expect(memo.environment(pid: 100, in: after) == ["B": "2"])
+        #expect(after.environmentReads == 1)
+    }
+
+    @Test("an environment is trusted for ten minutes and then read again")
+    func environmentsExpire() {
+        let clock = TestClock()
+        let memo = LinkerMemo(now: { clock.now })
+        let table = CountingProcessTable(
+            records: [ProcessRecord(pid: 100, ppid: 1, startTime: Fixtures.date(0), executablePath: "/bin/claude", argv: [])],
+            environments: [100: [:]]
+        )
+        _ = memo.environment(pid: 100, in: table)
+        clock.advance(by: 9 * 60)
+        _ = memo.environment(pid: 100, in: table)
+        #expect(table.environmentReads == 1)
+        clock.advance(by: 2 * 60)
+        _ = memo.environment(pid: 100, in: table)
+        #expect(table.environmentReads == 2)
+    }
+}
+
+/// A settable clock for the memo's expiry.
+private final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var instant = Fixtures.date(0)
+    var now: Date { lock.withLock { instant } }
+    func advance(by seconds: TimeInterval) { lock.withLock { instant = instant.addingTimeInterval(seconds) } }
 }
