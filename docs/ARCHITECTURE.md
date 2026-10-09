@@ -609,15 +609,27 @@ bridge stamps every JSON-RPC object with its own pid; the server keeps that
 attribution request-scoped and accepts it only while the kernel's live socket
 roster contains the same process. `MCPSelfResolver` then walks its ancestry
 until it finds a process the board already owns, or a session-id environment
-variable the harness handed down. Old unstamped clients work only when exactly
+variable the harness handed down — and stops at the first harness process
+(`HarnessProcess`), because anything above it is an outer harness: a Codex
+worker launched from Claude Code is never filed as the Claude session. Pid
+evidence counts only when it is unique: a pid several live sessions share, a
+Codex thread server, or a harness serving several Auspex bridges is reported
+as ambiguous rather than settled by picking one. Harnesses that write no pid
+of their own (Codex, Cursor) learn it from their hooks: when a payload names a
+row with no pid and the hook's parent is that harness's program,
+`HookProcessLearning` records the pid and its start time. Old unstamped clients work only when exactly
 one socket is attached; with two they fail closed instead of using activity
 order. The socket is a local-user trust boundary, not authentication against a
 different process running as that same user. The next agent-session-kit API
 must attach its frozen connection id and kernel peer directly to each handler
 call; once Auspex pins that release, the bridge stamp can disappear.
 `sessions.self` says which pid it used and what convinced it. An optional
-`session_id` is only a corroborating hint: it must agree with the process
-evidence and cannot identify a caller by itself. Anonymous task/milestone
+`session_id` must agree with the process evidence whenever there is some.
+When there is none, it is accepted as a bounded self-report — only from a
+kernel-attributed bridge, only for a live session, only for the harness of the
+nearest harness process above that bridge, and never for a session that
+demonstrably runs in another live process — and its evidence says
+"self-reported" so a person can tell it from a resolved caller. Anonymous task/milestone
 creation remains possible (explicit project or Scratch); writes that author
 session state or history fail closed when the process cannot be attributed.
 

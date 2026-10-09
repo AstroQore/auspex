@@ -579,11 +579,16 @@ public enum AuspexMCPTools {
         title: "Who am I",
         description: """
             Which session Auspex thinks you are, worked out from the process \
-            on the other end of this connection. You never need to know your \
-            own session id; call this if you want to check that Auspex has \
-            placed you correctly, or to find the tasks already linked to you.
+            on the other end of this connection. Usually you never need to know \
+            your own session id; call this to check that Auspex has placed you \
+            correctly, or to find the tasks already linked to you. If it answers \
+            resolved=false, call it again with your harness's own session id as \
+            session_id to see whether Auspex can accept that self-report.
             """,
-        inputSchema: .object(["type": "object", "properties": .object([:])])
+        inputSchema: .object([
+            "type": "object",
+            "properties": .object(["session_id": sessionIDProperty])
+        ])
     )
 
     public static let sessionsList = MCPTool(
@@ -673,14 +678,18 @@ public enum AuspexMCPTools {
     /// Normally unnecessary and deliberately described that way: the pid on
     /// the socket answers the question, and an agent that guesses its own id
     /// wrong would file its work under somebody else's row. It never overrides
-    /// process evidence: the server accepts it only when the connection's
-    /// process tree independently resolves to the same session.
+    /// process evidence: when the connection's process tree resolves a
+    /// session, this must name the same one. Only when the tree cannot answer
+    /// is it taken as a self-report, and then only for a live session of the
+    /// harness the connection's own process belongs to.
     private static let sessionIDProperty: MCPJSON = .object([
         "type": "string",
         "description": """
-            Optional identity check: your harness's own session id, or \
-            '<harness>:<session id>'. It must agree with the session Auspex \
-            resolves from this connection and cannot identify you by itself.
+            Optional: your harness's own session id, or '<harness>:<session id>'. \
+            When Auspex resolves this connection by itself, this must name the \
+            same session. When it cannot, Auspex accepts it only for a live \
+            session of the harness this connection was opened by. Never pass \
+            a guessed id or another session's.
             """
     ])
 

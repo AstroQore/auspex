@@ -10,6 +10,23 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex and `cursor-agent` sessions can claim, finish and notify.** Neither
+  harness writes its pid anywhere Auspex reads, so their MCP calls could never
+  be attributed and every `tasks.claim`, `tasks.complete` and `auspex.notify`
+  was refused. A hook now teaches a pid-less session its process when the hook
+  was run by that harness's own program, and the pid reaches the `sessions`
+  table. Where one process runs many sessions — Codex's thread server inside a
+  desktop app — a session may name itself with `session_id`, accepted only for
+  a live session of the harness the connection descends from. The bundled
+  coordination skill (1.2.0) says how each harness finds its own id.
+- **A worker launched by another harness is no longer filed under its
+  launcher.** The caller walk used to climb past a Codex worker to the Claude
+  Code session that started it, and to trust the Claude session id the worker
+  had inherited, so the worker's claims landed on the orchestrator's row. It
+  now stops at the nearest harness process.
+
 ## [0.2.0] - 2026-08-31
 
 ### Fixed

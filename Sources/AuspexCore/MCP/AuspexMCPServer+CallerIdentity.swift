@@ -55,13 +55,18 @@ extension AuspexMCPServer {
     /// socket is attached; multiple connections without request attribution
     /// fail closed instead of choosing whoever happened to speak last.
     ///
-    /// `session_id` is now a corroborating hint, never an override. It must
-    /// resolve to the same session as the process evidence. This makes a typo
-    /// visible and prevents any local MCP caller from acting as an arbitrary
-    /// session merely by naming a row that exists on the board.
+    /// `session_id` corroborates process evidence whenever there is some: it
+    /// must then name the same session, which makes a typo visible and stops
+    /// any local MCP caller from acting as another session merely by naming a
+    /// row on the board.
+    ///
+    /// When the process tree cannot answer — a Codex thread server runs every
+    /// open thread in one process, and most harnesses tell their MCP servers
+    /// nothing — `session_id` is accepted as a *bounded* self-report. See
+    /// ``selfReported(_:reference:bridge:attempt:board:table:attribution:)``
+    /// for the bounds; outside them it is refused with the reason.
     func caller(_ arguments: MCPArguments) async throws -> Caller {
         let board = await host.boardSnapshot()
-        let identities = board.sessions.map(\.identity)
         let table = await host.processTable()
         let roster = await host.clientRoster()
         let candidatePID: pid_t?
@@ -90,9 +95,16 @@ extension AuspexMCPServer {
                     : "\(roster.connectionCount) connections are attached without request-scoped identity"
             }
         }
+        let attempt = candidatePID.map {
+            resolver.attempt(
+                pid: $0,
+                candidates: board.sessions.map(MCPSelfResolver.Candidate.init),
+                table: table,
+                attached: roster.processIDs
+            )
+        }
         let automatic: Caller
-        if let pid = candidatePID,
-           let resolution = resolver.resolve(pid: pid, identities: identities, table: table) {
+        if let pid = candidatePID, let resolution = attempt?.resolution {
             automatic = Caller(
                 session: resolution.session,
                 pid: pid,
@@ -103,7 +115,8 @@ extension AuspexMCPServer {
                 session: nil,
                 pid: candidatePID,
                 evidence: candidatePID.map {
-                    "no session on the board owns process \($0) or any of its ancestors"
+                    attempt?.refusal
+                        ?? "no session on the board owns process \($0) or any of its ancestors"
                 } ?? attributionEvidence ?? "the socket caller is not attributable"
             )
         }
@@ -113,22 +126,96 @@ extension AuspexMCPServer {
             throw MCPToolFailure("'session_id' must not be empty.")
         }
         let requested = try requestedSession(cleaned, board: board)
-        guard let resolved = automatic.session else {
+        if let resolved = automatic.session {
+            guard requested == resolved else {
+                throw MCPToolFailure(
+                    "session_id '\(cleaned)' names \(requested.description), but this connection "
+                        + "resolves to \(resolved.description). Auspex will not act as another session."
+                )
+            }
+            return Caller(
+                session: resolved,
+                pid: automatic.pid,
+                evidence: automatic.evidence + "; session_id agreed"
+            )
+        }
+        guard let bridge = candidatePID else {
             throw MCPToolFailure(
                 "Auspex cannot corroborate session_id '\(cleaned)' from this connection "
                     + "(\(automatic.evidence)). A session_id cannot identify its caller by itself."
             )
         }
-        guard requested == resolved else {
+        return try selfReported(
+            requested,
+            reference: cleaned,
+            bridge: bridge,
+            attempt: attempt,
+            board: board,
+            table: table,
+            attribution: attributionEvidence ?? "socket peer"
+        )
+    }
+
+    /// Accepts a `session_id` the process tree could not establish, within
+    /// bounds that keep it from being an impersonation tool:
+    ///
+    /// 1. The connection itself is attributed — a kernel-corroborated bridge
+    ///    pid, never a bare claim.
+    /// 2. The named session is on the board, alive, and not ended.
+    /// 3. The nearest harness process above the bridge is one that runs that
+    ///    session's harness. A Codex bridge can name a Codex (or ChatGPT Work)
+    ///    session and nothing else; there is no route from it to a Claude
+    ///    Code row.
+    /// 4. If the session records a pid that is still running, it is that same
+    ///    harness process. A session demonstrably living in another process
+    ///    belongs to that process.
+    ///
+    /// The evidence says "self-reported" first, so a person reading the
+    /// claim history can tell it from one the kernel established.
+    private func selfReported(
+        _ requested: SessionKey,
+        reference: String,
+        bridge: pid_t,
+        attempt: MCPSelfResolver.Attempt?,
+        board: BoardSnapshot,
+        table: any ProcessTableReading,
+        attribution: String
+    ) throws -> Caller {
+        let because = attempt?.refusal
+            ?? "no session on the board owns process \(bridge) or any of its ancestors"
+        guard let session = board.session(for: requested), session.isAlive, !session.state.isEnded else {
             throw MCPToolFailure(
-                "session_id '\(cleaned)' names \(requested.description), but this connection "
-                    + "resolves to \(resolved.description). Auspex will not act as another session."
+                "session_id '\(reference)' names \(requested.description), which is not running. "
+                    + "Auspex accepts a self-reported session_id only for a live session (\(because))."
+            )
+        }
+        guard let harness = attempt?.harness else {
+            throw MCPToolFailure(
+                "Auspex cannot corroborate session_id '\(reference)' from this connection: no process "
+                    + "above it is a harness Auspex recognises (\(because)). "
+                    + "A session_id cannot identify its caller by itself."
+            )
+        }
+        guard harness.harnesses.contains(requested.harness) else {
+            throw MCPToolFailure(
+                "session_id '\(reference)' names a \(requested.harness.displayName) session, but this "
+                    + "connection was opened by \(harness.executable) (process \(harness.pid)). "
+                    + "Auspex will not act as a session of another harness."
+            )
+        }
+        if let recorded = session.identity.pid, recorded != harness.pid,
+           table.record(pid: recorded) != nil {
+            throw MCPToolFailure(
+                "session_id '\(reference)' names \(requested.description), which runs in process "
+                    + "\(recorded), not in the \(harness.executable) process \(harness.pid) this "
+                    + "connection belongs to. Auspex will not act as another session."
             )
         }
         return Caller(
-            session: resolved,
-            pid: automatic.pid,
-            evidence: automatic.evidence + "; session_id agreed"
+            session: requested,
+            pid: bridge,
+            evidence: "self-reported, harness-corroborated by \(harness.executable) "
+                + "(process \(harness.pid)); \(because); \(attribution)"
         )
     }
 
@@ -145,8 +232,9 @@ extension AuspexMCPServer {
         guard caller.session != nil else {
             throw MCPToolFailure(
                 "Auspex cannot \(action) without a process-attributed session "
-                    + "(\(caller.evidence)). Call sessions.self to inspect the evidence; "
-                    + "session_id is only a cross-check and cannot override it."
+                    + "(\(caller.evidence)). Call sessions.self to inspect the evidence. "
+                    + "If it stays unresolved, pass your harness's own session id as session_id: "
+                    + "Auspex accepts it for a live session of the harness this connection runs under."
             )
         }
         return caller
