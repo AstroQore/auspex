@@ -35,6 +35,9 @@ public struct GroupingCoordinator: Sendable {
     public let table: any ProcessTableReading
     /// What the last passes already worked out.
     let memo: LinkerMemo
+    /// Which Codex threads another thread spawned, one header read per
+    /// thread.
+    let spawns: CodexSpawnMemo
 
     /// Creates a coordinator.
     ///
@@ -59,13 +62,15 @@ public struct GroupingCoordinator: Sendable {
         table: any ProcessTableReading,
         placements: PlacementService = PlacementService(),
         linker: ProcessLinker = ProcessLinker(),
-        memo: LinkerMemo
+        memo: LinkerMemo,
+        spawns: CodexSpawnMemo = CodexSpawnMemo()
     ) {
         self.registry = registry
         self.table = table
         self.placements = placements
         self.linker = linker
         self.memo = memo
+        self.spawns = spawns
     }
 
     /// One pass: resolve the directories that changed, then apply the links —
@@ -92,12 +97,32 @@ public struct GroupingCoordinator: Sendable {
     ///
     /// - Returns: how many placements and how many links were applied, which is
     ///   what a test asserts on and what a host can log.
+    ///
+    /// Codex threads another thread spawned are tagged first (see
+    /// ``CodexThreadSpawn``) and kept out of placement: the project they
+    /// belong to is their parent's, which ``BoardSnapshot/projectKey(for:)``
+    /// finds by walking up, and their own directory would only invent one.
     @discardableResult
     public func tick() async -> (placements: Int, links: Int) {
-        let identities = await registry.linkableIdentities()
+        var identities = await registry.linkableIdentities()
         guard !identities.isEmpty else { return (0, 0) }
 
-        let resolved = await placements.placements(for: identities)
+        let variants = spawns.pendingVariants(for: identities)
+        if !variants.isEmpty {
+            await registry.applyVariants(variants)
+            // This pass reads the tags it just wrote, so the spawn is kept
+            // out of placement and linked to its parent now rather than three
+            // seconds from now.
+            identities = identities.map { identity in
+                guard let variant = variants[identity.key] else { return identity }
+                var tagged = identity
+                tagged.variant = variant
+                return tagged
+            }
+        }
+
+        let placeable = identities.filter { !SessionRelations.isThreadSpawn($0) }
+        let resolved = await placements.placements(for: placeable)
         let placed = await registry.applyPlacements(resolved)
 
         var links = SessionRelations.links(identities: identities)

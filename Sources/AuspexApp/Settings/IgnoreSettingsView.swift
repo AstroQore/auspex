@@ -86,7 +86,7 @@ struct IgnoreSettingsView: View {
                 } else {
                     TextField(tag.placeholder, text: $value)
                         .textFieldStyle(.roundedBorder)
-                        .font(tag == .pathPrefix ? AuspexType.monoSmall : AuspexType.body)
+                        .font(tag.takesPath ? AuspexType.monoSmall : AuspexType.body)
                         .onSubmit { add() }
                 }
 
@@ -152,7 +152,7 @@ struct IgnoreSettingsView: View {
 
             Text(rule.kind.value)
                 .font(
-                    rule.kind.tag == .pathPrefix ? AuspexType.monoSmall : AuspexType.rowTitle
+                    rule.kind.tag.takesPath ? AuspexType.monoSmall : AuspexType.rowTitle
                 )
                 .foregroundStyle(rule.isEnabled ? AuspexPalette.text : AuspexPalette.text3)
                 .lineLimit(1)

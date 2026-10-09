@@ -315,9 +315,15 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// scratch ``PseudoProject`` instead. A person who *claimed* that
     /// directory still gets their claim: the rule below the user is the only
     /// one this overrides.
+    ///
+    /// A Codex thread another thread spawned is the fourth kind: it reports a
+    /// directory, and the directory is not what it is working on — its parent
+    /// is. It never groups by its own, takes its nearest placeable ancestor's,
+    /// and with none on the board goes to its harness's scratch rather than
+    /// inventing a project of one. See ``CodexThreadSpawn``.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let claimed = claims.key(for: session) { return claimed }
-        if !isSandbox(session), let own = Self.projectKey(for: session) { return own }
+        if groupsByOwnDirectory(session), let own = Self.projectKey(for: session) { return own }
         var seen: Set<SessionKey> = [session.key]
         var current = session.identity.parent
         while let key = current, seen.insert(key).inserted {
@@ -330,12 +336,28 @@ public struct BoardSnapshot: Sendable, Equatable {
                 // parent sits in a section.
                 return PseudoProject.scratchKey(for: ancestor.key.harness)
             }
-            if let inherited = Self.projectKey(for: ancestor) { return inherited }
+            if !inheritsProject(ancestor), let inherited = Self.projectKey(for: ancestor) {
+                return inherited
+            }
             current = ancestor.identity.parent
         }
-        if isSandbox(session) { return PseudoProject.scratchKey(for: session.key.harness) }
+        if !groupsByOwnDirectory(session) {
+            return PseudoProject.scratchKey(for: session.key.harness)
+        }
         guard !session.key.harness.recordsWorkingDirectory else { return nil }
         return PseudoProject.key(for: session.key.harness)
+    }
+
+    /// Whether this session's own directory can be its project key — neither
+    /// a scratch thread nor a spawned thread.
+    private func groupsByOwnDirectory(_ session: SessionSnapshot) -> Bool {
+        !isSandbox(session) && !inheritsProject(session)
+    }
+
+    /// Whether this session takes its project from its parent whatever its
+    /// own directory says: a Codex thread another thread spawned.
+    public func inheritsProject(_ session: SessionSnapshot) -> Bool {
+        SessionRelations.isThreadSpawn(session.identity)
     }
 
     /// Whether this session's own directory is a harness's per-thread scratch.

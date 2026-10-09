@@ -131,6 +131,9 @@ public final class AppEnvironment {
     var followsVisibility = false
 
     private var registry: SessionRegistry?
+    /// The grouping pass's placement service, kept so a scratch folder the
+    /// person adds in Settings reaches it without a relaunch.
+    private var placements: PlacementService?
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
     private var eventContinuation: AsyncStream<AgentEvent>.Continuation?
@@ -228,7 +231,8 @@ public final class AppEnvironment {
         // Before the pipeline: the first frame should already be placed by the
         // person's projects and filtered by their rules, rather than showing
         // everything for a moment and then settling.
-        catalog.onChange = { [board, catalog] claims, rules, showsIgnored in
+        catalog.onChange = { [weak self, board, catalog] claims, rules, showsIgnored in
+            self?.applyScratchFolders(rules.scratchPrefixes)
             board.setUserLayer(
                 claims: claims,
                 rules: rules,
@@ -389,7 +393,41 @@ public final class AppEnvironment {
         startGrouping(registry: registry, table: table, mode: mode)
         // A demo's store lives in memory and holds nothing older than the
         // process; there is no history in it to trim.
-        if mode == .live { startMaintenance(store: store) }
+        if mode == .live {
+            startScratchPurge(store: store)
+            startMaintenance(store: store)
+        }
+    }
+
+    /// Removes, once per store, the project rows earlier builds wrote for
+    /// scratch directories. See ``ScratchProjectPurge``.
+    ///
+    /// At launch rather than with the maintenance pass a minute later: it is
+    /// one short transaction over a table of a few hundred rows, and the
+    /// sidebar's name map should stop offering those names as soon as it can.
+    /// The person's own projects are read now and protected; the rules are
+    /// the ones the grouping pass was just given.
+    private func startScratchPurge(store: AuspexStore) {
+        let purge = ScratchProjectPurge(store: store)
+        let rules = ScratchRules(userPrefixes: catalog.rules.scratchPrefixes)
+        let protectedRoots = catalog.projects.flatMap(\.roots)
+        let board = board
+        let projects = projects
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak projects] in
+            do {
+                guard let report = try await purge.runIfNeeded(
+                    rules: rules,
+                    protectedRoots: protectedRoots
+                ), report.projectsRemoved > 0 else { return }
+                await projects?.refreshNames()
+                let noun = report.projectsRemoved == 1 ? "folder" : "folders"
+                await board?.record(
+                    notice: "Auspex stopped listing \(report.projectsRemoved) scratch \(noun) as projects."
+                )
+            } catch {
+                await board?.record(notice: "Scratch folders could not be tidied: \(error).")
+            }
+        })
     }
 
     /// Trims the stored history, off the main actor and at utility priority.
@@ -553,9 +591,16 @@ public final class AppEnvironment {
         table: any ProcessTableReading,
         mode: Mode
     ) {
+        // The demo's directories are invented, so none of them is on disk:
+        // asked honestly, every one would be scratch. It says they all exist.
         let placements = mode == .demo
-            ? PlacementService(resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory))
-            : PlacementService()
+            ? PlacementService(
+                resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory),
+                rules: ScratchRules(home: DemoScript.homeDirectory),
+                directoryExists: { _ in true }
+            )
+            : PlacementService(rules: ScratchRules(userPrefixes: catalog.rules.scratchPrefixes))
+        self.placements = placements
         let groupingTable: any ProcessTableReading
         if mode == .demo {
             groupingTable = DemoGroupingProcessTable()
@@ -568,6 +613,14 @@ public final class AppEnvironment {
             placements: placements
         )
         pipelineTasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
+    }
+
+    /// Hands the person's scratch folders to the placement service. A no-op
+    /// before grouping starts — the service is built with the rules in force
+    /// then — and inside the service when nothing changed.
+    private func applyScratchFolders(_ prefixes: [String]) {
+        guard let placements else { return }
+        Task { await placements.setUserScratchPrefixes(prefixes) }
     }
 
     /// Stops every producer and flushes what the registry has buffered.
