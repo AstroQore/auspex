@@ -84,6 +84,19 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   the delegation tree is rebuilt for the store only when a parent changes.
 - A search hit on a session older than the live set now opens its details from
   the store instead of an empty pane.
+- **The office stops drawing when nothing in it moves.** A frame with nothing
+  moving in it is the last one drawn until something changes — a board frame,
+  the pointer, a scroll, a resize, a balloon's stopwatch — so a quiet office on
+  Now's stage or in the Aviary costs what the lists cost. Idle motion (a drawn
+  character breathing or dozing, a `z` over a stale session, a finished note
+  in the garden, the projector over a quiet table) plays once every three to
+  eight seconds instead of looping; working motion keeps its loops, and a
+  delegation arc pulses only while its parent is still delegating. Now's stage
+  draws at 15 frames a second (30 during a gesture); the Aviary keeps 30 and
+  60. Balloon stopwatches refresh every five seconds, only on screen. Room
+  borders are dashed on the GPU, and a closed stage's view is left paused.
+  `--stage <on|off>` (`AUSPEX_STAGE`) opens Now with or without the stage, for
+  measuring each.
 
 ## [0.2.0] - 2026-08-31
 

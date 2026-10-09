@@ -373,8 +373,23 @@ magnification, and a Metal-backed one would be re-rasterised for it.
 The view, not the scene, answers "is anybody looking at this": `OfficeSKView`
 watches window occlusion, superview, and hidden state, and suspends the render
 loop, the scene's actions, and the frame rate together when the answer is no.
-It rests at 30 fps — the fastest thing in the office is a typing hand at ten
-changes a second — and goes to 60 for the length of a gesture.
+While something is moving it draws at a resting rate — 30 fps in the Aviary,
+15 on Now's stage; the fastest thing in the office is a typing hand at ten
+changes a second — and at twice that for the length of a gesture.
+
+It also answers "is there anything to look at". An unpaused `SKView`'s display
+link fires at the display's rate whatever its frame rate says, so the only
+cheap rate is paused: after every frame the scene reports whether anything
+visible was moving (`OfficeScene.didFinishUpdate()`, asked of the director's
+own tables), and a frame with nothing moving is the last one drawn. Every
+change that does not arrive as an action — a board frame, a balloon, the
+pointer, the clip view moving, a resize, new character art — calls `wake()`,
+and what the scene will change on its own — a balloon's stopwatch, the next
+stir of idle motion — is handed over as a time to wake up at. Idle motion is
+deliberately a beat rather than a loop (`SceneIdleBeat`): every three to eight
+seconds the room stirs, about three in five idle things on screen play once,
+and the picture is still again — a loop would keep the clock running forever.
+Working motion stays looped, because it is the signal.
 
 The scene's zones shipped: one continuous map — the office, a meeting room
 strip where a delegating session sits at a long table with its sub-agents,
