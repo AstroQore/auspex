@@ -89,4 +89,17 @@ public struct ProjectPlacement: Hashable, Sendable, Codable {
             placementNote: thread.note
         )
     }
+
+    /// The placement of a directory one of the ``ScratchRules`` claimed.
+    ///
+    /// Projectless for the same reason a sandbox thread is, with the rule that
+    /// fired as its note — so "why is this not a project" has an answer a
+    /// reader can be given.
+    public static func scratch(_ match: ScratchRules.Match) -> ProjectPlacement {
+        ProjectPlacement(
+            projectRootPath: match.directory,
+            projectName: match.name,
+            placementNote: match.reason.rawValue
+        )
+    }
 }

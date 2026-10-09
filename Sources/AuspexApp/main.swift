@@ -37,6 +37,20 @@ if arguments.contains("--smoke-app-resources") {
             "auspex: loaded \(resources.count) critical resources "
             + "from \(AppResourceBundle.resolution.source.rawValue)\n"
         FileHandle.standardOutput.write(Data(summary.utf8))
+        // The string catalogue, the same way: a Simplified Chinese word, out of
+        // whichever bundle the catalogue resolved, and that bundle must be this
+        // app's own rather than the build machine's.
+        L10n.localeOverride = "zh-Hans"
+        let word = L10n.ViewMode.now
+        let catalogue = L10n.bundle.bundleURL.resolvingSymlinksInPath().path
+        let app = Bundle.main.bundleURL.resolvingSymlinksInPath().path
+        guard word != "viewMode.now", L10n.resolvedLocale == "zh-Hans" else {
+            throw AppResourceBundle.VerificationError.missing("zh-Hans string table")
+        }
+        let source = catalogue.hasPrefix(app + "/") ? "application" : "elsewhere (\(catalogue))"
+        FileHandle.standardOutput.write(
+            Data("auspex: localization zh-Hans from \(source): \(word)\n".utf8)
+        )
         exit(0)
     } catch {
         FileHandle.standardError.write(Data("auspex: \(error.localizedDescription)\n".utf8))
@@ -324,6 +338,17 @@ if let flag = arguments.firstIndex(of: "--render-board") {
     // had one, so three of them could only ever be checked by opening the app.
     let viewMode = rest.first { $0.hasPrefix("view=") }
         .flatMap { BoardViewMode(rawValue: String($0.dropFirst(5))) }
+    // Now's stage, open, folded or closed: `stage=off`, `stage=collapsed`.
+    // The office is an `SKView`, which an offscreen render cannot draw, so the
+    // list-only half of the screen — and the folded strip, which is a row of
+    // it — are what this renderer can photograph faithfully.
+    let stage = rest.first { $0.hasPrefix("stage=") }.map { String($0.dropFirst(6)) }
+    let showsStage = stage != "off"
+    let stageCollapsed = stage == "collapsed"
+    // The interface language, for the screenshots that are *about* a
+    // translation. `locale=en` or `locale=zh-Hans`; absent means the Mac's.
+    let language = rest.first { $0.hasPrefix("locale=") }
+        .flatMap { AppLanguage(rawValue: String($0.dropFirst(7))) }
     // The user layer, as `focus=<project key>` and `ignore=<kind>:<value>`
     // among the trailing arguments. Keyword rather than positional because
     // they are the two knobs that are usually absent, and because a picture of
@@ -355,7 +380,10 @@ if let flag = arguments.firstIndex(of: "--render-board") {
             groupBy: groupBy,
             pane: pane,
             viewMode: viewMode,
-            appearance: appearance
+            showsStage: showsStage,
+            stageCollapsed: stageCollapsed,
+            appearance: appearance,
+            language: language
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
         exit(0)
@@ -507,6 +535,12 @@ if arguments.contains("--help") || arguments.contains("-h") {
                             `AUSPEX_APPEARANCE` does the same. Auspex follows the
                             system by default; the persistent choice lives in
                             Settings → Appearance.
+              --stage <on|off>
+                            Open Now with its office stage, or with the lists
+                            only. `AUSPEX_STAGE` does the same. Held for the
+                            launch; the switch in Now's header still works. What
+                            the performance budget for Now with and without the
+                            stage is measured with.
               --render-scene <path> [seconds] [project] [crowd=N] [appearance=…]
                             Render the scene view's office to a PNG, offscreen,
                             from the demo board at `seconds` into its loop
@@ -542,7 +576,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                             [width=<points>] [pane=<settings pane>]
                             [focus=<project>] [ignore=<kind>:<value>]
                             [group=<none|harness|project|tree>]
-                            [appearance=<light|dark>]
+                            [appearance=<light|dark>] [locale=<en|zh-Hans>]
                             Render the whole window — sidebar, board, trace — to a
                             PNG, offscreen, after letting the demo run for
                             `seconds` (default 20), at `height` points (default
@@ -561,6 +595,8 @@ if arguments.contains("--help") || arguments.contains("-h") {
                             `harness`, `titleContains`) for this render only;
                             `group=` divides the wall along that axis, which is the
                             only way to reach the tree grouping headlessly.
+                            `locale=` draws it in that interface language for
+                            this render only, without touching the setting.
                             Reads no harness store and writes nothing.
               --render-trajectory <path> [seconds] [height] [width]
                             [appearance=<light|dark>]

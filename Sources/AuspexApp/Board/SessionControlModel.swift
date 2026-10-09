@@ -65,7 +65,7 @@ final class SessionControlModel {
     /// building a context menu costs no syscalls of its own.
     func availability(for identity: SessionIdentity) -> SessionControl.Availability {
         guard let table else {
-            return .unavailable(reason: "Auspex is not watching processes yet.")
+            return .unavailable(reason: L10n.Session.notWatchingProcesses)
         }
         return SessionControl.availability(for: identity, table: table)
     }
@@ -132,7 +132,7 @@ final class SessionControlModel {
         case let .available(target):
             return target
         case let .unavailable(reason):
-            onNotice?("Auspex did not signal this session: \(reason)")
+            onNotice?(L10n.Session.didNotSignal(reason: reason))
             return nil
         }
     }
@@ -156,7 +156,7 @@ final class SessionControlModel {
                 SessionControl.failureNote(signal, pid: target.pid, reason: reason),
                 for: session
             )
-            onNotice?("Auspex did not signal pid \(target.pid): \(reason)")
+            onNotice?(L10n.Session.didNotSignalPid(pid: Int(target.pid), reason: reason))
             return false
         }
     }
@@ -275,7 +275,7 @@ private struct KillConfirmationSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
-                Button("Cancel", role: .cancel, action: onCancel)
+                Button(L10n.Common.cancel, role: .cancel, action: onCancel)
                     .buttonStyle(.auspex)
                     .keyboardShortcut(.cancelAction)
                 Button(prompt.confirmTitle, role: .destructive, action: onConfirm)
@@ -316,8 +316,8 @@ struct ControlPrompt: Identifiable, Equatable {
     /// The dialog's headline.
     var headline: String {
         switch step {
-        case .terminate: SessionControl.killPrompt(title: title, target: target)
-        case .force: "Force \(title) to stop?"
+        case .terminate: SessionControl.localizedKillPrompt(title: title)
+        case .force: L10n.Session.Kill.forcePrompt(title: title)
         }
     }
 
@@ -325,11 +325,13 @@ struct ControlPrompt: Identifiable, Equatable {
     var message: String {
         switch step {
         case .terminate:
-            SessionControl.killMessage(target: target, isResumable: isResumable)
+            SessionControl.localizedKillMessage(target: target, isResumable: isResumable)
         case .force:
-            "\(target.processName) (pid \(target.pid)) is still running "
-                + "\(Int(SessionControlModel.forceGrace.components.seconds))s after SIGTERM. "
-                + "SIGKILL cannot be caught, so it will not get to finish writing anything."
+            L10n.Session.Kill.forceMessage(
+                process: target.processName,
+                pid: Int(target.pid),
+                seconds: Int(SessionControlModel.forceGrace.components.seconds)
+            )
         }
     }
 
@@ -339,8 +341,8 @@ struct ControlPrompt: Identifiable, Equatable {
     /// the question.
     var confirmTitle: String {
         switch step {
-        case .terminate: "Kill"
-        case .force: SessionControl.Signal.forceKill.menuTitle
+        case .terminate: L10n.Session.Kill.confirm
+        case .force: SessionControl.Signal.forceKill.localizedMenuTitle
         }
     }
 }

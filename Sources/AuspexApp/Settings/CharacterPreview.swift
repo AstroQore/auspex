@@ -127,7 +127,10 @@ struct CharacterPreviewTile: View {
         PreviewTile(
             image: CharacterPreview.image(for: package),
             size: size,
-            label: "\(package.displayName), \(package.previewPose?.name ?? "no art")"
+            label: L10n.Characters.previewLabel(
+                name: package.displayName,
+                pose: package.previewPose?.name ?? L10n.Characters.noArt
+            )
         )
     }
 }
@@ -145,7 +148,10 @@ struct BuiltInPreviewTile: View {
         PreviewTile(
             image: CharacterPreview.builtInImage(),
             size: size,
-            label: "\(CharacterChoice.builtInDisplayName), idle"
+            label: L10n.Characters.previewLabel(
+                name: CharacterChoice.localizedBuiltInDisplayName,
+                pose: L10n.Characters.idle
+            )
         )
     }
 }
@@ -171,7 +177,7 @@ private struct PreviewTile: View {
                 VStack(spacing: 4) {
                     Image(systemName: "square.dashed")
                         .font(.system(size: 16))
-                    Text("No art")
+                    Text(L10n.Characters.noArt)
                         .auspexLabel(AuspexType.labelSmall)
                 }
                 .foregroundStyle(AuspexPalette.textTertiary)

@@ -80,22 +80,19 @@ struct MCPServerPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 StateDot(color: dotColor, glows: mcp?.status == .listening)
-                Text("MCP server")
+                Text(L10n.Harnesses.Mcp.title)
                     .font(AuspexType.rowStrong)
                     .foregroundStyle(AuspexPalette.text)
                 Spacer(minLength: 8)
                 if let onOpenSetup {
-                    Button("Set up agents…", action: onOpenSetup)
+                    Button(L10n.Harnesses.Mcp.setUpAgents, action: onOpenSetup)
                         .buttonStyle(.auspex)
                         .font(AuspexType.pill)
                         .foregroundStyle(AuspexPalette.stateThinking)
-                        .help(
-                            "Register Auspex with each harness, install the short protocol note, "
-                                + "and add the optional coordination skill"
-                        )
+                        .help(L10n.Harnesses.Mcp.setUpAgentsHelp)
                 }
             }
-            Text(mcp?.summary ?? "Not running in this process.")
+            Text(mcp?.summary ?? L10n.Harnesses.Mcp.notRunning)
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text2)
                 .lineLimit(2)
@@ -108,7 +105,7 @@ struct MCPServerPanel: View {
                 Text(
                     mcp.connections
                         .map { connection in
-                            connection.processID.map { "pid \($0)" } ?? "an unattributed client"
+                            connection.processID.map { "pid \($0)" } ?? L10n.Harnesses.Mcp.unattributedClient
                         }
                         .joined(separator: " · ")
                 )
@@ -143,9 +140,8 @@ struct HarnessesPanel: View {
             if rows.isEmpty {
                 EmptyStateView(
                     symbol: "square.stack.3d.up.slash",
-                    title: "No harness to report on.",
-                    detail: "Auspex names a harness here as soon as an adapter watches a "
-                        + "store for it."
+                    title: L10n.Harnesses.Empty.title,
+                    detail: L10n.Harnesses.Empty.detail
                 )
                 .frame(maxWidth: .infinity)
             }
@@ -162,14 +158,7 @@ struct HarnessesPanel: View {
     /// It is the page's one claim about *behaviour* rather than about state,
     /// and it is the claim a reader most needs: nothing here is written to.
     private var footnote: some View {
-        Text(
-            "The rack is read-only: Auspex tails each store's own files and never writes "
-                + "into a harness directory on its own. The one exception is the setup "
-                + "above — registering MCP, installing the short note or versioned skill, "
-                + "and hooks. It happens only when you click. Config edits stay fenced; "
-                + "the skill has one hashed, Auspex-owned directory and modified content "
-                + "is never overwritten or removed."
-        )
+        Text(L10n.Harnesses.footnote)
         .font(AuspexType.caption)
         .foregroundStyle(AuspexPalette.text3)
         .fixedSize(horizontal: false, vertical: true)
@@ -414,7 +403,7 @@ private struct HarnessRackRow: View {
             status.storePath ?? AuspexAdapters.storeDescription(for: status.harness),
             AuspexAdapters.storeNote(for: status.harness)
         ].compactMap { $0 }
-        return parts.isEmpty ? "No adapter watches a store for this harness." : parts.joined(separator: " — ")
+        return parts.isEmpty ? L10n.Harnesses.noAdapter : parts.joined(separator: " — ")
     }
 
     /// Whether the store is on this Mac. A `stat`, and nothing else — kept
@@ -427,7 +416,7 @@ private struct HarnessRackRow: View {
                 glows: false,
                 size: 7
             )
-            Text(status.isDetected ? "detected" : "not installed")
+            Text(status.isDetected ? L10n.Harnesses.detected : L10n.Harnesses.notInstalled)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text2)
                 .fixedSize()
@@ -438,9 +427,9 @@ private struct HarnessRackRow: View {
     /// is looking for the first one.
     private var counters: some View {
         HStack(spacing: 12) {
-            CountBadge(value: status.liveCount, label: "live", tint: AuspexPalette.stateWriting)
-            CountBadge(value: status.idleCount, label: "idle", tint: AuspexPalette.text)
-            CountBadge(value: status.totalCount, label: "total", tint: AuspexPalette.text)
+            CountBadge(value: status.liveCount, label: L10n.Harnesses.Count.live, tint: AuspexPalette.stateWriting)
+            CountBadge(value: status.idleCount, label: L10n.Harnesses.Count.idle, tint: AuspexPalette.text)
+            CountBadge(value: status.totalCount, label: L10n.Harnesses.Count.total, tint: AuspexPalette.text)
         }
     }
 
@@ -457,12 +446,12 @@ private struct HarnessRackRow: View {
             HStack(spacing: 14) {
                 CountBadge(
                     value: status.work.claimed,
-                    label: "claimed",
+                    label: L10n.Harnesses.Count.claimed,
                     tint: AuspexPalette.stateTool
                 )
                 CountBadge(
                     value: status.work.closed,
-                    label: "finished",
+                    label: L10n.Harnesses.Count.finished,
                     tint: AuspexPalette.stateWriting
                 )
                 if let median = status.work.medianSeconds {
@@ -471,12 +460,12 @@ private struct HarnessRackRow: View {
                             .font(AuspexType.monoCount)
                             .auspexTabularDigits()
                             .foregroundStyle(AuspexPalette.text)
-                        Text("median")
+                        Text(L10n.Harnesses.median)
                             .auspexLabel(AuspexType.labelSmall)
                             .foregroundStyle(AuspexPalette.text3)
                     }
                     .fixedSize()
-                    .help("Median time from claim to finish, over the tasks this harness closed")
+                    .help(L10n.Harnesses.medianHelp)
                 }
             }
         }
@@ -533,27 +522,19 @@ private struct HarnessRackRow: View {
             Circle()
                 .strokeBorder(AuspexPalette.text3, lineWidth: 1)
                 .frame(width: 7, height: 7)
-            Text("hooks off")
+            Text(L10n.Harnesses.hooksOff)
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize()
         }
-        .help(
-            "Harness hooks push a lifecycle event the moment it happens instead of on the "
-                + "next file poll. They are opt-in and land in a later milestone; file tailing stays the "
-                + "baseline either way."
-        )
+        .help(L10n.Harnesses.hooksHelp)
     }
 
     /// What the config amounts to, in one phrase.
     private func summary(_ mcp: HarnessMCPConfig) -> String {
-        guard mcp.exists else { return "no config file" }
-        guard mcp.didParse else { return "could not be read" }
-        switch mcp.serverCount {
-        case 0: return "no servers"
-        case 1: return "1 server"
-        default: return "\(mcp.serverCount) servers"
-        }
+        guard mcp.exists else { return L10n.Harnesses.Config.noFile }
+        guard mcp.didParse else { return L10n.Harnesses.Config.unreadable }
+        return L10n.Harnesses.Config.servers(count: mcp.serverCount)
     }
 }
 
@@ -609,7 +590,7 @@ struct RackChips {
 
     /// What the `+N` chip says when it is pointed at.
     var hiddenHelp: String {
-        "Also configured: " + hiddenNames.joined(separator: ", ")
+        L10n.Harnesses.Config.alsoConfigured(names: hiddenNames.joined(separator: ", "))
     }
 
     /// A server name with its middle taken out.
@@ -646,7 +627,7 @@ private struct ServerChip: View {
             }
         }
         .opacity(isScoped ? 0.7 : 1)
-        .help(isScoped ? "Configured for one project directory" : "Configured for every session")
+        .help(isScoped ? L10n.Harnesses.Config.scoped : L10n.Harnesses.Config.global)
     }
 }
 
@@ -669,7 +650,7 @@ private struct AuspexSlot: View {
             Text(
                 isRegistered
                     ? HarnessMCPConfigStore.auspexServerName
-                    : "\(HarnessMCPConfigStore.auspexServerName) — not registered"
+                    : L10n.Harnesses.Config.notRegistered(name: HarnessMCPConfigStore.auspexServerName)
             )
             .font(AuspexType.caption)
             .lineLimit(1)
@@ -685,9 +666,8 @@ private struct AuspexSlot: View {
         )
         .help(
             isRegistered
-                ? "This harness can reach the Auspex task board."
-                : "This harness cannot reach the Auspex task board. "
-                    + "Register it from “Set up agents…” above."
+                ? L10n.Harnesses.Config.canReach
+                : L10n.Harnesses.Config.cannotReach
         )
     }
 }
@@ -719,14 +699,14 @@ enum DurationText {
 
 enum RelativeTimeText {
     static func since(_ date: Date?, now: Date = Date()) -> String {
-        guard let date else { return "never" }
+        guard let date else { return L10n.Time.never }
         let seconds = max(0, now.timeIntervalSince(date))
         switch seconds {
-        case ..<10: return "just now"
-        case ..<60: return "\(Int(seconds))s ago"
-        case ..<3_600: return "\(Int(seconds / 60))m ago"
-        case ..<86_400: return "\(Int(seconds / 3_600))h ago"
-        default: return "\(Int(seconds / 86_400))d ago"
+        case ..<10: return L10n.Time.justNow
+        case ..<60: return L10n.Time.secondsAgo(count: Int(seconds))
+        case ..<3_600: return L10n.Time.minutesAgo(count: Int(seconds / 60))
+        case ..<86_400: return L10n.Time.hoursAgo(count: Int(seconds / 3_600))
+        default: return L10n.Time.daysAgo(count: Int(seconds / 86_400))
         }
     }
 }

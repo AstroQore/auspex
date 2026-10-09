@@ -89,7 +89,7 @@ struct BoardFrameAssemblerTests {
 
     // MARK: What one frame says
 
-    @Test("a frame carries the wall, the ended rows, the counts and the tree at once")
+    @Test("a frame carries the wall, the ended units, the counts and the tree at once")
     func oneFrameAnswersEverySurface() {
         let frame = BoardFrameAssembler.frame(
             board: fixture,
@@ -99,7 +99,7 @@ struct BoardFrameAssemblerTests {
         // The finished session leaves the grid entirely and collects below it.
         let onTheWall = frame.rowGroups.flatMap(\.rows).map(\.key.sessionID)
         #expect(!onTheWall.contains("d"))
-        #expect(frame.endedRows.map(\.key.sessionID) == ["d"])
+        #expect(frame.endedUnits.map(\.lead.key.sessionID) == ["d"])
 
         // Every session is in the index — a derivation that dropped one would
         // be a card nobody can select.
@@ -132,6 +132,91 @@ struct BoardFrameAssemblerTests {
         #expect(frame.tree.projects.count == 2)
     }
 
+    @Test("the crew's groups and the aviary's board are built only for their own mode")
+    func modeOutputsAreBuiltForTheirMode() {
+        let board = BoardFrameAssembler.frame(board: fixture, inputs: BoardFrameInputs())
+        #expect(board.groups.isEmpty)
+        #expect(board.sceneBoard.sessions.isEmpty)
+        #expect(board.assembledFor == .board)
+        // The rows the sidebar and the Tasks page read do not depend on it.
+        #expect(!board.rowGroups.isEmpty)
+
+        let crew = BoardFrameAssembler.frame(board: fixture, inputs: BoardFrameInputs(viewMode: .crew))
+        #expect(!crew.groups.isEmpty)
+        #expect(crew.sceneBoard.sessions.isEmpty)
+        #expect(crew.rowGroups == board.rowGroups)
+
+        let scene = BoardFrameAssembler.frame(board: fixture, inputs: BoardFrameInputs(viewMode: .scene))
+        #expect(scene.groups.isEmpty)
+        #expect(!scene.sceneBoard.sessions.isEmpty)
+    }
+
+    @Test("a frame assembled for another mode is never a repeat of the last one")
+    func aModeSwitchIsNotARepeat() async {
+        let assembler = BoardFrameAssembler()
+        let first = await assembler.assemble(board: fixture, inputs: BoardFrameInputs(), sequence: 1)
+        let same = await assembler.assemble(board: fixture, inputs: BoardFrameInputs(), sequence: 2)
+        #expect(same.isRepeat)
+        // The same board, looked at another way: the aviary's picture has to
+        // be adopted even though no session moved.
+        let scene = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .scene), sequence: 3
+        )
+        #expect(!scene.isRepeat)
+        #expect(!scene.sceneBoard.sessions.isEmpty)
+        #expect(first.boardRevision == scene.boardRevision)
+    }
+
+    @Test("Now's lists are built in every mode, and its office only while the stage is open")
+    func nowOutputsFollowTheStage() {
+        // The sidebar counts what is asking for the reader in every mode.
+        let board = BoardFrameAssembler.frame(board: fixture, inputs: BoardFrameInputs())
+        #expect(board.now.counts.needsYou == 1)
+        #expect(!board.includesOffice)
+
+        let staged = BoardFrameAssembler.frame(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: true)
+        )
+        #expect(staged.includesOffice)
+        #expect(!staged.sceneBoard.sessions.isEmpty)
+        // The permission wait is the one thing on this board that needs a
+        // person; the delegated pair is one working row.
+        #expect(staged.now.needsYou.map(\.row.key.sessionID) == ["b"])
+        #expect(staged.now.working.contains { $0.row.key.sessionID == "a" && $0.subagents == 1 })
+
+        let listOnly = BoardFrameAssembler.frame(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: false)
+        )
+        #expect(!listOnly.includesOffice)
+        #expect(listOnly.sceneBoard.sessions.isEmpty)
+        #expect(listOnly.now == staged.now)
+    }
+
+    @Test("opening Now's stage is not a repeat, and brings the office with it")
+    func openingTheStageIsNotARepeat() async {
+        let assembler = BoardFrameAssembler()
+        _ = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: false), sequence: 1
+        )
+        let opened = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: true), sequence: 2
+        )
+        #expect(!opened.isRepeat)
+        #expect(!opened.sceneBoard.sessions.isEmpty)
+    }
+
+    @Test("a board's key lookup agrees with a scan of its sessions")
+    func keyIndexAgreesWithTheSessions() {
+        for session in fixture.sessions {
+            #expect(fixture.session(for: session.key) == session)
+        }
+        #expect(fixture.session(for: SessionKey(harness: .cursor, sessionID: "absent")) == nil)
+        // Filtering and placing keep the lookup in step with what is left.
+        let kept = fixture.filtered { $0.key.sessionID != fixture.sessions[0].key.sessionID }
+        #expect(kept.session(for: fixture.sessions[0].key) == nil)
+        for session in kept.sessions { #expect(kept.session(for: session.key) == session) }
+    }
+
     @Test("the sections a filter empties are dropped rather than drawn empty")
     func bucketFilterDropsEmptySections() {
         let filtered = BoardFrameAssembler.frame(
@@ -158,7 +243,7 @@ struct BoardFrameAssemblerTests {
         #expect(frame.board.sessions.count == 3)
         #expect(frame.sessionIndex.count == 3)
         #expect(frame.tree.projects.count == 1)
-        #expect(frame.endedRows.isEmpty)
+        #expect(frame.endedUnits.isEmpty)
     }
 
     @Test("the person's own name for a project beats the store's")

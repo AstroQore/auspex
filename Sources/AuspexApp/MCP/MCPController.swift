@@ -97,7 +97,7 @@ final class MCPController {
         let explicit = (override?.isEmpty == false) ? override : nil
 
         guard let path = explicit ?? (isReadOnly ? nil : paths.socketPath) else {
-            errorDescription = "This is a demo replay, so no MCP socket was bound."
+            errorDescription = L10n.Mcp.Status.demo
             return
         }
 
@@ -167,12 +167,12 @@ final class MCPController {
     var summary: String {
         switch status {
         case .listening:
-            let clients = clientCount == 1 ? "1 agent attached" : "\(clientCount) agents attached"
-            return "Serving \(socketPath ?? "the MCP socket") · \(clients)"
+            let clients = L10n.Mcp.Status.agentsAttached(count: clientCount)
+            return L10n.Mcp.Status.serving(socket: socketPath ?? L10n.Mcp.Status.theSocket, clients: clients)
         case .conflict:
-            return errorDescription ?? "Another copy of Auspex is serving the MCP socket."
+            return errorDescription ?? L10n.Mcp.Status.conflict
         case .stopped:
-            return errorDescription ?? "Not serving."
+            return errorDescription ?? L10n.Mcp.Status.stopped
         }
     }
 }

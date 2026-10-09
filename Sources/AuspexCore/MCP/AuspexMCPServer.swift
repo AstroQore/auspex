@@ -111,19 +111,34 @@ public actor AuspexMCPServer {
     /// one was named explicitly, so a hook can only reach a fabricated board
     /// that somebody deliberately pointed at it — which is how this is
     /// demonstrated.
+    ///
+    /// A hook whose payload names a row with no pid also teaches that row its
+    /// process, when the process that ran the hook is that harness's own
+    /// program — see ``HookProcessLearning``. That is what lets a later MCP
+    /// call from the same session be attributed by its process tree.
     private func handleHook(_ params: MCPJSON?) async {
         guard let hook = HookEvent(params: params) else { return }
         let board = await host.boardSnapshot()
-        let fallback = resolver.resolve(
-            pid: hook.pid,
-            identities: board.sessions.map(\.identity),
-            table: await host.processTable()
-        )?.session
-        let events = hooks.events(
-            for: hook,
-            known: Set(board.sessions.map(\.key)),
-            fallback: fallback
-        )
+        let table = await host.processTable()
+        let known = Set(board.sessions.map(\.key))
+        let fallback = resolver.resolve(pid: hook.pid, sessions: board.sessions, table: table)?.session
+        var events = hooks.events(for: hook, known: known, fallback: fallback)
+
+        let named = hooks.identifiedSession(for: hook, known: known)
+        if let named,
+           let patch = HookProcessLearning.patch(for: hook, session: named, board: board, table: table) {
+            // First, so the events after it fold into an identity that
+            // already has its process.
+            events.insert(
+                AgentEvent(
+                    session: named,
+                    timestamp: hook.receivedAt,
+                    observedAt: hook.receivedAt,
+                    kind: .identityUpdated(patch)
+                ),
+                at: 0
+            )
+        }
         guard !events.isEmpty else { return }
         await host.didObserve(events)
     }

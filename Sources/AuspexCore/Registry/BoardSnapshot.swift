@@ -9,9 +9,9 @@ import Foundation
 /// showing the same thing — three readers of one value cannot disagree, while
 /// three readers of an actor can each observe a different moment.
 ///
-/// The sessions are already sorted and the counts already computed, because a
-/// value that arrives at up to 20 Hz should not make every consumer redo the
-/// same work.
+/// The sessions are already sorted, the counts already computed and the keys
+/// already indexed, because a value every surface reads on every frame should
+/// not make each of them redo the same work.
 public struct BoardSnapshot: Sendable, Equatable {
     /// When the frame was produced. Not the time of the newest event: a frame
     /// is also published when nothing happened but a session went stale.
@@ -53,6 +53,16 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// Empty on a frame nothing has been placed on yet, which reads exactly
     /// like the behaviour before there was such a thing as scratch.
     public let sandboxThreads: [SessionKey: String]
+
+    /// Where each session sits in ``sessions``.
+    ///
+    /// Built once with the frame. ``session(for:)`` used to be a linear scan,
+    /// and it is asked inside loops over every session — the ancestor walk in
+    /// ``projectKey(for:)``, the sidebar's tree, the unit builder, the ignore
+    /// rules — which made each of those quadratic in the size of the board.
+    ///
+    /// Derived from ``sessions`` and so left out of `==`.
+    public let index: [SessionKey: Int]
 
     /// The tallies a board shows at a glance.
     public struct Counts: Sendable, Equatable, Hashable {
@@ -120,6 +130,7 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = SessionTreeBuilder.build(self.sessions)
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.index = Self.makeIndex(self.sessions)
     }
 
     /// Creates a frame from sessions that are already in board order.
@@ -135,7 +146,8 @@ public struct BoardSnapshot: Sendable, Equatable {
         counts: Counts,
         tree: SessionTree,
         claims: ProjectClaims,
-        sandboxThreads: [SessionKey: String]
+        sandboxThreads: [SessionKey: String],
+        index: [SessionKey: Int]? = nil
     ) {
         self.generatedAt = generatedAt
         self.sessions = sessions
@@ -143,6 +155,28 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = tree
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.index = index ?? Self.makeIndex(sessions)
+    }
+
+    /// The first position of every key. First rather than last, so a board
+    /// that somehow held a key twice answers the way the old scan did.
+    private static func makeIndex(_ sessions: [SessionSnapshot]) -> [SessionKey: Int] {
+        var index: [SessionKey: Int] = [:]
+        index.reserveCapacity(sessions.count)
+        for (position, session) in sessions.enumerated() where index[session.key] == nil {
+            index[session.key] = position
+        }
+        return index
+    }
+
+    /// Everything but ``index``, which is a function of ``sessions``.
+    public static func == (lhs: BoardSnapshot, rhs: BoardSnapshot) -> Bool {
+        lhs.generatedAt == rhs.generatedAt
+            && lhs.sessions == rhs.sessions
+            && lhs.counts == rhs.counts
+            && lhs.tree == rhs.tree
+            && lhs.claims == rhs.claims
+            && lhs.sandboxThreads == rhs.sandboxThreads
     }
 
     /// An empty board, for a view's initial state.
@@ -158,9 +192,12 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// that is identical.
     ///
     /// `counts` and `tree` are derived from `sessions` in every initialiser, so
-    /// comparing the sessions and the claims answers for all four.
+    /// comparing the sessions, the claims and the scratch folders answers for
+    /// all five. The scratch folders are not derived from anything here: a
+    /// folder a person marks as scratch moves its session to another heading
+    /// without changing the session.
     public func saysTheSameAs(_ other: BoardSnapshot) -> Bool {
-        sessions == other.sessions && claims == other.claims
+        sessions == other.sessions && claims == other.claims && sandboxThreads == other.sandboxThreads
     }
 
     /// The same frame, placed by a different set of user projects.
@@ -172,7 +209,8 @@ public struct BoardSnapshot: Sendable, Equatable {
             counts: counts,
             tree: tree,
             claims: claims,
-            sandboxThreads: sandboxThreads
+            sandboxThreads: sandboxThreads,
+            index: index
         )
     }
 
@@ -219,9 +257,10 @@ public struct BoardSnapshot: Sendable, Equatable {
 
     // MARK: - Lookups
 
-    /// The session with `key`, when the board has one.
+    /// The session with `key`, when the board has one. A dictionary lookup —
+    /// see ``index``.
     public func session(for key: SessionKey) -> SessionSnapshot? {
-        sessions.first { $0.key == key }
+        index[key].map { sessions[$0] }
     }
 
     /// Sessions grouped by the harness that produced them, each group still in
@@ -279,9 +318,15 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// scratch ``PseudoProject`` instead. A person who *claimed* that
     /// directory still gets their claim: the rule below the user is the only
     /// one this overrides.
+    ///
+    /// A Codex thread another thread spawned is the fourth kind: it reports a
+    /// directory, and the directory is not what it is working on — its parent
+    /// is. It never groups by its own, takes its nearest placeable ancestor's,
+    /// and with none on the board goes to its harness's scratch rather than
+    /// inventing a project of one. See ``CodexThreadSpawn``.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let claimed = claims.key(for: session) { return claimed }
-        if !isSandbox(session), let own = Self.projectKey(for: session) { return own }
+        if groupsByOwnDirectory(session), let own = Self.projectKey(for: session) { return own }
         var seen: Set<SessionKey> = [session.key]
         var current = session.identity.parent
         while let key = current, seen.insert(key).inserted {
@@ -294,12 +339,28 @@ public struct BoardSnapshot: Sendable, Equatable {
                 // parent sits in a section.
                 return PseudoProject.scratchKey(for: ancestor.key.harness)
             }
-            if let inherited = Self.projectKey(for: ancestor) { return inherited }
+            if !inheritsProject(ancestor), let inherited = Self.projectKey(for: ancestor) {
+                return inherited
+            }
             current = ancestor.identity.parent
         }
-        if isSandbox(session) { return PseudoProject.scratchKey(for: session.key.harness) }
+        if !groupsByOwnDirectory(session) {
+            return PseudoProject.scratchKey(for: session.key.harness)
+        }
         guard !session.key.harness.recordsWorkingDirectory else { return nil }
         return PseudoProject.key(for: session.key.harness)
+    }
+
+    /// Whether this session's own directory can be its project key — neither
+    /// a scratch thread nor a spawned thread.
+    private func groupsByOwnDirectory(_ session: SessionSnapshot) -> Bool {
+        !isSandbox(session) && !inheritsProject(session)
+    }
+
+    /// Whether this session takes its project from its parent whatever its
+    /// own directory says: a Codex thread another thread spawned.
+    public func inheritsProject(_ session: SessionSnapshot) -> Bool {
+        SessionRelations.isThreadSpawn(session.identity)
     }
 
     /// Whether this session's own directory is a harness's per-thread scratch.

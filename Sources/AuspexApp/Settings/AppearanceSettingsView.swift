@@ -48,12 +48,7 @@ struct AppearanceSettingsView: View {
     /// The paragraph the title row is too short for. The pane's name and its
     /// one line live in the chrome — see ``AuspexSettingsView``.
     private var header: some View {
-        Text(
-            "Every colour Auspex draws with has a value for each appearance, so the "
-                + "board is the same board either way: the same four surface steps, the "
-                + "same three text steps, one colour per state and one per harness. "
-                + "Only their brightness moves."
-        )
+        Text(L10n.Settings.Appearance.intro)
         .font(AuspexType.body)
         .foregroundStyle(AuspexPalette.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -63,26 +58,26 @@ struct AppearanceSettingsView: View {
 
     private var modePicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Window appearance")
+            Text(L10n.Settings.Appearance.windowAppearance)
                 .auspexLabel(AuspexType.label)
                 .foregroundStyle(AuspexPalette.textTertiary)
 
             Picker(
-                "Window appearance",
+                L10n.Settings.Appearance.windowAppearance,
                 selection: Binding(
                     get: { catalog.appearance },
                     set: { catalog.setAppearance($0) }
                 )
             ) {
                 ForEach(AppearanceMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+                    Text(mode.localizedTitle).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(maxWidth: 280, alignment: .leading)
 
-            Text(catalog.appearance.detail)
+            Text(catalog.appearance.localizedDetail)
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -97,18 +92,18 @@ struct AppearanceSettingsView: View {
     private var swatches: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text("Drawing in")
+                Text(L10n.Settings.Appearance.drawingIn)
                     .auspexLabel(AuspexType.label)
                     .foregroundStyle(AuspexPalette.textTertiary)
-                Text(colorScheme == .dark ? "Dark" : "Light")
+                Text(colorScheme == .dark ? L10n.Settings.Appearance.dark : L10n.Settings.Appearance.light)
                     .font(AuspexType.pill)
                     .foregroundStyle(AuspexPalette.textSecondary)
             }
 
             HStack(spacing: 10) {
-                Swatch(name: "Accent", color: AuspexPalette.accent)
-                Swatch(name: "Background", color: AuspexPalette.canvas)
-                Swatch(name: "Foreground", color: AuspexPalette.text)
+                Swatch(name: L10n.Settings.Appearance.accent, color: AuspexPalette.accent)
+                Swatch(name: L10n.Settings.Appearance.background, color: AuspexPalette.canvas)
+                Swatch(name: L10n.Settings.Appearance.foreground, color: AuspexPalette.text)
             }
         }
         .padding(14)
@@ -150,15 +145,10 @@ struct AppearanceSettingsView: View {
                 )
             ) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Translucent sidebar")
+                    Text(L10n.Settings.Appearance.translucentSidebar)
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.textPrimary)
-                    Text(
-                        "The system's sidebar material under the column, which picks up "
-                            + "what is behind the window and drains when the window is not "
-                            + "in front. Switch it off for a flat ground that matches the "
-                            + "board exactly."
-                    )
+                    Text(L10n.Settings.Appearance.translucentNote)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -174,16 +164,13 @@ struct AppearanceSettingsView: View {
 
     private var note: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(
-                "Nothing has to be relaunched. The window, the menu bar panel, the "
-                    + "office and the crew all repaint where they stand."
-            )
+            Text(L10n.Settings.Appearance.noRelaunch)
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             if let error = catalog.saveErrorDescription {
-                Text("The setting is in effect, but could not be saved: \(error)")
+                Text(L10n.Settings.saveError(error: error))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.statePermission)
                     .fixedSize(horizontal: false, vertical: true)

@@ -536,7 +536,7 @@ final class MapDocumentView: NSView {
             path.lineWidth = 1
             line.setStroke()
             path.stroke()
-            let label = "\(frame.title.uppercased()) · \(frame.liveCount) LIVE"
+            let label = L10n.Perch.frameLabel(title: frame.title.uppercased(), count: frame.liveCount)
             label.draw(
                 at: CGPoint(x: rect.minX + 14, y: rect.minY + 12),
                 withAttributes: [
@@ -745,8 +745,8 @@ private struct MapCardSurface: View {
                     .frame(width: 10, height: 10)
                     .padding(.trailing, 5)
                     .draggable("auspex-task:\(taskID)")
-                    .help("Drag to another task to add a dependency")
-                    .accessibilityLabel("Dependency handle")
+                    .help(L10n.Perch.dependencyHandleHelp)
+                    .accessibilityLabel(L10n.Perch.dependencyHandle)
             }
         }
         .dropDestination(for: String.self) { values, _ in
@@ -760,9 +760,9 @@ private struct MapCardSurface: View {
         }
         .contextMenu {
             if isReadOnly {
-                Text("History is read-only · Jump to Live to edit")
+                Text(L10n.Perch.readOnly)
             } else if card.taskID != nil, !dependencyTargets.isEmpty {
-                Text("Depends on")
+                Text(L10n.Perch.dependsOn)
                 ForEach(dependencyTargets) { target in
                     let isOn = card.dependencyIDs.contains(target.id)
                     Button {
@@ -778,14 +778,14 @@ private struct MapCardSurface: View {
                     }
                 }
             } else if card.isImplicit {
-                Text("Promote this task before adding dependencies")
+                Text(L10n.Perch.promoteFirst)
             }
         }
         .opacity(card.state.isEnded ? 0.62 : 1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction(named: "Open Flight", onOpenFlight)
+        .accessibilityAction(named: L10n.App.Menu.openFlight, onOpenFlight)
     }
 
     private var fullCard: some View {
@@ -801,14 +801,14 @@ private struct MapCardSurface: View {
             }
             HStack(spacing: 6) {
                 Text(card.shortID)
-                if card.isImplicit { Text("AUTO") }
+                if card.isImplicit { Text(L10n.Perch.Card.auto) }
                 if card.memberCount > 1 {
                     Button(action: onToggleExpanded) {
-                        Text(isExpanded ? "↳ collapse" : "↳ \(card.memberCount - 1)")
+                        Text(isExpanded ? L10n.Perch.Card.collapse : "↳ \(card.memberCount - 1)")
                             .font(AuspexType.monoSmall)
                     }
                     .buttonStyle(.auspex)
-                    .accessibilityLabel(isExpanded ? "Collapse subagents" : "Expand subagents")
+                    .accessibilityLabel(isExpanded ? L10n.Perch.Card.collapseSubagents : L10n.Perch.Card.expandSubagents)
                 }
             }
             .font(AuspexType.monoSmall)
@@ -818,8 +818,8 @@ private struct MapCardSurface: View {
                 .foregroundStyle(card.attention.wantsPerson ? AuspexPalette.statePermission : AuspexPalette.text2)
                 .lineLimit(1)
             HStack(spacing: 8) {
-                Text("turns \(card.turnCount)")
-                Text("tools \(card.toolCount)")
+                Text(L10n.Perch.Card.turns(count: card.turnCount))
+                Text(L10n.Perch.Card.tools(count: card.toolCount))
                 Spacer(minLength: 0)
                 if card.taskID != nil {
                     Text(card.status.rawValue)
@@ -899,9 +899,9 @@ private struct MapCardSurface: View {
     }
 
     private var accessibilityLabel: String {
-        var pieces = [card.title, card.state.label]
-        if card.memberCount > 1 { pieces.append("\(card.memberCount - 1) subagents") }
-        if card.attention.wantsPerson { pieces.append("needs you") }
+        var pieces = [card.title, card.state.localizedLabel]
+        if card.memberCount > 1 { pieces.append(L10n.Perch.Card.subagents(count: card.memberCount - 1)) }
+        if card.attention.wantsPerson { pieces.append(L10n.Perch.Card.needsYou) }
         return pieces.joined(separator: ", ")
     }
 }

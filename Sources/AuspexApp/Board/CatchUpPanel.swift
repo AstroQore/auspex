@@ -23,7 +23,7 @@ struct CatchUpPanel: View {
             BoardScroll {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if !model.humanWorkQueue.items.isEmpty {
-                        sectionTitle("Your queue", count: model.humanWorkQueue.items.count)
+                        sectionTitle(L10n.CatchUp.yourQueue, count: model.humanWorkQueue.items.count)
                         ForEach(model.humanWorkQueue.items) { item in
                             CapsuleRow(
                                 capsule: item.capsule,
@@ -36,7 +36,7 @@ struct CatchUpPanel: View {
                     }
 
                     if !otherChanges.isEmpty {
-                        sectionTitle("Other changes", count: otherChanges.count)
+                        sectionTitle(L10n.CatchUp.otherChanges, count: otherChanges.count)
                         ForEach(otherChanges) { item in
                             CapsuleRow(
                                 capsule: item.capsule,
@@ -49,11 +49,8 @@ struct CatchUpPanel: View {
                     }
 
                     if !model.watchSignals.isEmpty {
-                        sectionTitle("Watch signals", count: model.watchSignals.count)
-                        Text(
-                            "Observed or inferred risks worth a glance. They are not requests "
-                                + "from an agent and never raise a notification by themselves."
-                        )
+                        sectionTitle(L10n.CatchUp.watchSignals, count: model.watchSignals.count)
+                        Text(L10n.CatchUp.watchSignalsNote)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -70,8 +67,8 @@ struct CatchUpPanel: View {
                        otherChanges.isEmpty,
                        model.watchSignals.isEmpty {
                         EmptyStateView(
-                            title: "Caught up",
-                            detail: "No material changes or watch signals are waiting."
+                            title: L10n.CatchUp.caughtUp,
+                            detail: L10n.CatchUp.caughtUpDetail
                         )
                         .padding(.vertical, 48)
                     }
@@ -90,19 +87,22 @@ struct CatchUpPanel: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Catch up")
+                Text(L10n.CatchUp.title)
                     .font(AuspexType.paneTitle)
                     .foregroundStyle(AuspexPalette.text)
-                Text("Changes since \(model.catchUp.since, style: .relative)")
+                Text(L10n.CatchUp.since(
+                    time: AppLocale.relativeDateTimeFormatter()
+                        .localizedString(for: model.catchUp.since, relativeTo: Date())
+                ))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
             }
             Spacer(minLength: 8)
-            Button("Mark caught up") {
+            Button(L10n.CatchUp.markCaughtUp) {
                 onMarkCaughtUp()
             }
             .buttonStyle(.auspex)
-            Button("Done") { model.isCatchUpOpen = false }
+            Button(L10n.Common.done) { model.isCatchUpOpen = false }
                 .buttonStyle(.auspex)
                 .keyboardShortcut(.cancelAction)
         }
@@ -121,22 +121,22 @@ struct CatchUpPanel: View {
 
     private func queueLabel(_ item: HumanWorkQueue.Item) -> String {
         switch item.reason {
-        case .needsYou: "Needs you"
-        case .takeover: "Takeover approval"
-        case .review: "Review"
-        case .orphanedClaim: "Orphaned claim"
+        case .needsYou: L10n.Now.needsYou
+        case .takeover: L10n.CatchUp.Reason.takeover
+        case .review: L10n.CatchUp.Reason.review
+        case .orphanedClaim: L10n.CatchUp.Reason.orphanedClaim
         }
     }
 
     private func changeLabel(_ kind: CatchUpSnapshot.Item.Kind) -> String {
         switch kind {
-        case .needsYou: "Needs you"
-        case .takeover: "Takeover approval"
-        case .review: "Review"
-        case .orphanedClaim: "Orphaned claim"
-        case .completed: "Completed"
-        case .started: "Started"
-        case .changed: "Changed"
+        case .needsYou: L10n.Now.needsYou
+        case .takeover: L10n.CatchUp.Reason.takeover
+        case .review: L10n.CatchUp.Reason.review
+        case .orphanedClaim: L10n.CatchUp.Reason.orphanedClaim
+        case .completed: L10n.CatchUp.Change.completed
+        case .started: L10n.CatchUp.Change.started
+        case .changed: L10n.CatchUp.Change.changed
         }
     }
 
@@ -171,7 +171,7 @@ private struct CapsuleRow: View {
                         .foregroundStyle(AuspexPalette.text3)
                     Spacer(minLength: 0)
                     if capsule.memberCount > 1 {
-                        Text("\(capsule.memberCount) sessions")
+                        Text(L10n.CatchUp.sessions(count: capsule.memberCount))
                             .font(AuspexType.caption)
                             .foregroundStyle(AuspexPalette.text3)
                     }
@@ -180,11 +180,13 @@ private struct CapsuleRow: View {
                     .font(AuspexType.rowStrong)
                     .foregroundStyle(AuspexPalette.text)
                     .lineLimit(2)
-                capsuleLine("goal", capsule.goal)
-                if let current = capsule.current { capsuleLine("now", current) }
-                if let recent = capsule.recentOutcome { capsuleLine("latest", recent) }
-                if let next = capsule.nextAction { capsuleLine("next", next) }
-                if let risk = capsule.risk { capsuleLine("risk", risk, tint: AuspexPalette.stateStale) }
+                capsuleLine(L10n.CatchUp.Line.goal, capsule.goal)
+                if let current = capsule.current { capsuleLine(L10n.CatchUp.Line.now, current) }
+                if let recent = capsule.recentOutcome { capsuleLine(L10n.CatchUp.Line.latest, recent) }
+                if let next = capsule.nextAction { capsuleLine(L10n.CatchUp.Line.next, next) }
+                if let risk = capsule.risk {
+                    capsuleLine(L10n.CatchUp.Line.risk, risk, tint: AuspexPalette.stateStale)
+                }
                 if let explanation {
                     Text(explanation)
                         .font(AuspexType.caption)
@@ -209,13 +211,13 @@ private struct CapsuleRow: View {
 
     private var phaseLabel: String {
         switch capsule.phase {
-        case .notStarted: "not started"
-        case .working: "working"
-        case .idle: "idle"
-        case .blocked: "blocked"
-        case .review: "review"
-        case .done: "done"
-        case .ended: "ended"
+        case .notStarted: L10n.CatchUp.Phase.notStarted
+        case .working: L10n.Board.Bucket.working
+        case .idle: L10n.Board.Bucket.idle
+        case .blocked: L10n.CatchUp.Phase.blocked
+        case .review: L10n.CatchUp.Phase.review
+        case .done: L10n.CatchUp.Phase.done
+        case .ended: L10n.Board.Bucket.ended
         }
     }
 
@@ -238,10 +240,10 @@ private struct CapsuleRow: View {
 
     private func sourceLabel(_ source: TaskCapsule.Source) -> String {
         switch source {
-        case .observed: "observed"
-        case .selfReported: "reported"
-        case .derived: "derived"
-        case .recorded: "task"
+        case .observed: L10n.CatchUp.Source.observed
+        case .selfReported: L10n.CatchUp.Source.reported
+        case .derived: L10n.CatchUp.Source.derived
+        case .recorded: L10n.CatchUp.Source.task
         }
     }
 }
@@ -263,7 +265,7 @@ private struct WatchSignalRow: View {
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text2)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(signal.confidence.rawValue) confidence · not an attention request")
+                    Text(L10n.CatchUp.Signal.confidence(confidence: confidenceLabel))
                         .font(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3)
                 }
@@ -281,12 +283,19 @@ private struct WatchSignalRow: View {
 
     private var label: String {
         switch signal.kind {
-        case .orphanedClaim: "Orphaned claim"
-        case .staleSession: "Stale session"
-        case .longTool: "Long-running tool"
-        case .contextPressure: "Context pressure"
-        case .sharedDirectory: "Shared working directory"
-        case .sharedBranch: "Shared branch"
+        case .orphanedClaim: L10n.CatchUp.Reason.orphanedClaim
+        case .staleSession: L10n.CatchUp.Signal.staleSession
+        case .longTool: L10n.CatchUp.Signal.longTool
+        case .contextPressure: L10n.CatchUp.Signal.contextPressure
+        case .sharedDirectory: L10n.CatchUp.Signal.sharedDirectory
+        case .sharedBranch: L10n.CatchUp.Signal.sharedBranch
+        }
+    }
+
+    private var confidenceLabel: String {
+        switch signal.confidence {
+        case .high: L10n.CatchUp.Confidence.high
+        case .medium: L10n.CatchUp.Confidence.medium
         }
     }
 }

@@ -107,8 +107,8 @@ struct BoardView: View {
         let isOpen = isEager || revealed.contains(group.id)
         VStack(alignment: .leading, spacing: 12) {
             BoardSectionHeader(
-                title: group.title,
-                subtitle: isOpen ? group.subtitle : "\(group.unitCount)",
+                title: CoreVocabulary.localized(group.title),
+                subtitle: isOpen ? group.subtitle.map(CoreVocabulary.localized) : "\(group.unitCount)",
                 liveCount: isOpen ? group.liveCount : nil,
                 harness: group.harness
             )
@@ -164,7 +164,7 @@ struct BoardView: View {
     private var endedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             BoardSectionHeader(
-                title: "Ended",
+                title: L10n.Board.Ended.title,
                 subtitle: "\(model.endedUnits.count)",
                 harness: nil
             )
@@ -212,7 +212,7 @@ struct BoardView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
         )
-        .help("Older sessions are in the store, not on the board. Widen to draw them.")
+        .help(L10n.Board.Ended.olderHelp)
     }
 
     private var showAllToggle: some View {
@@ -221,8 +221,8 @@ struct BoardView: View {
         } label: {
             Text(
                 model.showsAllEnded
-                    ? "Show the most recent \(EndedSessions.collapsedLimit)"
-                    : "Show all \(model.endedUnits.count)"
+                    ? L10n.Board.Ended.showRecent(count: EndedSessions.collapsedLimit)
+                    : L10n.Board.Ended.showAll(count: model.endedUnits.count)
             )
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.text2)
@@ -234,7 +234,7 @@ struct BoardView: View {
             )
         }
         .buttonStyle(.auspex)
-        .help("Finished work is collapsed so the board's cost tracks what is running")
+        .help(L10n.Board.Ended.collapsedHelp)
     }
 }
 
@@ -339,13 +339,13 @@ struct ProjectFilterBar: View {
             // it, and it is the same gesture as clicking "Live" in the sidebar
             // or pressing Escape.
             Button(action: onClear) {
-                Text("All projects")
+                Text(L10n.Board.Focus.allProjects)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text2)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.auspex)
-            .help("Show every project on the board again — or press Escape")
+            .help(L10n.Board.Focus.allProjectsHelp)
             Text("›")
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
@@ -374,7 +374,7 @@ struct ProjectFilterBar: View {
                     )
             }
             .buttonStyle(.auspex)
-            .help("Escape shows every project again")
+            .help(L10n.Board.Focus.escapeHelp)
         }
         .padding(.horizontal, 20)
         .frame(height: 34)
@@ -411,8 +411,8 @@ struct BoardSectionHeader: View {
     /// crew wall does — does not have to unpack the same four fields.
     init(group: BoardGroup) {
         self.init(
-            title: group.title,
-            subtitle: group.subtitle,
+            title: CoreVocabulary.localized(group.title),
+            subtitle: group.subtitle.map(CoreVocabulary.localized),
             liveCount: group.counts.live,
             harness: group.harness
         )
@@ -430,7 +430,7 @@ struct BoardSectionHeader: View {
                 .foregroundStyle(AuspexPalette.text)
                 .lineLimit(1)
             if let liveCount, liveCount > 0 {
-                Text("\(liveCount) live")
+                Text(L10n.Board.Section.live(count: liveCount))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(AuspexPalette.stateWriting)
                     .fixedSize()

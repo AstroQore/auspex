@@ -27,6 +27,11 @@ protocol SceneViewportHost: AnyObject {
 
     /// Called once per rendered frame, before the scene reads ``viewport``.
     func advance(to time: TimeInterval)
+
+    /// Whether the camera is still on its way somewhere — a flight in
+    /// progress, or the tail of a gesture — so the frame being drawn is not
+    /// the last one worth drawing.
+    var isMoving: Bool { get }
 }
 
 /// The office on a real scroll view.
@@ -138,6 +143,19 @@ final class SceneCanvasView: NSView, SceneViewportHost {
             object: scrollView
         )
 
+        // Every way the window onto the map can move — a scroller dragged, the
+        // elastic edge settling, a flight's own writes — moves the clip view,
+        // and a still office has to draw the frame that shows it. Most of
+        // those arrive as gesture events too; the scroller and the bounce do
+        // not.
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clipViewMoved),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+
         scene.host = self
     }
 
@@ -148,6 +166,10 @@ final class SceneCanvasView: NSView, SceneViewportHost {
 
     @objc private func liveMagnifyEnded(_ note: Notification) {
         settleZoom(atWindowPoint: scrollView.lastPinchLocation)
+    }
+
+    @objc private func clipViewMoved(_ note: Notification) {
+        skView.wake()
     }
 
     // MARK: - Being looked at
@@ -218,6 +240,8 @@ final class SceneCanvasView: NSView, SceneViewportHost {
             write(kept.clamped())
         }
     }
+
+    var isMoving: Bool { flight != nil || busyUntil != nil }
 
     func advance(to time: TimeInterval) {
         if let busyUntil, time > busyUntil {
@@ -334,6 +358,9 @@ final class SceneCanvasView: NSView, SceneViewportHost {
         flight = next
         flightStartedAt = CACurrentMediaTime()
         written = (scrollView.magnification, scrollView.contentView.bounds.origin)
+        // A flight is advanced by the scene's clock, which a still office has
+        // stopped.
+        skView.wake()
     }
 
     /// A two-finger double tap: frame the room under the pointer, or pull back

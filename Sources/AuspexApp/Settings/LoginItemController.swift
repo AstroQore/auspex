@@ -169,7 +169,7 @@ final class LoginItemController {
         case .notRegistered:
             guard enabled || previousRegistration != nil else { return nil }
             reconciliationDescription =
-                "macOS has Launch at Login turned off. Auspex left it off."
+                L10n.LoginItem.disabledExternally
             return LoginItemReconciliation(enabled: false, registration: nil)
 
         case .enabled, .requiresApproval:
@@ -182,7 +182,7 @@ final class LoginItemController {
                previousRegistration.provesInPlaceReplacement(by: currentRegistration) {
                 registration = currentRegistration
                 reconciliationDescription =
-                    "Auspex was updated and macOS kept Launch at Login enabled."
+                    L10n.LoginItem.keptAfterUpdate
             } else if previousRegistration == nil || !enabled {
                 registration = currentRegistration
             } else {
@@ -216,15 +216,15 @@ final class LoginItemController {
     var statusDescription: String {
         switch status {
         case .enabled:
-            "Auspex will start quietly when you log in."
+            L10n.LoginItem.enabled
         case .requiresApproval:
-            "Waiting for approval in System Settings → General → Login Items."
+            L10n.LoginItem.requiresApproval
         case .notRegistered:
-            "Off in macOS. Auspex will not turn it back on unless you click this switch."
+            L10n.LoginItem.notRegistered
         case .notFound:
-            "Unavailable in this copy. Move the packaged Auspex.app to Applications and open it once."
+            L10n.LoginItem.notFound
         case .unknown:
-            "macOS returned an unknown Login Items state."
+            L10n.LoginItem.unknown
         }
     }
 }

@@ -37,12 +37,7 @@ struct SceneSettingsView: View {
     /// The pane's name and its one line live in the chrome — see
     /// ``AuspexSettingsView``. This is the paragraph underneath them.
     private var header: some View {
-        Text(
-            "A project's sessions share a suite: desks for the ones that are "
-                + "working, a meeting room for each family that is delegating, and "
-                + "one break room where anything resting, asleep, finished, or "
-                + "waiting to be read goes — and where the door out is."
-        )
+        Text(L10n.Settings.Scene.intro)
         .font(AuspexType.body)
         .foregroundStyle(AuspexPalette.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -51,11 +46,8 @@ struct SceneSettingsView: View {
     private var switches: some View {
         VStack(alignment: .leading, spacing: 12) {
             toggle(
-                title: "Meeting rooms",
-                detail: "A session that is delegating walks to a long table in its own "
-                    + "project's suite and sits at the head of it, with the subagents it "
-                    + "spawned down the sides. A project with three or more sessions has "
-                    + "a meeting room whether or not anybody is in it.",
+                title: L10n.Settings.Scene.meetingRooms,
+                detail: L10n.Settings.Scene.meetingRoomsDetail,
                 isOn: catalog.sceneZones.meetingRooms
             ) { on in
                 var zones = catalog.sceneZones
@@ -64,10 +56,8 @@ struct SceneSettingsView: View {
             }
 
             toggle(
-                title: "Break areas",
-                detail: "Idle sessions rest, stale ones doze, anything that finished "
-                    + "while you were elsewhere waits by the door holding a note, and "
-                    + "anything that is over walks out through it.",
+                title: L10n.Settings.Scene.breakAreas,
+                detail: L10n.Settings.Scene.breakAreasDetail,
                 isOn: catalog.sceneZones.breakAreas
             ) { on in
                 var zones = catalog.sceneZones
@@ -99,7 +89,7 @@ struct SceneSettingsView: View {
     private var breakStyle: some View {
         VStack(alignment: .leading, spacing: 6) {
             Picker(
-                "Break area style",
+                L10n.Settings.Scene.breakStyle,
                 selection: Binding(
                     get: { catalog.sceneZones.breakStyle },
                     set: { style in
@@ -109,19 +99,16 @@ struct SceneSettingsView: View {
                     }
                 )
             ) {
-                Text("Per project (random)").tag(SceneBreakStyle.perProject)
-                Text("Garden").tag(SceneBreakStyle.garden)
-                Text("Tea room").tag(SceneBreakStyle.teaRoom)
-                Text("Lounge").tag(SceneBreakStyle.lounge)
+                Text(L10n.Settings.Scene.perProject).tag(SceneBreakStyle.perProject)
+                Text(L10n.Settings.Scene.garden).tag(SceneBreakStyle.garden)
+                Text(L10n.Settings.Scene.teaRoom).tag(SceneBreakStyle.teaRoom)
+                Text(L10n.Settings.Scene.lounge).tag(SceneBreakStyle.lounge)
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 260, alignment: .leading)
             .disabled(!catalog.sceneZones.breakAreas)
 
-            Text(
-                "Per project picks one of the three from the project's own path and "
-                    + "keeps it, so a suite is recognisable before its nameplate is."
-            )
+            Text(L10n.Settings.Scene.perProjectNote)
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
@@ -139,30 +126,25 @@ struct SceneSettingsView: View {
     /// ``AuspexSettings/sessionWindow``.
     private var reach: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("How far back")
+            Text(L10n.Settings.Scene.howFarBack)
                 .auspexLabel(AuspexType.label)
                 .foregroundStyle(AuspexPalette.textTertiary)
 
             Picker(
-                "Show sessions active in the last",
+                L10n.Board.Window.menuTitle,
                 selection: Binding(
                     get: { catalog.sessionWindow },
                     set: { catalog.setSessionWindow($0) }
                 )
             ) {
                 ForEach(SessionWindow.allCases) { option in
-                    Text(option.title).tag(option)
+                    Text(option.localizedTitle).tag(option)
                 }
             }
             .pickerStyle(.menu)
             .frame(maxWidth: 260, alignment: .leading)
 
-            Text(
-                "Auspex keeps a week of sessions and draws the recent ones. Anything "
-                    + "alive, working, or waiting on you is drawn whatever its age — the "
-                    + "window only decides how much history stands behind it. Nothing is "
-                    + "deleted: widen it and the rest come back."
-            )
+            Text(L10n.Settings.Scene.windowNote)
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
@@ -202,25 +184,18 @@ struct SceneSettingsView: View {
 
     private var note: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(
-                "With both switched off, everybody stays at their desk and the map "
-                    + "is the office on its own."
-            )
+            Text(L10n.Settings.Scene.bothOff)
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
 
-            Text(
-                "A session waiting on you never leaves its desk, whichever of these "
-                    + "is on. It is the one thing here allowed to interrupt, and it "
-                    + "has to do it from somewhere you are already looking."
-            )
+            Text(L10n.Settings.Scene.waitingNote)
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             if let error = catalog.saveErrorDescription {
-                Text("The setting is in effect, but could not be saved: \(error)")
+                Text(L10n.Settings.saveError(error: error))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.statePermission)
                     .fixedSize(horizontal: false, vertical: true)

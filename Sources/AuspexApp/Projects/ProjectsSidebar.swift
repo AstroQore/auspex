@@ -200,20 +200,20 @@ struct ProjectsSidebar: View {
     private func projectMenu(_ project: ProjectTree.Project) -> some View {
         let catalog = environment.catalog
         if let owned = catalog.claims.project(forKey: project.key) {
-            Button(owned.isPinned ? "Unpin" : "Pin to the top") {
+            Button(owned.isPinned ? L10n.Projects.unpin : L10n.Projects.pinToTop) {
                 catalog.togglePin(owned)
             }
         } else if !PseudoProject.isPseudo(project.key) {
-            Button("Make this an Auspex project") {
+            Button(L10n.Projects.makeProject) {
                 catalog.addProject(name: project.name, roots: [project.key])
             }
         }
         Divider()
-        Button("Ignore project…") {
+        Button(L10n.Ignore.Menu.project) {
             environment.composeIgnore(.project, value: project.key)
         }
         if !PseudoProject.isPseudo(project.key) {
-            Button("Ignore this folder…") {
+            Button(L10n.Ignore.Menu.folder) {
                 environment.composeIgnore(.pathPrefix, value: project.key)
             }
         }
@@ -248,7 +248,7 @@ struct ProjectsSidebar: View {
     }
 
     private var emptyNote: some View {
-        Text("Projects appear here as sessions report where they are working.")
+        Text(L10n.Projects.sidebarEmpty)
             .font(.system(size: 10))
             .foregroundStyle(AuspexPalette.text3)
             .fixedSize(horizontal: false, vertical: true)
@@ -326,8 +326,8 @@ private struct ProjectRow: View {
         }
         .help(
             isFocused
-                ? "Show every project on the board again"
-                : "Show only \(project.name) on the board"
+                ? L10n.Projects.showAll
+                : L10n.Projects.showOnly(name: project.name)
         )
     }
 
@@ -344,7 +344,7 @@ private struct ProjectRow: View {
                     .fill(colour)
                     .frame(width: 3, height: 14)
             }
-            Text(project.name)
+            Text(CoreVocabulary.localized(project.name))
                 .font(isFocused ? AuspexType.rowStrong : AuspexType.row)
                 .foregroundStyle(isFocused ? AuspexPalette.text : AuspexPalette.text2)
                 .lineLimit(1)
@@ -391,7 +391,7 @@ private struct CheckoutRow: View {
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(AuspexPalette.text3)
             }
-            Text(checkout.title)
+            Text(CoreVocabulary.localized(checkout.title))
                 .font(AuspexType.row)
                 .foregroundStyle(AuspexPalette.text2)
                 .lineLimit(1)
@@ -411,7 +411,7 @@ private struct CheckoutRow: View {
                     .foregroundStyle(AuspexPalette.text3)
             }
         }
-        .help(isExpanded ? "Hide this checkout's tasks" : "Show this checkout's tasks")
+        .help(isExpanded ? L10n.Projects.hideCheckoutTasks : L10n.Projects.showCheckoutTasks)
     }
 }
 
@@ -459,7 +459,7 @@ private struct UnitRow: View, Equatable {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.auspex(cornerRadius: 4))
-                .help(isExpanded ? "Fold these sessions away" : "List the sessions on this task")
+                .help(isExpanded ? L10n.Projects.foldSessions : L10n.Projects.listSessions)
             }
             if let colour = AttentionStyle.colour(unit.attention) {
                 StateDot(color: colour, glows: unit.attention.wantsPerson)
@@ -469,7 +469,7 @@ private struct UnitRow: View, Equatable {
         }
         .help(
             AttentionStyle.label(unit.attention).map { "\(unit.title) — \($0)" }
-                ?? "\(unit.shortID) \(unit.title) — \(unit.status.label)"
+                ?? "\(unit.shortID) \(unit.title) — \(unit.status.localizedLabel)"
         )
     }
 }
@@ -534,9 +534,9 @@ private struct SessionRow: View, Equatable {
         .opacity(isIgnored ? 0.45 : 1)
         .help(
             isIgnored
-                ? "\(row.title) — \(row.state.label) · ignored by a rule"
+                ? L10n.Projects.ignoredRow(title: row.title, state: row.state.localizedLabel)
                 : AttentionStyle.label(row.attention).map { "\(row.title) — \($0)" }
-                    ?? "\(row.title) — \(row.state.label)"
+                    ?? "\(row.title) — \(row.state.localizedLabel)"
         )
     }
 }
@@ -548,11 +548,16 @@ private struct SessionRow: View, Equatable {
 /// hue that belongs to no part of the design.
 enum ProjectColour {
     /// Every colour offered, as `#RRGGBB` with the name shown beside it.
-    static let choices: [(name: String, hex: String)] = [
-        ("Coral", "#E0785A"), ("Teal", "#2DD4BF"), ("Blue", "#4C8DFF"),
-        ("Violet", "#B48CFF"), ("Green", "#4FD08A"), ("Amber", "#F2B544"),
-        ("Magenta", "#F45FA0"), ("Lime", "#B4E048"), ("Sky", "#7DD3FC"),
-    ]
+    /// Computed rather than stored, so the names follow the Language setting.
+    static var choices: [(name: String, hex: String)] {
+        [
+            (L10n.Colour.coral, "#E0785A"), (L10n.Colour.teal, "#2DD4BF"),
+            (L10n.Colour.blue, "#4C8DFF"), (L10n.Colour.violet, "#B48CFF"),
+            (L10n.Colour.green, "#4FD08A"), (L10n.Colour.amber, "#F2B544"),
+            (L10n.Colour.magenta, "#F45FA0"), (L10n.Colour.lime, "#B4E048"),
+            (L10n.Colour.sky, "#7DD3FC"),
+        ]
+    }
 
     /// Parses `#RRGGBB`. `nil` for no colour and for anything unparseable —
     /// a project with a bad colour is a project drawn in the board's own.
@@ -649,26 +654,24 @@ struct MoreRow: View {
     /// body, so the one row that admits the column is showing a summary can be
     /// asserted on without a window.
     static func title(_ fold: SidebarFold) -> String {
-        if fold.isOpen { return "Show fewer" }
+        if fold.isOpen { return L10n.Projects.Fold.showFewer }
         if fold.capped > 0, fold.finished > 0 {
-            return "+\(fold.capped) more · \(fold.finished) finished"
+            return L10n.Projects.Fold.moreAndFinished(more: fold.capped, finished: fold.finished)
         }
-        if fold.capped > 0 { return "+\(fold.capped) more" }
-        return fold.finished == 1 ? "1 finished" : "\(fold.finished) finished"
+        if fold.capped > 0 { return L10n.Projects.Fold.more(count: fold.capped) }
+        return L10n.Projects.Fold.finished(count: fold.finished)
     }
 
     static func help(_ fold: SidebarFold) -> String {
-        if fold.isOpen { return "List only the first \(ProjectTree.listLimit) again" }
+        if fold.isOpen { return L10n.Projects.Fold.listFirst(count: ProjectTree.listLimit) }
         var parts: [String] = []
-        if fold.capped > 0 { parts.append("List every running session here") }
+        if fold.capped > 0 { parts.append(L10n.Projects.Fold.listEvery) }
         if fold.finished > 0 {
-            parts.append(
-                fold.finished == 1
-                    ? "1 finished session is in the board's Ended section"
-                    : "\(fold.finished) finished sessions are in the board's Ended section"
-            )
+            parts.append(L10n.Projects.Fold.finishedElsewhere(count: fold.finished))
         }
-        return parts.joined(separator: ". ")
+        return parts.count == 2
+            ? L10n.Projects.Fold.separator(first: parts[0], second: parts[1])
+            : parts.first ?? ""
     }
 }
 
@@ -687,7 +690,7 @@ private struct UngroupedRow: View {
         .foregroundStyle(AuspexPalette.text3)
         .padding(.horizontal, 10)
         .frame(height: 24)
-        .help("These sessions reported no working directory, and no ancestor did either.")
+        .help(L10n.Projects.ungroupedHelp)
     }
 }
 
@@ -766,7 +769,7 @@ private struct AttentionPill: View {
         )
         .fixedSize()
         .accessibilityLabel(
-            attention.wantsPerson ? "\(count) need you" : "\(count) finished"
+            attention.wantsPerson ? L10n.Projects.Badge.needYou(count: count) : L10n.Projects.Badge.finished(count: count)
         )
     }
 }
@@ -785,7 +788,7 @@ private struct TaskPill: View {
     let counts: TaskProjectCounts
 
     var body: some View {
-        if let description = counts.openDescription {
+        if let description = counts.localizedOpenDescription {
             Text(description)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(AuspexPalette.text3)
@@ -798,7 +801,7 @@ private struct TaskPill: View {
                 )
                 .fixedSize()
                 .accessibilityLabel(description)
-                .help("\(description) on the task board · \(counts.total) filed in all")
+                .help(L10n.Projects.tasksOnBoard(description: description, total: counts.total))
         }
     }
 }
@@ -807,7 +810,7 @@ private struct LivePill: View {
     let count: Int
 
     var body: some View {
-        Text("\(count) live")
+        Text(L10n.Board.Section.live(count: count))
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(AuspexPalette.stateWriting)
             .padding(.horizontal, 6)
@@ -821,6 +824,6 @@ private struct LivePill: View {
                     .strokeBorder(AuspexPalette.stateWriting.opacity(0.25), lineWidth: 1)
             )
             .fixedSize()
-            .accessibilityLabel("\(count) live")
+            .accessibilityLabel(L10n.Board.Section.live(count: count))
     }
 }

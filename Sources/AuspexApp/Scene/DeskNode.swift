@@ -163,6 +163,12 @@ final class DeskNode: SKNode {
     private let glowHolder = SKNode()
     private let paper = SKSpriteNode()
     private let bubble = SKSpriteNode()
+    /// Where the bubble rests. Its idle motion moves it *to* places rather
+    /// than *by* amounts, so a beat cut short by a state change cannot leave
+    /// it drifting.
+    private var bubbleBase: CGPoint = .zero
+    /// What the bubble over this person says, when one is showing.
+    private var bubbleKind: BubbleKind?
     /// `↳ N`: how many sessions this one handed work to.
     ///
     /// The arcs stopped being drawn all at once (see
@@ -186,6 +192,16 @@ final class DeskNode: SKNode {
 
     private var agent: AgentSprite?
     private var theme: SceneTheme
+
+    /// The balloon Now's stage hangs over this person, when it hangs one.
+    private let caption = SKNode()
+    private let captionBack = SKShapeNode()
+    private let captionLabel = SKLabelNode()
+    private var captionValue: SceneCaption?
+    /// The words last set on the label, so a tick that would set the same
+    /// string sets nothing.
+    private var captionText = ""
+    private var isHovered = false
 
     init(slotID: String, kind: SceneSeatKind = .desk, theme: SceneTheme) {
         self.slotID = slotID
@@ -267,6 +283,7 @@ final class DeskNode: SKNode {
         ring.isHidden = true
 
         buildNameplate()
+        buildCaption()
 
         addChild(glowHolder)
         addChild(chair)
@@ -279,8 +296,13 @@ final class DeskNode: SKNode {
         addChild(delegation)
         addChild(ring)
         addChild(nameplate)
+        addChild(caption)
 
         furnish(art)
+        bubbleBase = bubble.position
+        // Over the head, where the state bubble would be: the balloon says the
+        // same thing in words, so the two never show at once.
+        caption.position = CGPoint(x: bubble.position.x - 6, y: bubble.position.y - 2)
     }
 
     /// Puts out whatever this place is made of, and takes away what it is not.
@@ -412,13 +434,21 @@ final class DeskNode: SKNode {
         guard look != next || self.theme.id != theme.id else { return }
         let appearanceChanged = self.theme.isDark != theme.isDark
         self.theme = theme
-        if appearanceChanged { applyGlowGround() }
+        if appearanceChanged {
+            applyGlowGround()
+            if let value = captionValue {
+                paintCaption(value.tone)
+                // Re-set with the new appearance's colours on the next tick.
+                captionText = ""
+            }
+        }
         look = next
 
         setScale(scale)
         applyAgent(session: session, look: next)
         applyDesk(look: next)
         applyScreen(session: session, look: next)
+        applyCaptionVisibility()
         applyBubble(look: next)
         applyDelegationBadge(look: next)
     }
@@ -661,6 +691,8 @@ final class DeskNode: SKNode {
 
     private func applyBubble(look: Look) {
         bubble.removeAllActions()
+        bubble.position = bubbleBase
+        bubbleKind = nil
         let kind: BubbleKind?
         switch look.seat {
         // The whole point of the garden: a session that finished while you
@@ -685,7 +717,7 @@ final class DeskNode: SKNode {
             default: kind = nil
             }
         }
-        guard let kind, !look.isAway, !look.isVacant else {
+        guard let kind, !look.isAway, !look.isVacant, !isCaptionShown else {
             bubble.isHidden = true
             return
         }
@@ -693,6 +725,7 @@ final class DeskNode: SKNode {
         bubble.texture = PlaceholderArt.shared.bubble(kind)
         bubble.alpha = 1
         bubble.setScale(1)
+        bubbleKind = kind
         guard !look.reduceMotion else { return }
 
         switch kind {
@@ -707,17 +740,9 @@ final class DeskNode: SKNode {
                 ),
                 withKey: "bubble"
             )
-        case .asleep:
-            bubble.run(
-                .repeatForever(
-                    .sequence([
-                        .group([.fadeAlpha(to: 0.15, duration: 1.6), .moveBy(x: 0, y: 8, duration: 1.6)]),
-                        .group([.fadeAlpha(to: 1, duration: 0), .moveBy(x: 0, y: -8, duration: 0)]),
-                        .wait(forDuration: 0.4)
-                    ])
-                ),
-                withKey: "bubble"
-            )
+        case .asleep, .done:
+            // Idle motion: it waits for the room to stir — see `beat(round:)`.
+            return
         case .note:
             bubble.run(
                 .repeatForever(
@@ -728,19 +753,65 @@ final class DeskNode: SKNode {
                 ),
                 withKey: "bubble"
             )
+        }
+    }
+
+    // MARK: Idle motion
+
+    /// Whether anything at this place is moving right now — the desk sliding
+    /// or fading, the light, the bubble, the paper, or the person.
+    var isAnimating: Bool {
+        hasActions() || glow.hasActions() || screen.hasActions() || bubble.hasActions()
+            || paper.hasActions() || (agent?.isAnimating ?? false)
+    }
+
+    /// Whether this place has idle motion to play when the room stirs: a
+    /// drawn figure breathing or dozing, a `z` drifting up, a finished note
+    /// lifting and settling.
+    var hasIdleMotion: Bool {
+        guard let look, !look.reduceMotion, !look.isAway, !look.isVacant else { return false }
+        return (agent?.hasIdleMotion ?? false) || bubbleKind == .asleep || bubbleKind == .done
+    }
+
+    /// One stir of the room's idle motion, numbered `round`.
+    ///
+    /// Each idle thing here plays once — the figure's strip, the bubble's
+    /// drift — a little after the stir, so a garden of finished sessions moves
+    /// together without moving in unison; and about two stirs in five this
+    /// place sits out. See ``SceneIdleBeat``.
+    func beat(round: UInt64) {
+        guard hasIdleMotion, SceneIdleBeat.joins(slotID, round: round) else { return }
+        let delay = SceneIdleBeat.delay(slotID, round: round)
+        agent?.beat(after: delay)
+        guard bubble.action(forKey: "bubble") == nil, !bubble.isHidden else { return }
+        let base = bubbleBase
+        switch bubbleKind {
+        case .asleep:
+            // A `z` drifting up and fading, then back where it started.
+            bubble.run(
+                .sequence([
+                    .wait(forDuration: delay),
+                    .group([
+                        .fadeAlpha(to: 0.15, duration: 1.6),
+                        .move(to: CGPoint(x: base.x, y: base.y + 8), duration: 1.6)
+                    ]),
+                    .group([.fadeAlpha(to: 1, duration: 0), .move(to: base, duration: 0)])
+                ]),
+                withKey: "bubble"
+            )
         case .done:
             // A slow lift and settle rather than a pulse: it is waiting, not
             // asking. The only thing in this scene allowed to ask is red.
             bubble.run(
-                .repeatForever(
-                    .sequence([
-                        .moveBy(x: 0, y: 3, duration: 1.1),
-                        .moveBy(x: 0, y: -3, duration: 1.1),
-                        .wait(forDuration: 0.5)
-                    ])
-                ),
+                .sequence([
+                    .wait(forDuration: delay),
+                    .move(to: CGPoint(x: base.x, y: base.y + 3), duration: 1.1),
+                    .move(to: base, duration: 1.1)
+                ]),
                 withKey: "bubble"
             )
+        default:
+            return
         }
     }
 
@@ -756,6 +827,14 @@ final class DeskNode: SKNode {
 
     /// Shows or hides the nameplate over the desk.
     func setHovered(_ hovered: Bool, title: String = "", detail: String = "") {
+        // The nameplate and the balloon say overlapping things in the same
+        // place; under the pointer the nameplate wins, and the balloon comes
+        // back when the pointer leaves.
+        let shown = hovered && !title.isEmpty
+        if isHovered != shown {
+            isHovered = shown
+            applyCaptionVisibility()
+        }
         guard hovered, !title.isEmpty else {
             nameplate.isHidden = true
             return
@@ -781,6 +860,7 @@ final class DeskNode: SKNode {
     /// can read.
     func setCameraScale(_ scale: CGFloat) {
         nameplate.setScale(max(0.4, min(2.5, scale)))
+        caption.setScale(max(0.4, min(2.5, scale)))
     }
 
     private func buildNameplate() {
@@ -801,5 +881,95 @@ final class DeskNode: SKNode {
         nameplate.position = CGPoint(x: 0, y: 62)
         nameplate.zPosition = 20
         nameplate.isHidden = true
+    }
+
+    // MARK: Caption
+
+    /// Whether the balloon is on screen: there is one, somebody is sitting
+    /// here to say it, and the pointer is not over them.
+    private var isCaptionShown: Bool {
+        guard captionValue != nil, let look, !look.isAway, !look.isVacant else { return false }
+        return !isHovered
+    }
+
+    /// Hangs a balloon over this person, or takes it down.
+    ///
+    /// Returns without touching the scene graph when the caption is the one
+    /// already hanging; its stopwatch is advanced by ``refreshCaption(now:)``,
+    /// which the scene calls only when the reading is due to change.
+    func setCaption(_ next: SceneCaption?, now: Date) {
+        // The same balloon again is a board frame passing, not news: its
+        // stopwatch is advanced on its own schedule, by the scene's clock.
+        guard next != captionValue else { return }
+        let wasShown = isCaptionShown
+        let toneChanged = next?.tone != captionValue?.tone
+        captionValue = next
+        if toneChanged, let next { paintCaption(next.tone) }
+        captionText = ""
+        refreshCaption(now: now)
+        applyCaptionVisibility()
+        if wasShown != isCaptionShown, let look { applyBubble(look: look) }
+    }
+
+    /// Whether a balloon is hanging here, shown or not.
+    var hasCaption: Bool { captionValue != nil }
+
+    /// Re-sets the balloon's words if its stopwatch has moved on to a new
+    /// reading. At most one label write per balloon per call, and none when
+    /// the reading is the same.
+    func refreshCaption(now: Date) {
+        guard let value = captionValue else { return }
+        let text = value.text(now: now)
+        guard text != captionText else { return }
+        captionText = text
+        captionLabel.attributedText = value.attributed(text, theme: theme)
+        let width = ceil(captionLabel.frame.width) + 16
+        let height: CGFloat = 20
+        let path = CGMutablePath()
+        // A speech balloon whose sharp corner is the tail: the bottom-left
+        // corner sits on the node's origin, over the person's head.
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        let radius: CGFloat = 8
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+        path.addArc(
+            tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
+            tangent2End: CGPoint(x: rect.maxX, y: rect.minY + radius), radius: radius
+        )
+        path.addArc(
+            tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+            tangent2End: CGPoint(x: rect.maxX - radius, y: rect.maxY), radius: radius
+        )
+        path.addArc(
+            tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+            tangent2End: CGPoint(x: rect.minX, y: rect.maxY - radius), radius: radius
+        )
+        path.closeSubpath()
+        captionBack.path = path
+        captionLabel.position = CGPoint(x: 8, y: height / 2)
+    }
+
+    private func applyCaptionVisibility() {
+        caption.isHidden = !isCaptionShown
+    }
+
+    private func paintCaption(_ tone: SceneCaption.Tone) {
+        let dark = theme.isDark
+        captionBack.fillColor = SceneCaption.fill(tone, dark: dark)
+        captionBack.strokeColor = .clear
+    }
+
+    private func buildCaption() {
+        captionBack.lineWidth = 0
+        captionBack.zPosition = 0
+        captionLabel.horizontalAlignmentMode = .left
+        captionLabel.verticalAlignmentMode = .center
+        captionLabel.zPosition = 1
+        caption.addChild(captionBack)
+        caption.addChild(captionLabel)
+        // Above the furniture of every desk around it, and under any
+        // nameplate the pointer raises — see ``setHovered(_:title:detail:)``.
+        caption.zPosition = 15
+        caption.isHidden = true
     }
 }

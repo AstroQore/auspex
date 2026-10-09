@@ -36,7 +36,7 @@ struct TrajectoryRoleChip: View {
 
     var body: some View {
         let color = isError ? AuspexPalette.statePermission : TrajectoryStyle.color(for: role)
-        Text(role.label)
+        Text(role.localizedLabel)
             .auspexLabel(AuspexType.labelSmall)
             .foregroundStyle(color)
             .lineLimit(1)
@@ -50,7 +50,7 @@ struct TrajectoryRoleChip: View {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .strokeBorder(color.opacity(0.28), lineWidth: 1)
             )
-            .accessibilityLabel(role.label)
+            .accessibilityLabel(role.localizedLabel)
     }
 }
 
@@ -108,7 +108,7 @@ struct TrajectoryRowView: View, Equatable {
             TrajectoryRoleChip(role: step.role, isError: step.isError)
                 .frame(width: Self.chipWidth, alignment: .leading)
             if isPlayhead {
-                Text("PLAYHEAD")
+                Text(L10n.Flight.playhead.uppercased())
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.accent)
                     .padding(.horizontal, 5)
@@ -149,7 +149,7 @@ struct TrajectoryRowView: View, Equatable {
     private var gutter: some View {
         switch marker {
         case .turn(let index):
-            Text(index == 0 ? "Pre" : "Turn \(index)")
+            Text(index == 0 ? L10n.Flight.pre : L10n.Trace.turn(number: index))
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.text2)
                 .lineLimit(1)
@@ -228,7 +228,7 @@ struct TrajectoryRowView: View, Equatable {
     private var trailing: some View {
         HStack(spacing: 10) {
             if let tokens = step.tokens {
-                Text("\(TokenFormat.compact(tokens.output)) out")
+                Text(L10n.Flight.outTokens(tokens: TokenFormat.compact(tokens.output)))
                     .font(AuspexType.monoSmall)
                     .auspexTabularDigits()
                     .foregroundStyle(AuspexPalette.text3)
@@ -241,7 +241,7 @@ struct TrajectoryRowView: View, Equatable {
                         step.isError ? AuspexPalette.statePermission : AuspexPalette.text3
                     )
             } else if step.isError {
-                Text("failed")
+                Text(L10n.Flight.failed)
                     .font(AuspexType.monoTime)
                     .foregroundStyle(AuspexPalette.statePermission)
             }

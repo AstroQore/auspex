@@ -27,9 +27,12 @@ struct AuspexApp: App {
     /// What the menu item says. It toggles, so it names what pressing it
     /// would do rather than where the reader already is.
     private var trajectoryCommandTitle: String {
-        environment.board.viewMode == .trajectory
-            ? "Close Flight"
-            : "Open Flight"
+        // Read so that the menu bar's commands are rebuilt in the new language
+        // when it changes; the titles below are read on every rebuild.
+        _ = environment.catalog.language
+        return environment.board.viewMode == .trajectory
+            ? L10n.App.Menu.closeFlight
+            : L10n.App.Menu.openFlight
     }
 
     var body: some Scene {
@@ -61,18 +64,18 @@ struct AuspexApp: App {
             // person looking for the update are the same person, and this is
             // the first place they look.
             CommandGroup(after: .appInfo) {
-                Button("Check for Updates\u{2026}") { environment.updates.checkForUpdates() }
+                Button(L10n.App.Menu.checkForUpdates) { environment.updates.checkForUpdates() }
                     .disabled(!environment.updates.canCheckForUpdates)
             }
             CommandGroup(after: .toolbar) {
-                Button("Catch Up…") {
+                Button(L10n.App.Menu.catchUp) {
                     environment.board.isCatchUpOpen = true
                 }
                 .disabled(
                     environment.board.catchUp.items.isEmpty
                         && environment.board.watchSignals.isEmpty
                 )
-                Button("Review Next") {
+                Button(L10n.App.Menu.reviewNext) {
                     environment.board.openNextReview()
                 }
                 .disabled(environment.board.reviewCount == 0)
@@ -82,11 +85,11 @@ struct AuspexApp: App {
                 // the frame by name, and does the two or three things that
                 // otherwise need a right-click on a card you have to find
                 // first. See ``CommandPalette``.
-                Button("Go to Task\u{2026}") {
+                Button(L10n.App.Menu.goToTask) {
                     environment.board.isPaletteOpen.toggle()
                 }
                 .keyboardShortcut("k", modifiers: .command)
-                Button("Open Task") {
+                Button(L10n.App.Menu.openTask) {
                     guard let unit = environment.board.selectedUnit else { return }
                     environment.board.openUnitID = unit.id
                 }
@@ -95,7 +98,7 @@ struct AuspexApp: App {
                 // ⇧⌘K is already Mark All as Seen, which is the attention
                 // model's escape hatch and cannot move. Closing pairs with
                 // opening instead, which is the more useful adjacency anyway.
-                Button("Close Task") {
+                Button(L10n.App.Menu.closeTask) {
                     guard let unit = environment.board.selectedUnit, unit.isInReview else { return }
                     environment.tasks.close(unit: unit)
                 }
@@ -118,7 +121,7 @@ struct AuspexApp: App {
                 // them — a clearing gesture that only exists on a wide screen
                 // is a clearing gesture people learn to do without, which
                 // leaves a board of stale red.
-                Button("Mark All as Seen") { environment.board.markAllSeen() }
+                Button(L10n.App.Menu.markAllSeen) { environment.board.markAllSeen() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
                     .disabled(!environment.board.hasAttention)
             }
@@ -147,6 +150,7 @@ struct AuspexApp: App {
 
         MenuBarExtra {
             MenuBarContent(environment: environment)
+                .id(environment.catalog.language)
                 .auspexAppearance(environment.appearance)
                 .auspexNoInitialFocus()
         } label: {
@@ -248,11 +252,11 @@ struct MenuBarLabel: View {
 
     static func accessibilityLabel(_ summary: BoardSummary) -> String {
         var parts = ["Auspex"]
-        if summary.needsYou > 0 { parts.append("\(summary.needsYou) needs you") }
-        if summary.doneReported > 0 { parts.append("\(summary.doneReported) done") }
-        if summary.working > 0 { parts.append("\(summary.working) working") }
-        if summary.idle > 0 { parts.append("\(summary.idle) idle") }
-        if parts.count == 1 { parts.append("nothing running") }
+        if summary.needsYou > 0 { parts.append(L10n.MenuBar.needsYou(count: summary.needsYou)) }
+        if summary.doneReported > 0 { parts.append(L10n.MenuBar.done(count: summary.doneReported)) }
+        if summary.working > 0 { parts.append(L10n.MenuBar.working(count: summary.working)) }
+        if summary.idle > 0 { parts.append(L10n.MenuBar.idle(count: summary.idle)) }
+        if parts.count == 1 { parts.append(L10n.MenuBar.nothingRunning) }
         return parts.joined(separator: ", ")
     }
 }
@@ -295,7 +299,7 @@ struct MenuBarContent: View {
             )
 
             if sessions.isEmpty {
-                Text(environment.mode == .demo ? "Demo starting…" : "No live sessions")
+                Text(environment.mode == .demo ? L10n.MenuBar.demoStarting : L10n.MenuBar.noLiveSessions)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text3)
                     .padding(.horizontal, 12)
@@ -309,7 +313,7 @@ struct MenuBarContent: View {
                     ) { open(session.key) }
                 }
                 if sessions.count > Self.listLimit {
-                    Text("and \(sessions.count - Self.listLimit) more")
+                    Text(L10n.MenuBar.andMore(count: sessions.count - Self.listLimit))
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                         .padding(.horizontal, 12)
@@ -319,13 +323,13 @@ struct MenuBarContent: View {
 
             Divider().overlay(AuspexPalette.line).padding(.vertical, 6)
 
-            MenuBarCommand(title: "Open Auspex", key: "a", modifiers: [.command, .shift]) {
+            MenuBarCommand(title: L10n.MenuBar.openAuspex, key: "a", modifiers: [.command, .shift]) {
                 open(nil)
             }
             // The one window that is not the board still has to be reachable
             // from here: the menu bar is where this app is used from.
             SettingsLink {
-                MenuBarCommandLabel(title: "Settings\u{2026}", shortcut: "\u{2318},")
+                MenuBarCommandLabel(title: L10n.MenuBar.settings, shortcut: "\u{2318},")
             }
             .buttonStyle(.auspex)
             // No shortcut, so the right-hand column carries the version
@@ -333,19 +337,24 @@ struct MenuBarContent: View {
             // am I on, is there a newer one — are then answered by one row.
             Button { environment.updates.checkForUpdates() } label: {
                 MenuBarCommandLabel(
-                    title: "Check for Updates\u{2026}",
+                    title: L10n.App.Menu.checkForUpdates,
                     shortcut: environment.updates.versionDescription
                 )
             }
             .buttonStyle(.auspex)
             .disabled(!environment.updates.canCheckForUpdates)
-            MenuBarCommand(title: "Quit", key: "q", modifiers: .command) {
+            MenuBarCommand(title: L10n.MenuBar.quit, key: "q", modifiers: .command) {
                 NSApplication.shared.terminate(nil)
             }
         }
         .padding(8)
         .frame(width: 340)
         .background(AuspexPalette.bg1)
+        // The panel draws the board's counts, so while it is open the board
+        // is being looked at as much as when the window is.
+        .background(
+            SurfaceVisibilityProbe(visibility: environment.visibility).frame(width: 0, height: 0)
+        )
         // Hand-drawn rows, like the board's. The panel is not a menu, so
         // AppKit would ring whatever was clicked in it last.
         .auspexControlFocus()
@@ -353,7 +362,7 @@ struct MenuBarContent: View {
 
     private func header(count: Int, needsYou: Int, doneReported: Int) -> some View {
         HStack(spacing: 8) {
-            Text("Live")
+            Text(L10n.MenuBar.live)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(AuspexPalette.text)
             Text("\(count)")
@@ -366,7 +375,7 @@ struct MenuBarContent: View {
                     Text(verbatim: "✓")
                         .font(.system(size: 10, weight: .black))
                         .foregroundStyle(AuspexPalette.stateWriting)
-                    Text("\(doneReported) done")
+                    Text(L10n.MenuBar.done(count: doneReported))
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.stateWriting)
                 }
@@ -376,7 +385,7 @@ struct MenuBarContent: View {
                     Text(verbatim: "!")
                         .font(.system(size: 10, weight: .black))
                         .foregroundStyle(AuspexPalette.statePermission)
-                    Text(needsYou == 1 ? "1 needs you" : "\(needsYou) needs you")
+                    Text(L10n.MenuBar.needsYou(count: needsYou))
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.statePermission)
                 }
@@ -444,7 +453,7 @@ private struct MenuBarRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex)
-        .help("\(session.key.harness.displayName) — \(session.state.label)")
+        .help("\(session.key.harness.displayName) — \(session.state.localizedLabel)")
     }
 
     /// What the harness called it, or what it was told to do. A project name
@@ -462,14 +471,14 @@ private struct MenuBarRow: View {
     /// the window — and "two of them are not in the changelog" decides that,
     /// while "storefront-web · idle" does not.
     private var subtitle: String {
-        if let message = attention.message { return message }
+        if let message = attention.localizedMessage { return message }
         if let notice { return notice.message }
         var parts: [String] = []
         if let project = BoardGrouping.projectName(for: session) { parts.append(project) }
         if let activity = session.state.activityDescription {
             parts.append(activity)
         } else if session.state.isEnded {
-            parts.append("ended")
+            parts.append(L10n.Board.Bucket.ended)
         }
         return parts.isEmpty ? session.key.sessionID : parts.joined(separator: " · ")
     }

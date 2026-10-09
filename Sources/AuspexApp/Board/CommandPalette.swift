@@ -10,6 +10,20 @@ import SwiftUI
 /// *tested*: "what does typing `AUX-3f9k` offer" is a question about a
 /// function, and it should not need a window to answer.
 struct PaletteItem: Identifiable, Equatable {
+    /// The small tag before a row, from its `kind`, which stays an
+    /// identifier so a row's identity does not depend on the language.
+    static func localizedKind(_ kind: String) -> String {
+        switch kind {
+        case "task": L10n.Palette.Kind.task
+        case "close": L10n.Palette.Kind.close
+        case "project": L10n.Palette.Kind.project
+        case "session": L10n.Palette.Kind.session
+        case "view": L10n.Palette.Kind.view
+        case "filter": L10n.Palette.Kind.filter
+        default: kind
+        }
+    }
+
     enum Action: Equatable {
         /// Open a task's page.
         case openTask(String)
@@ -71,7 +85,7 @@ enum PaletteSearch {
                 PaletteItem(
                     id: "open:\(unit.id)",
                     title: unit.title,
-                    subtitle: [unit.shortID, unit.status.label, projectName(unit, board)]
+                    subtitle: [unit.shortID, unit.status.localizedLabel, projectName(unit, board)]
                         .compactMap { $0 }.joined(separator: " · "),
                     kind: "task",
                     action: .openTask(unit.id)
@@ -81,8 +95,8 @@ enum PaletteSearch {
                 items.append(
                     PaletteItem(
                         id: "close:\(id)",
-                        title: "Close \(unit.title)",
-                        subtitle: "\(unit.shortID) · finished, waiting on you",
+                        title: L10n.Palette.closeTask(title: unit.title),
+                        subtitle: L10n.Palette.closeTaskSubtitle(id: unit.shortID),
                         kind: "close",
                         action: .closeTask(id)
                     )
@@ -115,7 +129,7 @@ enum PaletteSearch {
                         PaletteItem(
                             id: "session:\(member.key.description)",
                             title: member.title,
-                            subtitle: "\(member.harness.displayName) · \(member.state.label)",
+                            subtitle: "\(member.harness.displayName) · \(member.state.localizedLabel)",
                             kind: "session",
                             action: .selectSession(member.key)
                         )
@@ -130,8 +144,8 @@ enum PaletteSearch {
                 items.append(
                     PaletteItem(
                         id: "toggle:subagents",
-                        title: showsSubagents ? "Hide subagents" : "Show subagents",
-                        subtitle: "List the sessions inside every task",
+                        title: showsSubagents ? L10n.Palette.hideSubagents : L10n.Board.showSubagents,
+                        subtitle: L10n.Palette.subagentsSubtitle,
                         kind: "view",
                         action: .toggleSubagents
                     )
@@ -141,8 +155,8 @@ enum PaletteSearch {
                 items.append(
                     PaletteItem(
                         id: "filter:ready",
-                        title: "Show only what is ready",
-                        subtitle: "Tasks whose dependencies are all closed",
+                        title: L10n.Palette.readyOnly,
+                        subtitle: L10n.Palette.readyOnlySubtitle,
                         kind: "filter",
                         action: .filter(TaskFilters(readyOnly: true))
                     )
@@ -172,7 +186,7 @@ enum PaletteSearch {
         BoardViewMode.pickerOrder.map { mode in
             PaletteItem(
                 id: "view:\(mode.rawValue)",
-                title: "Switch to \(mode.title)",
+                title: L10n.Palette.switchTo(view: mode.localizedTitle),
                 subtitle: nil,
                 kind: "view",
                 action: .setView(mode)
@@ -214,7 +228,7 @@ struct CommandPalette: View {
         VStack(spacing: 0) {
             field
             if items.isEmpty {
-                Text("Nothing matched.")
+                Text(L10n.Palette.nothingMatched)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text3)
                     .padding(14)
@@ -235,7 +249,7 @@ struct CommandPalette: View {
             Image(systemName: "command")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(AuspexPalette.text3)
-            TextField("Go to a task, a project, a session — or do something", text: $query)
+            TextField(L10n.Palette.placeholder, text: $query)
                 .textFieldStyle(.plain)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text)
@@ -268,7 +282,7 @@ struct CommandPalette: View {
                 ForEach(Array(items.prefix(12).enumerated()), id: \.element.id) { index, item in
                     Button { run(item) } label: {
                         HStack(spacing: 10) {
-                            Text(item.kind)
+                            Text(PaletteItem.localizedKind(item.kind))
                                 .font(AuspexType.labelSmall)
                                 .foregroundStyle(AuspexPalette.text3)
                                 .frame(width: 46, alignment: .leading)

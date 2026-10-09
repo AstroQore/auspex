@@ -46,7 +46,7 @@ struct BoardEmptyStateContent: View {
             HStack(spacing: 6) {
                 Image(systemName: "dot.radiowaves.left.and.right")
                     .font(.system(size: 10, weight: .semibold))
-                Text("Watching")
+                Text(L10n.Board.Empty.watching)
                     .auspexLabel()
             }
             .foregroundStyle(AuspexPalette.stateThinking)
@@ -81,10 +81,10 @@ struct BoardEmptyStateContent: View {
 
     private var columnHeader: some View {
         HStack(spacing: 10) {
-            Text("Harness").auspexLabel(AuspexType.labelSmall).frame(width: 128, alignment: .leading)
-            Text("Session store").auspexLabel(AuspexType.labelSmall)
+            Text(L10n.Common.harness).auspexLabel(AuspexType.labelSmall).frame(width: 128, alignment: .leading)
+            Text(L10n.Board.Empty.sessionStore).auspexLabel(AuspexType.labelSmall)
             Spacer()
-            Text("Status").auspexLabel(AuspexType.labelSmall)
+            Text(L10n.Common.status).auspexLabel(AuspexType.labelSmall)
         }
         .foregroundStyle(AuspexPalette.textTertiary)
         .padding(.horizontal, 12)
@@ -96,7 +96,7 @@ struct BoardEmptyStateContent: View {
 
     private var noticeList: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("From the ingest pipeline")
+            Text(L10n.Board.Empty.fromPipeline)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.textTertiary)
             ForEach(Array(model.diagnostics.suffix(6).enumerated()), id: \.offset) { _, notice in
@@ -114,7 +114,7 @@ struct BoardEmptyStateContent: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("See the board with fabricated sessions")
+            Text(L10n.Board.Empty.demoHint)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.textTertiary)
             Text("Auspex.app/Contents/MacOS/Auspex --demo")
@@ -125,7 +125,7 @@ struct BoardEmptyStateContent: View {
                 .padding(.vertical, 5)
                 .background(AuspexPalette.well)
                 .overlay(Rectangle().strokeBorder(AuspexPalette.hairline, lineWidth: 1))
-            Text("The demo runs entirely in memory. It reads no harness store and writes nothing to disk.")
+            Text(L10n.Board.Empty.demoNote)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -136,21 +136,14 @@ struct BoardEmptyStateContent: View {
     // MARK: Copy
 
     private var headline: String {
-        model.hasEverSeenSession ? "Every session has ended." : "No agent is running."
+        model.hasEverSeenSession ? L10n.Board.Empty.allEnded : L10n.Board.Empty.noAgent
     }
 
     private var explanation: String {
         if AuspexAdapters.installed.isEmpty {
-            return """
-                Auspex reads each harness's own session store and rebuilds what \
-                every agent is doing. No adapter has shipped yet, so nothing is \
-                being tailed — the board stays empty rather than guessing.
-                """
+            return L10n.Board.Empty.noAdapter
         }
-        return """
-            Auspex is tailing the stores below. Start an agent in any of them and \
-            its card appears here within a second.
-            """
+        return L10n.Board.Empty.tailing
     }
 }
 
@@ -181,7 +174,7 @@ private struct WatchRow: View {
 
             Spacer(minLength: 8)
 
-            Text(isInstalled ? "Tailing" : "Adapter pending")
+            Text(isInstalled ? L10n.Board.Empty.tailingStatus : L10n.Board.Empty.adapterPending)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(isInstalled ? AuspexPalette.stateWriting : AuspexPalette.textTertiary)
                 .padding(.horizontal, 6)

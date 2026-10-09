@@ -56,4 +56,14 @@ public enum StoreMetaKey {
     /// the same rows fold into and a store stamped "done" would never find out.
     /// Absent on a store that has never had a pass.
     public static let briefBackfill = "brief_backfill_schema_version"
+
+    /// Set once ``LivenessEventPurge`` has removed the liveness heartbeats
+    /// earlier builds recorded. Its value is when that finished, for a person
+    /// reading the table; only its presence is consulted.
+    public static let livenessEventsPurged = "liveness_events_purged_at"
+
+    /// Set once ``ScratchProjectPurge`` has removed the `projects` rows
+    /// earlier builds wrote for scratch directories. Its value is when that
+    /// finished; only its presence is consulted.
+    public static let scratchProjectsPurged = "scratch_projects_purged_at"
 }

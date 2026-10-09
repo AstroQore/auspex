@@ -36,8 +36,8 @@ struct FlightGraphView: View {
                 } else {
                     EmptyStateView(
                         symbol: "point.3.connected.trianglepath.dotted",
-                        title: "Building the execution graph…",
-                        detail: "Flight is folding this session's observed agent and tool events."
+                        title: L10n.Flight.buildingGraph,
+                        detail: L10n.Flight.buildingGraphDetail
                     )
                     .centredInPane()
                 }
@@ -85,7 +85,7 @@ struct FlightGraphView: View {
                     .background(Circle().fill(AuspexPalette.bg1))
             }
             .buttonStyle(.auspex)
-            .accessibilityLabel(model.isPlaying ? "Pause graph playback" : "Play graph history")
+            .accessibilityLabel(model.isPlaying ? L10n.Flight.pauseGraph : L10n.Flight.playGraph)
 
             Menu {
                 ForEach(PlaybackSpeed.allCases, id: \.self) { speed in
@@ -105,25 +105,25 @@ struct FlightGraphView: View {
                     color: model.isHistory ? AuspexPalette.stateStale : AuspexPalette.stateWriting,
                     glows: !model.isHistory && !reduceMotion
                 )
-                Text(model.isHistory ? (model.isPlaying ? "History" : "Paused") : "Live")
+                Text(model.isHistory ? (model.isPlaying ? L10n.Perch.history : L10n.Flight.paused) : L10n.Flight.live)
                     .font(AuspexType.pill)
                     .foregroundStyle(
                         model.isHistory ? AuspexPalette.stateStale : AuspexPalette.text)
             }
-            Text("event \(model.historyIndex + 1) / \(max(1, model.historyCount))")
+            Text(L10n.Perch.eventPosition(index: model.historyIndex + 1, count: max(1, model.historyCount)))
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
             if let frame = model.graphFrame {
-                Text(frame.timestamp.formatted(date: .omitted, time: .standard))
+                Text(AppLocale.time(frame.timestamp))
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text2)
             }
             Spacer()
-            Text("o overview · f follow · pan/zoom = manual")
+            Text(L10n.Flight.keyHint)
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
             if model.isHistory {
-                Button("Jump to Live") { model.jumpToLive() }
+                Button(L10n.Perch.jumpToLive) { model.jumpToLive() }
                     .font(AuspexType.pill)
                     .buttonStyle(.auspex(cornerRadius: 7))
             }
@@ -284,7 +284,7 @@ struct FlightGraphView: View {
             if model.historyCount > 1 {
                 FlightEventScrubber(model: model)
             }
-            Text(model.graphFrame?.timestamp.formatted(date: .omitted, time: .standard) ?? "—")
+            Text(model.graphFrame.map { AppLocale.time($0.timestamp) } ?? "—")
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text2)
                 .fixedSize()
@@ -374,8 +374,8 @@ struct FlightEventScrubber: View {
             return .handled
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Flight event playhead")
-        .accessibilityValue("Event \(model.historyIndex + 1) of \(model.historyCount)")
+        .accessibilityLabel(L10n.Flight.playheadA11y)
+        .accessibilityValue(L10n.Perch.playheadValue(index: model.historyIndex + 1, count: model.historyCount))
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment:
@@ -696,8 +696,8 @@ private struct FlightGraphNodeView: View {
             }
             HStack(spacing: 8) {
                 Text(node.key.sessionID.prefix(8))
-                Text("turn \(node.turnCount)")
-                if node.tokensOut > 0 { Text("\(TokenFormat.compact(node.tokensOut)) out") }
+                Text(L10n.Flight.turnCount(count: node.turnCount))
+                if node.tokensOut > 0 { Text(L10n.Flight.outTokens(tokens: TokenFormat.compact(node.tokensOut))) }
             }
             .font(AuspexType.monoSmall)
             .foregroundStyle(AuspexPalette.text3)
@@ -719,7 +719,7 @@ private struct FlightGraphNodeView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(node.title), \(node.state.label), \(node.toolCount) tools")
+        .accessibilityLabel(L10n.Flight.nodeA11y(title: node.title, state: node.state.localizedLabel, count: node.toolCount))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

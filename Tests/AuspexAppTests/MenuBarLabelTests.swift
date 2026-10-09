@@ -14,6 +14,8 @@ import Testing
 @MainActor
 @Suite("Menu bar label")
 struct MenuBarLabelTests {
+    init() { pinEnglishInterface() }
+
     private func summary(
         needsYou: Int = 0,
         doneReported: Int = 0,

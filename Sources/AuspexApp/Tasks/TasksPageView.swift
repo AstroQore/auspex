@@ -104,7 +104,7 @@ struct TasksPageView: View {
                     HStack(spacing: 5) {
                         Image(systemName: "checklist")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("Review next · \(board.reviewCount)")
+                        Text(L10n.Tasks.reviewNext(count: board.reviewCount))
                             .font(AuspexType.pill)
                     }
                     .foregroundStyle(AuspexPalette.stateWriting)
@@ -117,10 +117,10 @@ struct TasksPageView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.auspex(cornerRadius: 6))
-                .help("Open the first task waiting for review")
+                .help(L10n.Tasks.reviewNextHelp)
             }
             Button { model.showsArchived.toggle() } label: {
-                Text(model.showsArchived ? "Hide archived" : "Show archived")
+                Text(model.showsArchived ? L10n.Tasks.hideArchived : L10n.Tasks.showArchived)
                     .font(AuspexType.pill)
                     .foregroundStyle(
                         model.showsArchived ? AuspexPalette.text : AuspexPalette.text3
@@ -134,7 +134,7 @@ struct TasksPageView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.auspex)
-            .help("Show milestones that have been filed away")
+            .help(L10n.Tasks.archivedHelp)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -150,9 +150,10 @@ struct TasksPageView: View {
     private var summary: String {
         let lanes = visibleLanes.count
         let open = visibleLanes.reduce(0) { $0 + $1.openCount }
-        let projects = lanes == 1 ? "1 project" : "\(lanes) projects"
-        let tasks = open == 1 ? "1 task open" : "\(open) tasks open"
-        return "\(projects) · \(tasks)"
+        return L10n.Tasks.summary(
+            projects: L10n.Tasks.Summary.projects(count: lanes),
+            tasks: L10n.Projects.tasksOpen(count: open)
+        )
     }
 }
 
@@ -216,14 +217,14 @@ private struct ProjectLaneView: View {
                 }
             }
             Spacer(minLength: 6)
-            Text(lane.openCount == 1 ? "1 open" : "\(lane.openCount) open")
+            Text(L10n.Tasks.laneOpen(count: lane.openCount))
                 .font(AuspexType.monoCount)
                 .auspexTabularDigits()
                 .foregroundStyle(AuspexPalette.text3)
             Button {
                 isAddingMilestone.toggle()
             } label: {
-                Text("Milestone")
+                Text(L10n.Tasks.milestone)
                     .font(AuspexType.pill)
                     .padding(.horizontal, 6)
                     .frame(height: 18)
@@ -231,23 +232,23 @@ private struct ProjectLaneView: View {
             }
             .buttonStyle(.auspex)
             .foregroundStyle(AuspexPalette.text3)
-            .help("Register a milestone inside this project")
+            .help(L10n.Tasks.milestoneHelp)
         }
     }
 
     private var milestoneField: some View {
         HStack(spacing: 8) {
-            TextField("What is the whole piece of work?", text: $draftMilestone)
+            TextField(L10n.Tasks.milestonePlaceholder, text: $draftMilestone)
                 .textFieldStyle(.plain)
                 .font(AuspexType.body)
                 .auspexSystemControlFocus()
                 .onSubmit(commit)
-            Button("Register", action: commit)
+            Button(L10n.Tasks.register, action: commit)
                 .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.stateThinking)
                 .disabled(draftMilestone.trimmingCharacters(in: .whitespaces).isEmpty)
-            Button("Cancel") { isAddingMilestone = false; draftMilestone = "" }
+            Button(L10n.Common.cancel) { isAddingMilestone = false; draftMilestone = "" }
                 .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.text3)
@@ -290,10 +291,10 @@ private struct MilestoneGroupView: View {
                 // No symbol — the lane's own header already says what kind of
                 // thing is missing — and no box, per `EmptyStateView`.
                 EmptyStateView(
-                    title: "Nothing to do",
+                    title: L10n.Tasks.nothingToDo,
                     detail: group.plan == nil
-                        ? "Nothing is filed in this project yet."
-                        : "This milestone has no tasks under it."
+                        ? L10n.Tasks.nothingFiledInProject
+                        : L10n.Tasks.milestoneEmpty
                 )
                 .frame(maxWidth: .infinity)
             } else {
@@ -319,7 +320,7 @@ private struct MilestoneGroupView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
             if group.plan == nil, namesLooseGroup {
-                Text("Not in a milestone")
+                Text(L10n.Tasks.notInMilestone)
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
             }
@@ -334,7 +335,7 @@ private struct MilestoneGroupView: View {
                         .textSelection(.enabled)
                 }
                 if group.isArchived {
-                    Text("archived")
+                    Text(L10n.Tasks.archived)
                         .auspexLabel(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3)
                 }
@@ -356,7 +357,7 @@ private struct MilestoneGroupView: View {
             }
             .buttonStyle(.auspex)
             .foregroundStyle(AuspexPalette.text3)
-            .help(group.plan == nil ? "File a task in this project" : "File a task under this milestone")
+            .help(group.plan == nil ? L10n.Tasks.fileInProject : L10n.Tasks.fileUnderMilestone)
             if let plan = group.plan, !group.isArchived {
                 Button { model.archivePlan(id: plan.id) } label: {
                     Image(systemName: "archivebox")
@@ -366,7 +367,7 @@ private struct MilestoneGroupView: View {
                 }
                 .buttonStyle(.auspex)
                 .foregroundStyle(AuspexPalette.text3)
-                .help("File this milestone away. Its tasks stay in this project.")
+                .help(L10n.Tasks.archiveMilestoneHelp)
             }
         }
         .overlay(alignment: .bottom) {
@@ -378,12 +379,12 @@ private struct MilestoneGroupView: View {
 
     private var newTaskField: some View {
         HStack(spacing: 8) {
-            TextField("What has to be done", text: $draftTitle)
+            TextField(L10n.Tasks.newTaskPlaceholder, text: $draftTitle)
                 .textFieldStyle(.plain)
                 .font(AuspexType.body)
                 .auspexSystemControlFocus()
                 .onSubmit(commit)
-            Button("Add", action: commit)
+            Button(L10n.Common.add, action: commit)
                 .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.stateThinking)
@@ -422,7 +423,7 @@ private struct TaskColumnView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
-                Text(status.label)
+                Text(status.localizedLabel)
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                 Spacer(minLength: 2)
@@ -546,7 +547,7 @@ private struct TaskCardView: View {
                 // protocol has not been adopted, but somebody about to act on
                 // it should know there is no row in the ledger to act on.
                 if row.isImplicit {
-                    Text("auto")
+                    Text(L10n.Task.Card.auto)
                         .font(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3)
                         .padding(.horizontal, 3)
@@ -555,7 +556,7 @@ private struct TaskCardView: View {
                                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
                         )
                         .fixedSize()
-                        .help("Auspex worked this out from a delegation. Nobody filed a task.")
+                        .help(L10n.Tasks.autoHelp)
                 }
                 Spacer(minLength: 0)
                 if let unit = row.unit, unit.memberCount > 1 {
@@ -589,10 +590,10 @@ private struct TaskCardView: View {
             }
 
             if let unit = row.unit, unit.isClaimOrphaned {
-                Text("claim orphaned")
+                Text(L10n.Task.Filter.claimOrphaned)
                     .font(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.stateStale)
-                    .help("The session holding this claim ended without finishing.")
+                    .help(L10n.Tasks.orphanHelp)
             }
 
             if let result = row.task.result, !row.task.status.isOpen || row.task.status == .review {
@@ -622,7 +623,7 @@ private struct TaskCardView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.auspex)
-                        .help("\(session.harness.displayName) — \(session.state.label)")
+                        .help("\(session.harness.displayName) — \(session.state.localizedLabel)")
                     }
                 }
             }
@@ -664,20 +665,20 @@ private struct TaskCardView: View {
                 // Everything below writes to a row that does not exist yet.
                 // This is the one action that makes one.
                 if let unit = row.unit {
-                    Button("Promote to task…") { model.promote(unit: unit) }
+                    Button(L10n.Task.Menu.promote) { model.promote(unit: unit) }
                 }
             } else {
                 if row.task.status == .review {
-                    Button("Close") { model.close(taskID: row.task.id) }
+                    Button(L10n.Common.close) { model.close(taskID: row.task.id) }
                 } else if row.task.status == .done {
-                    Button("Reopen") { model.reopen(taskID: row.task.id) }
+                    Button(L10n.Task.Menu.reopen) { model.reopen(taskID: row.task.id) }
                 }
                 if row.unit?.isClaimOrphaned == true {
-                    Button("Release claim") { model.releaseClaim(taskID: row.task.id) }
+                    Button(L10n.Task.Menu.releaseClaim) { model.releaseClaim(taskID: row.task.id) }
                 }
                 Divider()
                 ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
-                    Button("Move to \(status.label)") { model.move(taskID: row.task.id, to: status) }
+                    Button(L10n.Tasks.moveTo(status: status.localizedLabel)) { model.move(taskID: row.task.id, to: status) }
                         .disabled(status == row.task.status)
                 }
             }
@@ -688,7 +689,7 @@ private struct TaskCardView: View {
                 : model.lanes.filter { $0.key != row.task.projectKey }
             if !elsewhere.isEmpty {
                 Divider()
-                Menu("File under…") {
+                Menu(L10n.Tasks.fileUnder) {
                     ForEach(elsewhere) { lane in
                         Button(lane.title) {
                             model.move(taskID: row.task.id, toProjectKey: lane.key)
@@ -699,7 +700,7 @@ private struct TaskCardView: View {
             if !row.sessions.isEmpty, !row.isImplicit {
                 Divider()
                 ForEach(row.sessions, id: \.key) { session in
-                    Button("Unlink \(session.title)") {
+                    Button(L10n.Tasks.unlink(title: session.title)) {
                         model.unlink(session: session.key, from: row.task.id)
                     }
                 }
@@ -748,7 +749,7 @@ private struct UnregisteredSessionsSection: View {
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
-                    Text("Not on the board")
+                    Text(L10n.Tasks.notOnBoard)
                         .auspexLabel(AuspexType.labelLarge)
                         .foregroundStyle(AuspexPalette.text3)
                     Text("\(rows.count)")
@@ -756,7 +757,7 @@ private struct UnregisteredSessionsSection: View {
                         .auspexTabularDigits()
                         .foregroundStyle(AuspexPalette.text3)
                     Spacer(minLength: 4)
-                    Text("Drag one onto a task, or use “Link to task…” on its card.")
+                    Text(L10n.Tasks.dragHint)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 }
@@ -817,9 +818,8 @@ private struct TasksEmptyState: View {
     var body: some View {
         EmptyStateView(
             symbol: "checklist",
-            title: "Nothing is filed yet.",
-            detail: "An agent with Auspex's MCP server installed files a task in whatever "
-                + "project it is working in — install it from the Harnesses page."
+            title: L10n.Tasks.nothingFiled,
+            detail: L10n.Tasks.nothingFiledDetail
         )
         .centredInPane()
     }
@@ -872,11 +872,11 @@ struct LinkToTaskMenu: View {
     var body: some View {
         let lanes = tasks.lanes.filter { !$0.isEmpty }
         if lanes.isEmpty {
-            Button("Link to task…") {}
+            Button(L10n.Tasks.linkToTask) {}
                 .disabled(true)
-                .help("Nothing is filed yet. File a task on the Tasks page.")
+                .help(L10n.Tasks.linkDisabledHelp)
         } else {
-            Menu("Link to task…") {
+            Menu(L10n.Tasks.linkToTask) {
                 ForEach(lanes) { lane in
                     let available = lane.tasks.filter { row in
                         !row.sessions.contains { $0.key == key }

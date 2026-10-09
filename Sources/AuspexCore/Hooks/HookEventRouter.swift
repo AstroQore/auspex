@@ -306,10 +306,7 @@ public struct HookEventRouter: Sendable {
         fallback: SessionKey?
     ) -> SessionKey? {
         let payload = hook.payload
-        let raw = [payload["session_id"], payload["conversation_id"], payload["thread_id"]]
-            .compactMap { $0?.stringValue }
-            .first { !$0.isEmpty }
-        guard let raw else { return fallback }
+        guard let raw = Self.payloadSessionID(payload) else { return fallback }
         let key = SessionKey(harness: hook.target.harness, sessionID: raw)
 
         // Everything a subagent does carries the parent's session id and its
@@ -332,11 +329,41 @@ public struct HookEventRouter: Sendable {
         // serves both and a payload cannot say which of the two a thread
         // belongs to. The board can: `CodexOriginator` decided that when it
         // read the rollout's header.
-        if hook.target == .codex {
+        if hook.target == .codex || hook.target == .codexNotify {
             let sibling = SessionKey(harness: .chatgptWork, sessionID: raw)
             if known.contains(sibling) { return sibling }
         }
         return fallback ?? key
+    }
+
+    /// The session id a payload carries, whatever the harness calls it.
+    ///
+    /// `thread-id` is Codex's `notify`, which spells its keys in kebab case;
+    /// every hook table uses `session_id`, and Cursor `conversation_id`.
+    static func payloadSessionID(_ payload: MCPJSON) -> String? {
+        [payload["session_id"], payload["conversation_id"], payload["thread_id"], payload["thread-id"]]
+            .compactMap { $0?.stringValue }
+            .first { !$0.isEmpty }
+    }
+
+    /// The row a hook's payload names by itself — not the process fallback,
+    /// and not a subagent's row — when the board already has it.
+    ///
+    /// This is the one case in which the hook's pid can be learned as that
+    /// session's process (see ``HookProcessLearning``): the payload says which
+    /// session, the kernel says which process ran the hook, and the two facts
+    /// came from different places. A session resolved *by* that pid would make
+    /// the lesson circular, and a subagent runs inside its parent's process, so
+    /// the parent is the row the process belongs to.
+    public func identifiedSession(for hook: HookEvent, known: Set<SessionKey>) -> SessionKey? {
+        guard let raw = Self.payloadSessionID(hook.payload) else { return nil }
+        let key = SessionKey(harness: hook.target.harness, sessionID: raw)
+        if known.contains(key) { return key }
+        if hook.target == .codex || hook.target == .codexNotify {
+            let sibling = SessionKey(harness: .chatgptWork, sessionID: raw)
+            if known.contains(sibling) { return sibling }
+        }
+        return nil
     }
 
     /// A Claude subagent's key: the parent's id, then the transcript file the

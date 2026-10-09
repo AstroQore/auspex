@@ -2,7 +2,7 @@
 name: auspex-coordination
 description: Coordinate Supervisor, Worker, and Reviewer work through Auspex when a brief names an Auspex task, when handing work to another agent, or when reviewing shared task progress. Auspex remains the task state source; this skill is only the operating playbook.
 metadata:
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Auspex Coordination
@@ -35,8 +35,9 @@ Auspex has two layers:
 6. Do not put raw transcripts, prompts, credentials, full command output, or
    secrets in task notes. Record only a compact fact and a checkable reference.
 7. If MCP is unavailable or `sessions.self` cannot resolve this process,
-   continue the user's work. State the degraded coordination honestly; never
-   report a claim, notification, or update that the server rejected.
+   retry once with your own session id (see "Identity unresolved" below),
+   then continue the user's work. State the degraded coordination honestly;
+   never report a claim, notification, or update that the server rejected.
 8. Treat a task's `version` as a compare-and-swap token. Pass the latest value
    as `expected_version` on every task write that accepts it. If it conflicts,
    re-read `tasks.get`, understand what changed, and decide again; never retry
@@ -131,8 +132,10 @@ Auspex coordination must never become a prerequisite for useful work.
 
 - MCP unavailable: continue, keep a local handoff summary, and say that board
   updates were not recorded.
-- Identity unresolved: use read-only overview/task context if available;
-  continue without claim/report/notify calls that require identity.
+- Identity unresolved: retry once with your own session id, as described
+  below. If that is refused too, use read-only overview/task context if
+  available and continue without claim/report/notify calls that require
+  identity.
 - A write is rejected: respect the server state, do not retry by impersonating
   another session or supplying a guessed session id.
 - A version is stale: re-read the task and make a fresh decision from the new
@@ -142,3 +145,33 @@ Auspex coordination must never become a prerequisite for useful work.
 
 In every degraded case, finish the user's actual task if it remains safe and
 possible.
+
+### Identity unresolved: name your own session
+
+Some harnesses run several sessions in one process (a Codex thread server
+inside a desktop app) or tell their MCP servers nothing, so the process tree
+cannot always say which session is calling. When `sessions.self` answers
+`resolved: false`, retry once with your own session id:
+
+1. Read the id from your own environment. Never guess one, and never use a
+   peer's.
+   - Claude Code: `echo "$CLAUDE_CODE_SESSION_ID"` in the Bash tool.
+   - Cursor (`cursor-agent`): `echo "$CURSOR_AGENT_CHAT_ID"`.
+   - Grok Build: `echo "$GROK_SESSION_ID"`, when it is set.
+   - Codex: `echo "$CODEX_THREAD_ID"` in your shell tool, when it is set.
+     Otherwise your rollout file is named `rollout-<timestamp>-<thread id>.jsonl`
+     under `${CODEX_HOME:-$HOME/.codex}/sessions/YYYY/MM/DD/` (the day the
+     thread started), and its trailing UUID is your id. Several threads can
+     write in the same directory at once, so do not take the newest file:
+     print a unique marker in one command (`echo auspex-self-<random>`), then
+     in a second command find the one rollout that contains it —
+     `find "${CODEX_HOME:-$HOME/.codex}/sessions" -name 'rollout-*.jsonl' -mmin -10 -exec grep -l 'auspex-self-<random>' {} +`
+     — and take the UUID at the end of that file name. If no file or more
+     than one file matches, stop: you do not know your id.
+2. Call `sessions.self(session_id=<id>)`. Auspex accepts it only for a live
+   session of the same harness as the process this connection came from,
+   and its `evidence` then starts with "self-reported".
+3. If it resolves, pass the same `session_id` on every later write that
+   accepts it (`tasks.claim`, `tasks.update`, `tasks.log`, `tasks.complete`,
+   `tasks.release`, `auspex.notify`, `auspex.report`). If it is refused, read
+   the reason, do not try a different id, and continue in degraded mode.

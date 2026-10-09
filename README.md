@@ -151,11 +151,20 @@ behalf. Pressing Tab or an arrow key then enters the normal macOS key-view loop
 with visible focus feedback. The command palette is the deliberate exception:
 pressing ⌘K is already an explicit request to type, so its search field is ready.
 
-## Five ways to read one board
+## Six ways to read one board
 
-The picker in the header switches how the live sessions are drawn. It is a mode
-rather than a destination: the selection, the grouping, the filters and the
-trace beside them all survive a switch.
+The view menu in the header switches how the live sessions are drawn. It is a
+mode rather than a destination: the selection, the grouping, the filters and
+the trace beside them all survive a switch.
+
+**Now** is where the window opens: the Aviary as a stage across the top, with a
+balloon over the few people who most need reading — what they are running, or
+the permission they are waiting on — and under it four short lists. *Needs
+you* takes only explicit signals (a permission wait, an agent's
+`auspex.notify`, a task marked blocked); *may need you* is the amber watch
+signals, kept apart; *working* is one row per root session with its sub-agents
+folded into `↳N`; *done, unseen* is every receipt nobody has opened. Idle
+sessions are a count. The stage closes to leave only the lists.
 
 **Ledger** (was Board) is the wall of cards — the only view that shows
 everything at once, and the one that answers *what is this session doing*
@@ -313,7 +322,7 @@ protocol is enrichment and never a dependency. The same registration installs
 exits 0 within 200 ms whatever happens, because a hook is a synchronous child
 of a working agent and must never be able to block or veto it.
 
-**Roost** (was Tasks) is where that board is read back: one lane per project,
+**Tasks** (the Roost) is where that board is read back: one lane per project,
 the milestones inside it, and every task sorted by status with whoever claimed
 it named on the card.
 

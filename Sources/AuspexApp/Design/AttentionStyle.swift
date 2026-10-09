@@ -55,7 +55,7 @@ enum AttentionStyle {
     static func headline(_ attention: AttentionState) -> String? {
         switch attention {
         case .none, .needsYou: nil
-        case .doneReported: "Done"
+        case .doneReported: L10n.Attention.done
         }
     }
 
@@ -63,9 +63,11 @@ enum AttentionStyle {
     static func label(_ attention: AttentionState) -> String? {
         switch attention {
         case .none: nil
-        case .needsYou(let reason, let source):
-            "needs you — \(reason)\(source == .agent ? ", the agent says so" : "")"
-        case .doneReported(let summary, _): "finished — \(summary)"
+        case .needsYou(_, let source):
+            source == .agent
+                ? L10n.Attention.A11y.needsYouAgent(reason: attention.localizedMessage ?? "")
+                : L10n.Attention.A11y.needsYou(reason: attention.localizedMessage ?? "")
+        case .doneReported(let summary, _): L10n.Attention.A11y.finished(summary: summary)
         }
     }
 }
@@ -87,7 +89,7 @@ struct AttentionBanner: View {
     var onDismiss: (() -> Void)?
 
     var body: some View {
-        if let colour = AttentionStyle.colour(attention), let message = attention.message {
+        if let colour = AttentionStyle.colour(attention), let message = attention.localizedMessage {
             HStack(alignment: .top, spacing: 7) {
                 // The caret means "this text has an author"; the mark means
                 // "this is which bucket". A harness's permission wait has no
@@ -101,7 +103,8 @@ struct AttentionBanner: View {
                 .foregroundStyle(colour)
                 Group {
                     if let headline = AttentionStyle.headline(attention) {
-                        Text("\(headline): ").foregroundStyle(colour) + Text(message)
+                        Text(L10n.Attention.headline(headline: headline)).foregroundStyle(colour)
+                            + Text(message)
                             .foregroundStyle(AuspexPalette.text)
                     } else {
                         Text(message).foregroundStyle(AuspexPalette.text)
@@ -123,8 +126,8 @@ struct AttentionBanner: View {
                     .buttonStyle(.auspex)
                     .help(
                         attention.wantsPerson
-                            ? "Dismiss — the card goes quiet and stops being counted"
-                            : "Dismiss — you have read it"
+                            ? L10n.Attention.dismissNeedsYou
+                            : L10n.Attention.dismissRead
                     )
                 }
             }

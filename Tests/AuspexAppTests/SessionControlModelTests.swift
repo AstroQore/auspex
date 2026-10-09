@@ -16,6 +16,8 @@ import Testing
 @MainActor
 @Suite("Session control · the click path", .serialized)
 struct SessionControlModelTests {
+    init() { pinEnglishInterface() }
+
     /// A model wired the way `AppEnvironment` wires it, plus a box to catch
     /// the events and notices it would otherwise send into the pipeline.
     @MainActor

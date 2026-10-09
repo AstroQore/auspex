@@ -126,7 +126,7 @@ struct SessionCard: View, Equatable {
         .modifier(Desaturate(isOn: row.isStale))
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(row.harness.displayName), \(row.title), \(row.state.label)")
+        .accessibilityLabel("\(row.harness.displayName), \(row.title), \(row.state.localizedLabel)")
     }
 
     // MARK: Rows
@@ -182,19 +182,19 @@ struct SessionCard: View, Equatable {
         if row.latestPrompt != nil || row.latestAssistant != nil || row.reportedFocus != nil {
             VStack(alignment: .leading, spacing: 3) {
                 if let asked = row.latestPrompt {
-                    LedgerLine(key: "asked", text: asked, tint: AuspexPalette.text2)
+                    LedgerLine(key: L10n.Ledger.asked, text: asked, tint: AuspexPalette.text2)
                 }
                 if let focus = row.reportedFocus {
                     // The agent's own account of what it is doing, marked as
                     // such. It replaces the inferred "said" line: a sentence
                     // written on purpose beats one lifted out of a transcript.
                     LedgerLine(
-                        key: "doing",
+                        key: L10n.Ledger.doing,
                         text: "\(NoticeStyle.selfReportedMark) \(focus)",
                         tint: AuspexPalette.text2
                     )
                 } else if let said = row.latestAssistant {
-                    LedgerLine(key: "said", text: said, tint: AuspexPalette.text3)
+                    LedgerLine(key: L10n.Ledger.said, text: said, tint: AuspexPalette.text3)
                 }
             }
         }
@@ -227,7 +227,7 @@ struct SessionCard: View, Equatable {
             }
             if let variant = row.variantLabel {
                 separator
-                Text(variant).fixedSize()
+                Text(CoreVocabulary.localized(variant)).fixedSize()
             }
             Spacer(minLength: 0)
         }
@@ -276,10 +276,10 @@ struct SessionCard: View, Equatable {
                 }
                 .buttonStyle(.auspex(cornerRadius: 6))
                 .fixedSize()
-                .help("Open the session that spawned this one")
+                .help(L10n.Session.spawnedByHelp)
             } else if row.descendantCount > 0 {
                 FactChip(
-                    row.descendantCount == 1 ? "↳ 1 child" : "↳ \(row.descendantCount) children",
+                    L10n.Session.children(count: row.descendantCount),
                     tint: AuspexPalette.stateDelegating
                 )
                 .fixedSize()
@@ -326,15 +326,15 @@ struct SessionCard: View, Equatable {
                     )
                 }
             }
-            MetaField(key: "turns", value: "\(row.turnCount)")
-            MetaField(key: "tools", value: "\(row.toolCallCount)")
+            MetaField(key: L10n.Meta.turns, value: "\(row.turnCount)")
+            MetaField(key: L10n.Meta.tools, value: "\(row.toolCallCount)")
             Spacer(minLength: 4)
             Text("\(TokenFormat.compact(row.tokensIn))/\(TokenFormat.compact(row.tokensOut))")
                 .font(AuspexType.monoSmall)
                 .auspexTabularDigits()
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize()
-                .help("Tokens in / out")
+                .help(L10n.Session.tokensHelp)
         }
     }
 
@@ -354,10 +354,10 @@ struct SessionCard: View, Equatable {
 
     private var elapsedLabel: String {
         switch row.state {
-        case .ended: "ran for"
-        case .waitingPermission: "waiting"
-        case .idle: "quiet"
-        default: "elapsed"
+        case .ended: L10n.Session.Elapsed.ranFor
+        case .waitingPermission: L10n.Session.Elapsed.waiting
+        case .idle: L10n.Session.Elapsed.quiet
+        default: L10n.Session.Elapsed.elapsed
         }
     }
 }
@@ -406,7 +406,7 @@ struct QuietReplyDot: View {
         Circle()
             .fill(AuspexPalette.stateWriting.opacity(0.55))
             .frame(width: 6, height: 6)
-            .accessibilityLabel("Replied, and you have not looked at it")
+            .accessibilityLabel(L10n.Session.unreadReply)
     }
 }
 
@@ -420,7 +420,7 @@ private struct QuietReplyLabel: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            Text("replied")
+            Text(L10n.Session.replied)
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
             // Reads the shared clock rather than owning one, so this label

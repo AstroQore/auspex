@@ -9,7 +9,12 @@ enum FlightPresentation: String, CaseIterable, Identifiable {
     case graph
     case trace
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .graph: L10n.Flight.Presentation.graph
+        case .trace: L10n.Flight.Presentation.trace
+        }
+    }
 }
 
 enum FlightGraphCamera: String, CaseIterable, Identifiable {
@@ -17,7 +22,13 @@ enum FlightGraphCamera: String, CaseIterable, Identifiable {
     case follow
     case manual
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .overview: L10n.Flight.Camera.overview
+        case .follow: L10n.Flight.Camera.follow
+        case .manual: L10n.Flight.Camera.manual
+        }
+    }
 }
 
 struct FlightGraphAfterglow: Identifiable, Hashable, Sendable {
@@ -51,9 +62,9 @@ enum TrajectoryTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .summary: "Summary"
-        case .preview: "Preview"
-        case .raw: "Raw"
+        case .summary: L10n.Flight.Tab.summary
+        case .preview: L10n.Flight.preview
+        case .raw: L10n.Flight.Tab.raw
         }
     }
 }
@@ -117,8 +128,8 @@ final class TrajectoryModel {
 
         var title: String {
             switch self {
-            case .session: "Session"
-            case .task: "Task"
+            case .session: L10n.Flight.Scope.session
+            case .task: L10n.Flight.Scope.task
             }
         }
     }
@@ -615,7 +626,7 @@ final class TrajectoryModel {
         guard raw == nil, !isLoadingRaw else { return }
         guard let step = selectedStep else { return }
         guard let ref = step.raw else {
-            raw = .unavailable("Auspex recorded no source location for this event.")
+            raw = .unavailable(L10n.Flight.noSource)
             return
         }
         isLoadingRaw = true

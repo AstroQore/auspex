@@ -10,6 +10,102 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+### Added
+
+- **Now, the new default screen.** The office sits across the top as a stage,
+  with a balloon over the few people who most need reading — what a session is
+  running and for how long, the permission it is waiting on, or the watch
+  signal about it — and the balloons follow their desks as the room moves.
+  Under it, four short lists: *needs you* (explicit signals only), *may need
+  you* (watch signals, kept apart), *working* (one row per root session, its
+  sub-agents folded into `↳N`, with a context bar), and *done, unseen* with a
+  one-click "mark seen"; idle sessions are a count. The lists are derived once
+  per frame off the main thread, the stage can be closed to stop the office
+  entirely, and the Ledger, Aviary, Flock, Perch and Flight move into a view
+  menu in the header. The sidebar now reads Now, Tasks, Sessions, Projects,
+  Harnesses.
+- **Simplified Chinese, and a Language setting.** Every word Auspex shows now
+  comes from [auspex-i18n](https://github.com/AstroQore/auspex-i18n), a
+  catalogue of about 1,100 strings in English and Simplified Chinese consumed
+  as an exact-pinned package. Settings → General gains *Language: System /
+  English / 简体中文*; the choice is kept in `~/.auspex/settings.json` and
+  takes effect at once, without a relaunch. Harness, company and product names
+  stay as their owners spell them, and what agents read — MCP tool
+  descriptions and results, the coordination skill, `--help` — stays English.
+  `swift test` now fails on a hardcoded user-facing string anywhere in the app.
+
+### Fixed
+
+- **Codex and `cursor-agent` sessions can claim, finish and notify.** Neither
+  harness writes its pid anywhere Auspex reads, so their MCP calls could never
+  be attributed and every `tasks.claim`, `tasks.complete` and `auspex.notify`
+  was refused. A hook now teaches a pid-less session its process when the hook
+  was run by that harness's own program, and the pid reaches the `sessions`
+  table. Where one process runs many sessions — Codex's thread server inside a
+  desktop app — a session may name itself with `session_id`, accepted only for
+  a live session of the harness the connection descends from. The bundled
+  coordination skill (1.2.0) says how each harness finds its own id.
+- **A worker launched by another harness is no longer filed under its
+  launcher.** The caller walk used to climb past a Codex worker to the Claude
+  Code session that started it, and to trust the Claude session id the worker
+  had inherited, so the worker's claims landed on the orchestrator's row. It
+  now stops at the nearest harness process.
+- **Idle CPU and an ever-growing store.** Auspex no longer records a liveness
+  confirmation that changes nothing (these were three quarters of the event
+  log), and removes the ones earlier builds stored, once, in the background.
+  Relaunch reloads only sessions that are running or were active this week
+  instead of filling a 2,000-session budget with history. Board frames are
+  published at most twice a second, and every five seconds while neither the
+  window nor the menu bar panel is on screen.
+- The retention policy (14 days of events, 2,000 per session, 30 days of
+  search text) is finally applied: a minute after launch and every six hours,
+  in small batches that never hold the database for long.
+- **Scratch folders are no longer projects.** The home directory, the Codex
+  desktop's `~/Documents/Codex` chats, Claude Desktop's scratch workspaces,
+  `/root`, `/workspace`, `/tmp`, and folders that are no longer on disk each
+  used to become a project and a sidebar heading. Their sessions now sit in
+  the harness's scratch section, the project rows earlier builds stored for
+  them are removed once (projects you made yourself are kept), and Settings →
+  Ignore gains a "Scratch folder" rule for your own throwaway folders — it
+  keeps the sessions on the board and only stops the folder becoming a
+  project. Codex sub-agent threads now join the project of the thread that
+  spawned them instead of making one of their own.
+
+### Changed
+
+- Claude Cowork is no longer tailed live. Cowork runs in the cloud by default
+  since it merged with Chat, and the workspace tree under Claude.app's
+  container has held no new transcript since July 2026; watching it cost a
+  sweep of every Claude.app helper's environment every three seconds for
+  nothing. The harness, its logo, and the rows already in the store remain.
+
+- The board's derivation skips work nobody reads: session lookups are indexed,
+  the Flock's and Aviary's own data is built only while that view is open, and
+  the delegation tree is rebuilt for the store only when a parent changes.
+- A search hit on a session older than the live set now opens its details from
+  the store instead of an empty pane.
+- **The office stops drawing when nothing in it moves.** A frame with nothing
+  moving in it is the last one drawn until something changes — a board frame,
+  the pointer, a scroll, a resize, a balloon's stopwatch — so a quiet office on
+  Now's stage or in the Aviary costs what the lists cost. Idle motion (a drawn
+  character breathing or dozing, a `z` over a stale session, a finished note
+  in the garden, the projector over a quiet table) plays once every three to
+  eight seconds instead of looping; working motion keeps its loops, and a
+  delegation arc pulses only while its parent is still delegating. Now's stage
+  draws at 15 frames a second (30 during a gesture); the Aviary keeps 30 and
+  60. Balloon stopwatches refresh every five seconds, only on screen. Room
+  borders are dashed on the GPU, and a closed stage's view is left paused.
+  `--stage <on|off>` (`AUSPEX_STAGE`) opens Now with or without the stage, for
+  measuring each.
+- **Now's stage folds itself away.** After two and a half minutes with no
+  mouse, scroll or key input in the window — board updates do not count — the
+  office folds into one line, *Office · 4 working · 1 needs you ▸*, and its
+  view and clock leave the window until the line is clicked; the stage's
+  chevron folds it the same way by hand. Nothing counts while the window is
+  covered, and the fold is kept for the launch only. `--render-board …
+  stage=collapsed` draws the folded line, and a demo launch reads
+  `AUSPEX_STAGE_IDLE_DELAY=<seconds>` to fold sooner.
+
 ## [0.2.0] - 2026-08-31
 
 ### Fixed

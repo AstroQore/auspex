@@ -75,12 +75,21 @@ final class ProjectCatalogModel {
         home = paths.homeDirectory
         projectStore = persists ? AuspexProjectStore(paths: paths) : nil
         settingsStore = persists ? AuspexSettingsStore(paths: paths) : nil
+        // The language, and only the language, is read now rather than in
+        // `load()`: `load()` runs once the pipeline starts, which is after the
+        // first frame, and a first frame in the wrong language followed by a
+        // redraw in the right one is a flash nobody asked for.
+        if let stored = settingsStore?.load() { settings.language = stored.language }
+        AppLocalization.apply(settings.language)
     }
 
     /// Reads both files. Called once, as the window comes up.
     func load() {
         projects = projectStore?.load() ?? []
         settings = settingsStore?.load() ?? AuspexSettings()
+        // Before anything is drawn, so the first frame is already in the
+        // language the person chose.
+        AppLocalization.apply(settings.language)
         rebuild()
     }
 
@@ -321,6 +330,24 @@ final class ProjectCatalogModel {
     func setTranslucentSidebar(_ on: Bool) {
         guard settings.translucentSidebar != on else { return }
         settings.translucentSidebar = on
+        persist()
+    }
+
+    // MARK: - The language
+
+    /// Which language the interface is drawn in.
+    var language: AppLanguage { settings.language }
+
+    /// Sets it, hands it to the catalogue, and remembers it.
+    ///
+    /// The catalogue's next read is already in the new language. What has
+    /// already been drawn is redrawn by the window roots, which key themselves
+    /// on ``language`` — so a choice in Settings reaches the board, the menu
+    /// bar panel and Settings itself without a relaunch.
+    func setLanguage(_ language: AppLanguage) {
+        guard settings.language != language else { return }
+        settings.language = language
+        AppLocalization.apply(language)
         persist()
     }
 

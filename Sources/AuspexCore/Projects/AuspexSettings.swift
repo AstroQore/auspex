@@ -158,6 +158,9 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
     /// the compact inbox offers on the next launch.
     public var lastCatchUpAt: Date?
 
+    /// Which language the interface is drawn in. See ``AppLanguage``.
+    public var language: AppLanguage
+
     public init(
         ignoreRules: [IgnoreRule] = [],
         showsIgnored: Bool = false,
@@ -172,7 +175,8 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         updateChannel: UpdateChannel = .standard,
         launchAtLogin: Bool = false,
         loginItemRegistration: LoginItemRegistrationReceipt? = nil,
-        lastCatchUpAt: Date? = nil
+        lastCatchUpAt: Date? = nil,
+        language: AppLanguage = .standard
     ) {
         self.showsSubagents = showsSubagents
         self.ignoreRules = ignoreRules
@@ -188,12 +192,14 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
         self.launchAtLogin = launchAtLogin
         self.loginItemRegistration = loginItemRegistration
         self.lastCatchUpAt = lastCatchUpAt
+        self.language = language
     }
 
     private enum CodingKeys: String, CodingKey {
         case ignoreRules, showsIgnored, didShowSetup, sceneZones, crewLiveliness
         case sessionWindow, notifiesOnDone, appearance, translucentSidebar
         case updateChannel, showsSubagents, launchAtLogin, loginItemRegistration, lastCatchUpAt
+        case language
     }
 
     public init(from decoder: any Decoder) throws {
@@ -247,6 +253,9 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
             forKey: .loginItemRegistration
         )
         lastCatchUpAt = try? container.decodeIfPresent(Date.self, forKey: .lastCatchUpAt)
+        // Absent or unrecognised means "follow the Mac", like the appearance:
+        // a typo in one hand-edited word costs that word, not the file.
+        language = (try? container.decode(AppLanguage.self, forKey: .language)) ?? .standard
     }
 
     public var isEmpty: Bool {
@@ -255,6 +264,7 @@ public struct AuspexSettings: Codable, Sendable, Equatable {
             && appearance == .standard && translucentSidebar && !showsSubagents
             && updateChannel == .standard && !launchAtLogin
             && loginItemRegistration == nil && lastCatchUpAt == nil
+            && language == .standard
     }
 }
 

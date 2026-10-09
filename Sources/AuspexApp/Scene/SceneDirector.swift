@@ -54,6 +54,11 @@ final class SceneDirector {
     private var tables: [String: TableNode] = [:]
     private var tethers: [String: TetherNode] = [:]
     private var deskBySession: [SessionKey: DeskNode] = [:]
+    /// Now's balloons, by the session whose desk wears one.
+    private var captions: [SessionKey: SceneCaption] = [:]
+    /// The desks wearing one right now, so taking a balloon down is a walk
+    /// over at most six nodes rather than over the building.
+    private var captioned: [SessionKey: DeskNode] = [:]
     /// Where each desk stands, in scene coordinates, so culling does not have
     /// to ask a node for its position while it is animating toward one.
     private var deskRects: [String: CGRect] = [:]
@@ -101,6 +106,18 @@ final class SceneDirector {
     /// enough to follow with the eye, short enough not to feel like a
     /// transition.
     private static let moveDuration: TimeInterval = 0.34
+
+    /// How long a desk that has left the plan takes to fade.
+    private static let fadeDuration: TimeInterval = 0.3
+
+    /// Until when a desk that has left the plan is still fading, in
+    /// `CACurrentMediaTime()` seconds.
+    private var fadingUntil: TimeInterval = 0
+
+    /// The room's idle motion: which stir is next, and when — see
+    /// ``SceneIdleBeat``.
+    private var beatRound: UInt64 = 0
+    private var nextBeatAt: TimeInterval?
 
     /// Who is between two places, and the node carrying them there.
     private var walkers: [SessionKey: WalkerNode] = [:]
@@ -241,7 +258,62 @@ final class SceneDirector {
         syncFloors(sessions: byKey)
         syncZones()
         syncContent(sessions: byKey)
+        syncArcMotion()
+        // After the content: a desk that changed hands this frame must lose
+        // the old occupant's balloon, and the person who moved to a bench must
+        // take theirs with them.
+        if !captions.isEmpty || !captioned.isEmpty { syncCaptions() }
         return moved
+    }
+
+    // MARK: Captions
+
+    /// Hangs Now's balloons. Nothing is touched when they are the ones already
+    /// hanging.
+    ///
+    /// - Returns: whether anything changed, and so whether there is a frame to
+    ///   draw.
+    @discardableResult
+    func apply(captions next: [SessionKey: SceneCaption]) -> Bool {
+        guard next != captions else { return false }
+        captions = next
+        syncCaptions()
+        return true
+    }
+
+    /// Puts each balloon on whichever node its session is drawn at, and takes
+    /// it off every node that no longer carries one.
+    private func syncCaptions() {
+        let now = Date()
+        var next: [SessionKey: DeskNode] = [:]
+        for (key, caption) in captions {
+            guard let node = deskBySession[key] else { continue }
+            node.setCaption(caption, now: now)
+            next[key] = node
+        }
+        let keep = Set(next.values.map(ObjectIdentifier.init))
+        for node in captioned.values where !keep.contains(ObjectIdentifier(node)) {
+            node.setCaption(nil, now: now)
+        }
+        captioned = next
+    }
+
+    /// Advances the stopwatch on every balloon the camera can see. Called from
+    /// the scene's own clock, so a stage nobody can see advances nothing; a
+    /// balloon that comes back into view is brought up to date by the cull.
+    ///
+    /// - Returns: how long until the next of those readings changes, or `nil`
+    ///   when none of them is a stopwatch — see
+    ///   ``NowFrame/compactDurationHold(_:)``.
+    func tickCaptions(now: Date) -> TimeInterval? {
+        var hold: TimeInterval?
+        for (key, node) in captioned where !node.isHidden {
+            node.refreshCaption(now: now)
+            guard let since = captions[key]?.since else { continue }
+            let next = NowFrame.compactDurationHold(now.timeIntervalSince(since))
+            hold = min(hold ?? next, next)
+        }
+        return hold
     }
 
     // MARK: Leaving
@@ -419,7 +491,10 @@ final class SceneDirector {
             } else {
                 node.isPaused = false
                 node.isHidden = false
-                node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
+                node.run(.sequence([.fadeOut(withDuration: Self.fadeDuration), .removeFromParent()]))
+                // No longer in the table the motion check reads, but still on
+                // the floor for as long as it takes to fade.
+                fadingUntil = CACurrentMediaTime() + Self.fadeDuration
             }
         }
         deskBySession = bySession
@@ -509,11 +584,27 @@ final class SceneDirector {
                 return created
             }()
             node.update(tether, reduceMotion: reduceMotion)
+            node.setPulsing(Self.isDelegating(sessions[tether.parent]))
         }
         for (id, node) in tethers where !live.contains(id) {
             node.removeFromParent()
             tethers.removeValue(forKey: id)
         }
+    }
+
+    /// Lets each drawn arc pulse while its parent is handing work over and
+    /// rest once it is not — the state changes far more often than the arcs
+    /// do, so this runs every pass, over at most ``arcLimit`` nodes.
+    private func syncArcMotion() {
+        for node in tethers.values {
+            guard let delegator = node.delegator else { continue }
+            node.setPulsing(Self.isDelegating(sessions[delegator]))
+        }
+    }
+
+    private static func isDelegating(_ session: SessionSnapshot?) -> Bool {
+        guard let session, case .delegating = session.state else { return false }
+        return true
     }
 
     /// The most arcs one picture is allowed.
@@ -785,12 +876,20 @@ final class SceneDirector {
         }
         culledTo = rect
 
+        var revealedCaption = false
         for (id, node) in desks {
             let onScreen = deskRects[id].map(rect.intersects) ?? true
             if node.isHidden == onScreen {
                 node.isHidden = !onScreen
                 node.isPaused = !onScreen
+                if onScreen, node.hasCaption { revealedCaption = true }
             }
+        }
+        // A balloon's stopwatch only advances while it can be seen, so one
+        // coming back into view is brought up to date before it is drawn.
+        if revealedCaption {
+            let now = Date()
+            for node in captioned.values where !node.isHidden { node.refreshCaption(now: now) }
         }
         for floor in frame.floors {
             guard let node = floors[floor.id] else { continue }
@@ -834,6 +933,66 @@ final class SceneDirector {
                 node.isPaused = !onScreen
             }
         }
+    }
+
+    // MARK: Motion
+
+    /// Whether anything the camera can see is in the middle of an action.
+    ///
+    /// What decides whether the frame being drawn is worth following with
+    /// another one — see `OfficeSKView`. Asked of the places the director
+    /// already keeps rather than by walking the scene graph: every action in
+    /// the office is on a desk and the person at it, a walker, an arc or a
+    /// table, and a culled one is paused, so it is not moving whatever it
+    /// holds.
+    func isAnimating(at time: TimeInterval = CACurrentMediaTime()) -> Bool {
+        if !walkers.isEmpty || time < fadingUntil { return true }
+        for node in desks.values where !node.isHidden && !node.isPaused && node.isAnimating {
+            return true
+        }
+        for node in tethers.values where !node.isHidden && !node.isPaused && node.hasActions() {
+            return true
+        }
+        for node in tables.values where !node.isHidden && !node.isPaused && node.isAnimating {
+            return true
+        }
+        return false
+    }
+
+    /// Stirs the room's idle motion, if a stir is due at `time`.
+    ///
+    /// Called from the scene's clock, so a stir that falls due while the view
+    /// is stopped happens on the frame the view is woken for it — see
+    /// ``nextBeat``. Only what the camera can see takes part; a culled place
+    /// is paused and would hold its stir until it was next on screen.
+    func beat(at time: TimeInterval) {
+        guard !reduceMotion else {
+            nextBeatAt = nil
+            return
+        }
+        guard let due = nextBeatAt else {
+            nextBeatAt = time + SceneIdleBeat.gap(after: beatRound)
+            return
+        }
+        guard time >= due else { return }
+        beatRound &+= 1
+        for node in desks.values where !node.isHidden && !node.isPaused {
+            node.beat(round: beatRound)
+        }
+        for (id, node) in tables where !node.isHidden && !node.isPaused {
+            node.beat(id: id, round: beatRound)
+        }
+        nextBeatAt = time + SceneIdleBeat.gap(after: beatRound)
+    }
+
+    /// When the room next stirs, in `CACurrentMediaTime()` seconds — or `nil`
+    /// when nothing the camera can see would stir with it, so a still office
+    /// with nobody idle on screen is not woken to find that out.
+    var nextBeat: TimeInterval? {
+        guard !reduceMotion, let nextBeatAt else { return nil }
+        let anybody = desks.values.contains { !$0.isHidden && !$0.isPaused && $0.hasIdleMotion }
+            || tables.values.contains { !$0.isHidden && !$0.isPaused && $0.hasIdleMotion }
+        return anybody ? nextBeatAt : nil
     }
 
     /// Puts everything back on screen, for the offscreen renderer — which
@@ -1039,6 +1198,7 @@ private final class FloorNode: SKNode {
         border.lineWidth = dashed.lineWidth
         border.fillColor = .clear
         border.zPosition = dashed.zPosition
+        border.strokeShader = dashed.strokeShader
 
         headerRule.strokeColor = theme.hairlineStrong
         headerRule.lineWidth = 1
@@ -1113,7 +1273,7 @@ private final class FloorNode: SKNode {
         if lastTitle != floor.title {
             lastTitle = floor.title
             title.attributedText = SceneText.label(
-                floor.title, size: 12, weight: .bold, color: theme.textPrimary
+                CoreVocabulary.localized(floor.title), size: 12, weight: .bold, color: theme.textPrimary
             )
             labelsNeedFitting = true
         }
@@ -1171,9 +1331,9 @@ private final class FloorNode: SKNode {
     /// teach different habits.
     private static func summary(_ counts: BoardSnapshot.Counts) -> String {
         var parts: [String] = []
-        if counts.waitingPermission > 0 { parts.append("\(counts.waitingPermission) blocked") }
-        if counts.delegating > 0 { parts.append("\(counts.delegating) delegating") }
-        parts.append("\(counts.live) live")
+        if counts.waitingPermission > 0 { parts.append(L10n.Aviary.Floor.blocked(count: counts.waitingPermission)) }
+        if counts.delegating > 0 { parts.append(L10n.Aviary.Floor.delegating(count: counts.delegating)) }
+        parts.append(L10n.Aviary.Room.live(count: counts.live))
         return parts.joined(separator: " · ")
     }
 }
@@ -1189,6 +1349,11 @@ private final class FloorNode: SKNode {
 private final class TetherNode: SKShapeNode {
     private var lastFrom: CGPoint = .zero
     private var lastTo: CGPoint = .zero
+    /// The session that handed the work over, whose state decides whether
+    /// the arc pulses.
+    private(set) var delegator: SessionKey?
+    /// Whether the parent is handing work over right now.
+    private var isPulsing = true
     /// How much of the arc the camera's distance leaves. Multiplied into the
     /// alpha the pulse is running at, so a zoomed-out arc dims rather than
     /// stopping.
@@ -1227,7 +1392,7 @@ private final class TetherNode: SKShapeNode {
     /// ends up brightening as the reader zooms out.
     private func breathe() {
         removeAllActions()
-        guard !isStill else {
+        guard !isStill, isPulsing else {
             alpha = 0.8 * zoomFade
             return
         }
@@ -1244,7 +1409,17 @@ private final class TetherNode: SKShapeNode {
 
     private var isStill = false
 
+    /// Pulses while the parent is delegating; a finished handover leaves a
+    /// quiet line. Re-runs the light only when that changes, so a pulse in
+    /// flight is not restarted by every board frame.
+    func setPulsing(_ pulsing: Bool) {
+        guard pulsing != isPulsing else { return }
+        isPulsing = pulsing
+        breathe()
+    }
+
     func update(_ tether: SceneTether, reduceMotion: Bool) {
+        delegator = tether.parent
         let from = CGPoint(x: tether.from.x + 26, y: -tether.from.y + 30)
         let to = CGPoint(x: tether.to.x - 20, y: -tether.to.y + 26)
         guard from != lastFrom || to != lastTo else { return }

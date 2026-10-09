@@ -117,7 +117,23 @@ public final class AppEnvironment {
         ignoreDraft = IgnoreDraft(tag: tag, value: value)
     }
 
+    /// Whether the board is on screen anywhere — the main window or the menu
+    /// bar's panel. Fed by the ``SurfaceVisibilityProbe`` each of them
+    /// carries.
+    let visibility = SurfaceVisibility()
+
+    /// Whether the registry's publishing rate follows ``visibility``.
+    ///
+    /// Only the launched app turns it on. The offscreen renderers draw into a
+    /// bitmap, no window of theirs ever reports itself visible, and a board
+    /// that believed nobody was looking would publish at the slow rate through
+    /// the very warm-up they are waiting on.
+    var followsVisibility = false
+
     private var registry: SessionRegistry?
+    /// The grouping pass's placement service, kept so a scratch folder the
+    /// person adds in Settings reaches it without a relaunch.
+    private var placements: PlacementService?
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
     private var eventContinuation: AsyncStream<AgentEvent>.Continuation?
@@ -215,7 +231,8 @@ public final class AppEnvironment {
         // Before the pipeline: the first frame should already be placed by the
         // person's projects and filtered by their rules, rather than showing
         // everything for a moment and then settling.
-        catalog.onChange = { [board, catalog] claims, rules, showsIgnored in
+        catalog.onChange = { [weak self, board, catalog] claims, rules, showsIgnored in
+            self?.applyScratchFolders(rules.scratchPrefixes)
             board.setUserLayer(
                 claims: claims,
                 rules: rules,
@@ -266,6 +283,15 @@ public final class AppEnvironment {
 
         let registry = SessionRegistry(store: store)
         self.registry = registry
+        if followsVisibility {
+            // In order, through one stream: two separate hops to the actor
+            // could land the other way round and leave the slow rate on with
+            // the window open.
+            let changes = visibility.changes
+            pipelineTasks.append(Task.detached {
+                for await observed in changes { await registry.setObserved(observed) }
+            })
+        }
         board.autoSelectsFirstSession = mode == .demo
         // The sidebar's tree is derived from the same frame the board is, in
         // the same pass and off the main actor; the names it is labelled with
@@ -365,6 +391,79 @@ public final class AppEnvironment {
         }
 
         startGrouping(registry: registry, table: table, mode: mode)
+        // A demo's store lives in memory and holds nothing older than the
+        // process; there is no history in it to trim.
+        if mode == .live {
+            startScratchPurge(store: store)
+            startMaintenance(store: store)
+        }
+    }
+
+    /// Removes, once per store, the project rows earlier builds wrote for
+    /// scratch directories. See ``ScratchProjectPurge``.
+    ///
+    /// At launch rather than with the maintenance pass a minute later: it is
+    /// one short transaction over a table of a few hundred rows, and the
+    /// sidebar's name map should stop offering those names as soon as it can.
+    /// The person's own projects are read now and protected; the rules are
+    /// the ones the grouping pass was just given.
+    private func startScratchPurge(store: AuspexStore) {
+        let purge = ScratchProjectPurge(store: store)
+        let rules = ScratchRules(userPrefixes: catalog.rules.scratchPrefixes)
+        let protectedRoots = catalog.projects.flatMap(\.roots)
+        let board = board
+        let projects = projects
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak projects] in
+            do {
+                guard let report = try await purge.runIfNeeded(
+                    rules: rules,
+                    protectedRoots: protectedRoots
+                ), report.projectsRemoved > 0 else { return }
+                await projects?.refreshNames()
+                let noun = report.projectsRemoved == 1 ? "folder" : "folders"
+                await board?.record(
+                    notice: "Auspex stopped listing \(report.projectsRemoved) scratch \(noun) as projects."
+                )
+            } catch {
+                await board?.record(notice: "Scratch folders could not be tidied: \(error).")
+            }
+        })
+    }
+
+    /// Trims the stored history, off the main actor and at utility priority.
+    ///
+    /// A minute after launch, then every six hours: the one-time removal of
+    /// the liveness heartbeats earlier builds recorded, and the retention
+    /// policy — both in short batches, so the registry's writes interleave.
+    /// See ``StoreMaintenance``. Only a pass that removed something says so,
+    /// and only in counts.
+    private func startMaintenance(store: AuspexStore) {
+        let maintenance = StoreMaintenance(store: store)
+        let board = board
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board] in
+            await maintenance.run { [weak board] result in
+                switch result {
+                case .success(let pass):
+                    guard pass.totalDeleted > 0 else { return }
+                    await board?.record(notice: Self.describe(pass))
+                case .failure(let error):
+                    await board?.record(notice: "The store could not be trimmed: \(error).")
+                }
+            }
+        })
+    }
+
+    /// One maintenance pass, as counts.
+    nonisolated private static func describe(_ pass: StoreMaintenance.Pass) -> String {
+        var parts: [String] = []
+        if let purged = pass.livenessEventsPurged, purged > 0 {
+            parts.append("\(purged) liveness heartbeats")
+        }
+        let events = pass.retention.eventsOverAgeLimit + pass.retention.eventsOverPerSessionLimit
+        if events > 0 { parts.append("\(events) old events") }
+        let messages = pass.retention.messagesOverAgeLimit + pass.retention.messagesFromExcludedHarnesses
+        if messages > 0 { parts.append("\(messages) indexed messages") }
+        return "Auspex trimmed its store: " + parts.joined(separator: ", ") + "."
     }
 
     /// Brings up the MCP listener and points it at the board.
@@ -455,9 +554,9 @@ public final class AppEnvironment {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     // For the sessions the registry does not hold: bootstrap
-                    // loads the most recent few hundred, and one past that
-                    // limit is seeded from its next event with a brief the
-                    // store already knows better than.
+                    // loads only the working set, and one outside it is
+                    // seeded from its next event with a brief the store
+                    // already knows better than.
                     board.setDerivedBriefs(report.briefs)
                     // The pass may have decided, on the person's behalf, that
                     // sessions quiet for two days have been read. The board
@@ -492,9 +591,16 @@ public final class AppEnvironment {
         table: any ProcessTableReading,
         mode: Mode
     ) {
+        // The demo's directories are invented, so none of them is on disk:
+        // asked honestly, every one would be scratch. It says they all exist.
         let placements = mode == .demo
-            ? PlacementService(resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory))
-            : PlacementService()
+            ? PlacementService(
+                resolver: ProjectResolver(homeDirectory: DemoScript.homeDirectory),
+                rules: ScratchRules(home: DemoScript.homeDirectory),
+                directoryExists: { _ in true }
+            )
+            : PlacementService(rules: ScratchRules(userPrefixes: catalog.rules.scratchPrefixes))
+        self.placements = placements
         let groupingTable: any ProcessTableReading
         if mode == .demo {
             groupingTable = DemoGroupingProcessTable()
@@ -507,6 +613,14 @@ public final class AppEnvironment {
             placements: placements
         )
         pipelineTasks.append(Task.detached { await grouping.run(every: Self.groupingInterval) })
+    }
+
+    /// Hands the person's scratch folders to the placement service. A no-op
+    /// before grouping starts — the service is built with the rules in force
+    /// then — and inside the service when nothing changed.
+    private func applyScratchFolders(_ prefixes: [String]) {
+        guard let placements else { return }
+        Task { await placements.setUserScratchPrefixes(prefixes) }
     }
 
     /// Stops every producer and flushes what the registry has buffered.
@@ -665,12 +779,12 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .live: "Live"
-        case .allSessions: "All sessions"
-        case .projects: "Projects"
-        case .tasks: "Roost"
-        case .harnesses: "Harnesses"
-        case .settings: "Settings"
+        case .live: L10n.ViewMode.now
+        case .allSessions: L10n.Section.sessions
+        case .projects: L10n.Section.projects
+        case .tasks: L10n.Section.tasks
+        case .harnesses: L10n.Section.harnesses
+        case .settings: L10n.Section.settings
         }
     }
 
@@ -731,6 +845,25 @@ public struct AppLaunchOptions: Sendable {
     /// `AppEnvironment.appearanceOverride`.
     public var appearance: AppearanceMode?
 
+    /// Whether Now opens with its stage, when the command line said.
+    ///
+    /// The stage is the one part of Now with a clock, so "Now with the office"
+    /// and "Now, lists only" are two different rows of the performance
+    /// budget, and the second could otherwise only be reached by a click.
+    /// Like the appearance flag it is held for the launch and never written
+    /// down. `nil` is the screen's own default, which is the stage open.
+    public var showsStage: Bool?
+
+    /// How long Now's stage waits without input before it folds, when a demo
+    /// asked for a different wait than ``StageIdleCollapse/delay``.
+    ///
+    /// `AUSPEX_STAGE_IDLE_DELAY=5` folds it five seconds after launch, which
+    /// is the only way to watch the fold happen without sitting through two
+    /// and a half minutes. Read for a demo launch only: a live launch ignores
+    /// it, so a variable left in somebody's shell cannot change how the app
+    /// they use every day behaves.
+    public var stageIdleDelay: Duration?
+
     /// Reads the flag from the command line, with an environment variable as
     /// the alternative for the case where the launcher owns the argv —
     /// `open -a Auspex` cannot pass arguments through.
@@ -748,17 +881,33 @@ public struct AppLaunchOptions: Sendable {
         let appearance = value(after: "--appearance") ?? environment["AUSPEX_APPEARANCE"]
         let scale = (value(after: "--demo-scale") ?? environment["AUSPEX_DEMO_SCALE"])
             .flatMap(Int.init)
+        let stage = value(after: "--stage") ?? environment["AUSPEX_STAGE"]
+        // A scale asks for a demo. Nobody types `--demo-scale 12` meaning
+        // "and also tail my real stores", and a flag that silently did
+        // nothing without a second flag beside it is a flag that gets
+        // reported as broken.
+        let isDemo = rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
+            || (scale ?? 1) > 1
         return AppLaunchOptions(
-            // A scale asks for a demo. Nobody types `--demo-scale 12` meaning
-            // "and also tail my real stores", and a flag that silently did
-            // nothing without a second flag beside it is a flag that gets
-            // reported as broken.
-            isDemo: rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
-                || (scale ?? 1) > 1,
+            isDemo: isDemo,
             demoScale: Self.clampedScale(scale),
             viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(named:)),
-            appearance: appearance.flatMap(AppearanceMode.init(rawValue:))
+            appearance: appearance.flatMap(AppearanceMode.init(rawValue:)),
+            showsStage: stage.flatMap(Self.stageSwitch),
+            stageIdleDelay: isDemo
+                ? StageIdleCollapse.delay(seconds: environment["AUSPEX_STAGE_IDLE_DELAY"])
+                : nil
         )
+    }
+
+    /// `on` or `off`, the way a person types a switch. Anything else is not
+    /// an answer, and leaves the screen's default alone.
+    static func stageSwitch(_ raw: String) -> Bool? {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "on", "1": true
+        case "off", "0": false
+        default: nil
+        }
     }
 
     /// A scale that cannot make the app unusable by accident.
@@ -782,7 +931,10 @@ extension AppEnvironment {
     @MainActor
     public static func launched(_ options: AppLaunchOptions = .current()) -> AppEnvironment {
         let environment = AppEnvironment(mode: options.mode, demoScale: options.demoScale)
+        environment.followsVisibility = true
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
+        if let showsStage = options.showsStage { environment.board.showsStage = showsStage }
+        if let delay = options.stageIdleDelay { environment.board.stageIdle.delay = delay }
         environment.appearanceOverride = options.appearance
         return environment
     }

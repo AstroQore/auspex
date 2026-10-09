@@ -17,6 +17,8 @@ import Testing
 @MainActor
 @Suite("Window cost")
 struct WindowCostTests {
+    init() { pinEnglishInterface() }
+
     // MARK: - The scroll viewport
 
     @Test("Roost scrolling has no custom placement or lazy-prefetch feedback path")

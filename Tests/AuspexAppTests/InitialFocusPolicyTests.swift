@@ -126,7 +126,7 @@ struct InitialFocusPolicyTests {
         let sources = try appSources()
         let source = try #require(sources["SessionControlModel.swift"])
 
-        #expect(source.contains("Button(\"Cancel\", role: .cancel"))
+        #expect(source.contains("Button(L10n.Common.cancel, role: .cancel"))
         #expect(source.contains(".keyboardShortcut(.cancelAction)"))
         #expect(source.contains("Button(prompt.confirmTitle, role: .destructive"))
         #expect(source.contains("control.confirm(prompt)"))

@@ -48,6 +48,10 @@ struct RootView: View {
         @Bindable var model = environment.board
         @Bindable var environment = environment
 
+        // Keyed on the language, so a choice in Settings redraws every word in
+        // the window at once. Below the window's own state — the section, the
+        // clock, the columns — so changing language does not move the reader.
+        let language = environment.catalog.language
         NavigationSplitView(columnVisibility: splitViewColumns) {
             SidebarView(
                 section: $section,
@@ -55,6 +59,7 @@ struct RootView: View {
                 projects: environment.projects,
                 tasks: environment.tasks,
                 mode: environment.mode,
+                harnessCount: environment.harnesses.detected.count,
                 isTranslucent: environment.catalog.translucentSidebar
             )
         } content: {
@@ -70,12 +75,18 @@ struct RootView: View {
             }
                 .navigationSplitViewColumnWidth(min: 360, ideal: 420)
         }
+        .id(language)
         .auspexAppearance(environment.appearance)
         .environment(clock)
         // Zero-sized, hidden, and in the background so it cannot take a click:
         // it is in the tree only so that the window can be found from inside
         // it. See ``WindowSizingProbe``.
         .background(WindowSizingProbe().frame(width: 0, height: 0))
+        // The same trick for a different question: whether this window can be
+        // seen, which is what decides how often the registry publishes.
+        .background(
+            SurfaceVisibilityProbe(visibility: environment.visibility).frame(width: 0, height: 0)
+        )
         .sheet(item: $environment.ignoreDraft) { draft in
             IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
                 environment.ignoreDraft = nil
@@ -241,6 +252,7 @@ struct RootView: View {
             }
         }
         .onChange(of: section) { _, new in
+            model.section = new ?? .live
             // "All sessions" is the same board with its history opened out, so
             // selecting it is what opens the collapsed section rather than a
             // separate screen that would show the same cards twice.
@@ -291,7 +303,8 @@ struct RootView: View {
                     // The mode picker lives in the header, so the container is
                     // a plain switch: adding a way of looking at the board is
                     // a case in `BoardViewMode` and a line here.
-                    switch model.viewMode {
+                    switch section.effectiveMode(model.viewMode) {
+                    case .now: NowView(model: model)
                     case .board: BoardView(model: model)
                     case .scene: SceneContainerView(model: model)
                     case .crew: CrewView(model: model, liveliness: environment.catalog.crewLiveliness)
@@ -365,6 +378,8 @@ struct SidebarView: View {
     let projects: ProjectsModel
     let tasks: TasksModel
     let mode: AppEnvironment.Mode
+    /// How many harnesses this Mac has, for the Harnesses row's count.
+    var harnessCount: Int?
     /// Whether the column sits on the system's sidebar material. `false` in
     /// the offscreen renderers, which have no window behind which a material
     /// could sample anything and would draw it as a flat grey rectangle.
@@ -382,22 +397,44 @@ struct SidebarView: View {
 
             SidebarRow(
                 title: BoardSection.live.title,
-                count: model.summary.live,
+                count: nowCount,
+                countTint: AuspexPalette.accent,
                 isSelected: section == .live
             ) {
-                // The Live row is the way back to the whole board: it clears
+                // The Now row is the way back to the whole board: it clears
                 // the project binding as well as selecting the section, so
                 // "show me everything again" is one click rather than a click
-                // and a hunt for the crumb.
+                // and a hunt for the crumb. And it is called Now, so it opens
+                // Now — whichever mode the board was last switched to.
                 section = .live
                 model.focusedProjectKey = nil
+                model.viewMode = .now
             }
+
+            SidebarRow(
+                title: BoardSection.tasks.title,
+                count: model.reviewCount > 0 ? nil : tasks.openCount,
+                trailingText: model.reviewCount > 0 ? L10n.Sidebar.review(count: model.reviewCount) : nil,
+                isSelected: section == .tasks
+            ) { section = .tasks }
 
             SidebarRow(
                 title: BoardSection.allSessions.title,
                 count: model.sessionCount,
                 isSelected: section == .allSessions
             ) { section = .allSessions }
+
+            SidebarRow(
+                title: BoardSection.projects.title,
+                count: tree.projects.count,
+                isSelected: section == .projects
+            ) { section = .projects }
+
+            SidebarRow(
+                title: BoardSection.harnesses.title,
+                count: harnessCount,
+                isSelected: section == .harnesses
+            ) { section = .harnesses }
 
             projectsHeader
 
@@ -433,17 +470,6 @@ struct SidebarView: View {
             if mode == .demo { demoNote }
 
             SidebarRow(
-                title: BoardSection.tasks.title,
-                count: tasks.openCount,
-                isSelected: section == .tasks
-            ) { section = .tasks }
-
-            SidebarRow(
-                title: BoardSection.harnesses.title,
-                isSelected: section == .harnesses
-            ) { section = .harnesses }
-
-            SidebarRow(
                 title: BoardSection.settings.title,
                 isSelected: section == .settings,
                 isEnabled: BoardSection.settings.isAvailable,
@@ -468,34 +494,21 @@ struct SidebarView: View {
         // ⌘⌥S into a window a person could not navigate.
     }
 
-    /// The rule over the tree, with the way into the Projects page on it.
-    ///
-    /// A button on the header rather than a row of its own: the tree below it
-    /// *is* the list of projects, and a second row saying "Projects" above a
-    /// list of projects would be a row that says nothing.
+    /// What the Now row counts: the sessions asking for a person, and the
+    /// ones that may be. The same two numbers as the first two pills in Now's
+    /// header, in the accent, because it is the one count in the column that
+    /// is about the reader.
+    private var nowCount: Int { model.nowCounts.asking }
+
+    /// The rule over the tree. The Projects row above is the way into the
+    /// page; this only says what the list under it is.
     private var projectsHeader: some View {
-        HStack(spacing: 6) {
-            Text(BoardSection.projects.title)
-                .auspexLabel(AuspexType.labelLarge)
-                .foregroundStyle(AuspexPalette.text3)
-            Spacer(minLength: 4)
-            Button {
-                section = .projects
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(
-                        section == .projects ? AuspexPalette.text : AuspexPalette.text3
-                    )
-                    .frame(width: 20, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.auspex)
-            .help("Manage projects: make one, import from a harness, pin or rename")
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 14)
-        .padding(.bottom, 6)
+        Text(BoardSection.projects.title)
+            .auspexLabel(AuspexType.labelLarge)
+            .foregroundStyle(AuspexPalette.text3)
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
     }
 
     /// The app's own mark and name, at the top of the column where a person
@@ -521,10 +534,10 @@ struct SidebarView: View {
             HStack(spacing: 5) {
                 Image(systemName: "theatermasks")
                     .font(.system(size: 9, weight: .semibold))
-                Text("Demo replay").font(AuspexType.labelSmall)
+                Text(L10n.Sidebar.demoReplay).font(AuspexType.labelSmall)
             }
             .foregroundStyle(AuspexPalette.stateDelegating)
-            Text("Fabricated sessions, in-memory store. No harness store is read.")
+            Text(L10n.Sidebar.demoNote)
                 .font(.system(size: 10))
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -538,6 +551,10 @@ struct SidebarView: View {
 struct SidebarRow: View {
     let title: String
     var count: Int?
+    /// The count's colour, when it is about the reader rather than a tally.
+    var countTint: Color?
+    /// Words in place of the count — `16 review`.
+    var trailingText: String?
     var isSelected: Bool
     var isEnabled = true
     var trailing: String?
@@ -561,11 +578,16 @@ struct SidebarRow: View {
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
                                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
                         )
+                } else if let trailingText {
+                    Text(trailingText)
+                        .font(AuspexType.monoCount)
+                        .auspexTabularDigits()
+                        .foregroundStyle(AuspexPalette.text3)
                 } else if let count {
                     Text("\(count)")
                         .font(AuspexType.monoCount)
                         .auspexTabularDigits()
-                        .foregroundStyle(AuspexPalette.text3)
+                        .foregroundStyle(countTint ?? AuspexPalette.text3)
                 }
             }
             .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
@@ -694,24 +716,21 @@ struct ComingSoonView: View {
     }
 
     private var headline: String {
-        section.arrivesIn.map { "Arrives in \($0)." } ?? section.title
+        section.arrivesIn.map { L10n.Placeholder.arrivesIn(milestone: $0) } ?? section.title
     }
 
     private var explanation: String {
         switch section {
         case .projects, .allSessions:
-            "Sessions grouped by git root and worktree, so three agents in three "
-                + "worktrees of one repository read as one project."
+            L10n.Placeholder.projects
         case .harnesses:
-            "Which harnesses are installed, where their stores are, and how far "
-                + "each tailer has read."
+            L10n.Placeholder.harnesses
         case .tasks:
-            "The shared task board, exposed over MCP so an agent can see what its "
-                + "siblings are working on."
+            L10n.Placeholder.tasks
         case .settings:
-            "Which character each harness wears, and where packages come from."
+            L10n.Settings.Pane.charactersSubtitle
         case .live:
-            "The live board."
+            L10n.Placeholder.live
         }
     }
 }
@@ -728,7 +747,7 @@ struct SearchResultsView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if model.searchHits.isEmpty {
-                Text("Nothing matched.")
+                Text(L10n.Palette.nothingMatched)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text3)
                     .padding(12)
@@ -754,11 +773,11 @@ struct SearchResultsView: View {
 
     private var header: some View {
         HStack {
-            Text("\(model.searchHits.count) matches")
+            Text(L10n.Search.matches(count: model.searchHits.count))
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.text3)
             Spacer()
-            Text("Full text · every harness")
+            Text(L10n.Search.scope)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.text3)
         }

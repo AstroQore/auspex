@@ -44,7 +44,7 @@ struct ProjectsPageView: View {
                 header
                 if let error = catalog.saveErrorDescription {
                     Label(
-                        "Your change is in effect but could not be saved: \(error)",
+                        L10n.Projects.saveError(error: error),
                         systemImage: "exclamationmark.triangle"
                     )
                     .font(AuspexType.body)
@@ -81,7 +81,7 @@ struct ProjectsPageView: View {
             HStack(spacing: 6) {
                 Image(systemName: "folder")
                     .font(.system(size: 10, weight: .semibold))
-                Text("Projects").auspexLabel()
+                Text(L10n.Projects.eyebrow).auspexLabel()
             }
             .foregroundStyle(AuspexPalette.stateTool)
 
@@ -89,20 +89,14 @@ struct ProjectsPageView: View {
                 .font(AuspexType.display)
                 .foregroundStyle(AuspexPalette.text)
 
-            Text(
-                "Auspex groups sessions by git root on its own, so three worktrees of one "
-                    + "repository are already one project. A project of your own claims "
-                    + "folders instead: every session working under a claimed folder is "
-                    + "placed in it, whatever git says, and the deepest claim wins when two "
-                    + "overlap."
-            )
+            Text(L10n.Projects.intro)
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                Button("New project…", systemImage: "plus") { isCreating = true }
-                Button("Import from harness…", systemImage: "square.and.arrow.down") {
+                Button(L10n.Projects.new, systemImage: "plus") { isCreating = true }
+                Button(L10n.Projects.import, systemImage: "square.and.arrow.down") {
                     isImporting = true
                 }
                 Spacer(minLength: 0)
@@ -117,10 +111,10 @@ struct ProjectsPageView: View {
         let auto = automaticProjects.count
         guard mine > 0 else {
             return auto == 0
-                ? "No projects yet."
-                : "\(auto) found on the board, none of them yours yet."
+                ? L10n.Projects.Headline.none
+                : L10n.Projects.Headline.autoOnly(count: auto)
         }
-        return "\(mine) yours, \(auto) more found on the board."
+        return L10n.Projects.Headline.mixed(mine: mine, auto: auto)
     }
 
     // MARK: Yours
@@ -128,12 +122,9 @@ struct ProjectsPageView: View {
     @ViewBuilder
     private var yours: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionRule("Yours", detail: "Claim folders; the board follows.")
+            SectionRule(L10n.Projects.yours, detail: L10n.Projects.yoursDetail)
             if catalog.projects.isEmpty {
-                Text(
-                    "Nothing yet. Make one from a folder, or import the projects Claude Code "
-                        + "and Codex already know about."
-                )
+                Text(L10n.Projects.yoursEmpty)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -176,7 +167,7 @@ struct ProjectsPageView: View {
                 ProjectTree.Project(
                     key: key,
                     name: key == TaskProject.scratchKey
-                        ? TaskProject.scratchName
+                        ? L10n.Common.scratch
                         : BoardGrouping.projectName(forPath: key),
                     checkouts: [],
                     harnesses: [],
@@ -190,11 +181,11 @@ struct ProjectsPageView: View {
     private var automatic: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionRule(
-                "Automatic",
-                detail: "Worked out from where sessions are running. Nothing is stored."
+                L10n.Projects.automatic,
+                detail: L10n.Projects.automaticDetail
             )
             if automaticProjects.isEmpty {
-                Text("Every project on the board is one of yours.")
+                Text(L10n.Projects.automaticEmpty)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text3)
                     .padding(14)
@@ -249,14 +240,14 @@ private struct TaskCountPill: View {
             HStack(spacing: 4) {
                 Image(systemName: "checklist")
                     .font(.system(size: 9))
-                Text(counts.openDescription ?? "all done")
+                Text(counts.localizedOpenDescription ?? L10n.Projects.allDone)
                     .font(AuspexType.caption)
             }
             .foregroundStyle(counts.open > 0 ? AuspexPalette.text2 : AuspexPalette.text3)
             .help(
                 counts.open > 0
-                    ? "\(counts.open) of \(counts.total) tasks in this project are open"
-                    : "Every task in this project is done"
+                    ? L10n.Projects.tasksHelp(open: counts.open, total: counts.total)
+                    : L10n.Projects.allTasksDone
             )
         }
     }
@@ -281,7 +272,7 @@ private struct ProjectCard: View {
                 colourMenu
                 // Editable in place: renaming a project is the most common
                 // edit and a sheet for one text field is a sheet nobody wants.
-                TextField("Name", text: $name)
+                TextField(L10n.Projects.name, text: $name)
                     .textFieldStyle(.plain)
                     .font(AuspexType.cardTitle)
                     .foregroundStyle(AuspexPalette.text)
@@ -290,11 +281,11 @@ private struct ProjectCard: View {
                     .frame(maxWidth: 260, alignment: .leading)
 
                 if liveCount > 0 {
-                    Text("\(liveCount) live")
+                    Text(L10n.Board.Section.live(count: liveCount))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(AuspexPalette.stateWriting)
                 } else if sessionCount > 0 {
-                    Text("\(sessionCount) on the board")
+                    Text(L10n.Projects.onBoard(count: sessionCount))
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 }
@@ -312,7 +303,7 @@ private struct ProjectCard: View {
                         )
                 }
                 .buttonStyle(.auspex)
-                .help(project.isPinned ? "Stop pinning it to the top" : "Pin it to the top")
+                .help(project.isPinned ? L10n.Projects.unpinHelp : L10n.Projects.pinHelp)
 
                 Button {
                     catalog.delete(project)
@@ -322,7 +313,7 @@ private struct ProjectCard: View {
                         .foregroundStyle(AuspexPalette.text3)
                 }
                 .buttonStyle(.auspex)
-                .help("Delete the project. Its sessions go back to where git puts them.")
+                .help(L10n.Projects.deleteHelp)
             }
 
             roots
@@ -342,7 +333,7 @@ private struct ProjectCard: View {
 
     private var colourMenu: some View {
         Menu {
-            Button("None") { catalog.recolour(project, to: nil) }
+            Button(L10n.Colour.none) { catalog.recolour(project, to: nil) }
             ForEach(ProjectColour.choices, id: \.hex) { choice in
                 Button(choice.name) { catalog.recolour(project, to: choice.hex) }
             }
@@ -355,7 +346,7 @@ private struct ProjectCard: View {
         .buttonStyle(.auspex)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("The project's colour on the board")
+        .help(L10n.Projects.colourHelp)
     }
 
     private var roots: some View {
@@ -380,15 +371,15 @@ private struct ProjectCard: View {
                             .foregroundStyle(AuspexPalette.text3)
                     }
                     .buttonStyle(.auspex)
-                    .help("Stop claiming this folder")
+                    .help(L10n.Projects.unclaimFolder)
                 }
             }
             if project.roots.isEmpty {
-                Text("Claims nothing yet, so no session is placed in it.")
+                Text(L10n.Projects.claimsNothing)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.stateStale)
             }
-            Button("Add folder…", systemImage: "plus") {
+            Button(L10n.Projects.addFolder, systemImage: "plus") {
                 guard let path = FolderPicker.choose() else { return }
                 catalog.addRoot(path, to: project)
             }
@@ -404,7 +395,7 @@ private struct ProjectCard: View {
             .sorted { $0.displayName < $1.displayName }
             .map(\.displayName)
             .joined(separator: ", ")
-        return "Imported from \(harnesses)."
+        return L10n.Projects.importedFrom(harnesses: harnesses)
     }
 }
 
@@ -429,7 +420,7 @@ private struct AutomaticProjectRow: View {
             Spacer(minLength: 8)
             TaskCountPill(counts: tasks)
             if project.liveCount > 0 {
-                Text("\(project.liveCount) live")
+                Text(L10n.Board.Section.live(count: project.liveCount))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(AuspexPalette.stateWriting)
             }
@@ -437,7 +428,7 @@ private struct AutomaticProjectRow: View {
             // the scratch project are not paths, and offering to make a project
             // out of one would be offering to claim nothing.
             if TaskProject.subtitle(forKey: project.key) != nil {
-                Button("Make a project") {
+                Button(L10n.Projects.makeAProject) {
                     catalog.addProject(name: project.name, roots: [project.key])
                 }
                 .controlSize(.small)
@@ -450,9 +441,9 @@ private struct AutomaticProjectRow: View {
     /// The line under the name: the directory, or why there is not one.
     private var subtitle: String {
         if project.key == TaskProject.scratchKey {
-            return "Work filed before Auspex could tell where it belonged"
+            return L10n.Projects.scratchSubtitle
         }
-        return PseudoProject.isPseudo(project.key) ? "No working directory" : project.key
+        return PseudoProject.isPseudo(project.key) ? L10n.Projects.noDirectory : project.key
     }
 }
 
@@ -492,13 +483,13 @@ struct SectionRule: View {
 /// claims nothing and says nothing about why.
 enum FolderPicker {
     @MainActor
-    static func choose(message: String = "Choose a folder for this project") -> String? {
+    static func choose(message: String = L10n.Projects.chooseFolder) -> String? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.message = message
-        panel.prompt = "Claim"
+        panel.prompt = L10n.Projects.claim
         guard panel.runModal() == .OK else { return nil }
         return panel.url?.path
     }

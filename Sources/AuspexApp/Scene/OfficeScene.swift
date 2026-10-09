@@ -179,6 +179,49 @@ final class OfficeScene: SKScene {
             director.select(selected)
             if let selected { revealDesk(of: selected) }
         }
+        // Whatever the board changed, a still office has to draw it; if it
+        // changed nothing that moves, the view stops again after one frame.
+        requestFrame()
+    }
+
+    /// Hangs Now's balloons over the people they are about.
+    ///
+    /// Separate from ``update(board:selected:focusedProject:reduceMotion:theme:zones:attention:)``
+    /// because the aviary never sends any, and because the balloons change on
+    /// a different rhythm from the room: their stopwatches are re-read from
+    /// the scene's own clock when a reading is due to change — at most every
+    /// ``captionStep`` seconds — while the room only moves when the board
+    /// does.
+    func setCaptions(_ captions: [SessionKey: SceneCaption]) {
+        hasCaptions = !captions.isEmpty
+        guard director.apply(captions: captions) else { return }
+        // New words were just set; the stopwatches are read again on the next
+        // frame and scheduled from there.
+        nextCaptionTick = 0
+        requestFrame()
+    }
+
+    private var hasCaptions = false
+    /// When the balloons' stopwatches are next re-read, in
+    /// `CACurrentMediaTime()` seconds. Infinite when none of them is due to
+    /// change on its own.
+    private var nextCaptionTick: TimeInterval = 0
+
+    /// The shortest gap between two re-readings of the balloons'
+    /// stopwatches. Under ten minutes a reading has seconds in it and would
+    /// otherwise change — and cost a frame — every second; a balloon is read
+    /// at a glance, and a glance does not need the units digit.
+    static let captionStep: TimeInterval = 5
+
+    /// Asks the view to draw, because something in the picture changed.
+    ///
+    /// A view whose last frame had nothing moving in it has stopped its clock
+    /// (see `OfficeSKView`), so every change that does not arrive through an
+    /// action — a board frame, a balloon, the pointer, new art — says so here.
+    /// Without a view, which is how the tests and the offscreen renderer hold
+    /// a scene, it does nothing.
+    func requestFrame() {
+        (view as? OfficeSKView)?.wake()
     }
 
     // MARK: - Pointing the camera
@@ -250,6 +293,26 @@ final class OfficeScene: SKScene {
         setViewport(viewport.focused(on: rect.insetBy(dx: -110, dy: -80)), animated: animated)
     }
 
+    /// Frames Now's stage: the office at half its own scale — close enough
+    /// that a person is a person and their balloon is a sentence, far enough
+    /// to see the room around them — centred on `key`'s desk when there is one
+    /// to centre on.
+    ///
+    /// Not ``fitAll(animated:)``: a whole building fitted into a strip 380
+    /// points tall is a picture of a building, with nobody in it legible.
+    func frameStage(on key: SessionKey?) {
+        cameraController.setViewSize(size)
+        var next = viewport.zoomed(to: Self.stageZoom)
+        if let key, let rect = director.deskRect(for: key) {
+            next = next.centered(on: CGPoint(x: rect.midX, y: rect.midY + 30))
+        }
+        hasFitted = true
+        setViewport(next)
+    }
+
+    /// The stage's zoom: a rung of the ladder, so the pixel art stays whole.
+    static let stageZoom: CGFloat = 0.5
+
     /// Frames one project's room, or the whole building when there is no
     /// project to frame.
     private func apply(focus project: String?, animated: Bool) {
@@ -297,6 +360,16 @@ final class OfficeScene: SKScene {
     /// Whether a session has walked out of its company's door. Likewise.
     func hasDeparted(_ key: SessionKey) -> Bool { director.hasDeparted(key) }
 
+    /// Whether anything the camera can see is in the middle of an action —
+    /// what decides whether the view keeps drawing. Likewise.
+    var hasVisibleMotion: Bool { director.isAnimating() }
+
+    /// When the balloons' stopwatches are next re-read. Likewise.
+    var nextCaptionRefresh: TimeInterval { nextCaptionTick }
+
+    /// When the room next stirs, if anything on screen would. Likewise.
+    var nextIdleBeat: TimeInterval? { director.nextBeat }
+
     // MARK: - The clock
 
     /// Everything that has to happen because the camera moved.
@@ -336,6 +409,17 @@ final class OfficeScene: SKScene {
         let live = cameraController.viewport
         director.cull(to: live.visibleRect, margin: Self.cullMargin)
 
+        // The balloons' stopwatches, when the next reading on screen is due
+        // and no sooner than every few seconds, and only while the scene is
+        // running: a paused scene is never asked, so a hidden stage costs
+        // nothing here at all.
+        if hasCaptions, currentTime >= nextCaptionTick {
+            let hold = director.tickCaptions(now: Date())
+            nextCaptionTick = hold.map { currentTime + max(Self.captionStep, $0) } ?? .infinity
+        }
+        // After the cull, so only what is on screen stirs.
+        director.beat(at: currentTime)
+
         // A scene nobody is touching publishes nothing: the minimap is a
         // SwiftUI view, and handing it an equal value thirty times a second
         // would be thirty comparisons of every room for no redraw.
@@ -353,6 +437,34 @@ final class OfficeScene: SKScene {
         guard overview != publishedOverview else { return }
         publishedOverview = overview
         onOverview?(overview)
+    }
+
+    /// Tells the view whether the frame about to be drawn has anything moving
+    /// in it, once the actions for it have run.
+    ///
+    /// A frame with nothing moving is the last one worth drawing until
+    /// something changes, and the view stops its clock after it. What can
+    /// still change on its own — a balloon's stopwatch, the room's next idle
+    /// stir — is handed over as the time to wake up for.
+    override func didFinishUpdate() {
+        super.didFinishUpdate()
+        guard let office = view as? OfficeSKView else { return }
+        let time = CACurrentMediaTime()
+        let moving = pendingHover != nil || (host?.isMoving ?? false)
+            || director.isAnimating(at: time)
+        office.frameFinished(moving: moving, nextWake: moving ? nil : nextWake)
+    }
+
+    /// When the picture next changes with nobody touching it, in
+    /// `CACurrentMediaTime()` seconds.
+    private var nextWake: TimeInterval? {
+        let caption = hasCaptions && nextCaptionTick.isFinite ? nextCaptionTick : nil
+        switch (caption, director.nextBeat) {
+        case let (caption?, beat?): return min(caption, beat)
+        case let (caption?, nil): return caption
+        case let (nil, beat?): return beat
+        case (nil, nil): return nil
+        }
     }
 
     /// Renders the office as a window `window` points across would show it,
@@ -504,6 +616,7 @@ final class OfficeScene: SKScene {
     /// same picture for a fraction of the work.
     func hover(atLayoutPoint point: CGPoint?) {
         pendingHover = .some(point)
+        requestFrame()
     }
 
     /// Acts on wherever the pointer was last seen, at most once per frame.
@@ -586,7 +699,7 @@ final class OfficeScene: SKScene {
 
     private static func detail(for session: SessionSnapshot) -> String {
         var parts = [session.key.harness.displayName, session.state.style.label]
-        if session.isStale { parts.append("stale") }
+        if session.isStale { parts.append(L10n.State.stale.lowercased()) }
         return parts.joined(separator: " · ")
     }
 }
