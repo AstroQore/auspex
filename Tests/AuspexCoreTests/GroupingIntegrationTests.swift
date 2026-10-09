@@ -115,6 +115,37 @@ struct GroupingIntegrationTests {
         await registry.stop()
     }
 
+    @Test("marking a known folder as scratch, or unmarking it, publishes a frame that says so")
+    func scratchReclassificationIsPublished() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = makeRegistry(store)
+        let key = SessionKey(harness: .claudeCode, sessionID: "notes-1")
+        let directory = "/Users/example/Documents/notes"
+        let scratch = ProjectPlacement.scratch(
+            ScratchRules.Match(reason: .userRule, directory: directory, name: "notes")
+        )
+
+        await registry.ingest(started(key, cwd: directory))
+        _ = await registry.applyPlacements([key: .plain(directory: directory)])
+        // A directory in no repository has no git facts either way, so the
+        // identity does not move: only the heading does.
+        _ = await registry.applyPlacements([key: scratch])
+        _ = await registry.applyPlacements([key: .plain(directory: directory)])
+        await registry.stop()
+
+        // Every frame but the one `stop()` publishes on its way out.
+        var frames: [BoardSnapshot] = []
+        for await frame in registry.boardSnapshots { frames.append(frame) }
+        let live = Array(frames.dropLast())
+        let marked = live.map { frame in frame.session(for: key).map(frame.isSandbox) ?? false }
+        #expect(marked == [false, true, false])
+        // And none of them is taken for the frame before it, which is what
+        // lets the assembler reuse the old picture.
+        for (previous, next) in zip(live, live.dropFirst()) {
+            #expect(!next.saysTheSameAs(previous))
+        }
+    }
+
     @Test("a placement reaches the identity, the board, and the foreign keys")
     func placementIsAppliedAndPersisted() async throws {
         let store = try AuspexStore(inMemory: true)

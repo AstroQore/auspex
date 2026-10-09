@@ -192,9 +192,12 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// that is identical.
     ///
     /// `counts` and `tree` are derived from `sessions` in every initialiser, so
-    /// comparing the sessions and the claims answers for all four.
+    /// comparing the sessions, the claims and the scratch folders answers for
+    /// all five. The scratch folders are not derived from anything here: a
+    /// folder a person marks as scratch moves its session to another heading
+    /// without changing the session.
     public func saysTheSameAs(_ other: BoardSnapshot) -> Bool {
-        sessions == other.sessions && claims == other.claims
+        sessions == other.sessions && claims == other.claims && sandboxThreads == other.sandboxThreads
     }
 
     /// The same frame, placed by a different set of user projects.

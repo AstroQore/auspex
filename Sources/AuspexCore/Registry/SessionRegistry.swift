@@ -408,6 +408,7 @@ public actor SessionRegistry {
     public func applyPlacements(_ placements: [SessionKey: ProjectPlacement]) -> Int {
         guard !isStopped, !placements.isEmpty else { return 0 }
         var applied = 0
+        var reclassified = false
         let now = Date()
         for (key, placement) in placements.sorted(by: { $0.key.description < $1.key.description }) {
             guard let current = snapshots[key] else { continue }
@@ -430,7 +431,11 @@ public actor SessionRegistry {
             // or a rule that changed under a rebuilt board — has to stop
             // being remembered as scratch, so this is an assignment rather
             // than an insertion.
-            sandboxThreads[key] = placement.isProjectless ? placement.projectName : nil
+            let scratchName = placement.isProjectless ? placement.projectName : nil
+            if sandboxThreads[key] != scratchName {
+                sandboxThreads[key] = scratchName
+                reclassified = true
+            }
 
             let patch = SessionIdentityPatch(
                 gitBranch: placement.branch ?? current.identity.gitBranch,
@@ -446,6 +451,9 @@ public actor SessionRegistry {
             }
             ingest(AgentEvent(session: key, timestamp: now, kind: .identityUpdated(patch)))
         }
+        // A folder a person just marked or unmarked as scratch keeps its
+        // identity, so nothing above published the heading it moved to.
+        if reclassified { schedulePublish() }
         return applied
     }
 
