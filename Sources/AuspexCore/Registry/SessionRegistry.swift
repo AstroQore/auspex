@@ -521,8 +521,12 @@ public actor SessionRegistry {
     /// recycled, so it must not be read as a process — but its session id is
     /// still the right answer for a child that inherited it, and dropping the
     /// row entirely would lose that.
+    ///
+    /// In no particular order: every reader indexes or sorts what it is given,
+    /// and sorting the live set into board order every three seconds for them
+    /// was work nobody used.
     public func linkableIdentities() -> [SessionIdentity] {
-        sessions.map { snapshot in
+        snapshots.values.map { snapshot in
             let isRunning = snapshot.isAlive && !snapshot.state.isEnded
             guard !isRunning else { return snapshot.identity }
             var identity = snapshot.identity
