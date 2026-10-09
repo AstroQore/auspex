@@ -5,22 +5,21 @@ import Foundation
 
 /// Every word the Now screen prints, in one place.
 ///
-/// The screen was designed with its copy, and that copy is the design's: the
-/// section headings in English capitals, everything a person reads in a row
-/// or a button in Chinese. Keeping it here rather than scattered across the
+/// The rest of the app speaks English and has no strings table yet, so this
+/// screen does too. Keeping every line here rather than scattered across the
 /// views is what makes it one edit to change — and the obvious seam for a
 /// strings table when the app grows one.
 enum NowCopy {
     // MARK: Header
 
     static let title = "Now"
-    static let needsYou = "需要你"
-    static let mayNeedYou = "可能需要你"
-    static let doneUnseen = "完成未看"
-    static let stageAndLists = "办公室 + 清单"
-    static let listsOnly = "只看清单"
-    static let search = "搜索 session…"
-    static let viewMode = "展示模式"
+    static let needsYou = "Needs you"
+    static let mayNeedYou = "May need you"
+    static let doneUnseen = "Done, unseen"
+    static let stageAndLists = "Office + lists"
+    static let listsOnly = "Lists only"
+    static let search = "Search sessions…"
+    static let viewMode = "View"
 
     static func status(time: String, live: Int, working: Int) -> String {
         "\(time) · \(live) live · \(working) working"
@@ -29,12 +28,12 @@ enum NowCopy {
     // MARK: Stage
 
     static let stageTag = "AVIARY"
-    static let stageHint = "点人物 = 打开会话 · 悬停 = 当前动作"
-    static let collapseStage = "收起办公室"
-    static let legendWorking = "工作中"
-    static let legendNeedsYou = "需要你"
-    static let legendMayNeedYou = "可能需要你"
-    static let legendIdle = "空闲"
+    static let stageHint = "Click a person to open the session · hover for what they are doing"
+    static let collapseStage = "Hide the office"
+    static let legendWorking = "Working"
+    static let legendNeedsYou = "Needs you"
+    static let legendMayNeedYou = "May need you"
+    static let legendIdle = "Idle"
 
     // MARK: Sections
 
@@ -44,35 +43,35 @@ enum NowCopy {
     static let doneHeading = "DONE, UNSEEN"
     static let idleHeading = "IDLE"
 
-    static let needsYouNote = "只认显式信号"
-    static let mayNeedYouNote = "WatchSignal，独立一桶"
-    static let workingNote = "一行一个根 session，子 agent 折叠"
+    static let needsYouNote = "explicit signals only"
+    static let mayNeedYouNote = "inferred — watch signals"
+    static let workingNote = "one row per root session, sub-agents folded"
     static let doneNote = "notify(done) / tasks.complete"
 
-    static let columnProject = "项目"
+    static let columnProject = "PROJECT"
     static let columnHarness = "HARNESS"
-    static let columnDoing = "正在"
-    static let columnTurn = "本轮 / 子 AGENT"
+    static let columnDoing = "DOING"
+    static let columnTurn = "TURN / SUB-AGENTS"
     static let columnContext = "CONTEXT"
 
-    static let open = "打开 →"
-    static let openQuiet = "打开"
-    static let markSeen = "标记已看"
-    static let openTask = "任务 →"
+    static let open = "Open →"
+    static let openQuiet = "Open"
+    static let markSeen = "Mark seen"
+    static let openTask = "Task →"
 
-    static func more(_ count: Int) -> String { "还有 \(count) 个 →" }
-    static let fewer = "收起"
+    static func more(_ count: Int) -> String { "\(count) more →" }
+    static let fewer = "Fewer"
     static func idle(_ count: Int, isOpen: Bool) -> String {
-        "\(idleHeading) \(count) · \(isOpen ? "收起" : "折叠 →")"
+        "\(idleHeading) \(count) · \(isOpen ? "hide" : "show →")"
     }
 
-    static let allClear = "没有在跑的，也没有在等你的。"
+    static let allClear = "Nothing is running, and nothing is waiting on you."
 
     // MARK: Lines
 
-    static let waitingPermission = "等待权限"
-    static let waitingAnswer = "等待回答"
-    static let blockedTask = "任务被标记为阻塞"
+    static let waitingPermission = "Waiting for permission"
+    static let waitingAnswer = "Waiting for an answer"
+    static let blockedTask = "Task marked blocked"
 
     /// A tool and what it is aimed at, the way a permission prompt names it:
     /// `Bash(gh pr merge)`.
@@ -85,12 +84,12 @@ enum NowCopy {
     /// and written for the Catch-up panel; this is the list's version.
     static func watch(_ kind: WatchSignal.Kind, tool: String?) -> String {
         switch kind {
-        case .staleSession: "活着，但没有新动静"
-        case .longTool: "\(tool ?? "工具") 已运行超过 \(Int(CollaborationSignals.longToolAfter / 60)) 分钟"
-        case .contextPressure: "context 已用掉 90% 以上"
-        case .sharedDirectory: "共用工作目录"
-        case .sharedBranch: "共用分支"
-        case .orphanedClaim: "认领它的会话已结束"
+        case .staleSession: "alive, but nothing new"
+        case .longTool: "\(tool ?? "a tool") has run for over \(Int(CollaborationSignals.longToolAfter / 60)) min"
+        case .contextPressure: "context over 90% used"
+        case .sharedDirectory: "shares a working directory"
+        case .sharedBranch: "shares a branch"
+        case .orphanedClaim: "the session that claimed it has ended"
         }
     }
 
@@ -126,11 +125,11 @@ enum NowCopy {
         }
     }
 
-    /// What a session is doing, as one short line: `WebSearch「Dots API」`.
+    /// What a session is doing, as one short line: `WebSearch “Dots API”`.
     static func activity(_ activity: NowFrame.Activity, limit: Int) -> String {
         switch (activity.tool, activity.detail) {
         case let (tool?, detail?) where !detail.isEmpty:
-            "\(tool)「\(PathDisplay.condense(detail, limit: limit))」"
+            "\(tool) “\(PathDisplay.condense(detail, limit: limit))”"
         case let (tool?, _):
             tool
         case let (nil, detail?):

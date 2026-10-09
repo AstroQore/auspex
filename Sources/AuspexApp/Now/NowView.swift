@@ -179,7 +179,7 @@ private struct NowLists: View {
     @Bindable var model: LiveBoardModel
     let columns: NowColumns
 
-    /// How many working rows show before the rest fold into "还有 N 个".
+    /// How many working rows show before the rest fold into "N more".
     private static let workingLimit = 8
 
     @State private var showsAllWorking = false
