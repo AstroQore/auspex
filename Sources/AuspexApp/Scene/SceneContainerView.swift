@@ -443,6 +443,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         let view = SceneCanvasView(
             scene: scene, frame: CGRect(x: 0, y: 0, width: 900, height: 640)
         )
+        view.skView.rates = frameAsStage ? .stage : .aviary
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
@@ -527,11 +528,11 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
 ///   vsync. The scene reports which frames were still; see
 ///   `OfficeScene.didFinishUpdate()`.
 ///
-/// The resting rate is thirty rather than sixty for the same reason the board
-/// coalesces its snapshots at twenty: the fastest thing in the scene is a
-/// typing hand at ten changes a second, and the difference between 30 and 60
-/// Hz on that is a difference nobody can see and everybody's fan can hear. A
-/// gesture gets twice the resting rate, for as long as it lasts.
+/// The resting rate is thirty in the aviary and fifteen on Now's stage: the
+/// fastest thing in the office is a typing hand at ten changes a second, and
+/// the stage is a strip a third the height of the window that sits on the
+/// default screen all day. A gesture gets twice the resting rate, for as long
+/// as it lasts.
 final class OfficeSKView: SKView {
     /// How fast the office is drawn while something in it moves, and while a
     /// hand is on it.
@@ -543,6 +544,10 @@ final class OfficeSKView: SKView {
 
         /// The aviary: the office is the whole window.
         static let aviary = Rates(resting: 30, gesture: 60)
+        /// Now's stage: a strip over the lists, open all day on the default
+        /// screen, where a picture that is glanced at does not need the
+        /// aviary's rate.
+        static let stage = Rates(resting: 15, gesture: 30)
     }
 
     /// Which pair of rates this view runs at.

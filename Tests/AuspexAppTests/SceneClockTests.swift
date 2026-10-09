@@ -154,6 +154,22 @@ struct SceneClockTests {
 
     // MARK: - Rates, and staying asleep
 
+    @Test("Now's stage draws at half the aviary's rate, gesture or not")
+    func stageRates() {
+        #expect(OfficeSKView.Rates.aviary == .init(resting: 30, gesture: 60))
+        #expect(OfficeSKView.Rates.stage == .init(resting: 15, gesture: 30))
+
+        let (view, _) = Self.canvas(reduceMotion: true)
+        view.skView.rates = .stage
+        // Headless there is no window, so the view put itself to sleep; a
+        // running one is what the rate is about.
+        view.skView.isPaused = false
+        view.noteInteraction()
+        #expect(view.skView.preferredFramesPerSecond == 30)
+        view.advance(to: CACurrentMediaTime() + 10)
+        #expect(view.skView.preferredFramesPerSecond == 15)
+    }
+
     @Test("A view nobody can see stays asleep whatever changes under it")
     func offscreenViewStaysAsleep() {
         let (view, scene) = Self.canvas(reduceMotion: false)
