@@ -67,7 +67,7 @@ Four, all pinned in `Package.swift`:
 | `GRDB.swift` | `from: 7.0.0` | The local store. |
 | `agent-session-kit` | `exact: "0.7.0"` | The harness adapters and the live pipeline. |
 | `Sparkle` | `exact: "2.9.4"` | In-app updates (§ 9). |
-| `auspex-i18n` | `exact: "0.1.0"` | Every user-facing string, English and Simplified Chinese (§ 6). |
+| `auspex-i18n` | `exact: "0.2.0"` | Every user-facing string, English and Simplified Chinese (§ 6). |
 
 `Package.resolved` is gitignored, so a release built from a clean checkout of
 a tag has nothing but `Package.swift` to tell it which dependency versions to
