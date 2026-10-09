@@ -67,6 +67,14 @@ public struct BoardFrameInputs: Sendable, Equatable {
     public var showsSubagents: Bool
     /// The global catch-up cursor the person last acknowledged.
     public var catchUpSince: Date
+    /// Which way the board is being looked at.
+    ///
+    /// Two outputs exist for one mode each — the crew wall's snapshot groups
+    /// and the aviary's reduced board — and both carry whole
+    /// `SessionSnapshot`s. Building them for a mode that is not on screen, and
+    /// then comparing them against the previous frame's to find out nothing
+    /// changed, was work on every frame for a picture nobody was drawing.
+    public var viewMode: BoardViewMode
 
     public init(
         claims: ProjectClaims = .empty,
@@ -86,8 +94,10 @@ public struct BoardFrameInputs: Sendable, Equatable {
         ledger: TaskLedgerFrame = .empty,
         filters: TaskFilters = .none,
         showsSubagents: Bool = false,
-        catchUpSince: Date = .distantPast
+        catchUpSince: Date = .distantPast,
+        viewMode: BoardViewMode = .board
     ) {
+        self.viewMode = viewMode
         self.ledger = ledger
         self.filters = filters
         self.showsSubagents = showsSubagents
@@ -125,7 +135,8 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     public let ignoredKeys: Set<SessionKey>
     /// ``board``'s sessions by key, for the lookups the selection makes.
     public let sessionIndex: [SessionKey: SessionSnapshot]
-    /// The sections as snapshots, for the crew wall.
+    /// The sections as snapshots, for the crew wall. Empty unless the frame
+    /// was assembled for ``BoardViewMode/crew`` — see ``assembledFor``.
     public let groups: [BoardGroup]
     /// The sections as rows, for the sidebar and anything session-shaped.
     public let rowGroups: [BoardRowGroup]
@@ -151,12 +162,13 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// everything else on this type is: the office rebuilds its floor plan
     /// from a frame, and a frame reduced on the main actor at eight frames a
     /// second is the work this whole arrangement moved off it.
+    ///
+    /// ``BoardSnapshot/empty`` unless the frame was assembled for
+    /// ``BoardViewMode/scene``.
     public let sceneBoard: BoardSnapshot
     /// Which unit each session is folded into, so selecting a card and
     /// selecting a session are the same gesture seen from two ends.
     public let unitBySession: [SessionKey: String]
-    /// The finished sessions, most urgent first.
-    public let endedRows: [BoardRow]
     /// The numbers across the top.
     public let summary: BoardSummary
     /// The sidebar's tree.
@@ -210,6 +222,12 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// it had nothing to do.
     public let isRepeat: Bool
 
+    /// The view mode the frame was derived for, which decides whether
+    /// ``groups`` and ``sceneBoard`` were built at all. A consumer assigns
+    /// them only from a frame assembled for the mode it is showing, so a frame
+    /// that was in flight across a switch cannot blank the new mode's picture.
+    public let assembledFor: BoardViewMode
+
     public init(
         sequence: UInt64,
         board: BoardSnapshot,
@@ -224,7 +242,6 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         filterOptions: TaskFilters.Options = .none,
         sceneBoard: BoardSnapshot? = nil,
         unitBySession: [SessionKey: String] = [:],
-        endedRows: [BoardRow],
         summary: BoardSummary,
         tree: ProjectTree,
         catchUp: CatchUpSnapshot,
@@ -233,7 +250,8 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         attention: [SessionKey: AttentionState] = [:],
         olderHidden: Int = 0,
         boardRevision: UInt64 = 1,
-        isRepeat: Bool = false
+        isRepeat: Bool = false,
+        assembledFor: BoardViewMode = .board
     ) {
         self.unitGroups = unitGroups
         self.endedUnits = endedUnits
@@ -248,7 +266,6 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.sessionIndex = sessionIndex
         self.groups = groups
         self.rowGroups = rowGroups
-        self.endedRows = endedRows
         self.summary = summary
         self.tree = tree
         self.catchUp = catchUp
@@ -258,6 +275,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         self.olderHidden = olderHidden
         self.boardRevision = boardRevision
         self.isRepeat = isRepeat
+        self.assembledFor = assembledFor
     }
 
     /// The same frame, holding `previous`'s value for everything the two have
@@ -297,26 +315,34 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         }
         let boardMoved = !board.saysTheSameAs(previous.board)
         if boardMoved { isRepeat = false }
+        let modeMoved = assembledFor != previous.assembledFor
+        if modeMoved { isRepeat = false }
+        let sharedUnits = kept(units, previous.units)
+        let unitsMoved = sharedUnits != previous.units
         let shared = AssembledBoardFrame(
             sequence: sequence,
             board: boardMoved ? board : previous.board,
             ignoredKeys: kept(ignoredKeys, previous.ignoredKeys),
-            sessionIndex: kept(sessionIndex, previous.sessionIndex),
+            // A function of the board's sessions and nothing else, so the
+            // answer to "did the board move" is the answer for this too —
+            // and comparing two dictionaries of every snapshot on the machine
+            // to find it out again is exactly the cost this pass exists to pay
+            // once.
+            sessionIndex: boardMoved ? sessionIndex : previous.sessionIndex,
             groups: kept(groups, previous.groups),
             rowGroups: kept(rowGroups, previous.rowGroups),
             unitGroups: kept(unitGroups, previous.unitGroups),
             endedUnits: kept(endedUnits, previous.endedUnits),
-            units: kept(units, previous.units),
+            units: sharedUnits,
             unitIndex: kept(unitIndex, previous.unitIndex),
             filterOptions: kept(filterOptions, previous.filterOptions),
             // The same rule ``board`` follows, and for the same reason: a
             // reduced frame carries `generatedAt`, which moves on every tick,
             // so comparing it would make every frame a new one and the repeat
-            // check useless. It is a function of the board and the units, and
-            // both of those have already been asked.
-            sceneBoard: boardMoved ? sceneBoard : previous.sceneBoard,
+            // check useless. It is a function of the board, the units and the
+            // mode, and all three have already been asked.
+            sceneBoard: boardMoved || unitsMoved || modeMoved ? sceneBoard : previous.sceneBoard,
             unitBySession: kept(unitBySession, previous.unitBySession),
-            endedRows: kept(endedRows, previous.endedRows),
             summary: kept(summary, previous.summary),
             tree: kept(tree, previous.tree),
             catchUp: kept(catchUp, previous.catchUp),
@@ -325,7 +351,8 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             attention: kept(attention, previous.attention),
             olderHidden: olderHidden,
             boardRevision: boardMoved ? boardRevision &+ 1 : previous.boardRevision,
-            isRepeat: isRepeat && olderHidden == previous.olderHidden
+            isRepeat: isRepeat && olderHidden == previous.olderHidden,
+            assembledFor: assembledFor
         )
         return shared
     }
@@ -536,13 +563,6 @@ public actor BoardFrameAssembler {
             unitIndex[unit.id] = unit
             for member in unit.members { unitBySession[member.key] = unit.id }
         }
-        // `EndedSessions.split` and not `mostRecentFirst`: the ledger's order
-        // is total and supersedes it, and sorting four hundred finished rows
-        // twice per frame is exactly the kind of redundant work the board's
-        // budget is spent avoiding.
-        let ended = EndedSessions.split(kept).ended
-        let endedRows = TaskLedger.sorted(builder.rows(for: ended))
-
         // The same question the rows already answered, kept as the answers
         // rather than as a count: the scene has to know *which* sessions sit on
         // the waiting bench, and the crew wall which card wears a ring. Derived
@@ -561,7 +581,9 @@ public actor BoardFrameAssembler {
             board: board,
             ignoredKeys: visible.ignored,
             sessionIndex: index,
-            groups: groups,
+            // Built above because the rows are made from it; carried only for
+            // the one mode that draws snapshots. See ``BoardFrameInputs/viewMode``.
+            groups: inputs.viewMode == .crew ? groups : [],
             rowGroups: rowGroups,
             unitGroups: unitGroups,
             endedUnits: inputs.bucketFilter == nil
@@ -577,9 +599,13 @@ public actor BoardFrameAssembler {
             // the office and the wall are two pictures of the same board, and
             // a desk for a card that is filtered out would be a room saying
             // something the wall does not.
-            sceneBoard: SceneUnits.board(from: board, units: liveUnits + unitSplit.ended),
+            //
+            // Only for the aviary: reducing the board is a sort and a tree
+            // build of its own, and no other mode draws it.
+            sceneBoard: inputs.viewMode == .scene
+                ? SceneUnits.board(from: board, units: liveUnits + unitSplit.ended)
+                : .empty,
             unitBySession: unitBySession,
-            endedRows: inputs.bucketFilter.map { TaskLedger.rows(endedRows, in: $0) } ?? endedRows,
             // Over units, and counted before the bucket filter, on purpose: the
             // wall's cards and the header's numbers have to be about the same
             // thing, and a chip that zeroed the others when clicked would leave
@@ -597,7 +623,8 @@ public actor BoardFrameAssembler {
             humanQueue: HumanWorkQueue(units: allUnits),
             watchSignals: CollaborationSignals.derive(units: allUnits, now: raw.generatedAt),
             attention: attention,
-            olderHidden: windowed.hidden
+            olderHidden: windowed.hidden,
+            assembledFor: inputs.viewMode
         )
     }
 

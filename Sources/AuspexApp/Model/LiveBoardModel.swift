@@ -177,11 +177,17 @@ final class LiveBoardModel {
     var viewMode: BoardViewMode = .board {
         didSet {
             guard oldValue != viewMode else { return }
-            // The crew wall is the only reader of `groups`, and it is the only
-            // mode that pays for it — see `adopt(_:)`. Handing it the last
-            // frame's is what stops a switch to the crew showing an empty wall
-            // until the next frame lands.
-            if viewMode == .crew, let previousFrame { groups = previousFrame.groups }
+            // The crew wall's snapshot groups and the aviary's reduced board
+            // are only assembled for their own mode — see
+            // `BoardFrameInputs.viewMode`. Switching into either asks for a
+            // frame that has them; switching out lets go of what the old
+            // mode was holding.
+            if oldValue == .crew { groups = [] }
+            if oldValue == .scene { sceneBoard = .empty }
+            if Self.modesWithOwnOutput.contains(oldValue)
+                || Self.modesWithOwnOutput.contains(viewMode) {
+                scheduleAssembly()
+            }
             if viewMode == .perch { map.apply(units: units) }
             guard viewMode.requiresSelection else {
                 // Leaving the trajectory stops its reads. The fold is kept:
@@ -202,6 +208,9 @@ final class LiveBoardModel {
             loadTrajectory()
         }
     }
+
+    /// The modes the assembler builds something for that no other mode reads.
+    private static let modesWithOwnOutput: Set<BoardViewMode> = [.crew, .scene]
 
     /// The mode to go back to when the trajectory is closed.
     ///
@@ -529,15 +538,6 @@ final class LiveBoardModel {
     /// mode's cost rather than the board's.
     private(set) var groups: [BoardGroup] = []
 
-    /// The finished sessions the collapsed section at the bottom draws from,
-    /// most recently finished first.
-    ///
-    /// Held apart from ``rowGroups`` rather than filtered out in the view,
-    /// because keeping them out of the grid is the board's main performance
-    /// property — see ``EndedSessions`` — and a policy that lived in a view
-    /// body would be one refactor away from being lost.
-    private(set) var endedRows: [BoardRow] = []
-
     /// The wall: sections of task cards, subagents folded into them.
     ///
     /// What ``rowGroups`` used to be for. The rows are still derived — the
@@ -732,15 +732,6 @@ final class LiveBoardModel {
     /// rows in step with the wall here.
     var onFrame: ((BoardSnapshot, [TaskUnit]) -> Void)?
 
-    /// The finished rows actually drawn, and how many are left out.
-    var visibleEndedRows: [BoardRow] {
-        showsAllEnded ? endedRows : Array(endedRows.prefix(EndedSessions.collapsedLimit))
-    }
-
-    var hiddenEndedCount: Int {
-        showsAllEnded ? 0 : max(0, endedRows.count - EndedSessions.collapsedLimit)
-    }
-
     // MARK: Assembly
 
     /// Where a frame is actually derived. One per model, so two assemblies of
@@ -756,11 +747,6 @@ final class LiveBoardModel {
 
     /// The stamp of the newest frame that has been assigned.
     private var appliedSequence: UInt64 = 0
-
-    /// The last frame actually adopted, so the crew wall can be handed the
-    /// snapshots it needs the moment it is switched to. Not observed: nothing
-    /// draws it, and it is replaced whenever anything does change.
-    @ObservationIgnored private var previousFrame: AssembledBoardFrame?
 
     /// Which version of the board is on screen — see
     /// ``AssembledBoardFrame/boardRevision``.
@@ -831,7 +817,8 @@ final class LiveBoardModel {
             ledger: ledgerFrame,
             filters: filters,
             showsSubagents: showsSubagents,
-            catchUpSince: catchUpSince
+            catchUpSince: catchUpSince,
+            viewMode: viewMode
         )
     }
 
@@ -867,7 +854,6 @@ final class LiveBoardModel {
         // of what changes never reaches the wall, and the user layer schedules
         // an assembly of its own every time somebody clicks.
         if frame.isRepeat { return }
-        previousFrame = frame
 
         // `generatedAt` moves on every frame and nothing draws it, so a board
         // whose sessions are the ones already on screen must not replace the
@@ -888,9 +874,14 @@ final class LiveBoardModel {
         // keep out of the render loop — and `@Observable` compares before it
         // publishes, so assigning it is a deep comparison of every session on
         // the board, on the main actor, whether or not anything is drawing it.
-        // The crew wall gets it the moment it is switched to; see `viewMode`.
-        if viewMode == .crew, groups != frame.groups { groups = frame.groups }
-        if viewMode == .scene, sceneBoard != frame.sceneBoard { sceneBoard = frame.sceneBoard }
+        // The assembler only builds it for a frame assembled for the crew,
+        // and switching to the crew asks for one; see `viewMode`.
+        if viewMode == .crew, frame.assembledFor == .crew, groups != frame.groups {
+            groups = frame.groups
+        }
+        if viewMode == .scene, frame.assembledFor == .scene, sceneBoard != frame.sceneBoard {
+            sceneBoard = frame.sceneBoard
+        }
         if rowGroups != frame.rowGroups { rowGroups = frame.rowGroups }
         if unitGroups != frame.unitGroups { unitGroups = frame.unitGroups }
         if endedUnits != frame.endedUnits { endedUnits = frame.endedUnits }
@@ -911,7 +902,6 @@ final class LiveBoardModel {
         }
         if filterOptions != frame.filterOptions { filterOptions = frame.filterOptions }
         if unitBySession != frame.unitBySession { unitBySession = frame.unitBySession }
-        if endedRows != frame.endedRows { endedRows = frame.endedRows }
         if summary != frame.summary { summary = frame.summary }
         if sessionCount != frame.sessionCount { sessionCount = frame.sessionCount }
         if attention != frame.attention { attention = frame.attention }

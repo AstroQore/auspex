@@ -265,7 +265,7 @@ struct LiveBoardModelTests {
         )
         #expect(model.rowGroups == expected.rowGroups)
         #expect(model.summary == expected.summary)
-        #expect(model.endedRows == expected.endedRows)
+        #expect(model.endedUnits == expected.endedUnits)
     }
 
     @Test("The crew's snapshots are kept only while the crew is on screen")
@@ -278,10 +278,28 @@ struct LiveBoardModelTests {
         #expect(model.viewMode == .board)
         #expect(model.groups.isEmpty)
 
-        // Switching to the crew hands over the frame already in hand rather
-        // than showing an empty wall until the next one lands.
+        // Switching to the crew asks for a frame that carries them; nothing
+        // else assembles them at all.
         model.viewMode = .crew
+        await model.settle()
         #expect(!model.groups.isEmpty)
         #expect(model.groups.flatMap(\.sessions).count == model.sessionCount)
+
+        // Leaving lets go of them.
+        model.viewMode = .board
+        #expect(model.groups.isEmpty)
+    }
+
+    @Test("The aviary's reduced board is assembled only while the aviary is on screen")
+    func sceneBoardIsSceneOnly() async {
+        let (model, _) = await model()
+        #expect(model.sceneBoard.sessions.isEmpty)
+
+        model.viewMode = .scene
+        await model.settle()
+        #expect(!model.sceneBoard.sessions.isEmpty)
+
+        model.viewMode = .board
+        #expect(model.sceneBoard.sessions.isEmpty)
     }
 }

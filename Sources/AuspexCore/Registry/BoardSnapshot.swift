@@ -9,9 +9,9 @@ import Foundation
 /// showing the same thing — three readers of one value cannot disagree, while
 /// three readers of an actor can each observe a different moment.
 ///
-/// The sessions are already sorted and the counts already computed, because a
-/// value that arrives at up to 20 Hz should not make every consumer redo the
-/// same work.
+/// The sessions are already sorted, the counts already computed and the keys
+/// already indexed, because a value every surface reads on every frame should
+/// not make each of them redo the same work.
 public struct BoardSnapshot: Sendable, Equatable {
     /// When the frame was produced. Not the time of the newest event: a frame
     /// is also published when nothing happened but a session went stale.
@@ -53,6 +53,16 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// Empty on a frame nothing has been placed on yet, which reads exactly
     /// like the behaviour before there was such a thing as scratch.
     public let sandboxThreads: [SessionKey: String]
+
+    /// Where each session sits in ``sessions``.
+    ///
+    /// Built once with the frame. ``session(for:)`` used to be a linear scan,
+    /// and it is asked inside loops over every session — the ancestor walk in
+    /// ``projectKey(for:)``, the sidebar's tree, the unit builder, the ignore
+    /// rules — which made each of those quadratic in the size of the board.
+    ///
+    /// Derived from ``sessions`` and so left out of `==`.
+    public let index: [SessionKey: Int]
 
     /// The tallies a board shows at a glance.
     public struct Counts: Sendable, Equatable, Hashable {
@@ -120,6 +130,7 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = SessionTreeBuilder.build(self.sessions)
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.index = Self.makeIndex(self.sessions)
     }
 
     /// Creates a frame from sessions that are already in board order.
@@ -135,7 +146,8 @@ public struct BoardSnapshot: Sendable, Equatable {
         counts: Counts,
         tree: SessionTree,
         claims: ProjectClaims,
-        sandboxThreads: [SessionKey: String]
+        sandboxThreads: [SessionKey: String],
+        index: [SessionKey: Int]? = nil
     ) {
         self.generatedAt = generatedAt
         self.sessions = sessions
@@ -143,6 +155,28 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = tree
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.index = index ?? Self.makeIndex(sessions)
+    }
+
+    /// The first position of every key. First rather than last, so a board
+    /// that somehow held a key twice answers the way the old scan did.
+    private static func makeIndex(_ sessions: [SessionSnapshot]) -> [SessionKey: Int] {
+        var index: [SessionKey: Int] = [:]
+        index.reserveCapacity(sessions.count)
+        for (position, session) in sessions.enumerated() where index[session.key] == nil {
+            index[session.key] = position
+        }
+        return index
+    }
+
+    /// Everything but ``index``, which is a function of ``sessions``.
+    public static func == (lhs: BoardSnapshot, rhs: BoardSnapshot) -> Bool {
+        lhs.generatedAt == rhs.generatedAt
+            && lhs.sessions == rhs.sessions
+            && lhs.counts == rhs.counts
+            && lhs.tree == rhs.tree
+            && lhs.claims == rhs.claims
+            && lhs.sandboxThreads == rhs.sandboxThreads
     }
 
     /// An empty board, for a view's initial state.
@@ -172,7 +206,8 @@ public struct BoardSnapshot: Sendable, Equatable {
             counts: counts,
             tree: tree,
             claims: claims,
-            sandboxThreads: sandboxThreads
+            sandboxThreads: sandboxThreads,
+            index: index
         )
     }
 
@@ -219,9 +254,10 @@ public struct BoardSnapshot: Sendable, Equatable {
 
     // MARK: - Lookups
 
-    /// The session with `key`, when the board has one.
+    /// The session with `key`, when the board has one. A dictionary lookup —
+    /// see ``index``.
     public func session(for key: SessionKey) -> SessionSnapshot? {
-        sessions.first { $0.key == key }
+        index[key].map { sessions[$0] }
     }
 
     /// Sessions grouped by the harness that produced them, each group still in

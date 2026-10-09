@@ -210,7 +210,7 @@ struct SessionWindowTests {
         )
         // Twelve of the forty are inside twelve hours, plus the live one.
         #expect(frame.summary.ended == 12)
-        #expect(frame.endedRows.count == 12)
+        #expect(frame.endedUnits.count == 12)
         #expect(frame.olderHidden == 28)
         #expect(frame.sessionCount == 13)
 
