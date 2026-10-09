@@ -16,6 +16,16 @@ import SwiftUI
 /// the window is not visible (see `OfficeSKView`). A stage scrolled out of a
 /// page would have been a third state, animating where nobody could see it.
 ///
+/// ## Folded
+///
+/// After two and a half minutes with no input in the window the stage folds
+/// into one line — the counts it would have shown, and a chevron to open it
+/// again — and the office leaves the window as it does for "Lists only". Its
+/// chevron folds it the same way by hand. See ``StageIdleCollapse`` for the
+/// rules and ``StageIdleController`` for the clock; the probe at the bottom
+/// of this view is what hears the input, and it is there only while the stage
+/// is switched on.
+///
 /// ## What the body reads
 ///
 /// One value per list from ``LiveBoardModel/nowFrame``, derived on the
@@ -26,6 +36,8 @@ import SwiftUI
 struct NowView: View {
     @Bindable var model: LiveBoardModel
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
@@ -35,15 +47,37 @@ struct NowView: View {
                     }
                 }
                 if model.showsStage {
-                    NowStage(model: model)
-                        .frame(height: Self.stageHeight(for: proxy.size.height))
-                        .padding(.horizontal, 20)
-                        .padding(.top, 16)
+                    if model.isStageCollapsed {
+                        NowStageStrip(model: model)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                            .transition(.opacity)
+                    } else {
+                        NowStage(model: model)
+                            .frame(height: Self.stageHeight(for: proxy.size.height))
+                            .padding(.horizontal, 20)
+                            .padding(.top, 16)
+                            .transition(.opacity)
+                    }
                 }
                 NowLists(model: model, columns: NowColumns(width: proxy.size.width))
             }
+            // One quarter-second ease for each fold and each open, and
+            // nothing in between: the value only moves when the stage does.
+            .animation(Self.foldAnimation(reduceMotion: reduceMotion), value: model.isStageCollapsed)
         }
         .background(AuspexPalette.canvas)
+        // Zero-sized and unclickable, like the window's other probes; it is
+        // in the tree to find the window and hear what the person does in it.
+        .background {
+            if model.showsStage {
+                StageIdleProbe(controller: model.stageIdle).frame(width: 0, height: 0)
+            }
+        }
+    }
+
+    static func foldAnimation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.25)
     }
 
     /// The design's 380 points, as long as the lists keep at least half of
@@ -109,7 +143,7 @@ private struct NowStage: View {
     }
 
     private var collapse: some View {
-        Button { model.showsStage = false } label: {
+        Button { model.collapseStage() } label: {
             Image(systemName: "chevron.up")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(AuspexPalette.text2)
@@ -169,6 +203,59 @@ private struct NowStageScene: View, Equatable {
 
     var body: some View {
         SceneContainerView(model: model, chrome: .stage, captions: captions, stageFocus: focus)
+    }
+}
+
+// MARK: - Folded stage
+
+/// The stage, folded: one line that says what the office would show, and
+/// opens it again.
+///
+/// Drawn as one of the lists' rows — the same card, the same hairline, and the
+/// Needs you rule down its left edge while anybody does — so the folded stage
+/// reads as part of the page rather than as a control on top of it. The
+/// numbers are ``LiveBoardModel/nowCounts``: the header's pills read the same
+/// ones, so the strip cannot disagree with them, and a frame that moved a row
+/// without moving a count does not reach this view.
+private struct NowStageStrip: View {
+    let model: LiveBoardModel
+
+    var body: some View {
+        let counts = model.nowCounts
+        Button { model.openStage() } label: {
+            HStack(spacing: 10) {
+                Text(NowCopy.stageTag)
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(AuspexPalette.bg0)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(AuspexPalette.text.opacity(0.82)))
+                Text(NowCopy.collapsedSummary(working: counts.working, needsYou: counts.needsYou))
+                    .font(.system(size: 13))
+                    .auspexTabularDigits()
+                    .foregroundStyle(AuspexPalette.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(AuspexPalette.text2)
+                    .frame(width: 24, height: 22)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(AuspexPalette.bg2)
+                    )
+            }
+            .nowRowChrome(tone: counts.needsYou > 0 ? .needsYou : .working, isSelected: false)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 10))
+        .help(NowCopy.expandStage)
+        // A label on the button itself rather than a new element around it:
+        // a replacement element would read the same and have nothing to press.
+        .accessibilityLabel(NowCopy.collapsedA11y(working: counts.working, needsYou: counts.needsYou))
+        .accessibilityHint(NowCopy.expandStage)
     }
 }
 

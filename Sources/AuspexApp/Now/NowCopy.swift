@@ -33,6 +33,21 @@ enum NowCopy {
     static var stageTag: String { L10n.ViewMode.scene.uppercased() }
     static var stageHint: String { L10n.Now.Stage.hint }
     static var collapseStage: String { L10n.Now.Stage.collapse }
+    static var expandStage: String { L10n.Now.Stage.expand }
+
+    /// The folded stage's line. The Needs you half is a second key rather
+    /// than a fragment, because it is left out entirely at zero and Chinese
+    /// does not put the two halves together the way English does.
+    static func collapsedSummary(working: Int, needsYou: Int) -> String {
+        needsYou > 0
+            ? L10n.Now.Stage.collapsedSummaryNeedsYou(working: working, needsYou: needsYou)
+            : L10n.Now.Stage.collapsedSummary(working: working)
+    }
+
+    /// The folded stage, read aloud: both counts, zero included, and no ▸.
+    static func collapsedA11y(working: Int, needsYou: Int) -> String {
+        L10n.Now.Stage.collapsedA11y(working: working, needsYou: needsYou)
+    }
     static var legendWorking: String { L10n.Now.working }
     static var legendNeedsYou: String { L10n.Now.needsYou }
     static var legendMayNeedYou: String { L10n.Now.mayNeedYou }

@@ -184,6 +184,8 @@ final class LiveBoardModel {
             // frame that has them; switching out lets go of what the old
             // mode was holding.
             if oldValue == .crew { groups = [] }
+            // The switch rather than ``isStageOpen``: a folded stage keeps its
+            // last reduced board so it can open without an empty frame.
             if !viewMode.drawsOffice(showsStage: showsStage), !sceneBoard.sessions.isEmpty {
                 sceneBoard = .empty
             }
@@ -227,9 +229,50 @@ final class LiveBoardModel {
             if !viewMode.drawsOffice(showsStage: showsStage), !sceneBoard.sessions.isEmpty {
                 sceneBoard = .empty
             }
+            // Switching the office back on is asking to see it, so a stage
+            // that was folded when it was switched off comes back open.
+            if showsStage, stageIdle.isCollapsed { stageIdle.open() }
             if viewMode == .now { scheduleAssembly() }
         }
     }
+
+    /// Whether Now's stage is folded into its one-line strip — by the
+    /// countdown in ``stageIdle``, or by its chevron.
+    ///
+    /// Folded, the office leaves the window as it does for "Lists only": its
+    /// view is dismantled, its clock stops with it, and the assembler stops
+    /// building the reduced board. One difference, on purpose: the last
+    /// reduced board is kept rather than let go of, so a click on the strip
+    /// draws the office at once instead of an empty room for a frame. Nothing
+    /// reads it while the stage is folded, so keeping it invalidates nobody.
+    ///
+    /// A mirror of ``stageIdle``, written only when the stage folds or opens.
+    /// Held for the launch and never written down.
+    private(set) var isStageCollapsed = false {
+        didSet {
+            guard oldValue != isStageCollapsed else { return }
+            if viewMode == .now, showsStage { scheduleAssembly() }
+        }
+    }
+
+    /// Whether the office is on Now's screen: switched on, and not folded.
+    var isStageOpen: Bool { showsStage && !isStageCollapsed }
+
+    /// The countdown that folds Now's stage after a while without input.
+    ///
+    /// A `let`, so observation never sees it: it hears every pointer move in
+    /// the window, and only a fold or an open reaches ``isStageCollapsed``.
+    let stageIdle = StageIdleController()
+
+    init() {
+        stageIdle.onChange = { [weak self] collapsed in self?.isStageCollapsed = collapsed }
+    }
+
+    /// The stage's chevron: folds the office until the strip is clicked.
+    func collapseStage() { stageIdle.collapseByHand() }
+
+    /// The folded strip: opens the office and starts the countdown over.
+    func openStage() { stageIdle.open() }
 
     /// Now's four lists, the idle count, and the stage's captions — held only
     /// while Now is the mode on screen.
@@ -847,7 +890,7 @@ final class LiveBoardModel {
             showsSubagents: showsSubagents,
             catchUpSince: catchUpSince,
             viewMode: viewMode,
-            showsStage: showsStage
+            showsStage: isStageOpen
         )
     }
 
@@ -908,7 +951,7 @@ final class LiveBoardModel {
         if viewMode == .crew, frame.assembledFor == .crew, groups != frame.groups {
             groups = frame.groups
         }
-        if viewMode.drawsOffice(showsStage: showsStage), frame.includesOffice,
+        if viewMode.drawsOffice(showsStage: isStageOpen), frame.includesOffice,
            sceneBoard != frame.sceneBoard {
             sceneBoard = frame.sceneBoard
         }

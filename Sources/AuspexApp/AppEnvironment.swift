@@ -854,6 +854,16 @@ public struct AppLaunchOptions: Sendable {
     /// down. `nil` is the screen's own default, which is the stage open.
     public var showsStage: Bool?
 
+    /// How long Now's stage waits without input before it folds, when a demo
+    /// asked for a different wait than ``StageIdleCollapse/delay``.
+    ///
+    /// `AUSPEX_STAGE_IDLE_DELAY=5` folds it five seconds after launch, which
+    /// is the only way to watch the fold happen without sitting through two
+    /// and a half minutes. Read for a demo launch only: a live launch ignores
+    /// it, so a variable left in somebody's shell cannot change how the app
+    /// they use every day behaves.
+    public var stageIdleDelay: Duration?
+
     /// Reads the flag from the command line, with an environment variable as
     /// the alternative for the case where the launcher owns the argv —
     /// `open -a Auspex` cannot pass arguments through.
@@ -872,17 +882,21 @@ public struct AppLaunchOptions: Sendable {
         let scale = (value(after: "--demo-scale") ?? environment["AUSPEX_DEMO_SCALE"])
             .flatMap(Int.init)
         let stage = value(after: "--stage") ?? environment["AUSPEX_STAGE"]
+        // A scale asks for a demo. Nobody types `--demo-scale 12` meaning
+        // "and also tail my real stores", and a flag that silently did
+        // nothing without a second flag beside it is a flag that gets
+        // reported as broken.
+        let isDemo = rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
+            || (scale ?? 1) > 1
         return AppLaunchOptions(
-            // A scale asks for a demo. Nobody types `--demo-scale 12` meaning
-            // "and also tail my real stores", and a flag that silently did
-            // nothing without a second flag beside it is a flag that gets
-            // reported as broken.
-            isDemo: rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
-                || (scale ?? 1) > 1,
+            isDemo: isDemo,
             demoScale: Self.clampedScale(scale),
             viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(named:)),
             appearance: appearance.flatMap(AppearanceMode.init(rawValue:)),
-            showsStage: stage.flatMap(Self.stageSwitch)
+            showsStage: stage.flatMap(Self.stageSwitch),
+            stageIdleDelay: isDemo
+                ? StageIdleCollapse.delay(seconds: environment["AUSPEX_STAGE_IDLE_DELAY"])
+                : nil
         )
     }
 
@@ -920,6 +934,7 @@ extension AppEnvironment {
         environment.followsVisibility = true
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
         if let showsStage = options.showsStage { environment.board.showsStage = showsStage }
+        if let delay = options.stageIdleDelay { environment.board.stageIdle.delay = delay }
         environment.appearanceOverride = options.appearance
         return environment
     }
