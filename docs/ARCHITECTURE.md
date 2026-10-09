@@ -391,6 +391,19 @@ seconds the room stirs, about three in five idle things on screen play once,
 and the picture is still again — a loop would keep the clock running forever.
 Working motion stays looped, because it is the signal.
 
+Now's stage goes one step further and leaves the window. `StageIdleCollapse`
+(Core) folds it into a one-line strip after 150 s with no mouse, scroll or key
+input in the window, or when its chevron is clicked; a click on the strip opens
+it and starts the countdown again. Board frames are not input. The countdown is
+a deadline rather than a timer restarted per event: a local event monitor and a
+tracking area (`StageIdleProbe`) only move the instant of the last input, one
+one-shot timer is armed for the deadline, and when it fires early because the
+deadline moved it is armed again — one wake per 150 s while a person works, and
+none while the stage is folded or its window cannot be seen. Folded, the
+representable is dismantled (the scene is released before the view is paused),
+and the assembler stops building the reduced board, keeping the last one so the
+stage reopens without an empty frame.
+
 The scene's zones shipped: one continuous map — the office, a meeting room
 strip where a delegating session sits at a long table with its sub-agents,
 and a garden whose front row holds whatever is asking or reporting, whose back

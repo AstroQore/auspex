@@ -97,6 +97,14 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   borders are dashed on the GPU, and a closed stage's view is left paused.
   `--stage <on|off>` (`AUSPEX_STAGE`) opens Now with or without the stage, for
   measuring each.
+- **Now's stage folds itself away.** After two and a half minutes with no
+  mouse, scroll or key input in the window — board updates do not count — the
+  office folds into one line, *Office · 4 working · 1 needs you ▸*, and its
+  view and clock leave the window until the line is clicked; the stage's
+  chevron folds it the same way by hand. Nothing counts while the window is
+  covered, and the fold is kept for the launch only. `--render-board …
+  stage=collapsed` draws the folded line, and a demo launch reads
+  `AUSPEX_STAGE_IDLE_DELAY=<seconds>` to fold sooner.
 
 ## [0.2.0] - 2026-08-31
 
