@@ -63,6 +63,7 @@ final class ZoneNode: SKNode {
         border.lineWidth = dashed.lineWidth
         border.fillColor = .clear
         border.zPosition = dashed.zPosition
+        border.strokeShader = dashed.strokeShader
 
         headerRule.strokeColor = theme.hairlineStrong
         headerRule.lineWidth = 1
@@ -660,13 +661,37 @@ enum SceneRoomChrome {
     /// The dash, in points: mark, gap.
     static let dash: [CGFloat] = [5, 4]
 
-    /// The dashed border for a room's rectangle, in scene space.
+    /// The border for a room's rectangle, in scene space: one unbroken
+    /// rounded rectangle, which ``dashShader`` breaks into dashes as it is
+    /// drawn.
     static func border(in rect: CGRect) -> CGPath {
         let inner = rect.insetBy(dx: inset, dy: inset)
         guard inner.width > 0, inner.height > 0 else { return CGMutablePath() }
         return CGPath(roundedRect: inner, cornerWidth: 3, cornerHeight: 3, transform: nil)
-            .copy(dashingWithPhase: 0, lengths: dash)
     }
+
+    /// Cuts a stroke into ``dash`` on the GPU, measured along the path from
+    /// its start — the same dashes `CGPath.copy(dashingWithPhase:lengths:)`
+    /// makes.
+    ///
+    /// ## Why not just dash the path
+    ///
+    /// `SKShapeNode` builds the geometry of its stroke again on every frame it
+    /// draws, and a dashed rounded rectangle is a hundred-odd separate pieces,
+    /// each with its own ends and its own share of a curve. Every room on
+    /// screen has one, so the borders were the largest single cost in a frame
+    /// of the office — more than every sprite in it put together. An unbroken
+    /// rectangle is nine pieces; the fragment shader leaves out the gaps.
+    static let dashShader: SKShader = {
+        let mark = dash[0]
+        let period = dash[0] + dash[1]
+        return SKShader(source: """
+        void main() {
+            if (mod(v_path_distance, \(period)) >= \(mark)) { discard; }
+            gl_FragColor = SKDefaultShading();
+        }
+        """)
+    }()
 
     /// A room's dashed border node, ready to be given a path.
     static func borderNode(theme: SceneTheme) -> SKShapeNode {
@@ -675,6 +700,7 @@ enum SceneRoomChrome {
         node.lineWidth = 1
         node.fillColor = .clear
         node.zPosition = 0.4
+        node.strokeShader = dashShader
         return node
     }
 }

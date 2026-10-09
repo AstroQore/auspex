@@ -1198,6 +1198,7 @@ private final class FloorNode: SKNode {
         border.lineWidth = dashed.lineWidth
         border.fillColor = .clear
         border.zPosition = dashed.zPosition
+        border.strokeShader = dashed.strokeShader
 
         headerRule.strokeColor = theme.hairlineStrong
         headerRule.lineWidth = 1
