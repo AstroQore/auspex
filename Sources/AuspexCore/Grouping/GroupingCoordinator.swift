@@ -35,7 +35,8 @@ public struct GroupingCoordinator: Sendable {
     public let table: any ProcessTableReading
     /// What the last passes already worked out.
     let memo: LinkerMemo
-    /// Which Codex threads ran in the cloud, one header read per thread.
+    /// Which Codex threads another thread spawned, one header read per
+    /// thread.
     let spawns: CodexSpawnMemo
 
     /// Creates a coordinator.
@@ -97,10 +98,10 @@ public struct GroupingCoordinator: Sendable {
     /// - Returns: how many placements and how many links were applied, which is
     ///   what a test asserts on and what a host can log.
     ///
-    /// Codex threads that ran in the cloud are tagged first (see
-    /// ``CodexThreadSpawn``) and kept out of placement: the directory they
-    /// report is the sandbox's, and the project they belong to is their
-    /// parent's, which ``BoardSnapshot/projectKey(for:)`` finds by walking up.
+    /// Codex threads another thread spawned are tagged first (see
+    /// ``CodexThreadSpawn``) and kept out of placement: the project they
+    /// belong to is their parent's, which ``BoardSnapshot/projectKey(for:)``
+    /// finds by walking up, and their own directory would only invent one.
     @discardableResult
     public func tick() async -> (placements: Int, links: Int) {
         var identities = await registry.linkableIdentities()
@@ -120,7 +121,7 @@ public struct GroupingCoordinator: Sendable {
             }
         }
 
-        let placeable = identities.filter { !SessionRelations.isCloudSpawn($0) }
+        let placeable = identities.filter { !SessionRelations.isThreadSpawn($0) }
         let resolved = await placements.placements(for: placeable)
         let placed = await registry.applyPlacements(resolved)
 

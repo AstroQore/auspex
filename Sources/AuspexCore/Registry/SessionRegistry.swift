@@ -451,7 +451,7 @@ public actor SessionRegistry {
 
     /// Rewrites sessions' variants, for the facts a grouping pass reads off
     /// disk that the kit's identity has no field for — today, that a Codex
-    /// thread ran in the cloud (``CodexThreadSpawn``).
+    /// thread was spawned by another (``CodexThreadSpawn``).
     ///
     /// An ordinary `identityUpdated`, so the snapshot, the event log and the
     /// store learn it the way they learn everything else. A session already

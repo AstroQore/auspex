@@ -6,8 +6,8 @@ import Testing
 
 @testable import AuspexCore
 
-/// Codex threads spawned into the cloud sandbox, which belong to the project
-/// of the thread that spawned them.
+/// Codex threads another thread spawned, which belong to the project of the
+/// thread that spawned them.
 @Suite("Codex thread spawn")
 struct CodexThreadSpawnTests {
     private let parentID = "0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6"
@@ -17,7 +17,7 @@ struct CodexThreadSpawnTests {
     private func header(
         id: String,
         parent: String? = nil,
-        agentPath: String? = "/root/factory_build",
+        agentPath: String? = "/root/worker",
         guardian: Bool = false
     ) -> Data {
         var source: Any = "vscode"
@@ -34,7 +34,7 @@ struct CodexThreadSpawnTests {
             "type": "session_meta",
             "payload": [
                 "id": id,
-                "cwd": "/root/factory_build",
+                "cwd": "/Users/example/Code/widget",
                 "originator": "codex_desktop",
                 "source": source,
             ] as [String: Any],
@@ -44,20 +44,23 @@ struct CodexThreadSpawnTests {
 
     // MARK: - The header
 
-    @Test("a thread_spawn header names its parent, and a /root/ agent path is the cloud")
+    @Test("a thread_spawn header names its parent, whatever its agent path says")
     func parsesSpawn() {
         let spawn = CodexThreadSpawn.parse(
             headerLines: [header(id: childID, parent: parentID)], sessionID: childID
         )
         #expect(spawn?.parentThreadID == parentID)
-        #expect(spawn?.runsInCloud == true)
-        #expect(spawn?.cloudVariant == "cloud:\(parentID)")
+        #expect(spawn?.variant == "spawn:\(parentID)")
 
-        let local = CodexThreadSpawn.parse(
-            headerLines: [header(id: childID, parent: parentID, agentPath: "worker")],
-            sessionID: childID
-        )
-        #expect(local?.runsInCloud == false)
+        // The agent path is a place in Codex's agent tree, not a directory,
+        // and does not decide anything: any shape, or none, is a spawn.
+        for agentPath in ["worker", nil] as [String?] {
+            let other = CodexThreadSpawn.parse(
+                headerLines: [header(id: childID, parent: parentID, agentPath: agentPath)],
+                sessionID: childID
+            )
+            #expect(other == spawn)
+        }
     }
 
     @Test("an ancestor's replayed header is skipped; a guardian or plain thread is no spawn")
@@ -84,21 +87,21 @@ struct CodexThreadSpawnTests {
     @Test("the variant is read back from the identity, for the Codex store only")
     func variantRoundTrip() {
         var identity = Fixtures.identity(key: Fixtures.key(.codex, childID), cwd: nil)
-        identity.variant = "cloud:\(parentID)"
-        #expect(SessionRelations.cloudSpawnParentID(of: identity) == parentID)
+        identity.variant = "spawn:\(parentID)"
+        #expect(SessionRelations.spawnParentID(of: identity) == parentID)
 
         var other = Fixtures.identity(key: Fixtures.key(.claudeCode, childID), cwd: nil)
-        other.variant = "cloud:\(parentID)"
-        #expect(!SessionRelations.isCloudSpawn(other))
+        other.variant = "spawn:\(parentID)"
+        #expect(!SessionRelations.isThreadSpawn(other))
 
-        identity.variant = "cloud:\(childID)"
-        #expect(!SessionRelations.isCloudSpawn(identity))
+        identity.variant = "spawn:\(childID)"
+        #expect(!SessionRelations.isThreadSpawn(identity))
     }
 
     // MARK: - Grouping
 
-    @Test("a cloud spawn is linked to its parent and takes the parent's project")
-    func cloudSpawnFollowsParent() async throws {
+    @Test("a spawned thread is linked to its parent and takes the parent's project")
+    func spawnFollowsParent() async throws {
         let root = try GitFixtures.makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let repository = try GitFixtures.makeDirectory(root.appendingPathComponent("widget"))
@@ -120,14 +123,15 @@ struct CodexThreadSpawnTests {
         await registry.ingest(
             Fixtures.event(.sessionStarted(identity: parentIdentity), key: parent, at: 0)
         )
-        // What the kit hands over for such a thread: the sandbox's directory,
-        // `subagent` as the entrypoint, the originator as the variant, and no
-        // parent — its header carried no `session_id` and nothing linked it.
+        // What the kit hands over for such a thread: a directory that is not
+        // a plain path, `subagent` as the entrypoint, the originator as the
+        // variant, and no parent — its header carried no `session_id` and
+        // nothing linked it.
         var childIdentity = SessionIdentity(
             key: child,
             sourcePath: rollout.path,
             variant: "codex_desktop",
-            cwd: "/root/factory_build",
+            cwd: "file://" + repository.path,
             entrypoint: "subagent"
         )
         childIdentity.gitBranch = nil
@@ -156,14 +160,15 @@ struct CodexThreadSpawnTests {
         await registry.stop()
         let frame = await registry.snapshot()
         let spawned = try #require(frame.session(for: child))
-        #expect(spawned.identity.variant == "cloud:\(parentID)")
+        #expect(spawned.identity.variant == "spawn:\(parentID)")
         #expect(spawned.identity.parent == parent)
         #expect(spawned.identity.parentLink == .subagent(toolUseID: nil))
         #expect(frame.inheritsProject(spawned))
         let parentSession = try #require(frame.session(for: parent))
         #expect(frame.projectKey(for: spawned) == frame.projectKey(for: parentSession))
         #expect(frame.projectKey(for: spawned) == ProjectResolver.standardized(repository.path))
-        // And the sandbox's directory never became a project or a scratch row.
+        // And the spawn's own directory never became a project or a scratch
+        // row.
         #expect(try store.projects.fetchProjects().map(\.name) == ["widget"])
         #expect(!frame.isSandbox(spawned))
     }
@@ -171,8 +176,7 @@ struct CodexThreadSpawnTests {
     @Test("a tag the kit overwrote is restored without reading the header again")
     func restoresOverwrittenTag() {
         let spawns = CodexSpawnMemo(read: { _, _ in
-            CodexThreadSpawn(parentThreadID: "0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6",
-                             agentPath: "/root/factory_build")
+            CodexThreadSpawn(parentThreadID: "0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6")
         })
         let identity = SessionIdentity(
             key: Fixtures.key(.codex, childID),
@@ -182,10 +186,10 @@ struct CodexThreadSpawnTests {
         )
         #expect(spawns.pendingVariants(for: [identity]).count == 1)
         var tagged = identity
-        tagged.variant = "cloud:\(parentID)"
+        tagged.variant = "spawn:\(parentID)"
         #expect(spawns.pendingVariants(for: [tagged]).isEmpty)
         // A re-read of the rollout from the top writes the originator back.
-        #expect(spawns.pendingVariants(for: [identity])[identity.key] == "cloud:\(parentID)")
+        #expect(spawns.pendingVariants(for: [identity])[identity.key] == "spawn:\(parentID)")
         #expect(spawns.readCount == 1)
 
         // Anything that is not a Codex sub-agent is never read.
@@ -198,11 +202,13 @@ struct CodexThreadSpawnTests {
         #expect(spawns.readCount == 1)
     }
 
-    @Test("a cloud spawn whose parent is not on the board goes to its harness's scratch")
-    func orphanedCloudSpawn() throws {
-        var identity = Fixtures.identity(key: Fixtures.key(.codex, childID), cwd: "/root/factory_build")
+    @Test("a spawned thread whose parent is not on the board goes to its harness's scratch")
+    func orphanedSpawn() throws {
+        var identity = Fixtures.identity(
+            key: Fixtures.key(.codex, childID), cwd: "/Users/example/Code/widget"
+        )
         identity.gitRoot = nil
-        identity.variant = "cloud:\(parentID)"
+        identity.variant = "spawn:\(parentID)"
         let session = SessionStateReducer.initialSnapshot(identity: identity)
         let frame = BoardSnapshot(generatedAt: Fixtures.date(0), sessions: [session])
         #expect(frame.projectKey(for: session) == PseudoProject.scratchKey(for: .codex))

@@ -11,52 +11,47 @@ import Synchronization
 /// ```json
 /// "source": {"subagent": {"thread_spawn": {
 ///     "parent_thread_id": "…", "depth": 1,
-///     "agent_path": "/root/factory_build", "agent_nickname": "…"}}}
+///     "agent_path": "/root/<name>", "agent_nickname": "…"}}}
 /// ```
+///
+/// `agent_path` is the spawn's place in Codex's own tree of agents — the
+/// conversation's agent is `/root` — and not a directory: these threads run on
+/// this Mac, in the same checkout as the thread that spawned them. Nothing here
+/// reads it.
 ///
 /// The kit reads this header for the cwd, the originator and the entrypoint
 /// (`subagent`), and for a guardian run's root; it does not read
 /// `thread_spawn`. So the parent the header names is not on the identity
 /// unless the parent's own transcript linked it or the header also carried a
-/// `session_id`, and nothing says where the thread ran.
+/// `session_id`.
 ///
 /// ## Why it matters to grouping
 ///
-/// A spawn whose `agent_path` sits under `/root/` ran in Codex's own
-/// execution sandbox, and the directory it reports is that sandbox's, not a
-/// folder on this Mac. Placed by its own `cwd` it becomes a project nobody has
-/// — or, now, a scratch row nobody asked for. It is working on whatever its
-/// parent is working on, so it takes its parent's project instead.
+/// A spawned thread is working on whatever its parent is working on, and the
+/// working directory it reports is not a reliable way to say so: it is not
+/// always a plain path, and placed by it on its own the thread can become a
+/// project of one, or a scratch row nobody asked for. So it takes its parent's
+/// project instead, whatever its own directory says.
 ///
 /// The fact is carried on the identity's ``SessionIdentity/variant`` as
-/// `cloud:<parent thread id>` — the same trick the kit uses for a guardian's
-/// `auto-review:<root>`. The identity is a kit type with no room for an
-/// origin field, the variant on a Codex thread otherwise holds only its
-/// originator, and an encoding every reader can parse from the identity alone
-/// keeps ``SessionRelations`` and ``BoardSnapshot/projectKey(for:)`` pure.
+/// `spawn:<parent thread id>` — the same trick the kit uses for a guardian's
+/// `auto-review:<root>`. The identity is a kit type with no field for it, the
+/// variant on a Codex thread otherwise holds only its originator, and an
+/// encoding every reader can parse from the identity alone keeps
+/// ``SessionRelations`` and ``BoardSnapshot/projectKey(for:)`` pure.
 public struct CodexThreadSpawn: Sendable, Hashable {
     /// The thread that spawned this one.
     public let parentThreadID: String
-    /// Where in the spawning agent's tree this one sits, when recorded.
-    public let agentPath: String?
 
-    public init(parentThreadID: String, agentPath: String?) {
+    public init(parentThreadID: String) {
         self.parentThreadID = parentThreadID
-        self.agentPath = agentPath
     }
 
-    /// The root every cloud execution path hangs off.
-    public static let cloudRoot = "/root/"
+    /// What a spawned thread's variant begins with.
+    public static let variantPrefix = "spawn:"
 
-    /// What a cloud spawn's variant begins with.
-    public static let variantPrefix = "cloud:"
-
-    /// `true` when this thread ran in Codex's execution sandbox rather than
-    /// in a directory on this Mac.
-    public var runsInCloud: Bool { agentPath?.hasPrefix(Self.cloudRoot) ?? false }
-
-    /// The variant a cloud spawn carries.
-    public var cloudVariant: String { Self.variantPrefix + parentThreadID }
+    /// The variant a spawned thread carries.
+    public var variant: String { Self.variantPrefix + parentThreadID }
 
     // MARK: - Reading the header
 
@@ -88,14 +83,14 @@ public struct CodexThreadSpawn: Sendable, Hashable {
                   !parent.isEmpty,
                   parent.caseInsensitiveCompare(sessionID) != .orderedSame
             else { return nil }
-            return CodexThreadSpawn(parentThreadID: parent, agentPath: spawn["agent_path"] as? String)
+            return CodexThreadSpawn(parentThreadID: parent)
         }
         return nil
     }
 
     /// Reads the head of a rollout and parses it. Read-only, bounded to
-    /// ``headerWindow`` lines; nothing from the file is kept but the two
-    /// fields above.
+    /// ``headerWindow`` lines; nothing from the file is kept but the parent's
+    /// thread id.
     public static func read(rolloutAt path: String, sessionID: String) -> CodexThreadSpawn? {
         guard !path.isEmpty else { return nil }
         let lines = JSONLHeadTail.headLines(url: URL(fileURLWithPath: path), count: headerWindow)
@@ -116,7 +111,8 @@ public struct CodexThreadSpawn: Sendable, Hashable {
     static let subagentEntrypoint = "subagent"
 }
 
-/// Which Codex threads ran in the cloud, read from each rollout's header once.
+/// Which Codex threads were spawned by another, read from each rollout's
+/// header once.
 ///
 /// The grouping pass asks every few seconds; the header of a thread does not
 /// change, so each candidate's file is opened once and the answer — spawn or
@@ -141,19 +137,19 @@ final class CodexSpawnMemo: Sendable {
     /// suite asserts on.
     var readCount: Int { state.withLock { $0.reads } }
 
-    /// The variant each cloud spawn among `identities` should carry and does
-    /// not yet.
+    /// The variant each spawned thread among `identities` should carry and
+    /// does not yet.
     ///
     /// Empty on a quiet board: an identity already tagged is not looked at
-    /// again, and one whose header said "not a cloud spawn" is not re-read.
+    /// again, and one whose header named no parent is not re-read.
     /// A tag the kit overwrote — a rollout re-read from the top writes its
     /// originator back — is restored from the memo without opening the file.
     func pendingVariants(for identities: [SessionIdentity]) -> [SessionKey: String] {
         var out: [SessionKey: String] = [:]
-        for identity in identities where !SessionRelations.isCloudSpawn(identity) {
+        for identity in identities where !SessionRelations.isThreadSpawn(identity) {
             guard CodexThreadSpawn.mayBeSpawn(identity) else { continue }
-            guard let spawn = answer(for: identity), spawn.runsInCloud else { continue }
-            out[identity.key] = spawn.cloudVariant
+            guard let spawn = answer(for: identity) else { continue }
+            out[identity.key] = spawn.variant
         }
         prune(keeping: identities)
         return out

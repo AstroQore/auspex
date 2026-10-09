@@ -72,13 +72,13 @@ public enum SessionRelations {
             != nil
     }
 
-    /// The thread a Codex cloud spawn came from, or `nil` when this is not
-    /// one.
+    /// The thread a spawned Codex thread came from, or `nil` when this is
+    /// not one.
     ///
-    /// Read off the ``CodexThreadSpawn/cloudVariant`` the grouping pass tags
-    /// such a thread with, so — like ``autoReviewRootID(of:)`` — it needs the
+    /// Read off the ``CodexThreadSpawn/variant`` the grouping pass tags such a
+    /// thread with, so — like ``autoReviewRootID(of:)`` — it needs the
     /// identity and nothing else.
-    public static func cloudSpawnParentID(of identity: SessionIdentity) -> String? {
+    public static func spawnParentID(of identity: SessionIdentity) -> String? {
         guard codexStoreHarnesses.contains(identity.key.harness),
               let variant = identity.variant,
               variant.hasPrefix(CodexThreadSpawn.variantPrefix)
@@ -91,10 +91,10 @@ public enum SessionRelations {
         return parent
     }
 
-    /// `true` when this session is a Codex thread that ran in the cloud and
-    /// takes its parent's project rather than one of its own.
-    public static func isCloudSpawn(_ identity: SessionIdentity) -> Bool {
-        cloudSpawnParentID(of: identity) != nil
+    /// `true` when this session is a Codex thread another thread spawned,
+    /// and takes its parent's project rather than one of its own.
+    public static func isThreadSpawn(_ identity: SessionIdentity) -> Bool {
+        spawnParentID(of: identity) != nil
     }
 
     /// The parent edges recorded in `identities` but not yet folded into them.
@@ -106,7 +106,7 @@ public enum SessionRelations {
     ///
     /// - Parameter identities: whatever the board is holding. Routinely
     ///   incomplete — a review whose root is not here yields nothing.
-    /// - Returns: one link per auto-review session, and one per cloud spawn,
+    /// - Returns: one link per auto-review session, and one per spawned thread,
     ///   whose parent is present and whose own parent is still unknown, in
     ///   input order.
     public static func links(identities: [SessionIdentity]) -> [ProcessLink] {
@@ -118,7 +118,7 @@ public enum SessionRelations {
             let recorded: (id: String, evidence: String)
             if let rootID = autoReviewRootID(of: identity) {
                 recorded = (rootID, "provider variant names root session")
-            } else if let parentID = cloudSpawnParentID(of: identity) {
+            } else if let parentID = spawnParentID(of: identity) {
                 // The direct parent this time, not the root: the header's
                 // `parent_thread_id` is the thread that spawned it.
                 recorded = (parentID, "rollout header names parent thread")

@@ -316,11 +316,11 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// directory still gets their claim: the rule below the user is the only
     /// one this overrides.
     ///
-    /// A Codex thread that ran in the cloud is the fourth kind: it reports a
-    /// directory, and it is the sandbox's. It never groups by its own, takes
-    /// its nearest placeable ancestor's, and with none on the board goes to
-    /// its harness's scratch rather than inventing a project out of a path
-    /// that is not on this Mac. See ``CodexThreadSpawn``.
+    /// A Codex thread another thread spawned is the fourth kind: it reports a
+    /// directory, and the directory is not what it is working on — its parent
+    /// is. It never groups by its own, takes its nearest placeable ancestor's,
+    /// and with none on the board goes to its harness's scratch rather than
+    /// inventing a project of one. See ``CodexThreadSpawn``.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let claimed = claims.key(for: session) { return claimed }
         if groupsByOwnDirectory(session), let own = Self.projectKey(for: session) { return own }
@@ -349,15 +349,15 @@ public struct BoardSnapshot: Sendable, Equatable {
     }
 
     /// Whether this session's own directory can be its project key — neither
-    /// a scratch thread nor a cloud spawn.
+    /// a scratch thread nor a spawned thread.
     private func groupsByOwnDirectory(_ session: SessionSnapshot) -> Bool {
         !isSandbox(session) && !inheritsProject(session)
     }
 
     /// Whether this session takes its project from its parent whatever its
-    /// own directory says: a Codex thread that ran in the cloud.
+    /// own directory says: a Codex thread another thread spawned.
     public func inheritsProject(_ session: SessionSnapshot) -> Bool {
-        SessionRelations.isCloudSpawn(session.identity)
+        SessionRelations.isThreadSpawn(session.identity)
     }
 
     /// Whether this session's own directory is a harness's per-thread scratch.

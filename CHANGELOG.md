@@ -44,8 +44,8 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   them are removed once (projects you made yourself are kept), and Settings →
   Ignore gains a "Scratch folder" rule for your own throwaway folders — it
   keeps the sessions on the board and only stops the folder becoming a
-  project. Codex sub-agents spawned into the cloud sandbox now join their
-  parent thread's project instead of their sandbox directory's.
+  project. Codex sub-agent threads now join the project of the thread that
+  spawned them instead of making one of their own.
 
 ### Changed
 

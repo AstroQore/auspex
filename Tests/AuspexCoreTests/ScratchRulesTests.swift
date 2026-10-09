@@ -62,7 +62,7 @@ struct ScratchRulesTests {
 
     @Test("container and temporary roots are scratch, component by component")
     func sandboxRoots() {
-        #expect(rules.match(cwd: "/root/factory_build", harness: .codex)?.reason == .container)
+        #expect(rules.match(cwd: "/root/app", harness: .codex)?.reason == .container)
         #expect(rules.match(cwd: "/workspace", harness: .grokBuild)?.reason == .container)
         #expect(rules.match(cwd: "/tmp/clone", harness: .claudeCode)?.reason == .temporary)
         #expect(rules.match(cwd: "/private/tmp/clone/src", harness: .cursor)?.name == "src")
