@@ -107,6 +107,18 @@ final class SceneDirector {
     /// transition.
     private static let moveDuration: TimeInterval = 0.34
 
+    /// How long a desk that has left the plan takes to fade.
+    private static let fadeDuration: TimeInterval = 0.3
+
+    /// Until when a desk that has left the plan is still fading, in
+    /// `CACurrentMediaTime()` seconds.
+    private var fadingUntil: TimeInterval = 0
+
+    /// The room's idle motion: which stir is next, and when — see
+    /// ``SceneIdleBeat``.
+    private var beatRound: UInt64 = 0
+    private var nextBeatAt: TimeInterval?
+
     /// Who is between two places, and the node carrying them there.
     private var walkers: [SessionKey: WalkerNode] = [:]
     /// Where everybody was on the last frame, so a place that changed can be
@@ -246,6 +258,7 @@ final class SceneDirector {
         syncFloors(sessions: byKey)
         syncZones()
         syncContent(sessions: byKey)
+        syncArcMotion()
         // After the content: a desk that changed hands this frame must lose
         // the old occupant's balloon, and the person who moved to a bench must
         // take theirs with them.
@@ -257,10 +270,15 @@ final class SceneDirector {
 
     /// Hangs Now's balloons. Nothing is touched when they are the ones already
     /// hanging.
-    func apply(captions next: [SessionKey: SceneCaption]) {
-        guard next != captions else { return }
+    ///
+    /// - Returns: whether anything changed, and so whether there is a frame to
+    ///   draw.
+    @discardableResult
+    func apply(captions next: [SessionKey: SceneCaption]) -> Bool {
+        guard next != captions else { return false }
         captions = next
         syncCaptions()
+        return true
     }
 
     /// Puts each balloon on whichever node its session is drawn at, and takes
@@ -461,7 +479,10 @@ final class SceneDirector {
             } else {
                 node.isPaused = false
                 node.isHidden = false
-                node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
+                node.run(.sequence([.fadeOut(withDuration: Self.fadeDuration), .removeFromParent()]))
+                // No longer in the table the motion check reads, but still on
+                // the floor for as long as it takes to fade.
+                fadingUntil = CACurrentMediaTime() + Self.fadeDuration
             }
         }
         deskBySession = bySession
@@ -551,11 +572,27 @@ final class SceneDirector {
                 return created
             }()
             node.update(tether, reduceMotion: reduceMotion)
+            node.setPulsing(Self.isDelegating(sessions[tether.parent]))
         }
         for (id, node) in tethers where !live.contains(id) {
             node.removeFromParent()
             tethers.removeValue(forKey: id)
         }
+    }
+
+    /// Lets each drawn arc pulse while its parent is handing work over and
+    /// rest once it is not — the state changes far more often than the arcs
+    /// do, so this runs every pass, over at most ``arcLimit`` nodes.
+    private func syncArcMotion() {
+        for node in tethers.values {
+            guard let delegator = node.delegator else { continue }
+            node.setPulsing(Self.isDelegating(sessions[delegator]))
+        }
+    }
+
+    private static func isDelegating(_ session: SessionSnapshot?) -> Bool {
+        guard let session, case .delegating = session.state else { return false }
+        return true
     }
 
     /// The most arcs one picture is allowed.
@@ -876,6 +913,66 @@ final class SceneDirector {
                 node.isPaused = !onScreen
             }
         }
+    }
+
+    // MARK: Motion
+
+    /// Whether anything the camera can see is in the middle of an action.
+    ///
+    /// What decides whether the frame being drawn is worth following with
+    /// another one — see `OfficeSKView`. Asked of the places the director
+    /// already keeps rather than by walking the scene graph: every action in
+    /// the office is on a desk and the person at it, a walker, an arc or a
+    /// table, and a culled one is paused, so it is not moving whatever it
+    /// holds.
+    func isAnimating(at time: TimeInterval = CACurrentMediaTime()) -> Bool {
+        if !walkers.isEmpty || time < fadingUntil { return true }
+        for node in desks.values where !node.isHidden && !node.isPaused && node.isAnimating {
+            return true
+        }
+        for node in tethers.values where !node.isHidden && !node.isPaused && node.hasActions() {
+            return true
+        }
+        for node in tables.values where !node.isHidden && !node.isPaused && node.isAnimating {
+            return true
+        }
+        return false
+    }
+
+    /// Stirs the room's idle motion, if a stir is due at `time`.
+    ///
+    /// Called from the scene's clock, so a stir that falls due while the view
+    /// is stopped happens on the frame the view is woken for it — see
+    /// ``nextBeat``. Only what the camera can see takes part; a culled place
+    /// is paused and would hold its stir until it was next on screen.
+    func beat(at time: TimeInterval) {
+        guard !reduceMotion else {
+            nextBeatAt = nil
+            return
+        }
+        guard let due = nextBeatAt else {
+            nextBeatAt = time + SceneIdleBeat.gap(after: beatRound)
+            return
+        }
+        guard time >= due else { return }
+        beatRound &+= 1
+        for node in desks.values where !node.isHidden && !node.isPaused {
+            node.beat(round: beatRound)
+        }
+        for (id, node) in tables where !node.isHidden && !node.isPaused {
+            node.beat(id: id, round: beatRound)
+        }
+        nextBeatAt = time + SceneIdleBeat.gap(after: beatRound)
+    }
+
+    /// When the room next stirs, in `CACurrentMediaTime()` seconds — or `nil`
+    /// when nothing the camera can see would stir with it, so a still office
+    /// with nobody idle on screen is not woken to find that out.
+    var nextBeat: TimeInterval? {
+        guard !reduceMotion, let nextBeatAt else { return nil }
+        let anybody = desks.values.contains { !$0.isHidden && !$0.isPaused && $0.hasIdleMotion }
+            || tables.values.contains { !$0.isHidden && !$0.isPaused && $0.hasIdleMotion }
+        return anybody ? nextBeatAt : nil
     }
 
     /// Puts everything back on screen, for the offscreen renderer — which
@@ -1231,6 +1328,11 @@ private final class FloorNode: SKNode {
 private final class TetherNode: SKShapeNode {
     private var lastFrom: CGPoint = .zero
     private var lastTo: CGPoint = .zero
+    /// The session that handed the work over, whose state decides whether
+    /// the arc pulses.
+    private(set) var delegator: SessionKey?
+    /// Whether the parent is handing work over right now.
+    private var isPulsing = true
     /// How much of the arc the camera's distance leaves. Multiplied into the
     /// alpha the pulse is running at, so a zoomed-out arc dims rather than
     /// stopping.
@@ -1269,7 +1371,7 @@ private final class TetherNode: SKShapeNode {
     /// ends up brightening as the reader zooms out.
     private func breathe() {
         removeAllActions()
-        guard !isStill else {
+        guard !isStill, isPulsing else {
             alpha = 0.8 * zoomFade
             return
         }
@@ -1286,7 +1388,17 @@ private final class TetherNode: SKShapeNode {
 
     private var isStill = false
 
+    /// Pulses while the parent is delegating; a finished handover leaves a
+    /// quiet line. Re-runs the light only when that changes, so a pulse in
+    /// flight is not restarted by every board frame.
+    func setPulsing(_ pulsing: Bool) {
+        guard pulsing != isPulsing else { return }
+        isPulsing = pulsing
+        breathe()
+    }
+
     func update(_ tether: SceneTether, reduceMotion: Bool) {
+        delegator = tether.parent
         let from = CGPoint(x: tether.from.x + 26, y: -tether.from.y + 30)
         let to = CGPoint(x: tether.to.x - 20, y: -tether.to.y + 26)
         guard from != lastFrom || to != lastTo else { return }

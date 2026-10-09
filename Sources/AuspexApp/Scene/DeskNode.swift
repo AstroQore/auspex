@@ -163,6 +163,12 @@ final class DeskNode: SKNode {
     private let glowHolder = SKNode()
     private let paper = SKSpriteNode()
     private let bubble = SKSpriteNode()
+    /// Where the bubble rests. Its idle motion moves it *to* places rather
+    /// than *by* amounts, so a beat cut short by a state change cannot leave
+    /// it drifting.
+    private var bubbleBase: CGPoint = .zero
+    /// What the bubble over this person says, when one is showing.
+    private var bubbleKind: BubbleKind?
     /// `↳ N`: how many sessions this one handed work to.
     ///
     /// The arcs stopped being drawn all at once (see
@@ -293,6 +299,7 @@ final class DeskNode: SKNode {
         addChild(caption)
 
         furnish(art)
+        bubbleBase = bubble.position
         // Over the head, where the state bubble would be: the balloon says the
         // same thing in words, so the two never show at once.
         caption.position = CGPoint(x: bubble.position.x - 6, y: bubble.position.y - 2)
@@ -684,6 +691,8 @@ final class DeskNode: SKNode {
 
     private func applyBubble(look: Look) {
         bubble.removeAllActions()
+        bubble.position = bubbleBase
+        bubbleKind = nil
         let kind: BubbleKind?
         switch look.seat {
         // The whole point of the garden: a session that finished while you
@@ -716,6 +725,7 @@ final class DeskNode: SKNode {
         bubble.texture = PlaceholderArt.shared.bubble(kind)
         bubble.alpha = 1
         bubble.setScale(1)
+        bubbleKind = kind
         guard !look.reduceMotion else { return }
 
         switch kind {
@@ -730,17 +740,9 @@ final class DeskNode: SKNode {
                 ),
                 withKey: "bubble"
             )
-        case .asleep:
-            bubble.run(
-                .repeatForever(
-                    .sequence([
-                        .group([.fadeAlpha(to: 0.15, duration: 1.6), .moveBy(x: 0, y: 8, duration: 1.6)]),
-                        .group([.fadeAlpha(to: 1, duration: 0), .moveBy(x: 0, y: -8, duration: 0)]),
-                        .wait(forDuration: 0.4)
-                    ])
-                ),
-                withKey: "bubble"
-            )
+        case .asleep, .done:
+            // Idle motion: it waits for the room to stir — see `beat(round:)`.
+            return
         case .note:
             bubble.run(
                 .repeatForever(
@@ -751,19 +753,65 @@ final class DeskNode: SKNode {
                 ),
                 withKey: "bubble"
             )
+        }
+    }
+
+    // MARK: Idle motion
+
+    /// Whether anything at this place is moving right now — the desk sliding
+    /// or fading, the light, the bubble, the paper, or the person.
+    var isAnimating: Bool {
+        hasActions() || glow.hasActions() || screen.hasActions() || bubble.hasActions()
+            || paper.hasActions() || (agent?.isAnimating ?? false)
+    }
+
+    /// Whether this place has idle motion to play when the room stirs: a
+    /// drawn figure breathing or dozing, a `z` drifting up, a finished note
+    /// lifting and settling.
+    var hasIdleMotion: Bool {
+        guard let look, !look.reduceMotion, !look.isAway, !look.isVacant else { return false }
+        return (agent?.hasIdleMotion ?? false) || bubbleKind == .asleep || bubbleKind == .done
+    }
+
+    /// One stir of the room's idle motion, numbered `round`.
+    ///
+    /// Each idle thing here plays once — the figure's strip, the bubble's
+    /// drift — a little after the stir, so a garden of finished sessions moves
+    /// together without moving in unison; and about two stirs in five this
+    /// place sits out. See ``SceneIdleBeat``.
+    func beat(round: UInt64) {
+        guard hasIdleMotion, SceneIdleBeat.joins(slotID, round: round) else { return }
+        let delay = SceneIdleBeat.delay(slotID, round: round)
+        agent?.beat(after: delay)
+        guard bubble.action(forKey: "bubble") == nil, !bubble.isHidden else { return }
+        let base = bubbleBase
+        switch bubbleKind {
+        case .asleep:
+            // A `z` drifting up and fading, then back where it started.
+            bubble.run(
+                .sequence([
+                    .wait(forDuration: delay),
+                    .group([
+                        .fadeAlpha(to: 0.15, duration: 1.6),
+                        .move(to: CGPoint(x: base.x, y: base.y + 8), duration: 1.6)
+                    ]),
+                    .group([.fadeAlpha(to: 1, duration: 0), .move(to: base, duration: 0)])
+                ]),
+                withKey: "bubble"
+            )
         case .done:
             // A slow lift and settle rather than a pulse: it is waiting, not
             // asking. The only thing in this scene allowed to ask is red.
             bubble.run(
-                .repeatForever(
-                    .sequence([
-                        .moveBy(x: 0, y: 3, duration: 1.1),
-                        .moveBy(x: 0, y: -3, duration: 1.1),
-                        .wait(forDuration: 0.5)
-                    ])
-                ),
+                .sequence([
+                    .wait(forDuration: delay),
+                    .move(to: CGPoint(x: base.x, y: base.y + 3), duration: 1.1),
+                    .move(to: base, duration: 1.1)
+                ]),
                 withKey: "bubble"
             )
+        default:
+            return
         }
     }
 

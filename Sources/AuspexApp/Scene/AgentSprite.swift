@@ -43,6 +43,14 @@ import SpriteKit
 /// two states that are *supposed* to be still — idle and ended — attach no
 /// action at all in either mode. A room of forty finished agents costs the
 /// render loop nothing.
+///
+/// A drawn character can still move while it does nothing — the shipped ones
+/// breathe in their idle strip, doze in their stale one, and pack up in their
+/// ended one. Those three are idle motion rather than signals, so they are
+/// not looped: the figure rests on its first frame and plays the strip once
+/// each time the room stirs (see ``SceneIdleBeat`` and ``beat(after:)``).
+/// Everything a reader is meant to notice — typing, thinking, a hand up —
+/// keeps its loop.
 @MainActor
 final class AgentSprite: SKNode {
     /// The width of the procedural torso in points. The whole rig hangs off it.
@@ -61,6 +69,13 @@ final class AgentSprite: SKNode {
     private var currentReduceMotion: Bool?
     /// The way it is facing while it walks. `nil` when it is sitting down.
     private var currentWalk: SceneWalkDirection?
+    /// The drawn strip played once per stir of the room, when the pose is one
+    /// whose motion is idle rather than a signal. `nil` for everything else.
+    private var idleStrip: SpriteLibrary.Strip?
+
+    /// The poses whose drawn motion is ambience — breathing, dozing, packing
+    /// up — rather than something the reader is meant to notice.
+    private static let idlePoses: Set<ScenePose> = [.idle, .stale, .ended]
 
     init(harness: Harness, key: SessionKey) {
         self.harness = harness
@@ -110,7 +125,7 @@ final class AgentSprite: SKNode {
 
         reset()
         if let strip = SpriteLibrary.shared.strip(for: key, pose: pose) {
-            applyStrip(strip, reduceMotion: reduceMotion)
+            applyStrip(strip, reduceMotion: reduceMotion, idle: Self.idlePoses.contains(pose))
         } else {
             applyProcedural(pose, reduceMotion: reduceMotion)
         }
@@ -169,8 +184,33 @@ final class AgentSprite: SKNode {
         )
     }
 
+    /// Whether anything about this figure is moving right now.
+    var isAnimating: Bool {
+        hasActions() || body.hasActions() || head.hasActions() || atlas.hasActions()
+    }
+
+    /// Whether this figure has idle motion to play when the room stirs.
+    var hasIdleMotion: Bool { idleStrip != nil }
+
+    /// Plays the idle strip once, `delay` seconds from now, and comes back to
+    /// rest on its first frame.
+    func beat(after delay: TimeInterval) {
+        guard let strip = idleStrip, let first = strip.frames.first,
+              atlas.action(forKey: "pose") == nil
+        else { return }
+        atlas.run(
+            .sequence([
+                .wait(forDuration: delay),
+                .animate(with: strip.frames, timePerFrame: strip.timePerFrame),
+                .setTexture(first)
+            ]),
+            withKey: "pose"
+        )
+    }
+
     /// Back to a standing start: no actions, nothing mirrored, fully opaque.
     private func reset() {
+        idleStrip = nil
         removeAllActions()
         body.removeAllActions()
         head.removeAllActions()
@@ -195,16 +235,22 @@ final class AgentSprite: SKNode {
         if let direction = currentWalk {
             currentWalk = nil
             walk(direction, reduceMotion: reduceMotion)
+            (scene as? OfficeScene)?.requestFrame()
             return
         }
         guard let pose = currentPose else { return }
         currentPose = nil
         apply(pose: pose, reduceMotion: reduceMotion)
+        // New art on a still office would otherwise wait for the next board
+        // frame to be drawn, which may be minutes away.
+        (scene as? OfficeScene)?.requestFrame()
     }
 
     // MARK: Drawn art
 
-    private func applyStrip(_ strip: SpriteLibrary.Strip, reduceMotion: Bool) {
+    /// - Parameter idle: whether the pose's motion is ambience, which plays
+    ///   once per stir of the room rather than in a loop.
+    private func applyStrip(_ strip: SpriteLibrary.Strip, reduceMotion: Bool, idle: Bool = false) {
         guard let first = strip.frames.first else { return }
         body.isHidden = true
         head.isHidden = true
@@ -219,6 +265,10 @@ final class AgentSprite: SKNode {
         )
         atlas.texture = first
         guard !reduceMotion, strip.frames.count > 1 else { return }
+        guard !idle else {
+            idleStrip = strip
+            return
+        }
         atlas.run(
             .repeatForever(.animate(with: strip.frames, timePerFrame: strip.timePerFrame)),
             withKey: "pose"

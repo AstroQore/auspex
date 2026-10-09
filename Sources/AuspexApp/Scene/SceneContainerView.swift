@@ -497,7 +497,8 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     }
 }
 
-/// An `SKView` that knows when nobody is looking at it.
+/// An `SKView` that knows when nobody is looking at it, and when there is
+/// nothing to look at.
 ///
 /// ## Why the pausing is here and not in the scene
 ///
@@ -506,18 +507,69 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
 /// core to render into a surface nobody composites. Only the view can answer
 /// "is this on screen", so the view owns the answer and pushes it down.
 ///
-/// Thirty frames a second rather than sixty for the same reason the board
+/// ## Three speeds, and stopped
+///
+/// An unpaused `SKView` is not only the frames it draws. Its display link
+/// fires at the display's own rate whatever `preferredFramesPerSecond` says,
+/// and every one of those ticks wakes a thread and the main queue to decide
+/// not to draw — so a scene that changes once every few seconds and a scene
+/// running at thirty frames a second cost nearly the same to leave alone. The
+/// only rate that costs nothing is *paused*. So the view runs at one of:
+///
+/// - **the gesture rate** while a hand is on the map, because a map moving
+///   under the fingers is judged by a stricter standard than anything else;
+/// - **the resting rate** while anything in the picture is moving — a typing
+///   hand, a walk, a flight of the camera;
+/// - **stopped** the moment a drawn frame had nothing moving in it. The last
+///   frame stays on the glass, and the first thing that changes — a board
+///   frame, the pointer, a scroll, a resize, a balloon's stopwatch, the next
+///   beat of the room's idle motion — starts the clock again on the next
+///   vsync. The scene reports which frames were still; see
+///   `OfficeScene.didFinishUpdate()`.
+///
+/// The resting rate is thirty rather than sixty for the same reason the board
 /// coalesces its snapshots at twenty: the fastest thing in the scene is a
-/// typing hand at ten changes a second, and the difference between 30 and 60 Hz
-/// on that is a difference nobody can see and everybody's fan can hear.
+/// typing hand at ten changes a second, and the difference between 30 and 60
+/// Hz on that is a difference nobody can see and everybody's fan can hear. A
+/// gesture gets twice the resting rate, for as long as it lasts.
 final class OfficeSKView: SKView {
+    /// How fast the office is drawn while something in it moves, and while a
+    /// hand is on it.
+    struct Rates: Equatable {
+        /// While anything on screen is moving.
+        var resting: Int
+        /// While a gesture is in flight.
+        var gesture: Int
+
+        /// The aviary: the office is the whole window.
+        static let aviary = Rates(resting: 30, gesture: 60)
+    }
+
+    /// Which pair of rates this view runs at.
+    var rates: Rates = .aviary {
+        didSet {
+            guard rates != oldValue else { return }
+            applyRate()
+        }
+    }
+
     /// Whether a gesture is in flight, which is the one time the office is
-    /// worth drawing at the display's rate.
+    /// worth drawing at the gesture rate.
     private var isInteracting = false
+    /// Whether a window is showing this view at all. A view that is not on
+    /// screen is suspended rather than still, and nothing wakes it but the
+    /// window coming back.
+    private(set) var isOnScreen = false
+    /// Whether the clock is stopped because the last drawn frame had nothing
+    /// moving in it.
+    private(set) var isStill = false
+    /// Bumped by every wake, so a decision to stop that was taken before
+    /// something changed is recognised as stale when it arrives.
+    private var generation = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        preferredFramesPerSecond = Self.framesPerSecond
+        preferredFramesPerSecond = rates.resting
         ignoresSiblingOrder = true
         allowsTransparency = false
         NotificationCenter.default.addObserver(
@@ -547,6 +599,9 @@ final class OfficeSKView: SKView {
     /// the frame rate is dropped so that even a run loop that somehow ticks is
     /// ticking once a second rather than thirty times.
     func suspend() {
+        generation &+= 1
+        isOnScreen = false
+        isStill = false
         isPaused = true
         scene?.isPaused = true
         preferredFramesPerSecond = 1
@@ -562,18 +617,72 @@ final class OfficeSKView: SKView {
 
     /// Says whether a gesture is in flight.
     ///
-    /// The office rests at thirty frames a second — the fastest thing in it is
-    /// a typing hand at ten changes a second — but a *map moving under the
-    /// fingers* is judged by a different standard, and thirty frames of a pan
-    /// is the one place the difference is visible. So the rate goes up for the
-    /// length of a gesture and comes straight back down; the canvas stops
-    /// asking a few hundred milliseconds after the last event, so nothing is
-    /// left paying for it.
+    /// The rate goes up for the length of a gesture and comes straight back
+    /// down; the canvas stops asking a few hundred milliseconds after the last
+    /// event, so nothing is left paying for it.
     func setInteracting(_ interacting: Bool) {
         guard isInteracting != interacting else { return }
         isInteracting = interacting
-        guard !isPaused else { return }
-        preferredFramesPerSecond = interacting ? Self.gestureFramesPerSecond : Self.framesPerSecond
+        applyRate()
+        if interacting { wake() }
+    }
+
+    /// Something in the picture changed: draw it.
+    ///
+    /// Cheap enough to call for every change, which is the point — the board,
+    /// the pointer, the scroll view and the scene's own beats all call it
+    /// rather than each deciding whether their change was worth a frame. A
+    /// running view only notes that the frame it is about to draw is not the
+    /// still one; a still view starts its clock again on the next vsync. A
+    /// view that is not on screen stays asleep.
+    func wake() {
+        generation &+= 1
+        guard isOnScreen else { return }
+        isStill = false
+        if isPaused { isPaused = false }
+    }
+
+    /// Hears from the scene, once per drawn frame, whether anything in that
+    /// frame was moving — and when it next has something to do.
+    ///
+    /// A frame with nothing moving is the last one worth drawing until
+    /// something changes, so the clock stops after it. Not here: this is
+    /// called from inside SpriteKit's update, before the frame is rendered,
+    /// and a view paused at that moment might not draw the frame that made
+    /// the picture still. The stop is queued behind the render instead, and
+    /// abandoned if anything woke the view in between.
+    ///
+    /// - Parameter nextWake: when, in `CACurrentMediaTime()` seconds, the
+    ///   scene next changes on its own — a balloon's stopwatch ticking over,
+    ///   the next beat of the room's idle motion. `nil` when nothing will.
+    func frameFinished(moving: Bool, nextWake: TimeInterval?) {
+        guard !moving, !isInteracting, isOnScreen else { return }
+        let decided = generation
+        DispatchQueue.main.async { [weak self] in
+            self?.settle(decided: decided, nextWake: nextWake)
+        }
+    }
+
+    private func settle(decided: Int, nextWake: TimeInterval?) {
+        guard decided == generation, isOnScreen, !isInteracting, !isPaused else { return }
+        isPaused = true
+        isStill = true
+        guard let nextWake else { return }
+        let delay = max(0.05, nextWake - CACurrentMediaTime())
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            // A wake that came first has already drawn whatever this was for,
+            // and set up its own next one.
+            guard let self, decided == generation else { return }
+            wake()
+        }
+    }
+
+    /// The rate for what is happening now. Written whenever the view is
+    /// running or could start running; a suspended view keeps its one frame
+    /// a second.
+    private func applyRate() {
+        guard isOnScreen || !isPaused else { return }
+        preferredFramesPerSecond = isInteracting ? rates.gesture : rates.resting
     }
 
     // MARK: - Live resize
@@ -608,11 +717,15 @@ final class OfficeSKView: SKView {
         // The scene has been following the size all along; this is only the
         // last one, and it lands on a size it has already been given.
         officeScene?.viewSizeChanged(to: bounds.size)
+        wake()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         officeScene?.viewSizeChanged(to: newSize)
+        // A still view's drawable is the old size, and AppKit would stretch
+        // it to the new one until a frame arrived.
+        wake()
     }
 
     /// Every Metal layer under this view. SpriteKit does not promise where its
@@ -661,18 +774,14 @@ final class OfficeSKView: SKView {
             suspend()
             return
         }
-        preferredFramesPerSecond = isInteracting
-            ? Self.gestureFramesPerSecond : Self.framesPerSecond
-        isPaused = false
+        isOnScreen = true
         scene?.isPaused = false
+        applyRate()
+        // Whatever brought the view back, the picture on the glass is the one
+        // it had when it left: draw at least one frame, and let the scene say
+        // whether there is reason to draw a second.
+        wake()
     }
-
-    /// Thirty rather than sixty for the same reason the board coalesces its
-    /// snapshots at twenty: the fastest thing in the scene is a typing hand at
-    /// ten changes a second.
-    private static let framesPerSecond = 30
-    /// What a gesture gets, for as long as it lasts.
-    private static let gestureFramesPerSecond = 60
 }
 
 /// Renders the office to a PNG without a window.

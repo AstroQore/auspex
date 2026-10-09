@@ -394,6 +394,10 @@ final class TableNode: SKNode {
     private var lastFrame: CGRect = .null
     private var lastStateKey: String?
     private var lastTitle: String?
+    /// Whether the projector's breath is idle motion — the table's head has
+    /// stopped working — and so waits for the room to stir rather than
+    /// looping.
+    private var breathesOnBeat = false
 
     init(theme: SceneTheme) {
         super.init()
@@ -480,6 +484,7 @@ final class TableNode: SKNode {
             lastStateKey = key
             projection.removeAllActions()
             glow.removeAllActions()
+            breathesOnBeat = false
             guard let state else {
                 projection.color = theme.screenOff
                 glow.alpha = 0
@@ -490,6 +495,12 @@ final class TableNode: SKNode {
             glow.color = color
             glow.alpha = 0.3
             guard !reduceMotion else { return }
+            // A handover that is still going breathes all the time; one whose
+            // head has gone quiet breathes when the room stirs.
+            guard state.isActive else {
+                breathesOnBeat = true
+                return
+            }
             glow.run(
                 .repeatForever(
                     .sequence([
@@ -509,6 +520,27 @@ final class TableNode: SKNode {
             let rect = SceneGeometry.scene(from: table.frame)
             plate.position = CGPoint(x: rect.minX + 10, y: rect.maxY - 12)
         }
+    }
+
+    /// Whether the projector's light is changing right now.
+    var isAnimating: Bool { glow.hasActions() || projection.hasActions() }
+
+    /// Whether the table has idle motion to play when the room stirs.
+    var hasIdleMotion: Bool { breathesOnBeat }
+
+    /// One breath of the projector, for stir number `round` of the room.
+    func beat(id: String, round: UInt64) {
+        guard breathesOnBeat, glow.action(forKey: "light") == nil,
+              SceneIdleBeat.joins(id, round: round)
+        else { return }
+        glow.run(
+            .sequence([
+                .wait(forDuration: SceneIdleBeat.delay(id, round: round)),
+                .fadeAlpha(to: 0.46, duration: 1.2),
+                .fadeAlpha(to: 0.3, duration: 1.2)
+            ]),
+            withKey: "light"
+        )
     }
 }
 
