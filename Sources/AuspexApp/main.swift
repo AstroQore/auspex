@@ -324,6 +324,10 @@ if let flag = arguments.firstIndex(of: "--render-board") {
     // had one, so three of them could only ever be checked by opening the app.
     let viewMode = rest.first { $0.hasPrefix("view=") }
         .flatMap { BoardViewMode(rawValue: String($0.dropFirst(5))) }
+    // Now's stage, open or closed. The office is an `SKView`, which an
+    // offscreen render cannot draw, so the list-only half of the screen is the
+    // half this renderer can photograph faithfully.
+    let showsStage = rest.first { $0.hasPrefix("stage=") }.map { $0.dropFirst(6) != "off" } ?? true
     // The user layer, as `focus=<project key>` and `ignore=<kind>:<value>`
     // among the trailing arguments. Keyword rather than positional because
     // they are the two knobs that are usually absent, and because a picture of
@@ -355,6 +359,7 @@ if let flag = arguments.firstIndex(of: "--render-board") {
             groupBy: groupBy,
             pane: pane,
             viewMode: viewMode,
+            showsStage: showsStage,
             appearance: appearance
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))

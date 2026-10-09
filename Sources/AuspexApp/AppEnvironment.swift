@@ -726,10 +726,10 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .live: "Live"
-        case .allSessions: "All sessions"
+        case .live: "Now"
+        case .allSessions: "Sessions"
         case .projects: "Projects"
-        case .tasks: "Roost"
+        case .tasks: "Tasks"
         case .harnesses: "Harnesses"
         case .settings: "Settings"
         }

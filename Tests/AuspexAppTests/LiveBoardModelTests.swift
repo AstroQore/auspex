@@ -275,7 +275,7 @@ struct LiveBoardModelTests {
         // `groups` carries whole `SessionSnapshot`s, and `@Observable` compares
         // before it publishes — so assigning it in board mode is a deep
         // comparison of every session on the board that nothing is drawing.
-        #expect(model.viewMode == .board)
+        #expect(model.viewMode == .now)
         #expect(model.groups.isEmpty)
 
         // Switching to the crew asks for a frame that carries them; nothing
@@ -293,6 +293,8 @@ struct LiveBoardModelTests {
     @Test("The aviary's reduced board is assembled only while the aviary is on screen")
     func sceneBoardIsSceneOnly() async {
         let (model, _) = await model()
+        model.viewMode = .board
+        await model.settle()
         #expect(model.sceneBoard.sessions.isEmpty)
 
         model.viewMode = .scene
@@ -301,5 +303,34 @@ struct LiveBoardModelTests {
 
         model.viewMode = .board
         #expect(model.sceneBoard.sessions.isEmpty)
+    }
+
+    @Test("Now is the default, and its office follows the stage")
+    func nowFollowsTheStage() async {
+        let (model, _) = await model()
+        #expect(model.viewMode == .now)
+        // Three thinking sessions in two projects: three working roots.
+        #expect(model.nowFrame.working.count == 3)
+        #expect(model.nowFrame.liveCount == 3)
+        #expect(!model.sceneBoard.sessions.isEmpty)
+
+        // Only the lists: the reduced board is let go of at once, and the
+        // next frame does not build it.
+        model.showsStage = false
+        #expect(model.sceneBoard.sessions.isEmpty)
+        await model.settle()
+        #expect(model.sceneBoard.sessions.isEmpty)
+        #expect(model.nowFrame.working.count == 3)
+
+        model.showsStage = true
+        await model.settle()
+        #expect(!model.sceneBoard.sessions.isEmpty)
+
+        // Leaving Now lets go of its lists, and keeps counting them.
+        model.viewMode = .board
+        #expect(model.nowFrame == .empty)
+        await model.settle()
+        #expect(model.nowFrame == .empty)
+        #expect(model.nowCounts.working == 3)
     }
 }

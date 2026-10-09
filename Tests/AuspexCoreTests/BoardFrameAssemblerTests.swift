@@ -167,6 +167,44 @@ struct BoardFrameAssemblerTests {
         #expect(first.boardRevision == scene.boardRevision)
     }
 
+    @Test("Now's lists are built in every mode, and its office only while the stage is open")
+    func nowOutputsFollowTheStage() {
+        // The sidebar counts what is asking for the reader in every mode.
+        let board = BoardFrameAssembler.frame(board: fixture, inputs: BoardFrameInputs())
+        #expect(board.now.counts.needsYou == 1)
+        #expect(!board.includesOffice)
+
+        let staged = BoardFrameAssembler.frame(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: true)
+        )
+        #expect(staged.includesOffice)
+        #expect(!staged.sceneBoard.sessions.isEmpty)
+        // The permission wait is the one thing on this board that needs a
+        // person; the delegated pair is one working row.
+        #expect(staged.now.needsYou.map(\.row.key.sessionID) == ["b"])
+        #expect(staged.now.working.contains { $0.row.key.sessionID == "a" && $0.subagents == 1 })
+
+        let listOnly = BoardFrameAssembler.frame(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: false)
+        )
+        #expect(!listOnly.includesOffice)
+        #expect(listOnly.sceneBoard.sessions.isEmpty)
+        #expect(listOnly.now == staged.now)
+    }
+
+    @Test("opening Now's stage is not a repeat, and brings the office with it")
+    func openingTheStageIsNotARepeat() async {
+        let assembler = BoardFrameAssembler()
+        _ = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: false), sequence: 1
+        )
+        let opened = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(viewMode: .now, showsStage: true), sequence: 2
+        )
+        #expect(!opened.isRepeat)
+        #expect(!opened.sceneBoard.sessions.isEmpty)
+    }
+
     @Test("a board's key lookup agrees with a scan of its sessions")
     func keyIndexAgreesWithTheSessions() {
         for session in fixture.sessions {

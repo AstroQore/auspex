@@ -55,6 +55,7 @@ struct RootView: View {
                 projects: environment.projects,
                 tasks: environment.tasks,
                 mode: environment.mode,
+                harnessCount: environment.harnesses.detected.count,
                 isTranslucent: environment.catalog.translucentSidebar
             )
         } content: {
@@ -296,7 +297,8 @@ struct RootView: View {
                     // The mode picker lives in the header, so the container is
                     // a plain switch: adding a way of looking at the board is
                     // a case in `BoardViewMode` and a line here.
-                    switch model.viewMode {
+                    switch section.effectiveMode(model.viewMode) {
+                    case .now: NowView(model: model)
                     case .board: BoardView(model: model)
                     case .scene: SceneContainerView(model: model)
                     case .crew: CrewView(model: model, liveliness: environment.catalog.crewLiveliness)
@@ -370,6 +372,8 @@ struct SidebarView: View {
     let projects: ProjectsModel
     let tasks: TasksModel
     let mode: AppEnvironment.Mode
+    /// How many harnesses this Mac has, for the Harnesses row's count.
+    var harnessCount: Int?
     /// Whether the column sits on the system's sidebar material. `false` in
     /// the offscreen renderers, which have no window behind which a material
     /// could sample anything and would draw it as a flat grey rectangle.
@@ -387,22 +391,44 @@ struct SidebarView: View {
 
             SidebarRow(
                 title: BoardSection.live.title,
-                count: model.summary.live,
+                count: nowCount,
+                countTint: AuspexPalette.accent,
                 isSelected: section == .live
             ) {
-                // The Live row is the way back to the whole board: it clears
+                // The Now row is the way back to the whole board: it clears
                 // the project binding as well as selecting the section, so
                 // "show me everything again" is one click rather than a click
-                // and a hunt for the crumb.
+                // and a hunt for the crumb. And it is called Now, so it opens
+                // Now — whichever mode the board was last switched to.
                 section = .live
                 model.focusedProjectKey = nil
+                model.viewMode = .now
             }
+
+            SidebarRow(
+                title: BoardSection.tasks.title,
+                count: model.reviewCount > 0 ? nil : tasks.openCount,
+                trailingText: model.reviewCount > 0 ? "\(model.reviewCount) review" : nil,
+                isSelected: section == .tasks
+            ) { section = .tasks }
 
             SidebarRow(
                 title: BoardSection.allSessions.title,
                 count: model.sessionCount,
                 isSelected: section == .allSessions
             ) { section = .allSessions }
+
+            SidebarRow(
+                title: BoardSection.projects.title,
+                count: tree.projects.count,
+                isSelected: section == .projects
+            ) { section = .projects }
+
+            SidebarRow(
+                title: BoardSection.harnesses.title,
+                count: harnessCount,
+                isSelected: section == .harnesses
+            ) { section = .harnesses }
 
             projectsHeader
 
@@ -438,17 +464,6 @@ struct SidebarView: View {
             if mode == .demo { demoNote }
 
             SidebarRow(
-                title: BoardSection.tasks.title,
-                count: tasks.openCount,
-                isSelected: section == .tasks
-            ) { section = .tasks }
-
-            SidebarRow(
-                title: BoardSection.harnesses.title,
-                isSelected: section == .harnesses
-            ) { section = .harnesses }
-
-            SidebarRow(
                 title: BoardSection.settings.title,
                 isSelected: section == .settings,
                 isEnabled: BoardSection.settings.isAvailable,
@@ -473,34 +488,21 @@ struct SidebarView: View {
         // ⌘⌥S into a window a person could not navigate.
     }
 
-    /// The rule over the tree, with the way into the Projects page on it.
-    ///
-    /// A button on the header rather than a row of its own: the tree below it
-    /// *is* the list of projects, and a second row saying "Projects" above a
-    /// list of projects would be a row that says nothing.
+    /// What the Now row counts: the sessions asking for a person, and the
+    /// ones that may be. The same two numbers as the first two pills in Now's
+    /// header, in the accent, because it is the one count in the column that
+    /// is about the reader.
+    private var nowCount: Int { model.nowCounts.asking }
+
+    /// The rule over the tree. The Projects row above is the way into the
+    /// page; this only says what the list under it is.
     private var projectsHeader: some View {
-        HStack(spacing: 6) {
-            Text(BoardSection.projects.title)
-                .auspexLabel(AuspexType.labelLarge)
-                .foregroundStyle(AuspexPalette.text3)
-            Spacer(minLength: 4)
-            Button {
-                section = .projects
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(
-                        section == .projects ? AuspexPalette.text : AuspexPalette.text3
-                    )
-                    .frame(width: 20, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.auspex)
-            .help("Manage projects: make one, import from a harness, pin or rename")
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 14)
-        .padding(.bottom, 6)
+        Text(BoardSection.projects.title)
+            .auspexLabel(AuspexType.labelLarge)
+            .foregroundStyle(AuspexPalette.text3)
+            .padding(.horizontal, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
     }
 
     /// The app's own mark and name, at the top of the column where a person
@@ -543,6 +545,10 @@ struct SidebarView: View {
 struct SidebarRow: View {
     let title: String
     var count: Int?
+    /// The count's colour, when it is about the reader rather than a tally.
+    var countTint: Color?
+    /// Words in place of the count — `16 review`.
+    var trailingText: String?
     var isSelected: Bool
     var isEnabled = true
     var trailing: String?
@@ -566,11 +572,16 @@ struct SidebarRow: View {
                             RoundedRectangle(cornerRadius: 4, style: .continuous)
                                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
                         )
+                } else if let trailingText {
+                    Text(trailingText)
+                        .font(AuspexType.monoCount)
+                        .auspexTabularDigits()
+                        .foregroundStyle(AuspexPalette.text3)
                 } else if let count {
                     Text("\(count)")
                         .font(AuspexType.monoCount)
                         .auspexTabularDigits()
-                        .foregroundStyle(AuspexPalette.text3)
+                        .foregroundStyle(countTint ?? AuspexPalette.text3)
                 }
             }
             .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
