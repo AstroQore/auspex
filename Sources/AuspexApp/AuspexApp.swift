@@ -346,6 +346,11 @@ struct MenuBarContent: View {
         .padding(8)
         .frame(width: 340)
         .background(AuspexPalette.bg1)
+        // The panel draws the board's counts, so while it is open the board
+        // is being looked at as much as when the window is.
+        .background(
+            SurfaceVisibilityProbe(visibility: environment.visibility).frame(width: 0, height: 0)
+        )
         // Hand-drawn rows, like the board's. The panel is not a menu, so
         // AppKit would ring whatever was clicked in it last.
         .auspexControlFocus()

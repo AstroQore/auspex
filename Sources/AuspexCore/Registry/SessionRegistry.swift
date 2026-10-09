@@ -18,8 +18,12 @@ import GRDB
 /// separate valves keep that from reaching either end untouched:
 ///
 /// - **Publishing is coalesced** to at most one frame per `publishInterval`
-///   (50 ms, so ≤ 20 Hz). A board redrawn faster than that is redrawn for
-///   nobody, and each frame sorts every session.
+///   (500 ms, so ≤ 2 Hz — the board applies at most two frames a second
+///   anyway, and each published frame copies, sorts and tree-builds every
+///   session). While nobody is looking — ``setObserved(_:)`` says whether the
+///   window or the menu bar panel is on screen — the gap widens to
+///   `unobservedPublishInterval` (5 s): the menu bar's counts still move,
+///   and an idle machine stops paying for frames nobody draws.
 /// - **Persistence is batched** into one transaction per `persistInterval`
 ///   (250 ms). Committing per event would turn a burst into a hundred fsyncs.
 ///
@@ -45,6 +49,7 @@ public actor SessionRegistry {
     private let projects: ProjectRepository
     private let reducer: SessionStateReducer
     private let publishInterval: TimeInterval
+    private let unobservedPublishInterval: TimeInterval
     private let persistInterval: TimeInterval
     private let tickInterval: TimeInterval
     private let bootstrapLimit: Int?
@@ -72,6 +77,10 @@ public actor SessionRegistry {
 
     private var lastPublishedAt: Date?
     private var publishTask: Task<Void, Never>?
+    /// Whether a surface that draws the board is on screen. Starts `true` so
+    /// a host that never says otherwise — every test, every offscreen render
+    /// — gets the interval it asked for.
+    private var isObserved = true
     private var persistTask: Task<Void, Never>?
     private var tickerTask: Task<Void, Never>?
     private var isFlushing = false
@@ -95,6 +104,9 @@ public actor SessionRegistry {
     ///     change `staleAfter`.
     ///   - publishInterval: minimum gap between published frames. `0` publishes
     ///     on every change.
+    ///   - unobservedPublishInterval: the gap while ``setObserved(_:)`` last
+    ///     said nothing is drawing the board. Never shorter than
+    ///     `publishInterval`.
     ///   - persistInterval: how long writes are batched before committing. `0`
     ///     commits on every event.
     ///   - tickInterval: how often staleness is re-evaluated while
@@ -112,7 +124,8 @@ public actor SessionRegistry {
     public init(
         store: AuspexStore,
         reducer: SessionStateReducer = SessionStateReducer(),
-        publishInterval: TimeInterval = 0.05,
+        publishInterval: TimeInterval = 0.5,
+        unobservedPublishInterval: TimeInterval = 5,
         persistInterval: TimeInterval = 0.25,
         tickInterval: TimeInterval = 1,
         policy: RetentionPolicy = .default,
@@ -124,6 +137,7 @@ public actor SessionRegistry {
         self.projects = ProjectRepository(store: store)
         self.reducer = reducer
         self.publishInterval = publishInterval
+        self.unobservedPublishInterval = max(publishInterval, unobservedPublishInterval)
         self.persistInterval = persistInterval
         self.tickInterval = tickInterval
         self.policy = policy
@@ -537,21 +551,43 @@ public actor SessionRegistry {
 
     // MARK: - Publishing
 
+    /// Tells the registry whether anything that draws the board is on screen.
+    ///
+    /// Only the publishing rate depends on it. Persistence, liveness and the
+    /// store are exactly as they were: an unobserved board is a board drawn
+    /// less often, not one that knows less. Becoming observed publishes a
+    /// change that was waiting out the slow interval straight away, so a
+    /// window brought forward is never up to five seconds behind.
+    public func setObserved(_ observed: Bool) {
+        guard observed != isObserved else { return }
+        isObserved = observed
+        guard observed, publishTask != nil, !isStopped else { return }
+        publishTask?.cancel()
+        publishTask = nil
+        publish()
+    }
+
+    /// The gap the next publish waits for.
+    private var currentPublishInterval: TimeInterval {
+        isObserved ? publishInterval : unobservedPublishInterval
+    }
+
     private func schedulePublish() {
         guard !isStopped else { return }
-        guard publishInterval > 0, let last = lastPublishedAt else {
+        let interval = currentPublishInterval
+        guard interval > 0, let last = lastPublishedAt else {
             publish()
             return
         }
         let elapsed = Date().timeIntervalSince(last)
-        if elapsed >= publishInterval {
+        if elapsed >= interval {
             publish()
             return
         }
         // Inside the coalescing window: let the already-scheduled trailing
         // publish carry this change, or schedule one.
         guard publishTask == nil else { return }
-        let delay = publishInterval - elapsed
+        let delay = interval - elapsed
         publishTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
             await self?.publishFromTimer()
@@ -559,6 +595,8 @@ public actor SessionRegistry {
     }
 
     private func publishFromTimer() {
+        // A cancelled timer has already been answered by `setObserved(_:)`.
+        guard !Task.isCancelled else { return }
         publishTask = nil
         guard !isStopped else { return }
         publish()

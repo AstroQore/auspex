@@ -117,6 +117,19 @@ public final class AppEnvironment {
         ignoreDraft = IgnoreDraft(tag: tag, value: value)
     }
 
+    /// Whether the board is on screen anywhere — the main window or the menu
+    /// bar's panel. Fed by the ``SurfaceVisibilityProbe`` each of them
+    /// carries.
+    let visibility = SurfaceVisibility()
+
+    /// Whether the registry's publishing rate follows ``visibility``.
+    ///
+    /// Only the launched app turns it on. The offscreen renderers draw into a
+    /// bitmap, no window of theirs ever reports itself visible, and a board
+    /// that believed nobody was looking would publish at the slow rate through
+    /// the very warm-up they are waiting on.
+    var followsVisibility = false
+
     private var registry: SessionRegistry?
     private var coordinator: IngestCoordinator?
     private var demoSource: DemoEventSource?
@@ -266,6 +279,15 @@ public final class AppEnvironment {
 
         let registry = SessionRegistry(store: store)
         self.registry = registry
+        if followsVisibility {
+            // In order, through one stream: two separate hops to the actor
+            // could land the other way round and leave the slow rate on with
+            // the window open.
+            let changes = visibility.changes
+            pipelineTasks.append(Task.detached {
+                for await observed in changes { await registry.setObserved(observed) }
+            })
+        }
         board.autoSelectsFirstSession = mode == .demo
         // The sidebar's tree is derived from the same frame the board is, in
         // the same pass and off the main actor; the names it is labelled with
@@ -816,6 +838,7 @@ extension AppEnvironment {
     @MainActor
     public static func launched(_ options: AppLaunchOptions = .current()) -> AppEnvironment {
         let environment = AppEnvironment(mode: options.mode, demoScale: options.demoScale)
+        environment.followsVisibility = true
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
         environment.appearanceOverride = options.appearance
         return environment

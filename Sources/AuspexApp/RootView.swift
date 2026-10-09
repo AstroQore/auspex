@@ -76,6 +76,11 @@ struct RootView: View {
         // it is in the tree only so that the window can be found from inside
         // it. See ``WindowSizingProbe``.
         .background(WindowSizingProbe().frame(width: 0, height: 0))
+        // The same trick for a different question: whether this window can be
+        // seen, which is what decides how often the registry publishes.
+        .background(
+            SurfaceVisibilityProbe(visibility: environment.visibility).frame(width: 0, height: 0)
+        )
         .sheet(item: $environment.ignoreDraft) { draft in
             IgnoreRuleSheet(draft: draft, catalog: environment.catalog) {
                 environment.ignoreDraft = nil

@@ -1404,9 +1404,10 @@ final class LiveBoardModel {
         loadAcknowledgements()
         consumeTask?.cancel()
         consumeTask = Task { [weak self] in
-            // The registry publishes up to 20 frames a second; a wall of a few
-            // hundred cards cannot lay out that often without owning the main
-            // thread. Frames are coalesced to `frameInterval` — the newest one
+            // The registry publishes up to two frames a second (one every few
+            // seconds while nothing is on screen); a wall of a few hundred
+            // cards still cannot lay out on every one of them without owning
+            // the main thread. Frames are coalesced to `frameInterval` — the newest one
             // wins, nothing is queued — which is invisible on a live board and
             // is what keeps ingest and rendering from fighting.
             var lastApplied = ContinuousClock.now - Self.frameInterval(forSessions: 0)

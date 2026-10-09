@@ -375,6 +375,47 @@ struct SessionRegistryTests {
         #expect(frames < 50)
     }
 
+    @Test("an unobserved board publishes at the slow rate, and catches up when looked at")
+    func unobservedBoardPublishesSlowly() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let registry = SessionRegistry(
+            store: store,
+            publishInterval: 0.01,
+            unobservedPublishInterval: 600,
+            persistInterval: 0,
+            tickInterval: 0
+        )
+        let key = Fixtures.key()
+        let frames = FrameLog()
+        let collector = Task {
+            for await board in registry.boardSnapshots {
+                await frames.append(board.session(for: key)?.state)
+            }
+        }
+
+        await registry.setObserved(false)
+        await registry.ingest(Fixtures.event(
+            .sessionStarted(identity: Fixtures.identity(key: key)), key: key, at: 0
+        ))
+        await registry.ingest(Fixtures.event(.userPrompt(preview: "go"), key: key, at: 1))
+        await registry.ingest(Fixtures.event(.turnEnded(reason: .complete), key: key, at: 2))
+        try await Task.sleep(for: .milliseconds(150))
+        // The first frame goes out at once; everything after it waits out the
+        // slow interval, which in this test is ten minutes.
+        #expect(await frames.count == 1)
+
+        // Looking at the board publishes what was waiting, without the wait.
+        await registry.setObserved(true)
+        for _ in 0..<200 where await frames.count < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await frames.count == 2)
+        #expect(await frames.last == .idle)
+
+        await registry.stop()
+        collector.cancel()
+    }
+
     @Test("a late event for a session outside the bootstrap set does not blank it")
     func lateEventKeepsWhatTheStoreKnew() async throws {
         let store = try AuspexStore(inMemory: true)
@@ -516,4 +557,12 @@ struct SessionRegistryTests {
         #expect(await registry.applyBriefs([key: brief]) == 0)
         #expect(await registry.applyBriefs([:]) == 0)
     }
+}
+
+/// Frames a test collected, in arrival order.
+private actor FrameLog {
+    private var states: [SessionState?] = []
+    var count: Int { states.count }
+    var last: SessionState? { states.last ?? nil }
+    func append(_ state: SessionState?) { states.append(state) }
 }
