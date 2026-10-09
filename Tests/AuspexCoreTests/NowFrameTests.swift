@@ -185,6 +185,18 @@ struct NowFrameTests {
         #expect(now.working.first?.since == Fixtures.date(40))
     }
 
+    @Test("an orphaned subagent's caption hangs over its own desk, not its exited orchestrator's")
+    func orphanedChildCaptionIsItsOwn() {
+        let gone = row("gone", state: .ended(reason: .exited))
+        let orphan = row("orphan", state: .toolCalling(name: "exec"), parent: "gone", toolTarget: "pytest")
+        let now = NowFrame.derive(units: [unit("family", [gone, orphan])], signals: [])
+
+        #expect(now.working.map(\.row.shortID) == ["orphan"])
+        #expect(now.captions.count == 1)
+        #expect(now.captions.first?.sessionKey == key("orphan"))
+        #expect(now.captions.first?.deskKey == key("orphan"))
+    }
+
     @Test("a subagent whose orchestrator exited becomes a root of its own")
     func orphanedChildIsARoot() {
         let root = row("root", state: .ended(reason: .exited))

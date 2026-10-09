@@ -471,7 +471,14 @@ public struct NowFrame: Sendable, Equatable {
                 needsYou: needsYou,
                 mayNeedYou: mayNeedYou,
                 working: working,
-                leadOf: { unitByKey[$0]?.lead.key }
+                // A caption hangs over the unit's lead — unless that lead has
+                // exited and the item is a subagent that outlived it. Then the
+                // orphan is its own desk: hanging its live words over an agent
+                // drawn as gone would show the wrong person working.
+                leadOf: { key in
+                    guard let lead = unitByKey[key]?.lead else { return nil }
+                    return lead.isEnded && lead.key != key ? key : lead.key
+                }
             ),
             liveCount: liveCount
         )
