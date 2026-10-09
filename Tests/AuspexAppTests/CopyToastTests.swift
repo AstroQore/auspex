@@ -18,15 +18,14 @@ struct CopyToastTests {
     func aMessageExpires() async throws {
         let toast = CopyToast.shared
         toast.clear()
-        toast.show("Copied the session ID")
+        // A short duration: the dismissal is a real sleep on the main actor,
+        // and a CI runner has been seen to starve that actor for ten seconds
+        // at a time. What is under test is that the toast comes down after
+        // its duration, not what the duration is.
+        toast.show("Copied the session ID", for: .milliseconds(30))
         #expect(toast.message == "Copied the session ID")
 
-        // The dismissal is a real sleep on the main actor's clock, which is
-        // what it is in the window too. Under a loaded test runner that
-        // continuation can land well after the nominal duration, so wait for
-        // it rather than for a fixed margin: the assertion is that it comes
-        // down at all, bounded by a deadline no healthy toast would reach.
-        let deadline = ContinuousClock.now + CopyToast.duration + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(20)
         while toast.message != nil, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(50))
         }

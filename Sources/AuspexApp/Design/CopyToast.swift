@@ -40,11 +40,15 @@ final class CopyToast {
     private init() {}
 
     /// Says something, replacing whatever was being said.
-    func show(_ message: String) {
+    ///
+    /// `duration` is a parameter only so a test can watch the toast come down
+    /// in milliseconds instead of waiting out the real one on a loaded
+    /// runner; the window never passes it.
+    func show(_ message: String, for duration: Duration = CopyToast.duration) {
         self.message = message
         dismissal?.cancel()
         dismissal = Task { [weak self] in
-            try? await Task.sleep(for: Self.duration)
+            try? await Task.sleep(for: duration)
             guard !Task.isCancelled else { return }
             self?.message = nil
         }
