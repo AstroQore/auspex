@@ -449,6 +449,32 @@ public actor SessionRegistry {
         return applied
     }
 
+    /// Rewrites sessions' variants, for the facts a grouping pass reads off
+    /// disk that the kit's identity has no field for — today, that a Codex
+    /// thread ran in the cloud (``CodexThreadSpawn``).
+    ///
+    /// An ordinary `identityUpdated`, so the snapshot, the event log and the
+    /// store learn it the way they learn everything else. A session already
+    /// carrying the variant, or one this registry has never seen, is skipped.
+    ///
+    /// - Returns: how many sessions changed.
+    @discardableResult
+    public func applyVariants(_ variants: [SessionKey: String]) -> Int {
+        guard !isStopped, !variants.isEmpty else { return 0 }
+        var applied = 0
+        let now = Date()
+        for (key, variant) in variants.sorted(by: { $0.key.description < $1.key.description }) {
+            guard let current = snapshots[key], current.identity.variant != variant else { continue }
+            ingest(AgentEvent(
+                session: key,
+                timestamp: now,
+                kind: .identityUpdated(SessionIdentityPatch(variant: variant))
+            ))
+            applied += 1
+        }
+        return applied
+    }
+
     /// Applies inferred parent links, for sessions that have no parent yet.
     ///
     /// Guarded twice on purpose. ``ProcessLinker`` already refuses to propose a
