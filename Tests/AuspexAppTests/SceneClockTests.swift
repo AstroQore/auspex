@@ -213,4 +213,19 @@ struct SceneClockTests {
         #expect(view.skView.isPaused)
         #expect(!view.skView.isStill)
     }
+
+    @Test("Taking the stage away stops its clock for good")
+    func stoppedViewStaysStopped() {
+        let (view, scene) = Self.canvas(reduceMotion: false)
+        view.stop()
+        #expect(view.skView.isPaused)
+        #expect(view.skView.scene == nil)
+        #expect(scene.host == nil)
+        #expect(view.skView.preferredFramesPerSecond == 1)
+
+        // Nothing that used to wake it can start it again.
+        view.skView.wake()
+        view.skView.refreshPaused()
+        #expect(view.skView.isPaused)
+    }
 }

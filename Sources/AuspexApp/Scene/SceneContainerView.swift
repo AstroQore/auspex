@@ -591,9 +591,13 @@ final class OfficeSKView: SKView {
     deinit { NotificationCenter.default.removeObserver(self) }
 
     /// Releases the scene when SwiftUI takes the view away.
+    ///
+    /// The scene goes first: presenting — even presenting nothing — starts an
+    /// `SKView`'s clock again, so a view suspended and *then* emptied was left
+    /// ticking for as long as SwiftUI took to let go of it.
     func stop() {
-        suspend()
         presentScene(nil)
+        suspend()
     }
 
     /// Stops the clock, whoever asked.
