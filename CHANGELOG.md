@@ -39,6 +39,12 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ### Changed
 
+- Claude Cowork is no longer tailed live. Cowork runs in the cloud by default
+  since it merged with Chat, and the workspace tree under Claude.app's
+  container has held no new transcript since July 2026; watching it cost a
+  sweep of every Claude.app helper's environment every three seconds for
+  nothing. The harness, its logo, and the rows already in the store remain.
+
 - The board's derivation skips work nobody reads: session lookups are indexed,
   the Flock's and Aviary's own data is built only while that view is open, and
   the delegation tree is rebuilt for the store only when a parent changes.
