@@ -16,6 +16,22 @@ import SwiftUI
 /// does.
 struct SceneContainerView: View {
     let model: LiveBoardModel
+    /// How much of the aviary's own chrome to draw.
+    var chrome: Chrome = .full
+    /// Now's balloons, by the desk they hang over. Empty in the aviary.
+    var captions: [SessionKey: SceneCaption] = [:]
+    /// The desk Now's stage opens on. Read once, the first time there is a
+    /// board to frame.
+    var stageFocus: SessionKey?
+
+    /// The aviary draws its own zoom controls, legend and minimap. Now's
+    /// stage is a fixed-height window onto the same office with its own
+    /// labels over it, and those three would crowd a picture a third the
+    /// height.
+    enum Chrome: Equatable {
+        case full
+        case stage
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Which appearance the office is built for. Read here rather than inside
@@ -66,6 +82,9 @@ struct SceneContainerView: View {
                 reduceMotion: reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                 zones: zones,
                 attention: attention,
+                captions: captions,
+                stageFocus: stageFocus,
+                frameAsStage: chrome == .stage,
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
                 onFocusProject: { model.focusedProjectKey = $0 },
@@ -81,24 +100,30 @@ struct SceneContainerView: View {
                 emptyRoom
             }
 
-            controls
-                .padding(12)
+            if chrome == .full {
+                controls
+                    .padding(12)
+            }
         }
         .overlay(alignment: .bottomLeading) {
-            VStack(alignment: .leading, spacing: 6) {
-                // Above the legend rather than on the garden's nameplate: the
-                // sessions the window is holding back have no bench and no
-                // gate — they are not on this map at all — so the place to say
-                // so is the map's own chrome, next to the garden it would
-                // otherwise have filled.
-                if let hint = model.olderHiddenHint { windowHint(hint) }
-                legend
+            if chrome == .full {
+                VStack(alignment: .leading, spacing: 6) {
+                    // Above the legend rather than on the garden's nameplate:
+                    // the sessions the window is holding back have no bench
+                    // and no gate — they are not on this map at all — so the
+                    // place to say so is the map's own chrome, next to the
+                    // garden it would otherwise have filled.
+                    if let hint = model.olderHiddenHint { windowHint(hint) }
+                    legend
+                }
+                .padding(12)
             }
-            .padding(12)
         }
         .overlay(alignment: .bottomTrailing) {
-            SceneMinimapView(overview: overview) { commands.jump($0) }
-                .padding(12)
+            if chrome == .full {
+                SceneMinimapView(overview: overview) { commands.jump($0) }
+                    .padding(12)
+            }
         }
         .background(AuspexPalette.canvas)
         // Switching to the board is the common case and SwiftUI takes the
@@ -395,6 +420,9 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let reduceMotion: Bool
     let zones: SceneZoneOptions
     let attention: [SessionKey: AttentionState]
+    let captions: [SessionKey: SceneCaption]
+    let stageFocus: SessionKey?
+    let frameAsStage: Bool
     let commands: SceneCommands
     let onSelect: (SessionKey?) -> Void
     let onFocusProject: (String?) -> Void
@@ -454,9 +482,27 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
             zones: zones,
             attention: attention
         )
+        // After the board, so a balloon lands on the desk this frame seats
+        // its session at.
+        scene.setCaptions(captions)
+        // A stage is framed once, when it first has a room to frame; after
+        // that the camera is the reader's.
+        if frameAsStage, !context.coordinator.framedStage, !board.sessions.isEmpty {
+            context.coordinator.framedStage = true
+            let focus = stageFocus
+            // Next turn of the run loop, once the card has given the view
+            // its real size.
+            DispatchQueue.main.async { [weak scene] in scene?.frameStage(on: focus) }
+        }
     }
 
-    static func dismantleNSView(_ view: SceneCanvasView, coordinator: ()) {
+    final class Coordinator {
+        var framedStage = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    static func dismantleNSView(_ view: SceneCanvasView, coordinator: Coordinator) {
         view.stop()
     }
 }

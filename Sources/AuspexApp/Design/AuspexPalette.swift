@@ -135,6 +135,22 @@ enum AuspexPalette {
         /// Over.
         case stateEnded
 
+        // Now — the three lists that are about the person
+        /// Needs you: the strong mark, the dot and the stage's balloon.
+        case nowNeeds
+        /// Needs you: the wash under a count pill.
+        case nowNeedsWash
+        /// Needs you: words on that wash, and the section's heading.
+        case nowNeedsInk
+        /// May need you: observed, amber, never an alarm.
+        case nowMaybe
+        case nowMaybeWash
+        case nowMaybeInk
+        /// Done, unseen: a receipt waiting to be read.
+        case nowDone
+        case nowDoneWash
+        case nowDoneInk
+
         // Harness identity
         case harnessCodex
         case harnessChatGPTWork
@@ -200,6 +216,21 @@ enum AuspexPalette {
         case .stateStale: (0xB5_9A5A, 0x8E_6E1F)
         case .stateEnded: (0x5E_5E5A, 0xB0_B0AB)
 
+        // Now's three tones. The light column is the design's own swatches
+        // (`#B23A1E`, `#C9931F`, `#5B8C5A` on washes of themselves); the dark
+        // column keeps each hue and lifts it until it reads on charcoal, and
+        // turns the wash into a dim tint of the same hue rather than a pastel
+        // that would glow on a dark board.
+        case .nowNeeds: (0xE2_694B, 0xB2_3A1E)
+        case .nowNeedsWash: (0x4A_2F27, 0xF3_DCD3)
+        case .nowNeedsInk: (0xF2_A88F, 0x9A_4A2E)
+        case .nowMaybe: (0xE0_AA3E, 0xC9_931F)
+        case .nowMaybeWash: (0x4A_3E24, 0xF6_E7C8)
+        case .nowMaybeInk: (0xEF_CB7E, 0x7A_5A12)
+        case .nowDone: (0x7D_B37C, 0x5B_8C5A)
+        case .nowDoneWash: (0x31_402F, 0xE3_EBE0)
+        case .nowDoneInk: (0xA9_D2A8, 0x35_5C34)
+
         case .harnessCodex: (0x2D_D4BF, 0x13_A290)
         case .harnessChatGPTWork: (0x22_A06B, 0x22_A06B)
         case .harnessClaudeCode: (0xE0_785A, 0xDA_7456)
@@ -247,6 +278,18 @@ enum AuspexPalette {
     static let stateIdle = color(.stateIdle)
     static let stateStale = color(.stateStale)
     static let stateEnded = color(.stateEnded)
+
+    // MARK: - Now
+
+    static let nowNeeds = color(.nowNeeds)
+    static let nowNeedsWash = color(.nowNeedsWash)
+    static let nowNeedsInk = color(.nowNeedsInk)
+    static let nowMaybe = color(.nowMaybe)
+    static let nowMaybeWash = color(.nowMaybeWash)
+    static let nowMaybeInk = color(.nowMaybeInk)
+    static let nowDone = color(.nowDone)
+    static let nowDoneWash = color(.nowDoneWash)
+    static let nowDoneInk = color(.nowDoneInk)
 
     // MARK: - Harness accents
     //
