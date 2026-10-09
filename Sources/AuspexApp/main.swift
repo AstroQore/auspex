@@ -338,10 +338,13 @@ if let flag = arguments.firstIndex(of: "--render-board") {
     // had one, so three of them could only ever be checked by opening the app.
     let viewMode = rest.first { $0.hasPrefix("view=") }
         .flatMap { BoardViewMode(rawValue: String($0.dropFirst(5))) }
-    // Now's stage, open or closed. The office is an `SKView`, which an
-    // offscreen render cannot draw, so the list-only half of the screen is the
-    // half this renderer can photograph faithfully.
-    let showsStage = rest.first { $0.hasPrefix("stage=") }.map { $0.dropFirst(6) != "off" } ?? true
+    // Now's stage, open, folded or closed: `stage=off`, `stage=collapsed`.
+    // The office is an `SKView`, which an offscreen render cannot draw, so the
+    // list-only half of the screen — and the folded strip, which is a row of
+    // it — are what this renderer can photograph faithfully.
+    let stage = rest.first { $0.hasPrefix("stage=") }.map { String($0.dropFirst(6)) }
+    let showsStage = stage != "off"
+    let stageCollapsed = stage == "collapsed"
     // The interface language, for the screenshots that are *about* a
     // translation. `locale=en` or `locale=zh-Hans`; absent means the Mac's.
     let language = rest.first { $0.hasPrefix("locale=") }
@@ -378,6 +381,7 @@ if let flag = arguments.firstIndex(of: "--render-board") {
             pane: pane,
             viewMode: viewMode,
             showsStage: showsStage,
+            stageCollapsed: stageCollapsed,
             appearance: appearance,
             language: language
         )

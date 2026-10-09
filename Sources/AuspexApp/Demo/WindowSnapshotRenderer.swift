@@ -54,6 +54,7 @@ enum WindowSnapshotRenderer {
         pane: SettingsPane? = nil,
         viewMode: BoardViewMode? = nil,
         showsStage: Bool = true,
+        stageCollapsed: Bool = false,
         appearance: AppearanceMode = .dark,
         language: AppLanguage? = nil
     ) throws {
@@ -73,6 +74,9 @@ enum WindowSnapshotRenderer {
         if let groupBy { environment.board.groupBy = groupBy }
         if let viewMode { environment.board.viewMode = viewMode }
         environment.board.showsStage = showsStage
+        // Folded the way the chevron folds it. Nothing here hears input, so
+        // the countdown never runs and never opens it again.
+        if stageCollapsed { environment.board.collapseStage() }
         defer { Task { await environment.shutdown() } }
 
         // The pipeline runs on detached tasks; spinning the main run loop is
