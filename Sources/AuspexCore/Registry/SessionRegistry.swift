@@ -103,11 +103,12 @@ public actor SessionRegistry {
     ///   - policy: consulted before indexing text, so an excluded harness is
     ///     never written to the search index in the first place.
     ///   - bootstrapLimit: the most stored sessions ``bootstrap()`` holds in
-    ///     memory. A budget rather than a policy — everything alive or active
-    ///     within `bootstrapWindow` is reloaded first, and the cap falls on the
-    ///     finished tail. `nil` reloads all of them.
-    ///   - bootstrapWindow: how long after its last event a stored session is
-    ///     still reloaded whatever the cap.
+    ///     memory. A budget rather than a policy: only sessions alive or
+    ///     active within `bootstrapWindow` are reloaded at all, and the cap
+    ///     only bites if that working set is larger than it. `nil` reloads the
+    ///     whole working set. See ``SessionRepository/fetchForBootstrap(now:window:cap:)``.
+    ///   - bootstrapWindow: how long after its last event a finished session
+    ///     is still reloaded. Older history stays in the store.
     public init(
         store: AuspexStore,
         reducer: SessionStateReducer = SessionStateReducer(),
@@ -455,8 +456,8 @@ public actor SessionRegistry {
     /// merged copy is what makes the live set the last word either way.
     ///
     /// - Returns: how many sessions changed. A brief for a session this
-    ///   registry has never seen is ignored — bootstrap loads the most recent
-    ///   few hundred, and seeding a row from a brief would put a session on the
+    ///   registry has never seen is ignored — bootstrap loads only the
+    ///   working set, and seeding a row from a brief would put a session on the
     ///   board with nothing but an instruction.
     @discardableResult
     public func applyBriefs(_ briefs: [SessionKey: SessionBrief]) -> Int {

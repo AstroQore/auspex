@@ -448,9 +448,9 @@ final class LiveBoardModel {
     ///
     /// Sessions the registry already holds get theirs through
     /// ``SessionRegistry/applyBriefs(_:)``; this covers the ones it does not —
-    /// bootstrap loads the most recent few hundred, and a session past that
-    /// limit is seeded from its next event with a brief the store already knows
-    /// better than.
+    /// bootstrap loads only the working set, and a session outside it is
+    /// seeded from its next event with a brief the store already knows better
+    /// than.
     func setDerivedBriefs(_ briefs: [SessionKey: SessionBrief]) {
         guard !briefs.isEmpty else { return }
         derivedBriefs = briefs
@@ -478,6 +478,7 @@ final class LiveBoardModel {
         didSet {
             guard oldValue != selectedKey else { return }
             refreshSelection()
+            loadStoredSelectionIfNeeded()
             if let selectedKey { markSeen(selectedKey) }
             trace = []
             traceItems = []
@@ -984,8 +985,11 @@ final class LiveBoardModel {
         // be reached — from a search hit, from a notification, from the menu
         // bar — while the recency window or an ignore rule keeps it off the
         // wall. A trace pane that went blank because the *card* is not drawn
-        // would be answering "show me this session" with "no".
-        let session = selectedKey.flatMap { sessionIndex[$0] ?? rawBoard.session(for: $0) }
+        // would be answering "show me this session" with "no". The store is
+        // the last resort, for a session the live set does not hold at all.
+        let session = selectedKey.flatMap {
+            sessionIndex[$0] ?? rawBoard.session(for: $0) ?? storedSelection(for: $0)
+        }
         if selectedSession != session { selectedSession = session }
         let parent = session?.identity.parent.flatMap { sessionIndex[$0] }
         if selectedParent != parent { selectedParent = parent }
@@ -1012,6 +1016,43 @@ final class LiveBoardModel {
 
         let nextAttention = selectedKey.flatMap { attention[$0] } ?? .none
         if selectedAttention != nextAttention { selectedAttention = nextAttention }
+    }
+
+    /// A selected session the live set does not hold, as the store last
+    /// recorded it.
+    ///
+    /// The registry holds the working set — what is running and what was
+    /// active this week — and the search index reaches back a month. A hit on
+    /// a session from three weeks ago selects a key nobody's frame carries, and
+    /// a detail pane that answered "show me this" with an empty column would be
+    /// the search lying about what it found. So the row is read once, off the
+    /// main actor, when such a key is selected; the frame's own copy wins the
+    /// moment the session is live again.
+    @ObservationIgnored private var storedSelection: SessionSnapshot?
+    @ObservationIgnored private var storedSelectionTask: Task<Void, Never>?
+
+    private func storedSelection(for key: SessionKey) -> SessionSnapshot? {
+        storedSelection?.key == key ? storedSelection : nil
+    }
+
+    private func loadStoredSelectionIfNeeded() {
+        storedSelectionTask?.cancel()
+        storedSelectionTask = nil
+        if let held = storedSelection, held.key != selectedKey { storedSelection = nil }
+        guard let key = selectedKey,
+              sessionIndex[key] == nil,
+              rawBoard.session(for: key) == nil,
+              storedSelection(for: key) == nil,
+              let repository
+        else { return }
+        storedSelectionTask = Task { [weak self] in
+            let stored = await Task.detached(priority: .userInitiated) { () -> SessionSnapshot? in
+                (try? repository.fetch(key: key)) ?? nil
+            }.value
+            guard !Task.isCancelled, let self, self.selectedKey == key, let stored else { return }
+            self.storedSelection = stored
+            self.refreshSelection()
+        }
     }
 
     /// Turns the bucket filter on, or off if it is already on this bucket.
@@ -1427,6 +1468,7 @@ final class LiveBoardModel {
         consumeTask?.cancel()
         traceTask?.cancel()
         searchTask?.cancel()
+        storedSelectionTask?.cancel()
         assemblyLoop?.cancel()
         consumeTask = nil
         traceTask = nil

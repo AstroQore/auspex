@@ -216,6 +216,34 @@ struct LiveBoardModelTests {
         #expect(model.sessionCount == 1)
     }
 
+    @Test("A session the live set does not hold is read from the store when selected")
+    func selectionFallsBackToTheStore() async throws {
+        // What a search hit on last month's work selects: a key no frame
+        // carries, because bootstrap holds only the working set.
+        let store = try AuspexStore(inMemory: true)
+        let repository = SessionRepository(store: store)
+        let old = session("archived", cwd: "/Users/example/Code/archive", title: "Last month's work")
+        try repository.upsert(snapshot: old)
+        let registry = SessionRegistry(
+            store: store, publishInterval: 0, persistInterval: 0, tickInterval: 0
+        )
+
+        let model = LiveBoardModel()
+        model.start(registry: registry, repository: repository)
+        defer { model.stop() }
+        model.selectedKey = old.key
+        for _ in 0..<300 where model.selectedSession == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(model.selectedSession?.key == old.key)
+        #expect(model.selectedSession?.identity.title == "Last month's work")
+
+        // Moving on drops it rather than leaving it to answer for another key.
+        model.selectedKey = nil
+        #expect(model.selectedSession == nil)
+    }
+
     @Test("A filter clicked and a frame applied reach the same board")
     func uiInputMatchesTheAssembler() async {
         let (model, _) = await model()

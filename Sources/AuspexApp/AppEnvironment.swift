@@ -489,9 +489,9 @@ public final class AppEnvironment {
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     // For the sessions the registry does not hold: bootstrap
-                    // loads the most recent few hundred, and one past that
-                    // limit is seeded from its next event with a brief the
-                    // store already knows better than.
+                    // loads only the working set, and one outside it is
+                    // seeded from its next event with a brief the store
+                    // already knows better than.
                     board.setDerivedBriefs(report.briefs)
                     // The pass may have decided, on the person's behalf, that
                     // sessions quiet for two days have been read. The board
