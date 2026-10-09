@@ -252,6 +252,7 @@ struct RootView: View {
             }
         }
         .onChange(of: section) { _, new in
+            model.section = new ?? .live
             // "All sessions" is the same board with its history opened out, so
             // selecting it is what opens the collapsed section rather than a
             // separate screen that would show the same cards twice.

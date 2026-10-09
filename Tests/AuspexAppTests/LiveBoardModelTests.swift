@@ -333,4 +333,39 @@ struct LiveBoardModelTests {
         #expect(model.nowFrame == .empty)
         #expect(model.nowCounts.working == 3)
     }
+
+    @Test("A page that does not draw Now asks for neither its lists nor its office")
+    func drawnModeFollowsThePage() async {
+        let (model, _) = await model()
+        #expect(model.assemblyInputs.viewMode == .now)
+        #expect(!model.sceneBoard.sessions.isEmpty)
+
+        // The Sessions page draws Now as the Ledger: what it was holding is
+        // let go of at once, and the next frame is assembled for the Ledger.
+        model.section = .allSessions
+        #expect(model.drawnMode == .board)
+        #expect(model.sceneBoard.sessions.isEmpty)
+        #expect(model.nowFrame == .empty)
+        await model.settle()
+        #expect(model.assemblyInputs.viewMode == .board)
+        #expect(!model.assemblyInputs.viewMode.drawsOffice(showsStage: model.assemblyInputs.showsStage))
+        #expect(model.sceneBoard.sessions.isEmpty)
+        #expect(model.nowFrame == .empty)
+        // The counts the sidebar reads are kept, and so is the choice.
+        #expect(model.nowCounts.working == 3)
+        #expect(model.viewMode == .now)
+
+        // A page with no board at all draws no office either.
+        model.section = .tasks
+        await model.settle()
+        #expect(model.assemblyInputs.viewMode == .board)
+        #expect(model.sceneBoard.sessions.isEmpty)
+
+        // Back on Now, both come back.
+        model.section = .live
+        await model.settle()
+        #expect(model.assemblyInputs.viewMode == .now)
+        #expect(model.nowFrame.working.count == 3)
+        #expect(!model.sceneBoard.sessions.isEmpty)
+    }
 }

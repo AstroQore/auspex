@@ -73,6 +73,7 @@ enum WindowSnapshotRenderer {
         environment.board.focusedProjectKey = focus
         if let groupBy { environment.board.groupBy = groupBy }
         if let viewMode { environment.board.viewMode = viewMode }
+        environment.board.section = section
         environment.board.showsStage = showsStage
         // Folded the way the chevron folds it. Nothing here hears input, so
         // the countdown never runs and never opens it again.
