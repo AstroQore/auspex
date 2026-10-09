@@ -55,27 +55,15 @@ struct SetupSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 9) {
                 AuspexMark(size: 24)
-                Text("Let your agents talk back")
+                Text(L10n.Setup.title)
                     .font(AuspexType.paneTitle)
                     .foregroundStyle(AuspexPalette.text)
             }
-            Text(
-                "Auspex already watches every agent session on this Mac by reading "
-                    + "the files they write. These add explicit coordination: an MCP "
-                    + "server for task truth and human attention, a versioned skill that "
-                    + "teaches Supervisor/Worker/Reviewer handoffs, and hooks for states "
-                    + "such as permission waits that transcripts do not record."
-            )
+            Text(L10n.Setup.intro)
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
             .fixedSize(horizontal: false, vertical: true)
-            Text(
-                "Every box is off until you tick it. Each one names the file it "
-                    + "writes to. Config edits stay inside an Auspex-owned fence; the "
-                    + "skill gets one exclusive directory with an ownership marker and "
-                    + "content hash. Existing or modified directories are left alone. "
-                    + "Updates are backed up to ~/.auspex/backups/ and can be undone."
-            )
+            Text(L10n.Setup.safety)
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.text3)
             .fixedSize(horizontal: false, vertical: true)
@@ -92,29 +80,29 @@ struct SetupSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let socketPath {
-                Text("Serving \(socketPath)")
+                Text(L10n.Setup.serving(path: socketPath))
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
                     .lineLimit(1)
                     .truncationMode(.middle)
             } else {
-                Text("The MCP socket is not being served, so nothing will answer yet.")
+                Text(L10n.Setup.notServing)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.stateStale)
             }
             HStack(spacing: 10) {
-                Button("Select all") { model.selectEverythingActionable() }
+                Button(L10n.Setup.selectAll) { model.selectEverythingActionable() }
                     .buttonStyle(.auspex)
                     .font(AuspexType.pill)
                     .foregroundStyle(AuspexPalette.text3)
                     .disabled(model.actionableCount == 0)
                 Spacer(minLength: 8)
-                Button("Skip for now") {
+                Button(L10n.Setup.skip) {
                     model.skip()
                     onClose()
                 }
                 .keyboardShortcut(.cancelAction)
-                Button(model.selected.isEmpty ? "Done" : "Install \(model.selected.count)") {
+                Button(model.selected.isEmpty ? L10n.Common.done : L10n.Setup.install(count: model.selected.count)) {
                     guard !model.selected.isEmpty else {
                         onClose()
                         return
@@ -154,7 +142,7 @@ private struct StartupSetupRow: View {
                 )
             ) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Keep Auspex watching after restart")
+                    Text(L10n.Setup.keepWatching)
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.text)
                     Text(loginItem.statusDescription)
@@ -165,16 +153,13 @@ private struct StartupSetupRow: View {
             }
             .toggleStyle(.checkbox)
 
-            Text(
-                "Uses macOS Login Items to start the signed main app quietly. "
-                    + "No helper, LaunchAgent, or additional disk access is installed."
-            )
+            Text(L10n.Setup.loginNote)
             .font(AuspexType.caption)
             .foregroundStyle(AuspexPalette.text3)
             .fixedSize(horizontal: false, vertical: true)
 
             if loginItem.status == .requiresApproval {
-                Button("Open Login Items", systemImage: "gear") {
+                Button(L10n.Settings.General.openLoginItems, systemImage: "gear") {
                     loginItem.openSystemSettings()
                 }
                 .buttonStyle(.auspex)
@@ -182,7 +167,7 @@ private struct StartupSetupRow: View {
             }
 
             if let error = loginItem.errorDescription {
-                Text("macOS did not change the login item: \(error)")
+                Text(L10n.Settings.General.loginError(error: error))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.statePermission)
                     .fixedSize(horizontal: false, vertical: true)
@@ -215,7 +200,7 @@ private struct SetupGroupView: View {
                     .font(AuspexType.rowStrong)
                     .foregroundStyle(AuspexPalette.text)
                 if !group.isDetected {
-                    Text("not detected")
+                    Text(L10n.Setup.notDetected)
                         .auspexLabel(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3)
                 }
@@ -242,10 +227,10 @@ private struct SetupRowView: View {
         HStack(alignment: .top, spacing: 9) {
             checkbox
             VStack(alignment: .leading, spacing: 2) {
-                Text(row.piece.title)
+                Text(row.piece.localizedTitle)
                     .font(AuspexType.body)
                     .foregroundStyle(isEnabled ? AuspexPalette.text : AuspexPalette.text3)
-                Text(row.piece.explanation)
+                Text(row.piece.localizedExplanation)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -278,7 +263,7 @@ private struct SetupRowView: View {
             }
             Spacer(minLength: 4)
             if row.isInstalled {
-                Button("Remove") {
+                Button(L10n.Common.remove) {
                     Task { await model.uninstall(row, detected: detected) }
                 }
                 .buttonStyle(.auspex)
@@ -317,11 +302,11 @@ private struct SetupRowView: View {
 
     private var stateNote: String? {
         switch row.state {
-        case .installed: "Installed."
+        case .installed: L10n.Setup.State.installed
         case let .installedElsewhere(what):
             row.piece == .coordinationSkill
-                ? "An owned \(what) is installed. Ticking this updates it after backup."
-                : "Already there, pointing at \(what). Ticking this replaces it."
+                ? L10n.Setup.State.ownedInstalled(what: what)
+                : L10n.Setup.State.elsewhere(what: what)
         case let .unavailable(reason): reason
         case let .unreadable(reason): reason
         case .absent: nil

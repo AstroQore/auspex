@@ -109,9 +109,9 @@ struct MapView: View {
 
     private var controls: some View {
         VStack(spacing: 6) {
-            mapControl("Fit all", symbol: "arrow.up.left.and.arrow.down.right") { commands.fit() }
+            mapControl(L10n.Perch.fitAll, symbol: "arrow.up.left.and.arrow.down.right") { commands.fit() }
                 .keyboardShortcut("0", modifiers: .command)
-            mapControl("Zoom in", symbol: "plus") { commands.zoomIn() }
+            mapControl(L10n.Perch.zoomIn, symbol: "plus") { commands.zoomIn() }
                 .keyboardShortcut("=", modifiers: .command)
             Menu {
                 ForEach([0.25, 0.5, 0.75, 1, 1.5, 2, 4], id: \.self) { zoom in
@@ -124,7 +124,7 @@ struct MapView: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            mapControl("Zoom out", symbol: "minus") { commands.zoomOut() }
+            mapControl(L10n.Perch.zoomOut, symbol: "minus") { commands.zoomOut() }
                 .keyboardShortcut("-", modifiers: .command)
         }
         .padding(4)
@@ -159,10 +159,10 @@ struct MapView: View {
     private var emptyState: some View {
         EmptyStateView(
             symbol: BoardViewMode.perch.systemImage,
-            title: map.isLoading ? "Placing the map…" : "This board is empty",
+            title: map.isLoading ? L10n.Perch.placing : L10n.Perch.empty,
             detail: map.selectedBoard?.isProtected == true
-                ? "A card appears for every piece of work Auspex can see."
-                : "Pin a task here, or add a rule that matches one."
+                ? L10n.Perch.emptyProtected
+                : L10n.Perch.emptyUser
         )
         .centredInPane()
         .allowsHitTesting(false)
@@ -194,21 +194,21 @@ private struct MapToolbar: View {
                 }
                 if !map.isHistory, !map.deletedBoards.isEmpty {
                     Divider()
-                    Menu("Recently deleted") {
+                    Menu(L10n.Perch.recentlyDeleted) {
                         ForEach(map.deletedBoards) { board in
-                            Button("Restore \(board.name)") { map.restoreBoard(board.id) }
+                            Button(L10n.Perch.restore(name: board.name)) { map.restoreBoard(board.id) }
                         }
                     }
                 }
                 if !map.isHistory {
                     Divider()
-                    Button("New board…", systemImage: "plus", action: onCreate)
+                    Button(L10n.Perch.newBoard, systemImage: "plus", action: onCreate)
                 }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "square.on.square")
                         .font(.system(size: 10, weight: .semibold))
-                    Text(map.selectedBoard?.name ?? "All boards")
+                    Text(map.selectedBoard?.name ?? L10n.Perch.allBoards)
                         .font(AuspexType.pill)
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .bold))
@@ -230,14 +230,14 @@ private struct MapToolbar: View {
 
             if map.isHistory {
                 Button(action: onFork) {
-                    Label("Fork board here", systemImage: "arrow.triangle.branch")
+                    Label(L10n.Perch.fork, systemImage: "arrow.triangle.branch")
                         .font(AuspexType.caption)
                 }
                 .buttonStyle(.auspex)
             } else if let board = map.selectedBoard, !board.isProtected {
                 if map.canMergeSelectedBoard {
                     Button(action: onMerge) {
-                        Label("Merge to parent", systemImage: "arrow.triangle.merge")
+                        Label(L10n.Perch.merge, systemImage: "arrow.triangle.merge")
                             .font(AuspexType.caption)
                     }
                     .buttonStyle(.auspex)
@@ -251,7 +251,7 @@ private struct MapToolbar: View {
                         }
                     } label: {
                         Label(
-                            map.contains(unitID: selectedUnitID) ? "Remove" : "Pin selected",
+                            map.contains(unitID: selectedUnitID) ? L10n.Common.remove : L10n.Perch.pinSelected,
                             systemImage: map.contains(unitID: selectedUnitID) ? "minus" : "pin"
                         )
                         .font(AuspexType.caption)
@@ -259,7 +259,7 @@ private struct MapToolbar: View {
                     .buttonStyle(.auspex)
                 }
                 Button(action: onEdit) {
-                    Label("Board rules", systemImage: "line.3.horizontal.decrease.circle")
+                    Label(L10n.Perch.boardRules, systemImage: "line.3.horizontal.decrease.circle")
                         .font(AuspexType.caption)
                 }
                 .buttonStyle(.auspex)
@@ -268,7 +268,7 @@ private struct MapToolbar: View {
                         map.setRulesPaused(!board.rulesPaused)
                     } label: {
                         Label(
-                            board.rulesPaused ? "Resume rules" : "Pause rules",
+                            board.rulesPaused ? L10n.Perch.resumeRules : L10n.Perch.pauseRules,
                             systemImage: board.rulesPaused ? "play.fill" : "pause.fill"
                         )
                         .font(AuspexType.caption)
@@ -281,7 +281,7 @@ private struct MapToolbar: View {
             }
 
             Spacer(minLength: 0)
-            Text("\(map.cards.count) cards")
+            Text(L10n.Perch.cards(count: map.cards.count))
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
             if let error = map.errorDescription {
@@ -311,30 +311,28 @@ private struct MapMergeSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Merge Perch branch").font(AuspexType.paneTitle)
-            Text(
-                "Only positions, membership overrides, and the rule tree are merged. Tasks, dependencies, agents, board names, and cameras are untouched."
-            )
+            Text(L10n.Perch.mergeTitle).font(AuspexType.paneTitle)
+            Text(L10n.Perch.mergeNote)
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
             .fixedSize(horizontal: false, vertical: true)
 
             if map.isPreparingMerge {
-                ProgressView("Comparing the fork base, parent, and branch…")
+                ProgressView(L10n.Perch.mergeComparing)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let plan = map.mergePlan {
                 HStack(spacing: 14) {
                     MetaField(
-                        key: "automatic memberships", value: "\(plan.automaticMemberships.count)")
+                        key: L10n.Perch.Merge.automaticMemberships, value: "\(plan.automaticMemberships.count)")
                     MetaField(
-                        key: "automatic positions", value: "\(plan.automaticPlacements.count)")
-                    MetaField(key: "conflicts", value: "\(plan.conflicts.count)")
+                        key: L10n.Perch.Merge.automaticPositions, value: "\(plan.automaticPlacements.count)")
+                    MetaField(key: L10n.Perch.Merge.conflicts, value: "\(plan.conflicts.count)")
                 }
                 if plan.conflicts.isEmpty {
                     EmptyStateView(
                         symbol: "arrow.triangle.merge",
-                        title: "No conflicts",
-                        detail: "The branch can be merged without replacing later parent edits."
+                        title: L10n.Perch.Merge.noConflicts,
+                        detail: L10n.Perch.Merge.noConflictsDetail
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -348,15 +346,15 @@ private struct MapMergeSheet: View {
                     .frame(minHeight: 240, maxHeight: 420)
                 }
             } else {
-                EmptyStateView(title: "The merge comparison could not be prepared.")
+                EmptyStateView(title: L10n.Perch.Merge.failed)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
             HStack {
-                Button("Cancel", role: .cancel) { isPresented = false }
+                Button(L10n.Common.cancel, role: .cancel) { isPresented = false }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("Merge") {
+                Button(L10n.Perch.Merge.action) {
                     map.applyMerge()
                     isPresented = false
                 }
@@ -376,7 +374,7 @@ private struct MapMergeSheet: View {
     private func conflictRow(_ conflict: MapMergeConflict) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(conflict.field.rawValue.uppercased())
+                Text(Self.fieldTitle(conflict.field).uppercased())
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.stateStale)
                 if let nodeID = conflict.nodeID {
@@ -386,28 +384,36 @@ private struct MapMergeSheet: View {
                 }
                 Spacer()
                 Picker(
-                    "Resolution",
+                    L10n.Perch.Merge.resolution,
                     selection: Binding(
                         get: { map.mergeChoices[conflict.id] },
                         set: { if let value = $0 { map.choose(value, for: conflict.id) } }
                     )
                 ) {
-                    Text("Choose…").tag(MapMergeChoice?.none)
-                    Text("Keep parent").tag(MapMergeChoice?.some(.parent))
-                    Text("Take branch").tag(MapMergeChoice?.some(.branch))
+                    Text(L10n.Perch.Merge.choose).tag(MapMergeChoice?.none)
+                    Text(L10n.Perch.Merge.keepParent).tag(MapMergeChoice?.some(.parent))
+                    Text(L10n.Perch.Merge.takeBranch).tag(MapMergeChoice?.some(.branch))
                 }
                 .labelsHidden()
                 .frame(width: 130)
                 .auspexSystemControlFocus()
             }
             HStack(spacing: 8) {
-                comparison("Parent", conflict.parentSummary)
-                comparison("Branch", conflict.branchSummary)
+                comparison(L10n.Perch.Merge.parent, conflict.parentSummary)
+                comparison(L10n.Perch.Merge.branch, conflict.branchSummary)
             }
         }
         .padding(10)
         .background(AuspexPalette.bg2)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private static func fieldTitle(_ field: MapMergeConflict.Field) -> String {
+        switch field {
+        case .membership: L10n.Perch.Merge.Field.membership
+        case .position: L10n.Perch.Merge.Field.position
+        case .rules: L10n.Perch.Merge.Field.rules
+        }
     }
 
     private func comparison(_ label: String, _ value: String) -> some View {
@@ -438,7 +444,7 @@ private struct MapPlaybackStrip: View {
                     .background(Circle().fill(AuspexPalette.bg1))
             }
             .buttonStyle(.auspex)
-            .accessibilityLabel(map.isPlaying ? "Pause playback" : "Play history")
+            .accessibilityLabel(map.isPlaying ? L10n.Perch.pausePlayback : L10n.Perch.playHistory)
             Menu {
                 ForEach(PlaybackSpeed.allCases, id: \.self) { speed in
                     Button(speed.label) { map.setPlaybackSpeed(speed) }
@@ -456,17 +462,17 @@ private struct MapPlaybackStrip: View {
                     color: map.isHistory ? AuspexPalette.stateStale : AuspexPalette.stateWriting,
                     glows: !map.isHistory
                 )
-                Text(map.isHistory ? "History" : "Live")
+                Text(map.isHistory ? L10n.Perch.history : L10n.Perch.live)
                     .font(AuspexType.pill)
                     .foregroundStyle(map.isHistory ? AuspexPalette.stateStale : AuspexPalette.text)
                 if map.isHistoryLoading {
-                    Text("indexing…").font(AuspexType.caption).foregroundStyle(AuspexPalette.text3)
+                    Text(L10n.Perch.indexing).font(AuspexType.caption).foregroundStyle(AuspexPalette.text3)
                 } else if map.isHistory {
-                    Text("event \(map.historyIndex + 1) / \(map.historyCount)")
+                    Text(L10n.Perch.eventPosition(index: map.historyIndex + 1, count: map.historyCount))
                         .font(AuspexType.monoSmall)
                         .foregroundStyle(AuspexPalette.text3)
                 } else {
-                    Text("following").font(AuspexType.caption).foregroundStyle(AuspexPalette.text3)
+                    Text(L10n.Perch.following).font(AuspexType.caption).foregroundStyle(AuspexPalette.text3)
                 }
             }
             if map.historyCount > 1 {
@@ -480,8 +486,8 @@ private struct MapPlaybackStrip: View {
                 )
                 .tint(AuspexPalette.accent)
                 .auspexSystemControlFocus()
-                .accessibilityLabel("Perch history playhead")
-                .accessibilityValue("Event \(map.historyIndex + 1) of \(map.historyCount)")
+                .accessibilityLabel(L10n.Perch.playhead)
+                .accessibilityValue(L10n.Perch.playheadValue(index: map.historyIndex + 1, count: map.historyCount))
             } else {
                 GeometryReader { geometry in
                     Canvas { context, size in
@@ -517,10 +523,10 @@ private struct MapPlaybackStrip: View {
             .font(AuspexType.monoSmall)
             .foregroundStyle(AuspexPalette.text2)
             if map.isHistory {
-                Text("\(map.eventsAhead) ahead")
+                Text(L10n.Perch.ahead(count: map.eventsAhead))
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
-                Button("Jump to Live") { map.jumpToLive() }
+                Button(L10n.Perch.jumpToLive) { map.jumpToLive() }
                     .font(AuspexType.pill)
                     .buttonStyle(.auspex(cornerRadius: 7))
             }
@@ -532,11 +538,11 @@ private struct MapPlaybackStrip: View {
             Rectangle().fill(AuspexPalette.line).frame(height: 1)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Live activity overview")
+        .accessibilityLabel(L10n.Perch.liveOverview)
     }
 
     private static func time(_ date: Date) -> String {
-        date.formatted(date: .omitted, time: .standard)
+        AppLocale.time(date)
     }
 }
 
@@ -599,7 +605,7 @@ private struct MapMinimap: View {
                         ))
                 }
             )
-            .help("The whole board. Click or drag to move the camera.")
+            .help(L10n.Perch.minimapHelp)
             .accessibilityHidden(true)
         }
     }
@@ -621,17 +627,17 @@ private struct MapBoardCreateSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New Perch board").font(AuspexType.paneTitle)
-            TextField("Board name", text: $name)
+            Text(L10n.Perch.newBoardTitle).font(AuspexType.paneTitle)
+            TextField(L10n.Perch.boardName, text: $name)
                 .textFieldStyle(.roundedBorder)
                 .auspexSystemControlFocus()
-            Text("This board starts manual. Add nested rules from Board rules after it is created.")
+            Text(L10n.Perch.newBoardNote)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text2)
             HStack {
                 Spacer()
-                Button("Cancel") { isPresented = false }
-                Button("Create") {
+                Button(L10n.Common.cancel) { isPresented = false }
+                Button(L10n.Common.create) {
                     map.createBoard(name: name)
                     isPresented = false
                 }
@@ -659,8 +665,8 @@ private struct MapBoardEditorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Board rules").font(AuspexType.paneTitle)
-            TextField("Board name", text: $name)
+            Text(L10n.Perch.boardRules).font(AuspexType.paneTitle)
+            TextField(L10n.Perch.boardName, text: $name)
                 .textFieldStyle(.roundedBorder)
                 .auspexSystemControlFocus()
             MapRuleEditor(
@@ -673,31 +679,31 @@ private struct MapBoardEditorSheet: View {
                 Button {
                     map.moveSelectedBoard(by: -1)
                 } label: {
-                    Label("Move earlier", systemImage: "arrow.up")
+                    Label(L10n.Perch.moveEarlier, systemImage: "arrow.up")
                 }
                 .disabled(!map.canMoveSelectedBoardUp)
                 Button {
                     map.moveSelectedBoard(by: 1)
                 } label: {
-                    Label("Move later", systemImage: "arrow.down")
+                    Label(L10n.Perch.moveLater, systemImage: "arrow.down")
                 }
                 .disabled(!map.canMoveSelectedBoardDown)
                 Divider().frame(height: 18)
                 if confirmsDelete {
-                    Text("Delete this board?")
+                    Text(L10n.Perch.deleteConfirm)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.statePermission)
-                    Button("Cancel", role: .cancel) { confirmsDelete = false }
+                    Button(L10n.Common.cancel, role: .cancel) { confirmsDelete = false }
                         .keyboardShortcut(.cancelAction)
-                    Button("Delete", role: .destructive) {
+                    Button(L10n.Common.delete, role: .destructive) {
                         map.deleteSelectedBoard()
                         isPresented = false
                     }
                 } else {
-                    Button("Delete board", role: .destructive) { confirmsDelete = true }
+                    Button(L10n.Perch.deleteBoard, role: .destructive) { confirmsDelete = true }
                 }
                 Spacer()
-                Button("Done") {
+                Button(L10n.Common.done) {
                     if name != board.name { map.renameSelectedBoard(name) }
                     isPresented = false
                 }

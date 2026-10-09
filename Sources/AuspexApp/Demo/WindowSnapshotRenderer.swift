@@ -54,7 +54,8 @@ enum WindowSnapshotRenderer {
         pane: SettingsPane? = nil,
         viewMode: BoardViewMode? = nil,
         showsStage: Bool = true,
-        appearance: AppearanceMode = .dark
+        appearance: AppearanceMode = .dark,
+        language: AppLanguage? = nil
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
         // policy keeps it out of the Dock and off the menu bar while it does.
@@ -63,6 +64,10 @@ enum WindowSnapshotRenderer {
         let environment = AppEnvironment(mode: .demo, offersSignalTarget: false)
         environment.board.autoSelectsFirstSession = true
         environment.start()
+        // After `start()`, which loads the catalog. The demo's catalog has no
+        // store behind it, so this is set for this render only and written
+        // nowhere.
+        if let language { environment.catalog.setLanguage(language) }
         for kind in ignore { environment.catalog.add(rule: IgnoreRule(kind: kind)) }
         environment.board.focusedProjectKey = focus
         if let groupBy { environment.board.groupBy = groupBy }

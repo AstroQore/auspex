@@ -97,9 +97,9 @@ enum AuspexAdapters {
     static func storeNote(for harness: Harness) -> String? {
         switch harness {
         case .codex:
-            "shares ~/.codex/sessions; every originator except ChatGPT Work"
+            L10n.Harnesses.Store.codexShared
         case .chatgptWork:
-            "shares ~/.codex/sessions; originator ChatGPT Work"
+            L10n.Harnesses.Store.chatgptShared
         default:
             nil
         }

@@ -328,6 +328,10 @@ if let flag = arguments.firstIndex(of: "--render-board") {
     // offscreen render cannot draw, so the list-only half of the screen is the
     // half this renderer can photograph faithfully.
     let showsStage = rest.first { $0.hasPrefix("stage=") }.map { $0.dropFirst(6) != "off" } ?? true
+    // The interface language, for the screenshots that are *about* a
+    // translation. `locale=en` or `locale=zh-Hans`; absent means the Mac's.
+    let language = rest.first { $0.hasPrefix("locale=") }
+        .flatMap { AppLanguage(rawValue: String($0.dropFirst(7))) }
     // The user layer, as `focus=<project key>` and `ignore=<kind>:<value>`
     // among the trailing arguments. Keyword rather than positional because
     // they are the two knobs that are usually absent, and because a picture of
@@ -360,7 +364,8 @@ if let flag = arguments.firstIndex(of: "--render-board") {
             pane: pane,
             viewMode: viewMode,
             showsStage: showsStage,
-            appearance: appearance
+            appearance: appearance,
+            language: language
         )
         FileHandle.standardOutput.write(Data("auspex: wrote \(path)\n".utf8))
         exit(0)
@@ -547,7 +552,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
                             [width=<points>] [pane=<settings pane>]
                             [focus=<project>] [ignore=<kind>:<value>]
                             [group=<none|harness|project|tree>]
-                            [appearance=<light|dark>]
+                            [appearance=<light|dark>] [locale=<en|zh-Hans>]
                             Render the whole window — sidebar, board, trace — to a
                             PNG, offscreen, after letting the demo run for
                             `seconds` (default 20), at `height` points (default
@@ -566,6 +571,8 @@ if arguments.contains("--help") || arguments.contains("-h") {
                             `harness`, `titleContains`) for this render only;
                             `group=` divides the wall along that axis, which is the
                             only way to reach the tree grouping headlessly.
+                            `locale=` draws it in that interface language for
+                            this render only, without touching the setting.
                             Reads no harness store and writes nothing.
               --render-trajectory <path> [seconds] [height] [width]
                             [appearance=<light|dark>]

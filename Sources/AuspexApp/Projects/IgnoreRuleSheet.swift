@@ -40,34 +40,34 @@ struct IgnoreRuleSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Ignore").auspexLabel().foregroundStyle(AuspexPalette.statePermission)
-                Text("Hide these sessions from the board")
+                Text(L10n.Ignore.eyebrow).auspexLabel().foregroundStyle(AuspexPalette.statePermission)
+                Text(L10n.Ignore.title)
                     .font(AuspexType.display)
                     .foregroundStyle(AuspexPalette.text)
             }
 
-            Picker("Match on", selection: $tag) {
+            Picker(L10n.Ignore.matchOn, selection: $tag) {
                 ForEach(IgnoreRule.Kind.Tag.hidingCases) { tag in
-                    Text(tag.label).tag(tag)
+                    Text(tag.localizedLabel).tag(tag)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
 
             if tag == .harness {
-                Picker("Harness", selection: $value) {
+                Picker(L10n.Common.harness, selection: $value) {
                     ForEach(AuspexAdapters.featured, id: \.self) { harness in
                         Text(harness.displayName).tag(harness.rawValue)
                     }
                 }
                 .labelsHidden()
             } else {
-                TextField(tag.placeholder, text: $value)
+                TextField(tag.localizedPlaceholder, text: $value)
                     .textFieldStyle(.roundedBorder)
                     .font(tag.takesPath ? AuspexType.monoSmall : AuspexType.body)
             }
 
-            Text(tag.explanation)
+            Text(tag.localizedExplanation)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -79,9 +79,9 @@ struct IgnoreRuleSheet: View {
 
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
-                Button("Cancel", role: .cancel) { onClose() }
+                Button(L10n.Common.cancel, role: .cancel) { onClose() }
                     .keyboardShortcut(.cancelAction)
-                Button("Ignore") {
+                Button(L10n.Ignore.eyebrow) {
                     if let kind { catalog.add(rule: IgnoreRule(kind: kind)) }
                     onClose()
                 }
@@ -117,25 +117,25 @@ struct SessionRowMenu: View {
         // The row's own directory is abbreviated for display; a rule needs the
         // path the session actually reported.
         if let directory = model.directoryPath(of: row.key) {
-            Button("Ignore this folder…") {
+            Button(L10n.Ignore.Menu.folder) {
                 environment.composeIgnore(.pathPrefix, value: directory)
             }
         }
         if let project = row.project {
-            Button("Ignore project…") {
+            Button(L10n.Ignore.Menu.project) {
                 environment.composeIgnore(.project, value: project)
             }
         }
-        Button("Ignore prompts starting with…") {
+        Button(L10n.Ignore.Menu.prompt) {
             environment.composeIgnore(.promptPrefix, value: row.title)
         }
         Divider()
-        Button("Ignore every \(row.harness.displayName) session…") {
+        Button(L10n.Ignore.Menu.harness(harness: row.harness.displayName)) {
             environment.composeIgnore(.harness, value: row.harness.rawValue)
         }
         if let directory = model.directoryPath(of: row.key) {
             Divider()
-            Button("Make this folder an Auspex project") {
+            Button(L10n.Projects.makeFolderProject) {
                 environment.catalog.addProject(
                     name: BoardGrouping.projectName(forPath: directory),
                     roots: [directory]
@@ -148,7 +148,5 @@ struct SessionRowMenu: View {
 /// The sentence every ignore surface says, in one place so all of them say it
 /// the same way.
 enum IgnoreCopy {
-    static let stillRecorded =
-        "Ignored sessions are still recorded and still searchable — they are only "
-        + "hidden from the board, the scene and the counts."
+    static var stillRecorded: String { L10n.Ignore.stillRecorded }
 }

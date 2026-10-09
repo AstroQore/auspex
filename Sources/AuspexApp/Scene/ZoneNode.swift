@@ -164,7 +164,7 @@ final class ZoneNode: SKNode {
         if lastTitle != area.title {
             lastTitle = area.title
             title.attributedText = SceneText.label(
-                area.title, size: 12, weight: .bold, color: theme.textPrimary
+                CoreVocabulary.localized(area.title), size: 12, weight: .bold, color: theme.textPrimary
             )
             labelsNeedFitting = true
         }
@@ -364,12 +364,12 @@ final class ZoneNode: SKNode {
         // "0 meeting" is a sentence about nothing. A company's meeting room
         // stands there whether or not it is in use, and the word for that is
         // free.
-        case .meeting: occupancy == 0 ? "free" : "\(occupancy) meeting"
+        case .meeting: occupancy == 0 ? L10n.Aviary.Room.free : L10n.Aviary.Room.meeting(count: occupancy)
         case .breakArea:
             overflow > 0
-                ? "\(occupancy) resting · +\(overflow) more"
-                : "\(occupancy) resting"
-        case .office: "\(occupancy) live"
+                ? L10n.Aviary.Room.restingMore(count: occupancy, more: overflow)
+                : L10n.Aviary.Room.resting(count: occupancy)
+        case .office: L10n.Aviary.Room.live(count: occupancy)
         }
     }
 }

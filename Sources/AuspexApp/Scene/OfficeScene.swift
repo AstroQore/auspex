@@ -629,7 +629,7 @@ final class OfficeScene: SKScene {
 
     private static func detail(for session: SessionSnapshot) -> String {
         var parts = [session.key.harness.displayName, session.state.style.label]
-        if session.isStale { parts.append("stale") }
+        if session.isStale { parts.append(L10n.State.stale.lowercased()) }
         return parts.joined(separator: " · ")
     }
 }

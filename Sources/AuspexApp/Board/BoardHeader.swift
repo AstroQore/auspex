@@ -202,7 +202,7 @@ struct BoardHeader: View {
             HStack(spacing: 5) {
                 Image(systemName: "clock.arrow.circlepath")
                     .font(.system(size: 10, weight: .semibold))
-                Text("Catch up \(catchUpCount)")
+                Text(L10n.Board.Header.catchUp(count: catchUpCount))
                     .font(AuspexType.caption)
                     .auspexTabularDigits()
             }
@@ -219,7 +219,7 @@ struct BoardHeader: View {
             )
         }
         .buttonStyle(.auspex(cornerRadius: 8))
-        .help("Review material changes, human work, and amber watch signals")
+        .help(L10n.Board.Header.catchUpHelp)
     }
 
     // MARK: Pieces
@@ -249,7 +249,7 @@ struct BoardHeader: View {
             // looked at: the sidebar's row is called Now, and a wall of cards
             // under the word "Now" would be the header contradicting the
             // menu beside it.
-            Text(section == .live ? model.viewMode.title : section.title)
+            Text(section == .live ? model.viewMode.localizedTitle : section.title)
                 .font(AuspexType.windowTitle)
                 .foregroundStyle(AuspexPalette.text)
             if let headingCount {
@@ -270,7 +270,7 @@ struct BoardHeader: View {
             HStack(spacing: 5) {
                 Image(systemName: "checklist")
                     .font(.system(size: 9, weight: .semibold))
-                Text("Review \(model.reviewCount)")
+                Text(L10n.Board.Header.review(count: model.reviewCount))
                     .font(AuspexType.caption)
                     .auspexTabularDigits()
             }
@@ -288,7 +288,7 @@ struct BoardHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex(cornerRadius: 8))
-        .help("Review next — open the first task waiting for your judgement")
+        .help(L10n.Board.Header.reviewHelp)
     }
 
     /// The number beside the heading, when the heading is about a number of
@@ -313,7 +313,7 @@ struct BoardHeader: View {
     private var subtitle: String? {
         switch section {
         case .harnesses:
-            "\(AuspexAdapters.featured.count) harnesses · what Auspex can see on this Mac, and how"
+            L10n.Board.Header.harnessesSubtitle(count: AuspexAdapters.featured.count)
         default:
             nil
         }
@@ -357,11 +357,8 @@ struct BoardHeader: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex(cornerRadius: 8))
-        .accessibilityLabel("Mark all as seen")
-        .help(
-            "Mark all as seen — clear every card that is asking or reporting. "
-                + "A session that is still blocked will say so again."
-        )
+        .accessibilityLabel(L10n.App.Menu.markAllSeen)
+        .help(L10n.Board.markAllSeenHelp)
     }
 
     /// What the rules are hiding, and the switch that reveals it.
@@ -378,7 +375,7 @@ struct BoardHeader: View {
             HStack(spacing: 5) {
                 Image(systemName: model.showsIgnored ? "eye" : "eye.slash")
                     .font(.system(size: 10, weight: .semibold))
-                Text("\(model.ignoredCount) ignored")
+                Text(L10n.Board.Ignored.count(count: model.ignoredCount))
                     .font(AuspexType.caption)
                     .auspexTabularDigits()
             }
@@ -400,9 +397,11 @@ struct BoardHeader: View {
         .buttonStyle(.auspex(cornerRadius: 8))
         .help(
             model.showsIgnored
-                ? "Hide the ignored sessions again. " + IgnoreCopy.stillRecorded
-                : "Show the \(model.ignoredCount) sessions your rules hide, dimmed. "
-                    + IgnoreCopy.stillRecorded
+                ? L10n.Board.Ignored.hideHelp(note: IgnoreCopy.stillRecorded)
+                : L10n.Board.Ignored.showHelp(
+                    count: model.ignoredCount,
+                    note: IgnoreCopy.stillRecorded
+                )
         )
     }
 
@@ -411,9 +410,9 @@ struct BoardHeader: View {
     /// the width the search field needs.
     private var groupMenu: some View {
         Menu {
-            Picker("Group by", selection: $model.groupBy) {
+            Picker(L10n.Board.Group.title, selection: $model.groupBy) {
                 ForEach(BoardGroupBy.allCases) { option in
-                    Text(option.title).tag(option)
+                    Text(option.localizedTitle).tag(option)
                 }
             }
             .pickerStyle(.inline)
@@ -429,15 +428,15 @@ struct BoardHeader: View {
                 environment.catalog.setShowsSubagents(!model.showsSubagents)
             } label: {
                 if model.showsSubagents {
-                    Label("Show subagents", systemImage: "checkmark")
+                    Label(L10n.Board.showSubagents, systemImage: "checkmark")
                 } else {
-                    Text("Show subagents")
+                    Text(L10n.Board.showSubagents)
                 }
             }
         } label: {
             HStack(spacing: 6) {
-                Text("By").foregroundStyle(AuspexPalette.text3)
-                Text(model.groupBy.title).foregroundStyle(AuspexPalette.text2)
+                Text(L10n.Board.Group.by).foregroundStyle(AuspexPalette.text3)
+                Text(model.groupBy.localizedTitle).foregroundStyle(AuspexPalette.text2)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(AuspexPalette.text3)
@@ -451,10 +450,7 @@ struct BoardHeader: View {
         .padding(.horizontal, 10)
         .frame(height: 28)
         .background(fieldBackground)
-        .help(
-            "Divide the board into sections, and choose whether every card "
-                + "lists the sessions inside it"
-        )
+        .help(L10n.Board.Group.help)
     }
 
     /// How far back the board reaches, beside the axis it is divided along.
@@ -472,9 +468,8 @@ struct BoardHeader: View {
         .frame(height: 28)
         .background(fieldBackground)
         .help(
-            model.olderHiddenHint.map { "\($0). Widen to see them." }
-                ?? "How far back the board and the map reach. "
-                    + "Older sessions stay in the store."
+            model.olderHiddenHint.map { L10n.Board.Window.hiddenHelp(hint: $0) }
+                ?? L10n.Board.Window.help
         )
     }
 
@@ -507,11 +502,11 @@ struct BoardHeader: View {
         .frame(minWidth: 110, idealWidth: 150, maxWidth: 150)
         .frame(height: 28)
         .background(fieldBackground)
-        .help("Search every transcript")
+        .help(L10n.Board.searchHelp)
     }
 
     private var searchPlaceholder: String {
-        section == .live && model.viewMode == .now ? NowCopy.search : "Search sessions"
+        section == .live && model.viewMode == .now ? NowCopy.search : L10n.Board.search
     }
 
     private var fieldBackground: some View {
@@ -567,7 +562,7 @@ struct SummaryChips: View {
                                     ? AuspexPalette.text3
                                     : AuspexPalette.text
                             )
-                        Text(chip.kind.label)
+                        Text(chip.kind.localizedLabel)
                             .font(AuspexType.caption)
                             .foregroundStyle(isOn ? AuspexPalette.text2 : AuspexPalette.text3)
                     }
@@ -583,11 +578,11 @@ struct SummaryChips: View {
                 .buttonStyle(.auspex(cornerRadius: 6))
                 .help(
                     isOn
-                        ? "Show every session again"
-                        : "Show only the \(chip.kind.label) sessions"
+                        ? L10n.Board.Chip.showAll
+                        : L10n.Board.Chip.showOnly(bucket: chip.kind.localizedLabel)
                 )
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(chip.value) \(chip.kind.label)")
+                .accessibilityLabel("\(chip.value) \(chip.kind.localizedLabel)")
                 .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
             }
         }
@@ -732,9 +727,9 @@ struct ViewModeMenu: View {
                         model.viewMode = mode
                     } label: {
                         if mode == current {
-                            Label(mode.title, systemImage: "checkmark")
+                            Label(mode.localizedTitle, systemImage: "checkmark")
                         } else {
-                            Label(mode.title, systemImage: mode.systemImage)
+                            Label(mode.localizedTitle, systemImage: mode.systemImage)
                         }
                     }
                     // Flight draws one session, so it needs one selected.
@@ -746,7 +741,7 @@ struct ViewModeMenu: View {
                 Image(systemName: current.systemImage)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(AuspexPalette.text3)
-                Text(current.title).foregroundStyle(AuspexPalette.text2)
+                Text(current.localizedTitle).foregroundStyle(AuspexPalette.text2)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(AuspexPalette.text3)
@@ -767,11 +762,8 @@ struct ViewModeMenu: View {
                         .strokeBorder(AuspexPalette.line, lineWidth: 1)
                 )
         )
-        .help(
-            "\(NowCopy.viewMode): Now, the Ledger of cards, the Aviary, the Flock, "
-                + "your Perch, or one session's Flight"
-        )
-        .accessibilityLabel("\(NowCopy.viewMode): \(current.title)")
+        .help(L10n.Now.ViewMenu.help)
+        .accessibilityLabel(L10n.Now.ViewMenu.accessibility(mode: current.localizedTitle))
     }
 }
 

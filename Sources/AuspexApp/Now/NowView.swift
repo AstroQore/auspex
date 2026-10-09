@@ -478,7 +478,7 @@ private struct NowRow: View, Equatable {
             Text("×\(item.sessionCount)").nowMetric()
         } else if let since = item.since {
             if case .watch(.staleSession, _) = item.reason {
-                NowElapsed(since: since, suffix: " idle")
+                NowElapsed(since: since, format: L10n.Now.idleFor(duration:))
             } else {
                 NowElapsed(since: since)
             }
@@ -650,13 +650,13 @@ private struct NowContextBar: View {
                     .foregroundStyle(warm ? AuspexPalette.nowNeedsInk : AuspexPalette.text3)
                     .frame(width: 32, alignment: .trailing)
             }
-            .help(gauge?.helpText ?? "")
+            .help(gauge?.localizedHelpText ?? "")
         } else {
             Text(verbatim: "—")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(AuspexPalette.text3)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .help("This harness does not record its context window.")
+                .help(L10n.Now.Context.unrecorded)
         }
     }
 }
@@ -668,13 +668,16 @@ private struct NowContextBar: View {
 /// above them.
 struct NowElapsed: View {
     let since: Date
-    var suffix = ""
+    /// Puts the reading into a sentence — "12m idle" — or `nil` for the bare
+    /// reading.
+    var format: ((String) -> String)?
 
     @Environment(BoardClock.self) private var clock: BoardClock?
 
     var body: some View {
         let now = clock?.now ?? Date()
-        Text(NowFrame.compactDuration(now.timeIntervalSince(since)) + suffix)
+        let reading = NowFrame.compactDuration(now.timeIntervalSince(since))
+        Text(format?(reading) ?? reading)
             .nowMetric()
     }
 }

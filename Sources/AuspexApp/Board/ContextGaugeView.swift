@@ -53,7 +53,7 @@ struct ContextGaugeView: View, Equatable {
                     .frame(minWidth: minimumTrack, maxWidth: .infinity)
             }
             if showsLabel {
-                Text(gauge.label)
+                Text(gauge.localizedLabel)
                     .font(AuspexType.monoSmall)
                     .auspexTabularDigits()
                     .foregroundStyle(ContextGaugeStyle.colour(gauge.level))
@@ -68,7 +68,7 @@ struct ContextGaugeView: View, Equatable {
                     .fixedSize()
             }
         }
-        .help(gauge.helpText)
+        .help(gauge.localizedHelpText)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(gauge.accessibilityLabel)
     }

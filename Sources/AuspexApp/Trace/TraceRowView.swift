@@ -54,7 +54,7 @@ struct TraceRowView: View, Equatable {
                 // session fits on screen for a fact that is usually a path
                 // whose tail is all anybody reads.
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(entry.title)
+                    Text(entry.localizedTitle)
                         .font(isProse ? AuspexType.rowTitle : AuspexType.mono)
                         .foregroundStyle(titleColor)
                         .lineLimit(1)
@@ -118,7 +118,7 @@ struct TraceRowView: View, Equatable {
     private var expansion: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let body = entry.body {
-                labelled("Full text") {
+                labelled(L10n.Trace.fullText) {
                     Text(body)
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.text)
@@ -127,7 +127,7 @@ struct TraceRowView: View, Equatable {
                 }
             }
             if let json = entry.detailJSON {
-                labelled("Event payload") {
+                labelled(L10n.Trace.eventPayload) {
                     Text(json)
                         .font(AuspexType.monoBlock)
                         .foregroundStyle(AuspexPalette.text2)
@@ -253,7 +253,7 @@ struct TraceTurnSeparator: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("Turn \(turn)")
+            Text(L10n.Trace.turn(number: turn))
                 .auspexLabel(AuspexType.label)
                 .foregroundStyle(AuspexPalette.text3)
             Text(Self.formatter.string(from: timestamp))

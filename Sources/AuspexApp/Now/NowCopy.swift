@@ -5,73 +5,78 @@ import Foundation
 
 /// Every word the Now screen prints, in one place.
 ///
-/// The rest of the app speaks English and has no strings table yet, so this
-/// screen does too. Keeping every line here rather than scattered across the
-/// views is what makes it one edit to change — and the obvious seam for a
-/// strings table when the app grows one.
+/// The words come from the `auspex-i18n` catalogue through `L10n`; this type
+/// forwards to it and keeps the few rules about how a line is put together —
+/// a tool and its target, a balloon's lead, where a line is clipped. Every
+/// member is computed rather than stored, so a change of language reaches the
+/// next frame without a relaunch.
 enum NowCopy {
     // MARK: Header
 
-    static let title = "Now"
-    static let needsYou = "Needs you"
-    static let mayNeedYou = "May need you"
-    static let doneUnseen = "Done, unseen"
-    static let stageAndLists = "Office + lists"
-    static let listsOnly = "Lists only"
-    static let search = "Search sessions…"
-    static let viewMode = "View"
+    static var title: String { L10n.ViewMode.now }
+    static var needsYou: String { L10n.Now.needsYou }
+    static var mayNeedYou: String { L10n.Now.mayNeedYou }
+    static var doneUnseen: String { L10n.Now.doneUnseen }
+    static var stageAndLists: String { L10n.Now.Stage.officeAndLists }
+    static var listsOnly: String { L10n.Now.Stage.listsOnly }
+    static var search: String { L10n.Now.search }
+    static var viewMode: String { L10n.Now.ViewMenu.title }
 
     static func status(time: String, live: Int, working: Int) -> String {
-        "\(time) · \(live) live · \(working) working"
+        L10n.Now.status(time: time, live: live, working: working)
     }
 
     // MARK: Stage
 
-    static let stageTag = "AVIARY"
-    static let stageHint = "Click a person to open the session · hover for what they are doing"
-    static let collapseStage = "Hide the office"
-    static let legendWorking = "Working"
-    static let legendNeedsYou = "Needs you"
-    static let legendMayNeedYou = "May need you"
-    static let legendIdle = "Idle"
+    /// The view's own name, set as a tag. Upper-cased here rather than in the
+    /// catalogue so the tag and the menu can never name the view differently.
+    static var stageTag: String { L10n.ViewMode.scene.uppercased() }
+    static var stageHint: String { L10n.Now.Stage.hint }
+    static var collapseStage: String { L10n.Now.Stage.collapse }
+    static var legendWorking: String { L10n.Now.working }
+    static var legendNeedsYou: String { L10n.Now.needsYou }
+    static var legendMayNeedYou: String { L10n.Now.mayNeedYou }
+    static var legendIdle: String { L10n.Now.idle }
 
     // MARK: Sections
 
-    static let needsYouHeading = "NEEDS YOU"
-    static let mayNeedYouHeading = "MAY NEED YOU"
-    static let workingHeading = "WORKING"
-    static let doneHeading = "DONE, UNSEEN"
-    static let idleHeading = "IDLE"
+    static var needsYouHeading: String { needsYou.uppercased() }
+    static var mayNeedYouHeading: String { mayNeedYou.uppercased() }
+    static var workingHeading: String { legendWorking.uppercased() }
+    static var doneHeading: String { doneUnseen.uppercased() }
+    static var idleHeading: String { legendIdle.uppercased() }
 
-    static let needsYouNote = "explicit signals only"
-    static let mayNeedYouNote = "inferred — watch signals"
-    static let workingNote = "one row per root session, sub-agents folded"
+    static var needsYouNote: String { L10n.Now.Note.needsYou }
+    static var mayNeedYouNote: String { L10n.Now.Note.mayNeedYou }
+    static var workingNote: String { L10n.Now.Note.working }
+    /// The two MCP calls that put a row here, by their protocol names. Not
+    /// copy: an agent's author greps for exactly these.
     static let doneNote = "notify(done) / tasks.complete"
 
-    static let columnProject = "PROJECT"
-    static let columnHarness = "HARNESS"
-    static let columnDoing = "DOING"
-    static let columnTurn = "TURN / SUB-AGENTS"
-    static let columnContext = "CONTEXT"
+    static var columnProject: String { L10n.Common.project.uppercased() }
+    static var columnHarness: String { L10n.Common.harness.uppercased() }
+    static var columnDoing: String { L10n.Now.Column.doing.uppercased() }
+    static var columnTurn: String { L10n.Now.Column.turn.uppercased() }
+    static var columnContext: String { L10n.Common.context.uppercased() }
 
-    static let open = "Open →"
-    static let openQuiet = "Open"
-    static let markSeen = "Mark seen"
-    static let openTask = "Task →"
+    static var open: String { L10n.Now.openArrow }
+    static var openQuiet: String { L10n.Common.open }
+    static var markSeen: String { L10n.Now.markSeen }
+    static var openTask: String { L10n.Now.taskArrow }
 
-    static func more(_ count: Int) -> String { "\(count) more →" }
-    static let fewer = "Fewer"
+    static func more(_ count: Int) -> String { L10n.Now.more(count: count) }
+    static var fewer: String { L10n.Now.fewer }
     static func idle(_ count: Int, isOpen: Bool) -> String {
-        "\(idleHeading) \(count) · \(isOpen ? "hide" : "show →")"
+        isOpen ? L10n.Now.IdleFold.hide(count: count) : L10n.Now.IdleFold.show(count: count)
     }
 
-    static let allClear = "Nothing is running, and nothing is waiting on you."
+    static var allClear: String { L10n.Now.allClear }
 
     // MARK: Lines
 
-    static let waitingPermission = "Waiting for permission"
-    static let waitingAnswer = "Waiting for an answer"
-    static let blockedTask = "Task marked blocked"
+    static var waitingPermission: String { L10n.Now.waitingPermission }
+    static var waitingAnswer: String { L10n.Now.waitingAnswer }
+    static var blockedTask: String { L10n.Now.blockedTask }
 
     /// A tool and what it is aimed at, the way a permission prompt names it:
     /// `Bash(gh pr merge)`.
@@ -84,12 +89,16 @@ enum NowCopy {
     /// and written for the Catch-up panel; this is the list's version.
     static func watch(_ kind: WatchSignal.Kind, tool: String?) -> String {
         switch kind {
-        case .staleSession: "alive, but nothing new"
-        case .longTool: "\(tool ?? "a tool") has run for over \(Int(CollaborationSignals.longToolAfter / 60)) min"
-        case .contextPressure: "context over 90% used"
-        case .sharedDirectory: "shares a working directory"
-        case .sharedBranch: "shares a branch"
-        case .orphanedClaim: "the session that claimed it has ended"
+        case .staleSession: L10n.Now.Watch.staleSession
+        case .longTool:
+            L10n.Now.Watch.longTool(
+                tool: tool ?? L10n.Now.Watch.aTool,
+                minutes: Int(CollaborationSignals.longToolAfter / 60)
+            )
+        case .contextPressure: L10n.Now.Watch.contextPressure(percent: 90)
+        case .sharedDirectory: L10n.Now.Watch.sharedDirectory
+        case .sharedBranch: L10n.Now.Watch.sharedBranch
+        case .orphanedClaim: L10n.Now.Watch.orphanedClaim
         }
     }
 

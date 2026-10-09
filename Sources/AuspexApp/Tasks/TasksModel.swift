@@ -468,7 +468,7 @@ final class TasksModel {
     /// its own title, because the frame arrives eight times a second and the
     /// title changes about once a month.
     private func name(forKey key: String) -> String {
-        if TaskProject.isScratch(key) { return TaskProject.scratchName }
+        if TaskProject.isScratch(key) { return L10n.Common.scratch }
         return claims.name(forKey: key) ?? BoardGrouping.projectName(forPath: key)
     }
 
@@ -593,7 +593,7 @@ final class TasksModel {
             if let outcome, outcome.request.status == .expired {
                 self?.takeoverResolutionNotice = (
                     outcome.task.id,
-                    "That takeover request expired because the task or its holder changed. Review the current claim before deciding again."
+                    L10n.Tasks.takeoverExpired
                 )
             } else {
                 self?.takeoverResolutionNotice = nil

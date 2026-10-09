@@ -121,13 +121,13 @@ struct TrajectoryTimelineView: View {
     private var laneLabels: some View {
         VStack(alignment: .leading, spacing: Self.laneGap) {
             ForEach(TrajectoryLane.allCases) { lane in
-                Text(lane.title)
+                Text(lane.localizedTitle)
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                     .frame(height: Self.laneHeight, alignment: .leading)
             }
             if hasContextLane {
-                Text("Context")
+                Text(L10n.Common.context)
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                     .frame(height: Self.laneHeight, alignment: .leading)
@@ -471,7 +471,7 @@ struct TrajectoryTimelineView: View {
                     .frame(width: 22, height: 22)
             }
             .buttonStyle(.auspex)
-            .accessibilityLabel(model.isPlaying ? "Pause playback" : "Play history")
+            .accessibilityLabel(model.isPlaying ? L10n.Perch.pausePlayback : L10n.Perch.playHistory)
             Menu {
                 ForEach(PlaybackSpeed.allCases, id: \.self) { speed in
                     Button(speed.label) { model.setPlaybackSpeed(speed) }
@@ -489,7 +489,7 @@ struct TrajectoryTimelineView: View {
                     color: model.isHistory ? AuspexPalette.stateStale : AuspexPalette.stateWriting,
                     glows: !model.isHistory
                 )
-                Text(model.isHistory ? "History" : "Live")
+                Text(model.isHistory ? L10n.Perch.history : L10n.Flight.live)
                     .font(AuspexType.pill)
                     .foregroundStyle(
                         model.isHistory ? AuspexPalette.stateStale : AuspexPalette.text2)
@@ -497,12 +497,12 @@ struct TrajectoryTimelineView: View {
             if model.historyCount > 1 {
                 FlightEventScrubber(model: model)
             }
-            Text("event \(model.historyIndex + 1) / \(max(1, model.historyCount))")
+            Text(L10n.Perch.eventPosition(index: model.historyIndex + 1, count: max(1, model.historyCount)))
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize()
             if model.isHistory {
-                Button("Jump to Live") { model.jumpToLive() }
+                Button(L10n.Perch.jumpToLive) { model.jumpToLive() }
                     .font(AuspexType.pill)
                     .buttonStyle(.auspex(cornerRadius: 7))
             }
@@ -590,7 +590,7 @@ struct TrajectoryTimelineView: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 TrajectoryRoleChip(role: step.role, isError: step.isError)
-                Text("Turn \(step.turn)")
+                Text(L10n.Trace.turn(number: step.turn))
                     .font(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                 if let duration = step.duration {

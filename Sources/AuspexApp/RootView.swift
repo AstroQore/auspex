@@ -48,6 +48,10 @@ struct RootView: View {
         @Bindable var model = environment.board
         @Bindable var environment = environment
 
+        // Keyed on the language, so a choice in Settings redraws every word in
+        // the window at once. Below the window's own state — the section, the
+        // clock, the columns — so changing language does not move the reader.
+        let language = environment.catalog.language
         NavigationSplitView(columnVisibility: splitViewColumns) {
             SidebarView(
                 section: $section,
@@ -71,6 +75,7 @@ struct RootView: View {
             }
                 .navigationSplitViewColumnWidth(min: 360, ideal: 420)
         }
+        .id(language)
         .auspexAppearance(environment.appearance)
         .environment(clock)
         // Zero-sized, hidden, and in the background so it cannot take a click:
@@ -408,7 +413,7 @@ struct SidebarView: View {
             SidebarRow(
                 title: BoardSection.tasks.title,
                 count: model.reviewCount > 0 ? nil : tasks.openCount,
-                trailingText: model.reviewCount > 0 ? "\(model.reviewCount) review" : nil,
+                trailingText: model.reviewCount > 0 ? L10n.Sidebar.review(count: model.reviewCount) : nil,
                 isSelected: section == .tasks
             ) { section = .tasks }
 
@@ -528,10 +533,10 @@ struct SidebarView: View {
             HStack(spacing: 5) {
                 Image(systemName: "theatermasks")
                     .font(.system(size: 9, weight: .semibold))
-                Text("Demo replay").font(AuspexType.labelSmall)
+                Text(L10n.Sidebar.demoReplay).font(AuspexType.labelSmall)
             }
             .foregroundStyle(AuspexPalette.stateDelegating)
-            Text("Fabricated sessions, in-memory store. No harness store is read.")
+            Text(L10n.Sidebar.demoNote)
                 .font(.system(size: 10))
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -710,24 +715,21 @@ struct ComingSoonView: View {
     }
 
     private var headline: String {
-        section.arrivesIn.map { "Arrives in \($0)." } ?? section.title
+        section.arrivesIn.map { L10n.Placeholder.arrivesIn(milestone: $0) } ?? section.title
     }
 
     private var explanation: String {
         switch section {
         case .projects, .allSessions:
-            "Sessions grouped by git root and worktree, so three agents in three "
-                + "worktrees of one repository read as one project."
+            L10n.Placeholder.projects
         case .harnesses:
-            "Which harnesses are installed, where their stores are, and how far "
-                + "each tailer has read."
+            L10n.Placeholder.harnesses
         case .tasks:
-            "The shared task board, exposed over MCP so an agent can see what its "
-                + "siblings are working on."
+            L10n.Placeholder.tasks
         case .settings:
-            "Which character each harness wears, and where packages come from."
+            L10n.Settings.Pane.charactersSubtitle
         case .live:
-            "The live board."
+            L10n.Placeholder.live
         }
     }
 }
@@ -744,7 +746,7 @@ struct SearchResultsView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if model.searchHits.isEmpty {
-                Text("Nothing matched.")
+                Text(L10n.Palette.nothingMatched)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text3)
                     .padding(12)
@@ -770,11 +772,11 @@ struct SearchResultsView: View {
 
     private var header: some View {
         HStack {
-            Text("\(model.searchHits.count) matches")
+            Text(L10n.Search.matches(count: model.searchHits.count))
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.text3)
             Spacer()
-            Text("Full text · every harness")
+            Text(L10n.Search.scope)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.text3)
         }

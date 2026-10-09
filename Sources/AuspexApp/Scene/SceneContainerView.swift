@@ -142,17 +142,17 @@ struct SceneContainerView: View {
     /// odd wants "100 %" more than they want to count clicks back to it.
     private var controls: some View {
         VStack(spacing: 6) {
-            controlButton("Fit all", systemImage: "arrow.up.left.and.arrow.down.right") {
+            controlButton(L10n.Perch.fitAll, systemImage: "arrow.up.left.and.arrow.down.right") {
                 commands.fit()
             }
             .keyboardShortcut("0", modifiers: .command)
 
-            controlButton("Zoom in", systemImage: "plus.magnifyingglass") { commands.zoomIn() }
+            controlButton(L10n.Perch.zoomIn, systemImage: "plus.magnifyingglass") { commands.zoomIn() }
                 .keyboardShortcut("=", modifiers: .command)
 
             SceneZoomControl(overview: overview, commands: commands)
 
-            controlButton("Zoom out", systemImage: "minus.magnifyingglass") { commands.zoomOut() }
+            controlButton(L10n.Perch.zoomOut, systemImage: "minus.magnifyingglass") { commands.zoomOut() }
                 .keyboardShortcut("-", modifiers: .command)
         }
         .padding(4)
@@ -208,7 +208,7 @@ struct SceneContainerView: View {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
         )
-        .help("Older sessions are in the store, not on the map. Widen to draw them.")
+        .help(L10n.Aviary.olderHelp)
     }
 
     /// What the monitors mean, and what the garden's two rows mean.
@@ -244,35 +244,25 @@ struct SceneContainerView: View {
         .accessibilityHidden(true)
     }
 
-    private static let legendEntries: [(label: String, color: Color, help: String)] = [
-        ("Thinking", AuspexPalette.stateThinking, "Reasoning, with no tool open."),
-        ("Tool", AuspexPalette.stateTool, "A tool call is running."),
-        ("Writing", AuspexPalette.stateWriting, "The working tree is being changed."),
-        (
-            "Delegating", AuspexPalette.stateDelegating,
-            "Waiting on the sub-agents it spawned, around a table."
-        ),
-        (
-            "Needs you", AuspexPalette.statePermission,
-            StateCopy.explanation(for: .waitingPermission(tool: nil))
-                ?? "Blocked on a person."
-        ),
-        (
-            "Idle", AuspexPalette.stateIdle,
-            StateCopy.explanation(for: .idle) ?? "Nothing outstanding."
-        ),
-        (
-            "Ended", AuspexPalette.stateEnded,
-            StateCopy.explanation(for: .ended(reason: .exited)) ?? "Over."
-        )
-    ]
+    /// Computed rather than stored, so the legend follows the Language setting.
+    private static var legendEntries: [(label: String, color: Color, help: String)] {
+        [
+            (L10n.State.thinking, AuspexPalette.stateThinking, L10n.Aviary.Legend.thinkingHelp),
+            (L10n.State.tool, AuspexPalette.stateTool, L10n.Aviary.Legend.toolHelp),
+            (L10n.State.writing, AuspexPalette.stateWriting, L10n.Aviary.Legend.writingHelp),
+            (L10n.State.delegating, AuspexPalette.stateDelegating, L10n.Aviary.Legend.delegatingHelp),
+            (L10n.Now.needsYou, AuspexPalette.statePermission, L10n.State.Explain.needsYou),
+            (L10n.Now.idle, AuspexPalette.stateIdle, L10n.State.Explain.idle),
+            (L10n.Board.Ended.title, AuspexPalette.stateEnded, L10n.State.Explain.ended),
+        ]
+    }
 
     private var emptyRoom: some View {
         VStack(spacing: 6) {
-            Text("The office is empty")
+            Text(L10n.Aviary.empty)
                 .font(AuspexType.display)
                 .foregroundStyle(AuspexPalette.textSecondary)
-            Text("A desk appears for every session Auspex can see.")
+            Text(L10n.Aviary.emptyDetail)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.textTertiary)
         }
@@ -306,7 +296,7 @@ private struct SceneZoomControl: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .foregroundStyle(AuspexPalette.textSecondary)
-        .help("Zoom")
+        .help(L10n.Aviary.zoom)
     }
 
     /// A zoom as a person reads it. Rounded, because `33 %` is what a third is
@@ -389,7 +379,7 @@ private struct SceneMinimapView: View {
                     onJump(map.worldPoint(value.location))
                 }
         )
-        .help("The whole office. Click to go there.")
+        .help(L10n.Aviary.minimapHelp)
         .accessibilityHidden(true)
     }
 }

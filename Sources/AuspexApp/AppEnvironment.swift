@@ -779,12 +779,12 @@ public enum BoardSection: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .live: "Now"
-        case .allSessions: "Sessions"
-        case .projects: "Projects"
-        case .tasks: "Tasks"
-        case .harnesses: "Harnesses"
-        case .settings: "Settings"
+        case .live: L10n.ViewMode.now
+        case .allSessions: L10n.Section.sessions
+        case .projects: L10n.Section.projects
+        case .tasks: L10n.Section.tasks
+        case .harnesses: L10n.Section.harnesses
+        case .settings: L10n.Section.settings
         }
     }
 

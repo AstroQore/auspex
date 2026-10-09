@@ -19,20 +19,20 @@ struct NewProjectSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("New project").auspexLabel().foregroundStyle(AuspexPalette.stateTool)
-                Text("One project, any number of folders")
+                Text(L10n.Projects.newTitle).auspexLabel().foregroundStyle(AuspexPalette.stateTool)
+                Text(L10n.Projects.newSubtitle)
                     .font(AuspexType.display)
                     .foregroundStyle(AuspexPalette.text)
             }
 
             HStack(spacing: 8) {
                 colourMenu
-                TextField("Name", text: $name)
+                TextField(L10n.Projects.name, text: $name)
                     .textFieldStyle(.roundedBorder)
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Folders").auspexLabel(AuspexType.labelSmall)
+                Text(L10n.Projects.folders).auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                 ForEach(roots, id: \.self) { root in
                     HStack(spacing: 6) {
@@ -52,12 +52,12 @@ struct NewProjectSheet: View {
                     }
                 }
                 HStack(spacing: 8) {
-                    Button("Choose folder…", systemImage: "folder") {
+                    Button(L10n.Projects.chooseFolderButton, systemImage: "folder") {
                         guard let path = FolderPicker.choose() else { return }
                         add(path)
                     }
                     .controlSize(.small)
-                    TextField("…or paste a path", text: $typedPath)
+                    TextField(L10n.Projects.pastePath, text: $typedPath)
                         .textFieldStyle(.roundedBorder)
                         .font(AuspexType.monoSmall)
                         .onSubmit {
@@ -69,9 +69,9 @@ struct NewProjectSheet: View {
 
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
-                Button("Cancel", role: .cancel) { onClose() }
+                Button(L10n.Common.cancel, role: .cancel) { onClose() }
                     .keyboardShortcut(.cancelAction)
-                Button("Create") {
+                Button(L10n.Common.create) {
                     catalog.addProject(name: chosenName, roots: roots, colorHex: colorHex)
                     onClose()
                 }
@@ -88,7 +88,7 @@ struct NewProjectSheet: View {
     private var chosenName: String {
         let typed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard typed.isEmpty else { return typed }
-        return roots.first.map(BoardGrouping.projectName(forPath:)) ?? "New project"
+        return roots.first.map(BoardGrouping.projectName(forPath:)) ?? L10n.Projects.newTitle
     }
 
     private func add(_ path: String) {
@@ -100,7 +100,7 @@ struct NewProjectSheet: View {
 
     private var colourMenu: some View {
         Menu {
-            Button("None") { colorHex = nil }
+            Button(L10n.Colour.none) { colorHex = nil }
             ForEach(ProjectColour.choices, id: \.hex) { choice in
                 Button(choice.name) { colorHex = choice.hex }
             }
@@ -137,7 +137,7 @@ struct ImportProjectsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            TextField("Filter by path", text: $query)
+            TextField(L10n.Projects.filterByPath, text: $query)
                 .textFieldStyle(.roundedBorder)
                 .font(AuspexType.monoSmall)
 
@@ -159,15 +159,11 @@ struct ImportProjectsSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Import").auspexLabel().foregroundStyle(AuspexPalette.stateTool)
-            Text("Projects your harnesses already know about")
+            Text(L10n.Projects.importEyebrow).auspexLabel().foregroundStyle(AuspexPalette.stateTool)
+            Text(L10n.Projects.importTitle)
                 .font(AuspexType.display)
                 .foregroundStyle(AuspexPalette.text)
-            Text(
-                "Read from each harness's own registry, and only the paths: Claude Code's "
-                    + "projects folder and the project keys of ~/.claude.json, Codex's "
-                    + "config.toml tables and its thread catalog. Nothing is written back."
-            )
+            Text(L10n.Projects.importNote)
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.text2)
             .fixedSize(horizontal: false, vertical: true)
@@ -245,7 +241,7 @@ struct ImportProjectsSheet: View {
             }
             Spacer(minLength: 8)
             if let claimed {
-                Text("in \(claimed.name)")
+                Text(L10n.Projects.inProject(name: claimed.name))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
             } else if let seen = ref.lastSeen {
@@ -261,20 +257,20 @@ struct ImportProjectsSheet: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Picker("Into", selection: $destination) {
-                Text("A new project").tag(UUID?.none)
+            Picker(L10n.Projects.into, selection: $destination) {
+                Text(L10n.Projects.aNewProject).tag(UUID?.none)
                 ForEach(catalog.projects) { project in
                     Text(project.name).tag(UUID?.some(project.id))
                 }
             }
             .frame(width: 260)
             Spacer(minLength: 0)
-            Text("\(selected.count) selected")
+            Text(L10n.Projects.selected(count: selected.count))
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
-            Button("Cancel", role: .cancel) { onClose() }
+            Button(L10n.Common.cancel, role: .cancel) { onClose() }
                 .keyboardShortcut(.cancelAction)
-            Button("Add") {
+            Button(L10n.Common.add) {
                 add()
                 onClose()
             }

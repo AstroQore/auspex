@@ -29,7 +29,7 @@ struct ContextHeaderGauge: View {
             onOpen?()
         } label: {
             HStack(spacing: 5) {
-                Text("context")
+                Text(L10n.Context.chip)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                 Text(headline)
@@ -47,7 +47,7 @@ struct ContextHeaderGauge: View {
         }
         .buttonStyle(.plain)
         .auspexSystemControlFocus()
-        .help(gauge.helpText)
+        .help(gauge.localizedHelpText)
         .accessibilityLabel(gauge.accessibilityLabel)
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ContextUsagePopover(
@@ -62,7 +62,7 @@ struct ContextHeaderGauge: View {
     /// than after a middle dot, because this line sits among other `key value`
     /// pairs and a third separator would make it read as four fields.
     private var headline: String {
-        guard !gauge.overflowedWindow else { return gauge.label }
+        guard !gauge.overflowedWindow else { return gauge.localizedLabel }
         guard let window = gauge.window else { return ContextFormat.tokens(gauge.used) }
         var text = "\(ContextFormat.tokens(gauge.used)) / \(ContextFormat.tokens(window))"
         if let fraction = gauge.fraction { text += " (\(ContextFormat.percent(fraction)))" }
@@ -100,10 +100,10 @@ struct ContextUsagePopover: View {
 
     private var fill: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Context window")
+            Text(L10n.Context.window)
                 .auspexLabel(AuspexType.label)
                 .foregroundStyle(AuspexPalette.text3)
-            Text(gauge.label)
+            Text(gauge.localizedLabel)
                 .font(AuspexType.mono)
                 .auspexTabularDigits()
                 .foregroundStyle(ContextGaugeStyle.colour(gauge.level))
@@ -122,20 +122,18 @@ struct ContextUsagePopover: View {
             // The fill came out larger than the window beside it, which is not
             // a session at 425 % — it is the wrong denominator. Saying so is
             // the whole of this line; there is no percentage to defend.
-            return gauge.unknownWindowReason
-                + " The fill below is what the transcript recorded."
+            return L10n.Context.Fill.unknownSuffix(reason: gauge.localizedUnknownWindowReason)
         }
         return gauge.isDerived
-            ? "Fill read from the transcript. Window size looked up from the model — "
-                + "the harness does not record it."
-            : "Fill and window size both recorded by the harness."
+            ? L10n.Context.Fill.derived
+            : L10n.Context.Fill.recorded
     }
 
     // MARK: What is in it
 
     private func breakdown(_ composition: ContextComposition) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("What is in it")
+            Text(L10n.Context.whatsInIt)
                 .auspexLabel(AuspexType.label)
                 .foregroundStyle(AuspexPalette.text3)
             CompositionBar(composition: composition)
@@ -156,19 +154,17 @@ struct ContextUsagePopover: View {
     private func estimateCaption(_ composition: ContextComposition) -> String {
         var lines = [
             gauge.isDerived
-                ? "Estimate, from the \(composition.sampledEvents) messages Auspex indexed — "
-                    + "Claude Code's own /context is exact."
-                : "Estimate, from the \(composition.sampledEvents) messages Auspex indexed. "
-                    + "The harness records the fill but does not itemise it."
+                ? L10n.Context.Estimate.derived(count: composition.sampledEvents)
+                : L10n.Context.Estimate.recorded(count: composition.sampledEvents)
         ]
         if composition.sinceCompaction {
-            lines.append("Counted from the last compaction.")
+            lines.append(L10n.Context.Estimate.sinceCompaction)
         }
         if composition.isTruncated {
-            lines.append("Older messages were not read, so the measured bands are a floor.")
+            lines.append(L10n.Context.Estimate.truncated)
         }
         if composition.isOverEstimated {
-            lines.append("Four characters to the token over-counted here; the bands were scaled to fit.")
+            lines.append(L10n.Context.Estimate.overEstimated)
         }
         // The case that would otherwise read as a claim about the system
         // prompt: a session Auspex met late, or one whose harness writes no
@@ -176,26 +172,23 @@ struct ContextUsagePopover: View {
         // over. Saying so is the difference between "the system prompt is 96k"
         // and "we did not see most of this".
         if composition.isMostlyUnattributed {
-            lines.append(
-                "Little of this session's text is indexed here, so most of the window "
-                    + "falls into “everything else” rather than being attributed."
-            )
+            lines.append(L10n.Context.Estimate.unattributed)
         }
-        return lines.joined(separator: " ")
+        return lines.dropFirst().reduce(lines[0]) { L10n.Context.Estimate.join(first: $0, second: $1) }
     }
 
     // MARK: The numbers
 
     private var ledger: some View {
         VStack(alignment: .leading, spacing: 5) {
-            LedgerRow(key: "used", value: exact(gauge.used))
-            LedgerRow(key: "window", value: windowValue)
-            LedgerRow(key: "cached", value: gauge.cached.map(exact) ?? "not reported")
+            LedgerRow(key: L10n.Context.Ledger.used, value: exact(gauge.used))
+            LedgerRow(key: L10n.Context.Ledger.window, value: windowValue)
+            LedgerRow(key: L10n.Context.Ledger.cached, value: gauge.cached.map(exact) ?? L10n.Context.Ledger.notReported)
             // Cumulative, and labelled so. The snapshot counts every token a
             // session ever generated; nothing on disk separates the newest
             // turn's share of it.
-            LedgerRow(key: "output, all turns", value: exact(tokensOut))
-            LedgerRow(key: "compactions", value: "\(gauge.compactions)")
+            LedgerRow(key: L10n.Context.Ledger.output, value: exact(tokensOut))
+            LedgerRow(key: L10n.Context.Ledger.compactions, value: "\(gauge.compactions)")
         }
     }
 
@@ -203,8 +196,8 @@ struct ContextUsagePopover: View {
     /// block exists for the reader working out *why* the number above is
     /// hedged, and hiding the figure would take the evidence away.
     private var windowValue: String {
-        guard let reported = gauge.reportedWindow else { return "not recorded" }
-        return gauge.overflowedWindow ? "\(exact(reported)) · not believable" : exact(reported)
+        guard let reported = gauge.reportedWindow else { return L10n.Context.Ledger.notRecorded }
+        return gauge.overflowedWindow ? L10n.Context.Ledger.notBelievable(value: exact(reported)) : exact(reported)
     }
 
     /// Every digit, grouped. This block is the one somebody opened *because*
@@ -212,7 +205,7 @@ struct ContextUsagePopover: View {
     /// six unbroken digits is a number a person has to count, and grouping
     /// them costs no precision at all.
     private func exact(_ value: Int) -> String {
-        value.formatted(.number.grouping(.automatic))
+        value.formatted(.number.grouping(.automatic).locale(AppLocale.current))
     }
 }
 
@@ -265,7 +258,7 @@ private struct CompositionRow: View {
             RoundedRectangle(cornerRadius: 2, style: .continuous)
                 .fill(swatch)
                 .frame(width: 8, height: 8)
-            Text(slice.title)
+            Text(slice.localizedTitle)
                 .font(AuspexType.caption)
                 .foregroundStyle(slice.isMeasured ? AuspexPalette.text2 : AuspexPalette.text3)
             Spacer(minLength: 6)

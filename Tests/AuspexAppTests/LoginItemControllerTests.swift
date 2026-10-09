@@ -7,6 +7,8 @@ import Testing
 @Suite("Launch at login controller")
 @MainActor
 struct LoginItemControllerTests {
+    init() { pinEnglishInterface() }
+
     @Test("enabling registers once and adopts macOS state")
     func enable() {
         let service = LoginItemServiceDouble(status: .notRegistered)

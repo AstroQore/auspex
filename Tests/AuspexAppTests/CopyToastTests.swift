@@ -12,6 +12,8 @@ import Testing
 @Suite("Copy toast", .serialized)
 @MainActor
 struct CopyToastTests {
+    init() { pinEnglishInterface() }
+
     @Test("a message goes up, and takes itself down")
     func aMessageExpires() async throws {
         let toast = CopyToast.shared

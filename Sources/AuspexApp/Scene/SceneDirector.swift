@@ -1155,7 +1155,7 @@ private final class FloorNode: SKNode {
         if lastTitle != floor.title {
             lastTitle = floor.title
             title.attributedText = SceneText.label(
-                floor.title, size: 12, weight: .bold, color: theme.textPrimary
+                CoreVocabulary.localized(floor.title), size: 12, weight: .bold, color: theme.textPrimary
             )
             labelsNeedFitting = true
         }
@@ -1213,9 +1213,9 @@ private final class FloorNode: SKNode {
     /// teach different habits.
     private static func summary(_ counts: BoardSnapshot.Counts) -> String {
         var parts: [String] = []
-        if counts.waitingPermission > 0 { parts.append("\(counts.waitingPermission) blocked") }
-        if counts.delegating > 0 { parts.append("\(counts.delegating) delegating") }
-        parts.append("\(counts.live) live")
+        if counts.waitingPermission > 0 { parts.append(L10n.Aviary.Floor.blocked(count: counts.waitingPermission)) }
+        if counts.delegating > 0 { parts.append(L10n.Aviary.Floor.delegating(count: counts.delegating)) }
+        parts.append(L10n.Aviary.Room.live(count: counts.live))
         return parts.joined(separator: " · ")
     }
 }

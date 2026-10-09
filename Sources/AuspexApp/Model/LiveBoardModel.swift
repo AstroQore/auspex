@@ -148,7 +148,7 @@ final class LiveBoardModel {
 
     /// The sentence the hints show, or `nil` when nothing is hidden.
     var olderHiddenHint: String? {
-        SessionRecency.hint(hidden: olderHidden, window: sessionWindow)
+        SessionWindow.localizedHint(hidden: olderHidden, window: sessionWindow)
     }
 
     /// What each session on the frame is signalling, if anything.

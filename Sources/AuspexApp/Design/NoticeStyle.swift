@@ -62,7 +62,7 @@ struct NoticePill: View {
             Image(systemName: NoticeStyle.symbol(kind))
                 .font(.system(size: 9, weight: .bold))
             if !isCompact {
-                Text(kind.label)
+                Text(kind.localizedLabel)
                     .font(AuspexType.pill)
                     .fixedSize()
             }
@@ -74,7 +74,7 @@ struct NoticePill: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous).fill(color)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("the agent says: \(kind.label)")
+        .accessibilityLabel(L10n.Notice.agentSays(kind: kind.localizedLabel))
     }
 }
 
@@ -111,7 +111,7 @@ struct NoticeBanner: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.auspex)
-                .help("Dismiss — the agent stops asking and the card goes quiet")
+                .help(L10n.Notice.dismissHelp)
             }
         }
         .padding(.horizontal, 9)

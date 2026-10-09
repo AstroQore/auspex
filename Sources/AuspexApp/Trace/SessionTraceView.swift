@@ -66,7 +66,7 @@ struct SessionTraceView: View {
                let card = model.map.cards.first(where: { $0.leadKey == session.key }) {
                 MapInspectorContext(
                     card: card,
-                    boardName: model.map.selectedBoard?.name ?? "All boards",
+                    boardName: model.map.selectedBoard?.name ?? L10n.Perch.allBoards,
                     mirrors: model.map.mirrorNamesByNode[card.id] ?? [],
                     family: model.selectedUnit?.members ?? []
                 )
@@ -125,7 +125,7 @@ struct SessionTraceView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.auspex)
-                .help("Show \(tab.title.lowercased())")
+                .help(L10n.Trace.showTab(tab: tab.title.lowercased()))
             }
             Spacer(minLength: 6)
             followToggle
@@ -151,7 +151,7 @@ struct SessionTraceView: View {
                         : AuspexPalette.text3,
                     glows: model.followsTail
                 )
-                Text("Following")
+                Text(L10n.Trace.following)
                     .font(AuspexType.pill)
                     .foregroundStyle(
                         model.followsTail ? AuspexPalette.stateWriting : AuspexPalette.text3
@@ -163,8 +163,8 @@ struct SessionTraceView: View {
         .buttonStyle(.auspex)
         .help(
             model.followsTail
-                ? "Stop scrolling to the newest row"
-                : "Scroll to the newest row as it arrives"
+                ? L10n.Trace.stopFollowing
+                : L10n.Trace.startFollowing
         )
     }
 
@@ -213,11 +213,7 @@ struct SessionTraceView: View {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 9, weight: .bold))
-                Text(
-                    model.traceHiddenCount == 1
-                        ? "1 earlier row"
-                        : "\(model.traceHiddenCount) earlier rows"
-                )
+                Text(L10n.Trace.earlierRows(count: model.traceHiddenCount))
                 .font(AuspexType.pill)
                 Spacer(minLength: 0)
             }
@@ -228,7 +224,7 @@ struct SessionTraceView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex)
-        .help("Draw the whole of this session's trace, however long it is")
+        .help(L10n.Trace.earlierRowsHelp)
     }
 
     /// How tall a collapsed row is, and it is a *fixed* height on purpose.
@@ -277,11 +273,11 @@ struct SessionTraceView: View {
     @ViewBuilder
     private var emptyTrace: some View {
         EmptyStateView(
-            title: model.isLoadingTrace ? "Loading the event log…" : "Nothing in this view."
+            title: model.isLoadingTrace ? L10n.Trace.loading : L10n.Trace.nothingInView
         ) {
             if !model.isLoadingTrace,
                model.traceFilter.count < TraceEntry.Category.allCases.count {
-                Button("Show everything") {
+                Button(L10n.Trace.showEverything) {
                     model.traceFilter = Set(TraceEntry.Category.allCases)
                 }
                 .buttonStyle(.link)
@@ -296,8 +292,8 @@ struct SessionTraceView: View {
     private var noSelection: some View {
         EmptyStateView(
             symbol: "list.bullet.indent",
-            title: "Select a session",
-            detail: "Its prompts, tool calls, and turns appear here as they happen."
+            title: L10n.Trace.selectSession,
+            detail: L10n.Trace.selectSessionDetail
         )
         .centredInPane()
     }
@@ -315,10 +311,10 @@ private struct MapInspectorContext: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("LINEAGE").auspexLabel(AuspexType.labelSmall)
+                Text(L10n.Trace.lineage.uppercased()).auspexLabel(AuspexType.labelSmall)
                 Spacer()
                 if family.count > 1 {
-                    Text("\(family.count - 1) subagents")
+                    Text(L10n.Trace.subagents(count: family.count - 1))
                         .font(AuspexType.monoSmall)
                         .foregroundStyle(AuspexPalette.text3)
                 }
@@ -342,12 +338,12 @@ private struct MapInspectorContext: View {
                 }
             }
             Divider().overlay(AuspexPalette.line)
-            Text("ON THE PERCH").auspexLabel(AuspexType.labelSmall)
+            Text(L10n.Trace.onThePerch.uppercased()).auspexLabel(AuspexType.labelSmall)
             HStack(spacing: 7) {
                 Image(systemName: "mappin.and.ellipse")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(AuspexPalette.text3)
-                Text("Pinned in \(boardName)")
+                Text(L10n.Trace.pinnedIn(board: boardName))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text2)
                 Spacer()
@@ -356,12 +352,12 @@ private struct MapInspectorContext: View {
                     .foregroundStyle(AuspexPalette.text3)
             }
             if mirrors.count > 1 {
-                Text("Mirrored on " + mirrors.joined(separator: " · "))
+                Text(L10n.Trace.mirroredOn(boards: mirrors.joined(separator: " · ")))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .lineLimit(2)
             }
-            Text("Double-click the card to open its Flight. Resume stays an explicit action above.")
+            Text(L10n.Trace.perchNote)
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
         }
@@ -390,11 +386,11 @@ enum TraceTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .all: "All"
-        case .tools: "Tools"
-        case .prompts: "Prompts"
-        case .text: "Text"
-        case .usage: "Usage"
+        case .all: L10n.Trace.Tab.all
+        case .tools: L10n.Trace.Tab.tools
+        case .prompts: L10n.Trace.Tab.prompts
+        case .text: L10n.Trace.Tab.text
+        case .usage: L10n.Trace.Tab.usage
         }
     }
 
@@ -513,7 +509,7 @@ struct SessionHeaderView: View {
             VStack(alignment: .leading, spacing: 2) {
                 CopyFact(
                     text: title,
-                    what: "the title",
+                    what: L10n.Copy.What.title,
                     font: AuspexType.paneTitle,
                     tint: AuspexPalette.text
                 )
@@ -545,7 +541,7 @@ struct SessionHeaderView: View {
         if let task = session.brief.firstPrompt, !task.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text("asked for")
+                    Text(L10n.Trace.askedFor)
                         .font(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3.opacity(0.75))
                         .tracking(AuspexType.labelTracking)
@@ -558,7 +554,7 @@ struct SessionHeaderView: View {
                     // folded away.
                     if isOverTask {
                         Button {
-                            CopyToast.copy(task, what: "the assignment")
+                            CopyToast.copy(task, what: L10n.Copy.What.assignment)
                         } label: {
                             Image(systemName: "doc.on.doc")
                                 .font(.system(size: 9, weight: .semibold))
@@ -567,7 +563,7 @@ struct SessionHeaderView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.auspex)
-                        .help("Copy everything this session was asked for")
+                        .help(L10n.Trace.copyAssignmentHelp)
                         .transition(.opacity)
                     }
                 }
@@ -579,7 +575,7 @@ struct SessionHeaderView: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if task.count > Self.foldedTaskLength {
-                    Button(showsWholeTask ? "less" : "more") {
+                    Button(showsWholeTask ? L10n.Trace.less : L10n.Trace.more) {
                         showsWholeTask.toggle()
                     }
                     .buttonStyle(.link)
@@ -596,8 +592,8 @@ struct SessionHeaderView: View {
             .onHover { isOverTask = $0 }
             .animation(.easeOut(duration: 0.12), value: isOverTask)
             .contextMenu {
-                Button("Copy the assignment") {
-                    CopyToast.copy(task, what: "the assignment")
+                Button(L10n.Trace.copyAssignment) {
+                    CopyToast.copy(task, what: L10n.Copy.What.assignment)
                 }
             }
         }
@@ -627,11 +623,11 @@ struct SessionHeaderView: View {
     private var resumeButton: some View {
         let resume = SessionHandoff.resume(for: session.identity)
         PillButton(
-            title: "Resume",
+            title: L10n.Trace.resume,
             systemImage: "arrow.uturn.backward",
             isEnabled: resume.isAvailable,
             help: resume.reason
-                ?? "Opens \(SessionActions.terminal.name) on this session's own CLI command"
+                ?? L10n.Trace.resumeHelp(app: SessionActions.terminal.name)
         ) {
             guard case let .available(_, shellLine) = resume else { return }
             SessionActions.resume(
@@ -665,7 +661,7 @@ struct SessionHeaderView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
         )
-        .help("Copy the resume command, open the folder, interrupt or kill this session")
+        .help(L10n.Trace.moreHelp)
     }
 
     /// The way into the session's whole history.
@@ -675,9 +671,9 @@ struct SessionHeaderView: View {
     /// goes back through what already happened.
     private func trajectoryButton(_ action: @escaping () -> Void) -> some View {
         PillButton(
-            title: "Open trajectory",
+            title: L10n.Trace.openTrajectory,
             systemImage: BoardViewMode.trajectory.systemImage,
-            help: "Open this session's whole history as a waterfall (⌘T)",
+            help: L10n.Trace.openTrajectoryHelp,
             action: action
         )
     }
@@ -717,15 +713,15 @@ struct SessionHeaderView: View {
             CopyFact(
                 text: String(session.key.sessionID.prefix(8)),
                 value: session.key.sessionID,
-                what: "the session ID"
+                what: L10n.Copy.What.sessionID
             )
             if let pid = session.identity.pid {
                 separator
-                CopyFact(text: "pid \(pid)", value: "\(pid)", what: "the pid")
+                CopyFact(text: "pid \(pid)", value: "\(pid)", what: L10n.Copy.What.pid)
             }
             if showsModel, let model = session.identity.model {
                 separator
-                CopyFact(text: model, what: "the model")
+                CopyFact(text: model, what: L10n.Copy.What.model)
             }
         }
         .fixedSize()
@@ -761,7 +757,7 @@ struct SessionHeaderView: View {
                     title: projectName,
                     help: onFocusProject == nil
                         ? projectName
-                        : "Show only this project on the board",
+                        : L10n.Trace.focusProject,
                     action: { onFocusProject?(projectKey ?? projectName) }
                 )
                 .disabled(onFocusProject == nil)
@@ -770,20 +766,19 @@ struct SessionHeaderView: View {
                 // Its own chip rather than "project · branch" in one: a branch
                 // is the thing that gets pasted into a `git switch`, and half
                 // a chip cannot be copied.
-                CopyChip(title: branch, what: "the branch")
+                CopyChip(title: branch, what: L10n.Copy.What.branch)
             }
             if let cwd = session.identity.cwd ?? session.identity.gitRoot {
                 ActionChip(
                     title: PathDisplay.abbreviate(cwd),
                     isMono: true,
-                    help: "Click to copy the working directory · ⌥-click to reveal it in Finder\n"
-                        + cwd,
-                    action: { CopyToast.copy(cwd, what: "the working directory") },
+                    help: L10n.Trace.cwdHelp + "\n" + cwd,
+                    action: { CopyToast.copy(cwd, what: L10n.Copy.What.workingDirectory) },
                     onOption: { SessionActions.reveal(cwd) }
                 ) {
-                    Button("Copy path") { CopyToast.copy(cwd, what: "the working directory") }
-                    Button("Reveal in Finder") { SessionActions.reveal(cwd) }
-                    Button("Open in \(SessionActions.terminal.name)") {
+                    Button(L10n.Trace.copyPath) { CopyToast.copy(cwd, what: L10n.Copy.What.workingDirectory) }
+                    Button(L10n.Trace.revealInFinder) { SessionActions.reveal(cwd) }
+                    Button(L10n.Session.openIn(app: SessionActions.terminal.name)) {
                         SessionActions.openTerminal(at: cwd)
                     }
                 }
@@ -794,7 +789,7 @@ struct SessionHeaderView: View {
                     title: worktreeTask,
                     tint: AuspexPalette.stateWriting,
                     isMono: true,
-                    what: "the worktree task"
+                    what: L10n.Copy.What.worktreeTask
                 )
             }
             if let parent {
@@ -807,8 +802,8 @@ struct SessionHeaderView: View {
                 .buttonStyle(.auspex)
                 .help(
                     session.identity.parentLink
-                        .map { "Spawned by \(name(of: parent)) — \($0.evidenceDescription)" }
-                        ?? "Open the session that spawned this one"
+                        .map { L10n.Trace.spawnedBy(parent: name(of: parent), evidence: $0.evidenceDescription) }
+                        ?? L10n.Session.spawnedByHelp
                 )
             }
             if !family.isEmpty {
@@ -851,7 +846,7 @@ struct SessionHeaderView: View {
     private var stats: some View {
         FlowLayout(spacing: 16, lineSpacing: 8) {
             HStack(spacing: 5) {
-                Text("elapsed")
+                Text(L10n.Trace.elapsed)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                 ElapsedLabel(
@@ -861,10 +856,10 @@ struct SessionHeaderView: View {
                 )
             }
             .fixedSize()
-            MetaField(key: "turns", value: "\(session.turnCount)").fixedSize()
-            MetaField(key: "tools", value: "\(session.toolCallCount)").fixedSize()
+            MetaField(key: L10n.Meta.turns, value: "\(session.turnCount)").fixedSize()
+            MetaField(key: L10n.Meta.tools, value: "\(session.toolCallCount)").fixedSize()
             MetaField(
-                key: "tokens",
+                key: L10n.Meta.tokens,
                 value: "\(TokenFormat.compact(session.tokensIn)) / "
                     + "\(TokenFormat.compact(session.tokensOut))"
             )
@@ -961,8 +956,8 @@ private struct FamilyChip: View {
     private static let limit = 24
 
     private var noun: String {
-        if isTask { return family.count == 1 ? "1 more session" : "\(family.count) sessions" }
-        return family.count == 1 ? "1 child" : "\(family.count) children"
+        if isTask { return L10n.Trace.Family.moreSessions(count: family.count) }
+        return L10n.Trace.Family.children(count: family.count)
     }
 
     var body: some View {
@@ -970,8 +965,8 @@ private struct FamilyChip: View {
             title: "↳ \(noun)",
             tint: AuspexPalette.stateDelegating,
             help: isTask
-                ? "Everybody else working on this task"
-                : "What this session delegated to",
+                ? L10n.Trace.Family.taskHelp
+                : L10n.Trace.Family.childHelp,
             action: { isOpen.toggle() }
         )
         .popover(isPresented: $isOpen, arrowEdge: .bottom) {
@@ -984,19 +979,19 @@ private struct FamilyChip: View {
     private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Text(isTask ? "\(noun) on this task" : noun)
+                Text(isTask ? L10n.Trace.Family.onTask(noun: noun) : noun)
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
                 Spacer(minLength: 8)
                 if let onExpandInBoard {
-                    Button("Expand all in board") {
+                    Button(L10n.Trace.Family.expandInBoard) {
                         isOpen = false
                         onExpandInBoard()
                     }
                     .buttonStyle(.link)
                     .auspexSystemControlFocus()
                     .font(AuspexType.caption)
-                    .help("Divide the board along the delegation tree, so this family reads as one")
+                    .help(L10n.Trace.Family.expandHelp)
                 }
             }
             .padding(.horizontal, 12)
@@ -1018,7 +1013,7 @@ private struct FamilyChip: View {
                         Divider().overlay(AuspexPalette.line)
                     }
                     if family.count > Self.limit {
-                        Text("and \(family.count - Self.limit) more")
+                        Text(L10n.MenuBar.andMore(count: family.count - Self.limit))
                             .font(AuspexType.caption)
                             .foregroundStyle(AuspexPalette.text3)
                             .padding(.horizontal, 12)

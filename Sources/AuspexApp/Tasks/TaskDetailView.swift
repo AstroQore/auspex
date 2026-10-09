@@ -93,13 +93,13 @@ struct TaskDetailView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10, weight: .bold))
-                    Text(BoardViewMode.board.title).font(AuspexType.caption)
+                    Text(BoardViewMode.board.localizedTitle).font(AuspexType.caption)
                 }
                 .foregroundStyle(AuspexPalette.text2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.auspex)
-            .help("Back to the ledger — or press Escape")
+            .help(L10n.TaskDetail.backHelp)
             Text("›")
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
@@ -109,7 +109,7 @@ struct TaskDetailView: View {
             // it is clicked — the same rule the trace header follows.
             CopyFact(
                 text: unit.shortID,
-                what: "the task's handle",
+                what: L10n.Copy.What.taskHandle,
                 font: AuspexType.monoCount
             )
             Spacer(minLength: 8)
@@ -128,32 +128,32 @@ struct TaskDetailView: View {
         if unit.isInReview {
             let previous = board.reviewNeighbor(of: unit, direction: .previous)
             let next = board.reviewNeighbor(of: unit, direction: .next)
-            reviewNavigationButton("chevron.left", help: "Previous review") {
+            reviewNavigationButton("chevron.left", help: L10n.TaskDetail.previousReview) {
                 board.openUnitID = previous?.id
             }
             .disabled(previous == nil)
-            reviewNavigationButton("chevron.right", help: "Next review") {
+            reviewNavigationButton("chevron.right", help: L10n.TaskDetail.nextReview) {
                 board.openUnitID = next?.id
             }
             .disabled(next == nil)
-            actionButton("Defer") { board.deferReview(unit) }
-            actionButton("Reopen", tint: AuspexPalette.stateStale) {
+            actionButton(L10n.TaskDetail.defer) { board.deferReview(unit) }
+            actionButton(L10n.Task.Menu.reopen, tint: AuspexPalette.stateStale) {
                 let replacement = board.reviewReplacement(after: unit)
                 tasks.reopen(unit: unit)
                 board.openUnitID = replacement?.id
             }
-            actionButton("Close", tint: AuspexPalette.stateWriting) {
+            actionButton(L10n.Common.close, tint: AuspexPalette.stateWriting) {
                 let replacement = board.reviewReplacement(after: unit)
                 tasks.close(unit: unit)
                 board.openUnitID = replacement?.id
             }
         } else if unit.status == .done {
-            actionButton("Reopen") {
+            actionButton(L10n.Task.Menu.reopen) {
                 tasks.reopen(unit: unit)
             }
         }
         if unit.isClaimOrphaned, let id = unit.origin.taskID {
-            actionButton("Release claim", tint: AuspexPalette.stateStale) {
+            actionButton(L10n.Task.Menu.releaseClaim, tint: AuspexPalette.stateStale) {
                 tasks.releaseClaim(taskID: id)
             }
         }
@@ -161,7 +161,7 @@ struct TaskDetailView: View {
         // below still opens Flight in one click, so duplicating it here would
         // make the minimum-width task page overflow for no added capability.
         if unit.counts.live > 0, !unit.isInReview {
-            actionButton("Open flight") {
+            actionButton(L10n.TaskDetail.openFlight) {
                 board.selectedKey = unit.lead.key
                 board.openUnitID = nil
                 board.openTrajectory()
@@ -237,7 +237,7 @@ struct TaskDetailView: View {
     /// is here to read.
     private func reviewBox(_ result: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Agent report · self-reported")
+            Text(L10n.TaskDetail.agentReport)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.stateWriting)
             Text(result)
@@ -261,22 +261,22 @@ struct TaskDetailView: View {
     /// a page and the reader is looking one of them up.
     private var properties: some View {
         VStack(alignment: .leading, spacing: 0) {
-            property("Status", unit.status.label)
-            if let version = unit.version { property("Version", "v\(version)") }
-            property("Importance", unit.importance.label)
-            if let kind = unit.kind { property("Kind", kind.label) }
+            property(L10n.Common.status, unit.status.localizedLabel)
+            if let version = unit.version { property(L10n.TaskDetail.version, "v\(version)") }
+            property(L10n.Task.Filter.importance, unit.importance.localizedLabel)
+            if let kind = unit.kind { property(L10n.TaskDetail.kind, kind.localizedLabel) }
             if let key = unit.projectKey {
-                property("Project", TaskProject.displayName(forKey: key, in: board.board))
+                property(L10n.Common.project, TaskProject.displayName(forKey: key, in: board.board))
             }
-            if let milestone = unit.planTitle { property("Milestone", milestone) }
+            if let milestone = unit.planTitle { property(L10n.Tasks.milestone, milestone) }
             if let claim = unit.claim {
-                property("Claimed by", claim.description ?? claim.harness.displayName)
+                property(L10n.TaskDetail.claimedBy, claim.description ?? claim.harness.displayName)
             }
             if !unit.labels.isEmpty {
-                property("Labels", unit.labels.joined(separator: ", "))
+                property(L10n.TaskDetail.labels, unit.labels.joined(separator: ", "))
             }
             if let created = unit.createdAt {
-                property("Filed", RelativeTimeText.since(created))
+                property(L10n.TaskDetail.filed, RelativeTimeText.since(created))
             }
         }
         .panelChrome()
@@ -291,7 +291,7 @@ struct TaskDetailView: View {
     /// does not auto-promote anybody; the same explicit decision remains.
     private var takeoverRequests: some View {
         section(
-            pendingTakeovers.count == 1 ? "Takeover request" : "Takeover requests"
+            L10n.TaskDetail.takeoverRequests(count: pendingTakeovers.count)
         ) {
             VStack(spacing: 0) {
                 ForEach(pendingTakeovers) { request in
@@ -324,14 +324,14 @@ struct TaskDetailView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         HStack(spacing: 8) {
-                            Text("requested at v\(request.taskVersion)")
+                            Text(L10n.TaskDetail.requestedAt(version: Int(request.taskVersion)))
                                 .font(AuspexType.monoSmall)
                                 .foregroundStyle(AuspexPalette.text3)
                             Spacer(minLength: 8)
-                            actionButton("Reject", tint: AuspexPalette.text3) {
+                            actionButton(L10n.TaskDetail.reject, tint: AuspexPalette.text3) {
                                 tasks.resolveTakeover(requestID: request.id, approve: false)
                             }
-                            actionButton("Approve", tint: AuspexPalette.stateWriting) {
+                            actionButton(L10n.TaskDetail.approve, tint: AuspexPalette.stateWriting) {
                                 tasks.resolveTakeover(requestID: request.id, approve: true)
                             }
                         }
@@ -371,10 +371,10 @@ struct TaskDetailView: View {
     /// until AUX-… is closed" is one line and belongs where the decision is
     /// made.
     private var dependencies: some View {
-        section("Waits on") {
+        section(L10n.TaskDetail.waitsOn) {
             TaskGraphStub()
             if unit.waitingOn.isEmpty {
-                Text("Everything it waits on is closed. Ready to start.")
+                Text(L10n.TaskDetail.ready)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.stateWriting)
             } else {
@@ -396,7 +396,7 @@ struct TaskDetailView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.auspex(cornerRadius: 6))
-                        .help("Open \(dependency.shortID)")
+                        .help(L10n.TaskDetail.openDependency(id: dependency.shortID))
                     }
                 }
             }
@@ -407,7 +407,7 @@ struct TaskDetailView: View {
 
     /// Everybody on this task, and what each of them is doing.
     private var members: some View {
-        section(unit.memberCount == 1 ? "Session" : "\(unit.memberCount) sessions") {
+        section(L10n.TaskDetail.sessions(count: unit.memberCount)) {
             VStack(spacing: 0) {
                 ForEach(unit.members, id: \.key) { row in
                     memberRow(row)
@@ -426,7 +426,7 @@ struct TaskDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if row.key == unit.lead.key {
-                        Text("lead")
+                        Text(L10n.Task.Card.lead)
                             .font(AuspexType.labelSmall)
                             .foregroundStyle(AuspexPalette.text3)
                     }
@@ -454,7 +454,7 @@ struct TaskDetailView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.auspex(cornerRadius: 5))
-            .help("Open this session's flight")
+            .help(L10n.TaskDetail.openSessionFlight)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -476,10 +476,10 @@ struct TaskDetailView: View {
     /// ledger's bookkeeping, and it is a coloured word rather than a separate
     /// section.
     private var notes: some View {
-        section("History") {
+        section(L10n.TaskDetail.history) {
             VStack(alignment: .leading, spacing: 10) {
                 if tasks.openLog.isEmpty {
-                    Text("Nothing has been written down yet.")
+                    Text(L10n.TaskDetail.nothingWritten)
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.text3)
                 } else {
@@ -504,7 +504,7 @@ struct TaskDetailView: View {
             HStack(spacing: 6) {
                 ForEach(TaskNoteKind.allCases, id: \.self) { kind in
                     Button { noteKind = kind } label: {
-                        Text(kind.label)
+                        Text(kind.localizedLabel)
                             .font(AuspexType.caption)
                             .foregroundStyle(
                                 noteKind == kind
@@ -526,16 +526,16 @@ struct TaskDetailView: View {
                 Spacer(minLength: 0)
             }
             HStack(spacing: 8) {
-                TextField("Write it down", text: $draftNote)
+                TextField(L10n.TaskDetail.writeItDown, text: $draftNote)
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
                     .auspexSystemControlFocus()
-                TextField("ref", text: $draftRef)
+                TextField(L10n.TaskDetail.ref, text: $draftRef)
                     .textFieldStyle(.plain)
                     .font(AuspexType.monoSmall)
                     .frame(width: 96)
                     .auspexSystemControlFocus()
-                Button("Add") { commitNote() }
+                Button(L10n.Common.add) { commitNote() }
                     .buttonStyle(.auspex)
                     .disabled(draftNote.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -566,18 +566,13 @@ struct TaskDetailView: View {
 
     /// What a derived unit offers instead of a history.
     private var promotion: some View {
-        section("Not filed") {
+        section(L10n.TaskDetail.notFiled) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(
-                    "Auspex worked this out from a delegation: \(unit.lead.harness.displayName) "
-                        + "started it and nobody registered a task. Promoting it writes one, "
-                        + "claimed by the session already doing the work — the card keeps its "
-                        + "place and gains a history, a milestone, and something to close."
-                )
+                Text(L10n.TaskDetail.promoteNote(harness: unit.lead.harness.displayName))
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text2)
                 .fixedSize(horizontal: false, vertical: true)
-                actionButton("Promote to task", tint: AuspexPalette.stateThinking) {
+                actionButton(L10n.TaskDetail.promote, tint: AuspexPalette.stateThinking) {
                     tasks.promote(unit: unit)
                 }
             }
@@ -613,7 +608,7 @@ struct TaskGraphStub: View {
         HStack(spacing: 6) {
             Image(systemName: "point.3.filled.connected.trianglepath.dotted")
                 .font(.system(size: 10, weight: .semibold))
-            Text("The whole dependency graph is a page of its own, and is not built yet.")
+            Text(L10n.TaskDetail.graphStub)
                 .font(AuspexType.caption)
             Spacer(minLength: 0)
         }
@@ -625,9 +620,29 @@ struct TaskGraphStub: View {
 struct TaskLogRow: View {
     let entry: AuspexTaskLogEntry
 
+    /// The entry's kind as a tag. The stored kind is an identifier the ledger
+    /// writes; one this table does not know is shown as stored.
+    static func kindLabel(_ kind: String) -> String {
+        if let note = TaskNoteKind(rawValue: kind) { return note.localizedLabel }
+        switch kind {
+        case "created": return L10n.Task.Log.created
+        case "project": return L10n.Task.Log.project
+        case "status": return L10n.Task.Log.status
+        case "claimed": return L10n.Task.Filter.claimed
+        case "released": return L10n.Task.Log.released
+        case "linked": return L10n.Task.Link.linked
+        case "unlinked": return L10n.Task.Log.unlinked
+        case "takeover_requested": return L10n.Task.Log.takeoverRequested
+        case "takeover_expired": return L10n.Task.Log.takeoverExpired
+        case "finished": return L10n.Task.Log.finished
+        case "closed": return L10n.Task.Log.closed
+        default: return kind
+        }
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Text(entry.kind)
+            Text(Self.kindLabel(entry.kind))
                 .font(AuspexType.labelSmall)
                 .foregroundStyle(Self.colour(entry.noteKind))
                 .frame(width: 62, alignment: .leading)
