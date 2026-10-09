@@ -36,6 +36,16 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 - The retention policy (14 days of events, 2,000 per session, 30 days of
   search text) is finally applied: a minute after launch and every six hours,
   in small batches that never hold the database for long.
+- **Scratch folders are no longer projects.** The home directory, the Codex
+  desktop's `~/Documents/Codex` chats, Claude Desktop's scratch workspaces,
+  `/root`, `/workspace`, `/tmp`, and folders that are no longer on disk each
+  used to become a project and a sidebar heading. Their sessions now sit in
+  the harness's scratch section, the project rows earlier builds stored for
+  them are removed once (projects you made yourself are kept), and Settings →
+  Ignore gains a "Scratch folder" rule for your own throwaway folders — it
+  keeps the sessions on the board and only stops the folder becoming a
+  project. Codex sub-agents spawned into the cloud sandbox now join their
+  parent thread's project instead of their sandbox directory's.
 
 ### Changed
 
