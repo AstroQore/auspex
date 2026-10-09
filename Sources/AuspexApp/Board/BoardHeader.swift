@@ -27,46 +27,10 @@ struct BoardHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            heading
-            if section == .live || section == .allSessions {
-                // The chips are the first thing to give way. Every control to
-                // their right is a thing a person operates, and a picker
-                // squeezed to forty points is a picker nobody can hit; a chip
-                // that is not on screen is a number they can still read off
-                // the sidebar and the cards.
-                counts(limit: fit.chips, showsMarkAll: fit.showsMarkAll)
-                if showsCatchUpInHeader {
-                    catchUpButton.fixedSize()
-                }
-                if showsReviewInHeader { reviewNext.fixedSize() }
-                Spacer(minLength: 8)
-                if model.ignoredCount > 0 {
-                    ignoredToggle.fixedSize()
-                }
-                SegmentedPicker(
-                    selection: $model.viewMode,
-                    options: BoardViewMode.pickerOrder.map { ($0, $0.title) },
-                    // Trajectory draws one session, so it needs one selected.
-                    isEnabled: { !$0.requiresSelection || model.canOpenTrajectory }
-                )
-                .fixedSize()
-                .help(
-                    "Read the same work as a ledger of cards, as an aviary, "
-                        + "as a flock, on your map, or one session as its flight"
-                )
-                TaskFilterMenu(model: model).fixedSize()
-                groupMenu.fixedSize()
-                windowMenu.fixedSize()
-                searchField
+            if section == .live, model.viewMode == .now {
+                nowBar
             } else {
-                if let subtitle {
-                    Text(subtitle)
-                        .font(AuspexType.body)
-                        .foregroundStyle(AuspexPalette.text3)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                Spacer(minLength: 8)
+                boardBar
             }
         }
         .padding(.horizontal, 20)
@@ -85,6 +49,94 @@ struct BoardHeader: View {
                     .onChange(of: proxy.size.width) { _, new in width = new }
             }
         )
+    }
+
+    /// Now's bar: the heading and its live line, the three counts that are
+    /// about the person, the stage switch, the mode menu, and search.
+    @ViewBuilder
+    private var nowBar: some View {
+        let fit = nowFit
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(NowCopy.title)
+                .font(.system(size: 22, weight: .semibold))
+                .tracking(-0.22)
+                .foregroundStyle(AuspexPalette.text)
+            if fit.showsStatus {
+                NowStatusLine(live: model.nowCounts.live, working: model.nowCounts.working)
+            }
+        }
+        .fixedSize()
+        Spacer(minLength: 8)
+        if fit.pills > 0 {
+            NowCountPills(counts: model.nowCounts, limit: fit.pills).fixedSize()
+        }
+        NowStageSwitch(showsStage: $model.showsStage).fixedSize()
+        ViewModeMenu(model: model, section: section).fixedSize()
+        searchField
+    }
+
+    /// What of Now's bar fits, most important last to go: the search field,
+    /// the switch and the mode menu never give way; the live line goes first,
+    /// then the pills from the quietest end.
+    ///
+    /// Arithmetic over resting widths rather than `ViewThatFits`, for the
+    /// reason ``fit`` gives.
+    private var nowFit: (showsStatus: Bool, pills: Int) {
+        guard width > 0 else { return (true, 3) }
+        var reserved: CGFloat = 40  // the bar's own padding
+        reserved += 60  // the heading
+        reserved += 12 * 4  // the gaps between the controls
+        reserved += 172  // the stage switch
+        reserved += 84  // the mode menu
+        reserved += 120  // the search field at its narrowest
+        var free = width - reserved
+        // Resting widths of the three pills, most urgent first, and the gap
+        // before each.
+        let pills: [CGFloat] = [72, 96, 84]
+        let status: CGFloat = 200
+        var shown = 0
+        for pill in pills where free >= pill + 6 {
+            free -= pill + 6
+            shown += 1
+        }
+        return (shown == pills.count && free >= status, shown)
+    }
+
+    /// Every other mode's bar, as it was before Now: the counts, catch-up and
+    /// review, then the controls that cut the wall.
+    @ViewBuilder
+    private var boardBar: some View {
+            heading
+            if section == .live || section == .allSessions {
+                // The chips are the first thing to give way. Every control to
+                // their right is a thing a person operates, and a picker
+                // squeezed to forty points is a picker nobody can hit; a chip
+                // that is not on screen is a number they can still read off
+                // the sidebar and the cards.
+                counts(limit: fit.chips, showsMarkAll: fit.showsMarkAll)
+                if showsCatchUpInHeader {
+                    catchUpButton.fixedSize()
+                }
+                if showsReviewInHeader { reviewNext.fixedSize() }
+                Spacer(minLength: 8)
+                if model.ignoredCount > 0 {
+                    ignoredToggle.fixedSize()
+                }
+                ViewModeMenu(model: model, section: section).fixedSize()
+                TaskFilterMenu(model: model).fixedSize()
+                groupMenu.fixedSize()
+                windowMenu.fixedSize()
+                searchField
+            } else {
+                if let subtitle {
+                    Text(subtitle)
+                        .font(AuspexType.body)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 8)
+            }
     }
 
     /// The bar's own width, measured once and re-measured when it changes.
@@ -112,7 +164,7 @@ struct BoardHeader: View {
         var reserved: CGFloat = 40  // the bar's own padding
         reserved += 150  // the heading and its count
         reserved += 12 * 5  // the gaps between the controls
-        reserved += 246  // the five-mode picker
+        reserved += 92  // the mode menu
         reserved += 46  // the filter menu
         reserved += 108  // the grouping menu
         reserved += 92  // the window menu
@@ -193,7 +245,11 @@ struct BoardHeader: View {
 
     private var heading: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(section.title)
+            // On the live section the heading names the way it is being
+            // looked at: the sidebar's row is called Now, and a wall of cards
+            // under the word "Now" would be the header contradicting the
+            // menu beside it.
+            Text(section == .live ? model.viewMode.title : section.title)
                 .font(AuspexType.windowTitle)
                 .foregroundStyle(AuspexPalette.text)
             if let headingCount {
@@ -432,7 +488,7 @@ struct BoardHeader: View {
             // says nothing true about the app. The offscreen render gets the
             // field's resting state, which is what it looks like anyway.
             if isSnapshotRender {
-                Text(model.searchQuery.isEmpty ? "Search sessions" : model.searchQuery)
+                Text(model.searchQuery.isEmpty ? searchPlaceholder : model.searchQuery)
                     .font(AuspexType.body)
                     .foregroundStyle(
                         model.searchQuery.isEmpty ? AuspexPalette.text3 : AuspexPalette.text
@@ -440,7 +496,7 @@ struct BoardHeader: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             } else {
-                TextField("Search sessions", text: $model.searchQuery)
+                TextField(searchPlaceholder, text: $model.searchQuery)
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text)
@@ -452,6 +508,10 @@ struct BoardHeader: View {
         .frame(height: 28)
         .background(fieldBackground)
         .help("Search every transcript")
+    }
+
+    private var searchPlaceholder: String {
+        section == .live && model.viewMode == .now ? NowCopy.search : "Search sessions"
     }
 
     private var fieldBackground: some View {
@@ -564,5 +624,164 @@ struct SummaryChips: View {
         case .working: "▶"
         case .idle, .ended: nil
         }
+    }
+}
+
+// MARK: - Now's pieces
+
+/// `17:31 · 14 live · 7 working`. A leaf, so the clock's tick re-evaluates
+/// this line and nothing else in the bar.
+private struct NowStatusLine: View {
+    let live: Int
+    let working: Int
+
+    @Environment(BoardClock.self) private var clock: BoardClock?
+
+    var body: some View {
+        Text(NowCopy.status(
+            time: (clock?.now ?? Date()).formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits)),
+            live: live,
+            working: working
+        ))
+        .font(.system(size: 12, design: .monospaced))
+        .auspexTabularDigits()
+        .foregroundStyle(AuspexPalette.text3)
+        .lineLimit(1)
+    }
+}
+
+/// The three counts that are about the person, each on a wash of its own
+/// colour. Most urgent first, so a narrow bar drops the receipts before the
+/// questions.
+private struct NowCountPills: View {
+    let counts: NowFrame.Counts
+    var limit = 3
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(pills.prefix(limit)), id: \.label) { pill in
+                Text("\(pill.label) \(pill.count)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .auspexTabularDigits()
+                    .foregroundStyle(NowTone.ink(pill.tone))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(NowTone.wash(pill.tone)))
+                    .opacity(pill.count == 0 ? 0.55 : 1)
+                    .accessibilityLabel("\(pill.count) \(pill.label)")
+            }
+        }
+    }
+
+    private var pills: [(tone: NowFrame.Tone, label: String, count: Int)] {
+        [
+            (.needsYou, NowCopy.needsYou, counts.needsYou),
+            (.mayNeedYou, NowCopy.mayNeedYou, counts.mayNeedYou),
+            (.done, NowCopy.doneUnseen, counts.done)
+        ]
+    }
+}
+
+/// Office and lists, or the lists alone.
+private struct NowStageSwitch: View {
+    @Binding var showsStage: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            segment(NowCopy.stageAndLists, isOn: showsStage) { showsStage = true }
+            segment(NowCopy.listsOnly, isOn: !showsStage) { showsStage = false }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(AuspexPalette.line, lineWidth: 1)
+        )
+    }
+
+    private func segment(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(isOn ? AuspexPalette.bg0 : AuspexPalette.text)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(isOn ? AuspexPalette.text : AuspexPalette.panel)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 0))
+        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// Every way of looking at the board, as one menu.
+///
+/// A menu rather than six segments: Now is where a person lives, and the
+/// other five are places they go on purpose. Six segments would also take the
+/// width the counts need. On the Sessions page Now is not offered — that page
+/// is the whole history as a wall, and the Now lists are about the present.
+struct ViewModeMenu: View {
+    @Bindable var model: LiveBoardModel
+    let section: BoardSection
+
+    var body: some View {
+        let current = section.effectiveMode(model.viewMode)
+        Menu {
+            ForEach(BoardViewMode.pickerOrder) { mode in
+                if section != .allSessions || mode != .now {
+                    Button {
+                        model.viewMode = mode
+                    } label: {
+                        if mode == current {
+                            Label(mode.title, systemImage: "checkmark")
+                        } else {
+                            Label(mode.title, systemImage: mode.systemImage)
+                        }
+                    }
+                    // Flight draws one session, so it needs one selected.
+                    .disabled(mode.requiresSelection && !model.canOpenTrajectory)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: current.systemImage)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AuspexPalette.text3)
+                Text(current.title).foregroundStyle(AuspexPalette.text2)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+            .font(AuspexType.body)
+            .fixedSize()
+        }
+        .menuStyle(.button)
+        .buttonStyle(.auspex(cornerRadius: 8))
+        .menuIndicator(.hidden)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(AuspexPalette.bg1)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(AuspexPalette.line, lineWidth: 1)
+                )
+        )
+        .help(
+            "\(NowCopy.viewMode): Now, the Ledger of cards, the Aviary, the Flock, "
+                + "your Perch, or one session's Flight"
+        )
+        .accessibilityLabel("\(NowCopy.viewMode): \(current.title)")
+    }
+}
+
+extension BoardSection {
+    /// The mode this section actually draws when the board is set to `mode`.
+    ///
+    /// The Sessions page is the whole history as a wall; Now's lists are
+    /// about the present and have no history to show, so on that page Now
+    /// draws as the Ledger.
+    func effectiveMode(_ mode: BoardViewMode) -> BoardViewMode {
+        self == .allSessions && mode == .now ? .board : mode
     }
 }

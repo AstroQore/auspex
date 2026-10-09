@@ -75,6 +75,13 @@ public struct BoardFrameInputs: Sendable, Equatable {
     /// then comparing them against the previous frame's to find out nothing
     /// changed, was work on every frame for a picture nobody was drawing.
     public var viewMode: BoardViewMode
+    /// Whether Now's stage is open.
+    ///
+    /// Only read while ``viewMode`` is ``BoardViewMode/now``: it decides
+    /// whether the frame carries the reduced board the office is laid out
+    /// from, which a list-only Now has no use for. See
+    /// ``BoardViewMode/drawsOffice(showsStage:)``.
+    public var showsStage: Bool
 
     public init(
         claims: ProjectClaims = .empty,
@@ -95,9 +102,11 @@ public struct BoardFrameInputs: Sendable, Equatable {
         filters: TaskFilters = .none,
         showsSubagents: Bool = false,
         catchUpSince: Date = .distantPast,
-        viewMode: BoardViewMode = .board
+        viewMode: BoardViewMode = .board,
+        showsStage: Bool = true
     ) {
         self.viewMode = viewMode
+        self.showsStage = showsStage
         self.ledger = ledger
         self.filters = filters
         self.showsSubagents = showsSubagents
@@ -179,6 +188,21 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     public let humanQueue: HumanWorkQueue
     /// Amber inferred/observed risks, never folded into Attention.
     public let watchSignals: [WatchSignal]
+    /// The Now screen's lists and stage captions.
+    ///
+    /// Derived for every mode, not only for Now: the sidebar's Now row counts
+    /// what is asking for the reader whichever way the board is drawn, and a
+    /// badge that read zero in the Ledger would be a badge that lies. The
+    /// derivation is one pass over the units this frame already built.
+    public let now: NowFrame
+    /// Whether ``sceneBoard`` was built for this frame — the aviary, or Now
+    /// with its stage open.
+    ///
+    /// Stamped rather than recomputed from ``assembledFor``, because Now's
+    /// stage opens and closes without the mode changing, and a reconciled
+    /// frame that kept the previous, empty, reduced board across that switch
+    /// would open the stage on an empty room.
+    public let includesOffice: Bool
 
     /// How many sessions the frame holds.
     public var sessionCount: Int { board.sessions.count }
@@ -247,12 +271,16 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         catchUp: CatchUpSnapshot,
         humanQueue: HumanWorkQueue,
         watchSignals: [WatchSignal],
+        now: NowFrame = .empty,
         attention: [SessionKey: AttentionState] = [:],
         olderHidden: Int = 0,
         boardRevision: UInt64 = 1,
         isRepeat: Bool = false,
-        assembledFor: BoardViewMode = .board
+        assembledFor: BoardViewMode = .board,
+        includesOffice: Bool? = nil
     ) {
+        self.now = now
+        self.includesOffice = includesOffice ?? (assembledFor == .scene)
         self.unitGroups = unitGroups
         self.endedUnits = endedUnits
         self.units = units
@@ -316,6 +344,7 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         let boardMoved = !board.saysTheSameAs(previous.board)
         if boardMoved { isRepeat = false }
         let modeMoved = assembledFor != previous.assembledFor
+            || includesOffice != previous.includesOffice
         if modeMoved { isRepeat = false }
         let sharedUnits = kept(units, previous.units)
         let unitsMoved = sharedUnits != previous.units
@@ -348,11 +377,13 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             catchUp: kept(catchUp, previous.catchUp),
             humanQueue: kept(humanQueue, previous.humanQueue),
             watchSignals: kept(watchSignals, previous.watchSignals),
+            now: kept(now, previous.now),
             attention: kept(attention, previous.attention),
             olderHidden: olderHidden,
             boardRevision: boardMoved ? boardRevision &+ 1 : previous.boardRevision,
             isRepeat: isRepeat && olderHidden == previous.olderHidden,
-            assembledFor: assembledFor
+            assembledFor: assembledFor,
+            includesOffice: includesOffice
         )
         return shared
     }
@@ -575,6 +606,8 @@ public actor BoardFrameAssembler {
             guard state.isSignalling else { continue }
             attention[session.key] = state
         }
+        let watchSignals = CollaborationSignals.derive(units: allUnits, now: raw.generatedAt)
+        let drawsOffice = inputs.viewMode.drawsOffice(showsStage: inputs.showsStage)
 
         return AssembledBoardFrame(
             sequence: sequence,
@@ -600,9 +633,10 @@ public actor BoardFrameAssembler {
             // a desk for a card that is filtered out would be a room saying
             // something the wall does not.
             //
-            // Only for the aviary: reducing the board is a sort and a tree
-            // build of its own, and no other mode draws it.
-            sceneBoard: inputs.viewMode == .scene
+            // Only for the office: reducing the board is a sort and a tree
+            // build of its own, and only the aviary and Now's open stage draw
+            // it.
+            sceneBoard: drawsOffice
                 ? SceneUnits.board(from: board, units: liveUnits + unitSplit.ended)
                 : .empty,
             unitBySession: unitBySession,
@@ -621,10 +655,15 @@ public actor BoardFrameAssembler {
                 units: allUnits, since: inputs.catchUpSince, generatedAt: raw.generatedAt
             ),
             humanQueue: HumanWorkQueue(units: allUnits),
-            watchSignals: CollaborationSignals.derive(units: allUnits, now: raw.generatedAt),
+            watchSignals: watchSignals,
+            // Over every unit, like the summary: the lists are the header's
+            // counts spelled out, and a filter bar Now does not draw must not
+            // quietly empty them.
+            now: NowFrame.derive(units: allUnits, signals: watchSignals),
             attention: attention,
             olderHidden: windowed.hidden,
-            assembledFor: inputs.viewMode
+            assembledFor: inputs.viewMode,
+            includesOffice: drawsOffice
         )
     }
 

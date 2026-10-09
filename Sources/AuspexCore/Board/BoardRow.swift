@@ -61,6 +61,13 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
     public let directory: String?
     /// What is happening, in the harness's own words. Never empty.
     public let activity: String
+    /// What the open tool call is aimed at — the command, the path, the query
+    /// — while the session is calling a tool or waiting for permission to.
+    ///
+    /// Its own field rather than read back out of ``activity``, because a
+    /// permission wait's activity is the tool's name alone and the one thing a
+    /// person deciding whether to get up wants is *which* `Bash`.
+    public let toolTarget: String?
     public let turnCount: Int
     public let toolCallCount: Int
     public let tokensIn: Int
@@ -212,8 +219,10 @@ public struct BoardRow: Identifiable, Sendable, Equatable {
         notice: RowNotice? = nil,
         reportedFocus: String? = nil,
         reportedFocusAt: Date? = nil,
-        context: ContextGauge? = nil
+        context: ContextGauge? = nil,
+        toolTarget: String? = nil
     ) {
+        self.toolTarget = toolTarget
         self.variantLabel = variantLabel
         self.key = key
         self.harness = harness
@@ -389,7 +398,8 @@ public struct BoardRowBuilder: Sendable {
             reportedFocusAt: report?.createdAt,
             context: ContextGauge(
                 usage: session.contextUsage, compactions: session.compactions
-            )
+            ),
+            toolTarget: Self.toolTarget(for: session)
         )
     }
 
@@ -509,6 +519,33 @@ public struct BoardRowBuilder: Sendable {
         case .thinking:
             return "reasoning"
         }
+    }
+
+    /// What the open call is aimed at, while the state is about one.
+    ///
+    /// A permission wait names its tool and not its call, so the call is found
+    /// by name: the most recent open call to *that* tool. Another tool that
+    /// happens to be open in parallel is not what the prompt is about, and
+    /// showing its argument would put the wrong command beside "allow?".
+    static func toolTarget(for session: SessionSnapshot) -> String? {
+        let target: String?
+        switch session.state {
+        case .toolCalling:
+            target = session.pending.mostRecentOpenToolCall?.target
+        case .waitingPermission(let tool?):
+            target = session.pending.openToolCalls.values
+                .filter { $0.name == tool }
+                .max { lhs, rhs in
+                    if lhs.startedAt != rhs.startedAt { return lhs.startedAt < rhs.startedAt }
+                    return lhs.id < rhs.id
+                }?
+                .target
+        default:
+            target = nil
+        }
+        guard let target else { return nil }
+        let trimmed = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// When the current state began, as precisely as the snapshot allows.

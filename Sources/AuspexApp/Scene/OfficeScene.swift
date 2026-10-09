@@ -181,6 +181,21 @@ final class OfficeScene: SKScene {
         }
     }
 
+    /// Hangs Now's balloons over the people they are about.
+    ///
+    /// Separate from ``update(board:selected:focusedProject:reduceMotion:theme:zones:attention:)``
+    /// because the aviary never sends any, and because the balloons change on
+    /// a different rhythm from the room: their words are re-read from the
+    /// scene's own clock, once a second, while the room only moves when the
+    /// board does.
+    func setCaptions(_ captions: [SessionKey: SceneCaption]) {
+        director.apply(captions: captions)
+        hasCaptions = !captions.isEmpty
+    }
+
+    private var hasCaptions = false
+    private var lastCaptionTick: TimeInterval = 0
+
     // MARK: - Pointing the camera
 
     /// Where the camera is pointed and how close it is.
@@ -249,6 +264,26 @@ final class OfficeScene: SKScene {
         hasFitted = true
         setViewport(viewport.focused(on: rect.insetBy(dx: -110, dy: -80)), animated: animated)
     }
+
+    /// Frames Now's stage: the office at half its own scale — close enough
+    /// that a person is a person and their balloon is a sentence, far enough
+    /// to see the room around them — centred on `key`'s desk when there is one
+    /// to centre on.
+    ///
+    /// Not ``fitAll(animated:)``: a whole building fitted into a strip 380
+    /// points tall is a picture of a building, with nobody in it legible.
+    func frameStage(on key: SessionKey?) {
+        cameraController.setViewSize(size)
+        var next = viewport.zoomed(to: Self.stageZoom)
+        if let key, let rect = director.deskRect(for: key) {
+            next = next.centered(on: CGPoint(x: rect.midX, y: rect.midY + 30))
+        }
+        hasFitted = true
+        setViewport(next)
+    }
+
+    /// The stage's zoom: a rung of the ladder, so the pixel art stays whole.
+    static let stageZoom: CGFloat = 0.5
 
     /// Frames one project's room, or the whole building when there is no
     /// project to frame.
@@ -332,6 +367,14 @@ final class OfficeScene: SKScene {
         // At most one hit test per drawn frame, however many times the pointer
         // moved between them.
         flushHover()
+
+        // The balloons' stopwatches, once a second and only while the scene is
+        // running: a paused scene is never asked, so a hidden stage costs
+        // nothing here at all.
+        if hasCaptions, currentTime - lastCaptionTick >= 1 {
+            lastCaptionTick = currentTime
+            director.tickCaptions(now: Date())
+        }
 
         let live = cameraController.viewport
         director.cull(to: live.visibleRect, margin: Self.cullMargin)

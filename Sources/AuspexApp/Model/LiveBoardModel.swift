@@ -170,20 +170,24 @@ final class LiveBoardModel {
     private(set) var needsYouKeys: Set<SessionKey> = []
     private(set) var doneReportedKeys: Set<SessionKey> = []
 
-    /// How the live sessions are drawn: the grid of cards, or the scene.
+    /// How the live sessions are drawn: Now, the grid of cards, the scene.
     ///
     /// A mode rather than a destination, so switching keeps the selection, the
-    /// grouping, the filters, and the trace beside it.
-    var viewMode: BoardViewMode = .board {
+    /// grouping, the filters, and the trace beside it. Now by default: it is
+    /// the screen that answers what a person opens the window to ask.
+    var viewMode: BoardViewMode = .now {
         didSet {
             guard oldValue != viewMode else { return }
-            // The crew wall's snapshot groups and the aviary's reduced board
-            // are only assembled for their own mode — see
-            // `BoardFrameInputs.viewMode`. Switching into either asks for a
+            // The crew wall's snapshot groups, the office's reduced board and
+            // Now's lists are only assembled for the modes that draw them —
+            // see `BoardFrameInputs.viewMode`. Switching into one asks for a
             // frame that has them; switching out lets go of what the old
             // mode was holding.
             if oldValue == .crew { groups = [] }
-            if oldValue == .scene { sceneBoard = .empty }
+            if !viewMode.drawsOffice(showsStage: showsStage), !sceneBoard.sessions.isEmpty {
+                sceneBoard = .empty
+            }
+            if oldValue == .now { nowFrame = .empty }
             if Self.modesWithOwnOutput.contains(oldValue)
                 || Self.modesWithOwnOutput.contains(viewMode) {
                 scheduleAssembly()
@@ -210,14 +214,38 @@ final class LiveBoardModel {
     }
 
     /// The modes the assembler builds something for that no other mode reads.
-    private static let modesWithOwnOutput: Set<BoardViewMode> = [.crew, .scene]
+    private static let modesWithOwnOutput: Set<BoardViewMode> = [.crew, .scene, .now]
+
+    /// Whether Now draws the office over its lists, or only the lists.
+    ///
+    /// Closing the stage takes the office out of the window — its clock stops
+    /// with it — and stops the assembler building the reduced board it is
+    /// laid out from. Held for the launch; the screen opens with it on.
+    var showsStage = true {
+        didSet {
+            guard oldValue != showsStage else { return }
+            if !viewMode.drawsOffice(showsStage: showsStage), !sceneBoard.sessions.isEmpty {
+                sceneBoard = .empty
+            }
+            if viewMode == .now { scheduleAssembly() }
+        }
+    }
+
+    /// Now's four lists, the idle count, and the stage's captions — held only
+    /// while Now is the mode on screen.
+    private(set) var nowFrame: NowFrame = .empty
+
+    /// Now's numbers, in every mode. The sidebar's badge and the header's
+    /// pills read these rather than ``nowFrame``, so a frame that moved a row
+    /// without moving a count invalidates neither.
+    private(set) var nowCounts = NowFrame.Counts()
 
     /// The mode to go back to when the trajectory is closed.
     ///
     /// Stored rather than assumed to be `.board`, because a person who opened
     /// a trajectory from the scene asked to look at one session, not to be
     /// moved to a different way of looking at all of them.
-    private var modeBeforeTrajectory: BoardViewMode = .board
+    private var modeBeforeTrajectory: BoardViewMode = .now
 
     /// The Trajectory mode's own state: the fold, the layout, the brush, and
     /// the inspector's selection.
@@ -818,7 +846,8 @@ final class LiveBoardModel {
             filters: filters,
             showsSubagents: showsSubagents,
             catchUpSince: catchUpSince,
-            viewMode: viewMode
+            viewMode: viewMode,
+            showsStage: showsStage
         )
     }
 
@@ -879,9 +908,15 @@ final class LiveBoardModel {
         if viewMode == .crew, frame.assembledFor == .crew, groups != frame.groups {
             groups = frame.groups
         }
-        if viewMode == .scene, frame.assembledFor == .scene, sceneBoard != frame.sceneBoard {
+        if viewMode.drawsOffice(showsStage: showsStage), frame.includesOffice,
+           sceneBoard != frame.sceneBoard {
             sceneBoard = frame.sceneBoard
         }
+        if viewMode == .now, frame.assembledFor == .now, nowFrame != frame.now {
+            nowFrame = frame.now
+        }
+        let nextNowCounts = frame.now.counts
+        if nowCounts != nextNowCounts { nowCounts = nextNowCounts }
         if rowGroups != frame.rowGroups { rowGroups = frame.rowGroups }
         if unitGroups != frame.unitGroups { unitGroups = frame.unitGroups }
         if endedUnits != frame.endedUnits { endedUnits = frame.endedUnits }

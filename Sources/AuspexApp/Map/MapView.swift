@@ -46,7 +46,7 @@ struct MapView: View {
                         board.selectedKey = key
                         board.openTrajectory()
                     },
-                    onEscape: { board.viewMode = .board },
+                    onEscape: { board.viewMode = .now },
                     onMove: { if !map.isHistory { map.move(nodeID: $0, to: $1) } },
                     onToggleExpanded: { map.toggleExpanded(nodeID: $0) },
                     onSetDependencies: { taskID, ids, version in

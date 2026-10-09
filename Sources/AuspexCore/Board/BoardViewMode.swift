@@ -2,9 +2,10 @@ import Foundation
 
 /// How the live work is drawn.
 ///
-/// The same board, five ways of looking at it: a wall of cards for reading,
-/// a room and a wall of faces for watching, a user-owned Perch, and one
-/// session opened out for taking apart. The choice is a mode rather than a separate destination
+/// The same board, six ways of looking at it: one screen that answers "what
+/// needs me, and what is running" at a glance, a wall of cards for reading, a
+/// room and a wall of faces for watching, a user-owned Perch, and one session
+/// opened out for taking apart. The choice is a mode rather than a separate destination
 /// because it does not change *what* is on screen, only how it is drawn: the
 /// selection, the grouping, the filters, and the trace beside it all survive a
 /// switch.
@@ -12,7 +13,8 @@ import Foundation
 /// ## The names
 ///
 /// An auspex read birds. The modes are named for what they show rather than
-/// for the widget that shows it: the **Ledger** is what has been written down,
+/// for the widget that shows it: **Now** is the present tense of the whole
+/// machine, the **Ledger** is what has been written down,
 /// the **Aviary** is the room they are in, the **Flock** is the birds
 /// themselves, the **Perch** is where a person placed them, and a **Flight** is
 /// the path one of them took. Established raw values keep their old spellings
@@ -26,8 +28,13 @@ import Foundation
 /// container — not a new flag threaded through the model, the picker, and the
 /// window's state restoration.
 public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable {
-    /// The grid of session cards. The default, and the only one that can show
-    /// every session at once.
+    /// The office as a stage over four short lists — what needs you, what may
+    /// need you, what is running, and what finished unread. The default: it is
+    /// the question a person opens the window with, answered without reading a
+    /// wall. See ``NowFrame``.
+    case now
+    /// The grid of session cards, and the only mode that can show every
+    /// session at once.
     case board
     /// The rendered office. Fewer facts per task, but the shape of the whole
     /// machine at a glance.
@@ -51,6 +58,7 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
     /// The segment's label in the header's picker.
     public var title: String {
         switch self {
+        case .now: "Now"
         case .board: "Ledger"
         case .scene: "Aviary"
         case .crew: "Flock"
@@ -62,6 +70,7 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
     /// An SF Symbol, for the places a label will not fit.
     public var systemImage: String {
         switch self {
+        case .now: "list.bullet.below.rectangle"
         case .board: "square.grid.2x2"
         case .scene: "building.2"
         case .crew: "person.3"
@@ -77,7 +86,7 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
     /// and has none must show something rather than an empty column.
     public var requiresSelection: Bool {
         switch self {
-        case .board, .scene, .crew, .perch: false
+        case .now, .board, .scene, .crew, .perch: false
         case .trajectory: true
         }
     }
@@ -101,6 +110,20 @@ public enum BoardViewMode: String, CaseIterable, Identifiable, Sendable, Codable
         case "map", "perch": self = .perch
         case "flight": self = .trajectory
         default: return nil
+        }
+    }
+
+    /// Whether the mode draws the office.
+    ///
+    /// The aviary always does; Now does while its stage is open. It is what
+    /// decides whether a frame carries the reduced board the office is laid
+    /// out from — see `AssembledBoardFrame.sceneBoard` — so a list-only Now
+    /// costs the assembler nothing for a room nobody is looking at.
+    public func drawsOffice(showsStage: Bool) -> Bool {
+        switch self {
+        case .scene: true
+        case .now: showsStage
+        case .board, .crew, .perch, .trajectory: false
         }
     }
 

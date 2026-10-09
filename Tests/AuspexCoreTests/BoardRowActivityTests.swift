@@ -110,3 +110,40 @@ struct BoardRowRebuiltBriefTests {
         #expect(row.lastTurnEndedAt == nil)
     }
 }
+
+/// What an open call is aimed at, which a permission wait's own line omits.
+@Suite("BoardRow, tool target")
+struct BoardRowToolTargetTests {
+    private func session(_ state: SessionState, calls: [PendingToolCall]) -> SessionSnapshot {
+        let key = Fixtures.key(.claudeCode, "target-1")
+        var snapshot = SessionStateReducer.initialSnapshot(identity: Fixtures.identity(key: key))
+        snapshot.state = state
+        snapshot.isAlive = true
+        for call in calls { snapshot.pending.openToolCalls[call.id] = call }
+        return snapshot
+    }
+
+    private func call(_ id: String, _ name: String, _ target: String?, at offset: TimeInterval)
+        -> PendingToolCall {
+        PendingToolCall(id: id, name: name, kind: .shell, target: target, startedAt: Fixtures.date(offset))
+    }
+
+    @Test("a permission wait names the call to its own tool")
+    func permissionFindsItsCall() {
+        let snapshot = session(
+            .waitingPermission(tool: "Bash"),
+            calls: [call("a", "Bash", "gh pr merge", at: 1), call("b", "Read", "notes.md", at: 2)]
+        )
+        #expect(BoardRowBuilder.toolTarget(for: snapshot) == "gh pr merge")
+    }
+
+    @Test("a tool call names its most recent target; idle names none")
+    func toolCallAndIdle() {
+        let calls = [call("a", "Read", "one.swift", at: 1), call("b", "Read", "two.swift", at: 2)]
+        #expect(BoardRowBuilder.toolTarget(for: session(.toolCalling(name: "Read"), calls: calls))
+            == "two.swift")
+        #expect(BoardRowBuilder.toolTarget(for: session(.idle, calls: calls)) == nil)
+        #expect(BoardRowBuilder.toolTarget(
+            for: session(.waitingPermission(tool: nil), calls: calls)) == nil)
+    }
+}

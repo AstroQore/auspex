@@ -10,6 +10,21 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+### Added
+
+- **Now, the new default screen.** The office sits across the top as a stage,
+  with a balloon over the few people who most need reading — what a session is
+  running and for how long, the permission it is waiting on, or the watch
+  signal about it — and the balloons follow their desks as the room moves.
+  Under it, four short lists: *needs you* (explicit signals only), *may need
+  you* (watch signals, kept apart), *working* (one row per root session, its
+  sub-agents folded into `↳N`, with a context bar), and *done, unseen* with a
+  one-click "mark seen"; idle sessions are a count. The lists are derived once
+  per frame off the main thread, the stage can be closed to stop the office
+  entirely, and the Ledger, Aviary, Flock, Perch and Flight move into a view
+  menu in the header. The sidebar now reads Now, Tasks, Sessions, Projects,
+  Harnesses.
+
 ### Fixed
 
 - **Codex and `cursor-agent` sessions can claim, finish and notify.** Neither

@@ -54,6 +54,11 @@ final class SceneDirector {
     private var tables: [String: TableNode] = [:]
     private var tethers: [String: TetherNode] = [:]
     private var deskBySession: [SessionKey: DeskNode] = [:]
+    /// Now's balloons, by the session whose desk wears one.
+    private var captions: [SessionKey: SceneCaption] = [:]
+    /// The desks wearing one right now, so taking a balloon down is a walk
+    /// over at most six nodes rather than over the building.
+    private var captioned: [SessionKey: DeskNode] = [:]
     /// Where each desk stands, in scene coordinates, so culling does not have
     /// to ask a node for its position while it is animating toward one.
     private var deskRects: [String: CGRect] = [:]
@@ -241,7 +246,44 @@ final class SceneDirector {
         syncFloors(sessions: byKey)
         syncZones()
         syncContent(sessions: byKey)
+        // After the content: a desk that changed hands this frame must lose
+        // the old occupant's balloon, and the person who moved to a bench must
+        // take theirs with them.
+        if !captions.isEmpty || !captioned.isEmpty { syncCaptions() }
         return moved
+    }
+
+    // MARK: Captions
+
+    /// Hangs Now's balloons. Nothing is touched when they are the ones already
+    /// hanging.
+    func apply(captions next: [SessionKey: SceneCaption]) {
+        guard next != captions else { return }
+        captions = next
+        syncCaptions()
+    }
+
+    /// Puts each balloon on whichever node its session is drawn at, and takes
+    /// it off every node that no longer carries one.
+    private func syncCaptions() {
+        let now = Date()
+        var next: [SessionKey: DeskNode] = [:]
+        for (key, caption) in captions {
+            guard let node = deskBySession[key] else { continue }
+            node.setCaption(caption, now: now)
+            next[key] = node
+        }
+        let keep = Set(next.values.map(ObjectIdentifier.init))
+        for node in captioned.values where !keep.contains(ObjectIdentifier(node)) {
+            node.setCaption(nil, now: now)
+        }
+        captioned = next
+    }
+
+    /// Advances every hanging balloon's stopwatch. Called from the scene's own
+    /// clock, so a stage nobody can see advances nothing.
+    func tickCaptions(now: Date) {
+        for node in captioned.values { node.refreshCaption(now: now) }
     }
 
     // MARK: Leaving

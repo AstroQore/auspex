@@ -53,6 +53,7 @@ enum WindowSnapshotRenderer {
         groupBy: BoardGroupBy? = nil,
         pane: SettingsPane? = nil,
         viewMode: BoardViewMode? = nil,
+        showsStage: Bool = true,
         appearance: AppearanceMode = .dark
     ) throws {
         // Touching AppKit at all requires the shared application to exist; the
@@ -66,6 +67,7 @@ enum WindowSnapshotRenderer {
         environment.board.focusedProjectKey = focus
         if let groupBy { environment.board.groupBy = groupBy }
         if let viewMode { environment.board.viewMode = viewMode }
+        environment.board.showsStage = showsStage
         defer { Task { await environment.shutdown() } }
 
         // The pipeline runs on detached tasks; spinning the main run loop is
@@ -146,7 +148,8 @@ private struct WindowSnapshot: View {
                 model: environment.board,
                 projects: environment.projects,
                 tasks: environment.tasks,
-                mode: environment.mode
+                mode: environment.mode,
+                harnessCount: environment.harnesses.detected.count
             )
             .frame(width: 232)
             divider
@@ -180,7 +183,8 @@ private struct WindowSnapshot: View {
                     // way of looking at the board that the renderer cannot
                     // reach is a way of looking at the board nobody can take a
                     // picture of.
-                    switch environment.board.viewMode {
+                    switch section.effectiveMode(environment.board.viewMode) {
+                    case .now: NowView(model: environment.board)
                     case .board: BoardView(model: environment.board)
                     case .scene: SceneContainerView(model: environment.board)
                     case .crew:
