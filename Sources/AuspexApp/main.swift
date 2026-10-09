@@ -531,6 +531,12 @@ if arguments.contains("--help") || arguments.contains("-h") {
                             `AUSPEX_APPEARANCE` does the same. Auspex follows the
                             system by default; the persistent choice lives in
                             Settings → Appearance.
+              --stage <on|off>
+                            Open Now with its office stage, or with the lists
+                            only. `AUSPEX_STAGE` does the same. Held for the
+                            launch; the switch in Now's header still works. What
+                            the performance budget for Now with and without the
+                            stage is measured with.
               --render-scene <path> [seconds] [project] [crowd=N] [appearance=…]
                             Render the scene view's office to a PNG, offscreen,
                             from the demo board at `seconds` into its loop

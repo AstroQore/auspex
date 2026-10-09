@@ -845,6 +845,15 @@ public struct AppLaunchOptions: Sendable {
     /// `AppEnvironment.appearanceOverride`.
     public var appearance: AppearanceMode?
 
+    /// Whether Now opens with its stage, when the command line said.
+    ///
+    /// The stage is the one part of Now with a clock, so "Now with the office"
+    /// and "Now, lists only" are two different rows of the performance
+    /// budget, and the second could otherwise only be reached by a click.
+    /// Like the appearance flag it is held for the launch and never written
+    /// down. `nil` is the screen's own default, which is the stage open.
+    public var showsStage: Bool?
+
     /// Reads the flag from the command line, with an environment variable as
     /// the alternative for the case where the launcher owns the argv —
     /// `open -a Auspex` cannot pass arguments through.
@@ -862,6 +871,7 @@ public struct AppLaunchOptions: Sendable {
         let appearance = value(after: "--appearance") ?? environment["AUSPEX_APPEARANCE"]
         let scale = (value(after: "--demo-scale") ?? environment["AUSPEX_DEMO_SCALE"])
             .flatMap(Int.init)
+        let stage = value(after: "--stage") ?? environment["AUSPEX_STAGE"]
         return AppLaunchOptions(
             // A scale asks for a demo. Nobody types `--demo-scale 12` meaning
             // "and also tail my real stores", and a flag that silently did
@@ -871,8 +881,19 @@ public struct AppLaunchOptions: Sendable {
                 || (scale ?? 1) > 1,
             demoScale: Self.clampedScale(scale),
             viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(named:)),
-            appearance: appearance.flatMap(AppearanceMode.init(rawValue:))
+            appearance: appearance.flatMap(AppearanceMode.init(rawValue:)),
+            showsStage: stage.flatMap(Self.stageSwitch)
         )
+    }
+
+    /// `on` or `off`, the way a person types a switch. Anything else is not
+    /// an answer, and leaves the screen's default alone.
+    static func stageSwitch(_ raw: String) -> Bool? {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "on", "1": true
+        case "off", "0": false
+        default: nil
+        }
     }
 
     /// A scale that cannot make the app unusable by accident.
@@ -898,6 +919,7 @@ extension AppEnvironment {
         let environment = AppEnvironment(mode: options.mode, demoScale: options.demoScale)
         environment.followsVisibility = true
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
+        if let showsStage = options.showsStage { environment.board.showsStage = showsStage }
         environment.appearanceOverride = options.appearance
         return environment
     }

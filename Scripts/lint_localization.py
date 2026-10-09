@@ -652,7 +652,7 @@ ALLOWED: dict = {
         "Tasks/TaskDetailView.swift": {"v\\(version)"},
     },
     "command-line flags the launch options are parsed from": {
-        "AppEnvironment.swift": {"--view", "--appearance", "--demo-scale"},
+        "AppEnvironment.swift": {"--view", "--appearance", "--demo-scale", "--stage"},
     },
     "a command a person types into Terminal: the words are the program's "
     "arguments, and a translated one would not run": {
