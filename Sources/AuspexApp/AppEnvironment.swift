@@ -393,7 +393,41 @@ public final class AppEnvironment {
         startGrouping(registry: registry, table: table, mode: mode)
         // A demo's store lives in memory and holds nothing older than the
         // process; there is no history in it to trim.
-        if mode == .live { startMaintenance(store: store) }
+        if mode == .live {
+            startScratchPurge(store: store)
+            startMaintenance(store: store)
+        }
+    }
+
+    /// Removes, once per store, the project rows earlier builds wrote for
+    /// scratch directories. See ``ScratchProjectPurge``.
+    ///
+    /// At launch rather than with the maintenance pass a minute later: it is
+    /// one short transaction over a table of a few hundred rows, and the
+    /// sidebar's name map should stop offering those names as soon as it can.
+    /// The person's own projects are read now and protected; the rules are
+    /// the ones the grouping pass was just given.
+    private func startScratchPurge(store: AuspexStore) {
+        let purge = ScratchProjectPurge(store: store)
+        let rules = ScratchRules(userPrefixes: catalog.rules.scratchPrefixes)
+        let protectedRoots = catalog.projects.flatMap(\.roots)
+        let board = board
+        let projects = projects
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak projects] in
+            do {
+                guard let report = try await purge.runIfNeeded(
+                    rules: rules,
+                    protectedRoots: protectedRoots
+                ), report.projectsRemoved > 0 else { return }
+                await projects?.refreshNames()
+                let noun = report.projectsRemoved == 1 ? "folder" : "folders"
+                await board?.record(
+                    notice: "Auspex stopped listing \(report.projectsRemoved) scratch \(noun) as projects."
+                )
+            } catch {
+                await board?.record(notice: "Scratch folders could not be tidied: \(error).")
+            }
+        })
     }
 
     /// Trims the stored history, off the main actor and at utility priority.
