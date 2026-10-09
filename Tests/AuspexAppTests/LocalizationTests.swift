@@ -42,9 +42,12 @@ struct LocalizationTests {
     func bundleCarriesSimplifiedChinese() throws {
         let tables = try CatalogueTables.load()
         #expect(tables.bundle.lastPathComponent == "auspex-i18n_AuspexLocalization.bundle")
-        #expect(tables.chinese["viewMode.now"] == "此刻")
+        // View names are product names and stay English in every language;
+        // the proof of a real translation is a key that is actually worded.
+        #expect(tables.chinese["viewMode.now"] == "Now")
         #expect(tables.english["viewMode.now"] == "Now")
         #expect(tables.chinese["now.needsYou"] == "需要你")
+        #expect(tables.chinese["now.mayNeedYou"] == "可能需要你")
     }
 
     // MARK: Reading through L10n

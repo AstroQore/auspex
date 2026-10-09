@@ -42,7 +42,7 @@ let package = Package(
         // pin is what makes two builds of one Auspex commit show the same
         // words. `Scripts/build_app.sh` copies its resource bundle into the
         // app; AGENTS.md § 6 says where a new string goes.
-        .package(url: "https://github.com/AstroQore/auspex-i18n.git", exact: "0.1.0")
+        .package(url: "https://github.com/AstroQore/auspex-i18n.git", exact: "0.1.1")
     ],
     targets: [
         .executableTarget(
