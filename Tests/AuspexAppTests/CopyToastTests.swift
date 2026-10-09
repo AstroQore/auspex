@@ -9,7 +9,7 @@ import Testing
 /// result, so the two things worth asserting are that it says something and
 /// that it stops saying it — a toast that stayed up would be a permanent line
 /// of chrome, which is worse than no toast at all.
-@Suite("Copy toast")
+@Suite("Copy toast", .serialized)
 @MainActor
 struct CopyToastTests {
     @Test("a message goes up, and takes itself down")
@@ -19,9 +19,15 @@ struct CopyToastTests {
         toast.show("Copied the session ID")
         #expect(toast.message == "Copied the session ID")
 
-        // Its own duration plus a margin: the dismissal is a real sleep on the
-        // main actor's clock, which is what it is in the window too.
-        try await Task.sleep(for: CopyToast.duration + .milliseconds(400))
+        // The dismissal is a real sleep on the main actor's clock, which is
+        // what it is in the window too. Under a loaded test runner that
+        // continuation can land well after the nominal duration, so wait for
+        // it rather than for a fixed margin: the assertion is that it comes
+        // down at all, bounded by a deadline no healthy toast would reach.
+        let deadline = ContinuousClock.now + CopyToast.duration + .seconds(5)
+        while toast.message != nil, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         #expect(toast.message == nil)
     }
 
