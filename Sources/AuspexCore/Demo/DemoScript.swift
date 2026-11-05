@@ -409,7 +409,7 @@ extension DemoScript {
 // MARK: - The cast
 
 extension DemoScript.Blueprint {
-    /// The fourteen sessions the demo board shows.
+    /// The seventeen sessions the demo board shows.
     ///
     /// Chosen to cover all eight featured harnesses, every state the card can
     /// be in, both grouping axes (five directories, two of them shared by
@@ -897,7 +897,7 @@ extension DemoScript.Blueprint {
         //     `~/Documents/Codex/<date>/<name>`, a folder made for this one
         //     conversation. It has a directory and it is not a project, which
         //     is the whole of what this session is on the board to show — it
-        //     belongs under "Codex · scratch" with `zhe` on its card, not
+        //     belongs under Projectless with `zhe` as its directory, not
         //     under a project called `zhe` that will mean nothing tomorrow.
         DemoScript.Blueprint(
             harness: .codex,
@@ -969,6 +969,94 @@ extension DemoScript.Blueprint {
                 .idle(9.0)
             ],
             startDelay: 3.4
+        ),
+
+        // 15–17. Three more sessions that are in no project, so the
+        //     Projectless section on a screenshot holds every kind it exists
+        //     for: 13's desktop chat folder, a Claude Desktop scratch
+        //     workspace, a chat with no folder at all, and a review whose
+        //     thread is not on the board — counted under the section rather
+        //     than listed in it.
+        DemoScript.Blueprint(
+            harness: .claudeCode,
+            sessionID: "5e9b2c71-0d4a-4f88-b6e3-91a7c4d2f058",
+            cwd: "/Users/example/Library/Application Support/Claude/scratch-workspaces"
+                + "/ws-demo/7d3e/scratch-2026-08-19-4b1f",
+            gitRoot: nil,
+            branch: nil,
+            title: "Draft the on-call handover note",
+            model: "claude-opus-5",
+            pid: 45_310,
+            entrypoint: "claude-desktop",
+            variant: nil,
+            prologue: [
+                .prompt("Turn this week's pages into a handover note for the next on-call"),
+                .think(1.0),
+                .say("Four pages, two of them the same flapping health check."),
+                .endTurn
+            ],
+            live: [
+                .prompt("Lead with the flapping check and what we tried"),
+                .think(2.2),
+                .write("handover.md", 6.0),
+                .say("Drafted; the flapping check is first, with the two mitigations that did not hold."),
+                .usage(8_900, 1_420, 2_600),
+                .endTurn,
+                .idle(10.0)
+            ],
+            startDelay: 2.8
+        ),
+        DemoScript.Blueprint(
+            harness: .cursor,
+            sessionID: "c4f81e06a93d2b57",
+            cwd: nil,
+            gitRoot: nil,
+            branch: nil,
+            title: "Name the new queue metrics",
+            model: "composer-2",
+            pid: nil,
+            entrypoint: "ide",
+            variant: nil,
+            prologue: [
+                .prompt("Suggest names for the queue's lag and retry metrics"),
+                .think(0.9),
+                .say("queue_lag_seconds and queue_retries_total, following the existing prefix."),
+                .endTurn
+            ],
+            live: [
+                .prompt("And for the dead-letter count?"),
+                .think(1.6),
+                .say("queue_dead_letters_total — a counter, so it ends in _total."),
+                .endTurn,
+                .idle(12.0)
+            ],
+            startDelay: 3.0
+        ),
+        DemoScript.Blueprint(
+            harness: .codex,
+            sessionID: "0198f9a2-5c3e-7b41-9d06-2e8f4a7c1b39",
+            cwd: nil,
+            gitRoot: nil,
+            branch: nil,
+            title: "Review the queue metrics change",
+            model: "codex-auto-review",
+            pid: nil,
+            entrypoint: "subagent",
+            // A root that is not on the demo board: the review has nothing to
+            // fold under, which is the case Projectless counts.
+            variant: "auto-review:0198e000-0000-7000-8000-00000000d3a0",
+            prologue: [
+                .prompt("Review the metric names before they ship"),
+                .think(0.7),
+                .endTurn
+            ],
+            live: [
+                .think(1.2),
+                .say("The names follow the house convention."),
+                .endTurn,
+                .idle(15.0)
+            ],
+            startDelay: 3.6
         )
     ]
 }
