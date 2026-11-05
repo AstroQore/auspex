@@ -184,10 +184,10 @@ struct SceneClockTests {
 
     // MARK: - Rates, and staying asleep
 
-    @Test("Now's stage draws at half the aviary's rate, gesture or not")
+    @Test("Now's stage draws at a third of the aviary's resting rate, and half its gesture rate")
     func stageRates() {
         #expect(OfficeSKView.Rates.aviary == .init(resting: 30, gesture: 60))
-        #expect(OfficeSKView.Rates.stage == .init(resting: 15, gesture: 30))
+        #expect(OfficeSKView.Rates.stage == .init(resting: 10, gesture: 30))
 
         let (view, _) = Self.canvas(reduceMotion: true)
         view.skView.rates = .stage
@@ -197,7 +197,7 @@ struct SceneClockTests {
         view.noteInteraction()
         #expect(view.skView.preferredFramesPerSecond == 30)
         view.advance(to: CACurrentMediaTime() + 10)
-        #expect(view.skView.preferredFramesPerSecond == 15)
+        #expect(view.skView.preferredFramesPerSecond == 10)
     }
 
     @Test("A view nobody can see stays asleep whatever changes under it")

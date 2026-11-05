@@ -587,11 +587,14 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
 ///   vsync. The scene reports which frames were still; see
 ///   `OfficeScene.didFinishUpdate()`.
 ///
-/// The resting rate is thirty in the aviary and fifteen on Now's stage: the
-/// fastest thing in the office is a typing hand at ten changes a second, and
-/// the stage is a strip a third the height of the window that sits on the
-/// default screen all day. A gesture gets twice the resting rate, for as long
-/// as it lasts.
+/// The resting rate is thirty in the aviary and ten on Now's stage: the
+/// fastest thing in the office is a typing hand at about ten changes a
+/// second, and the stage is a strip a third the height of the window that
+/// sits on the default screen all day. Every frame it draws is also a Core
+/// Animation commit of the window it sits in, which is the larger half of
+/// what a running stage costs: measured with three people working, ten
+/// frames a second instead of fifteen took about 1.2 % process CPU off. A
+/// gesture gets thirty, for as long as it lasts.
 final class OfficeSKView: SKView {
     /// How fast the office is drawn while something in it moves, and while a
     /// hand is on it.
@@ -606,7 +609,7 @@ final class OfficeSKView: SKView {
         /// Now's stage: a strip over the lists, open all day on the default
         /// screen, where a picture that is glanced at does not need the
         /// aviary's rate.
-        static let stage = Rates(resting: 15, gesture: 30)
+        static let stage = Rates(resting: 10, gesture: 30)
     }
 
     /// Which pair of rates this view runs at.
@@ -770,7 +773,7 @@ final class OfficeSKView: SKView {
     ///
     /// Unpausing an `SKView` asks SpriteKit to start its display link, and
     /// about one launch in six it did not: the view said it was running —
-    /// on screen, unpaused, fifteen frames a second — and the scene was never
+    /// on screen, unpaused, at its resting rate — and the scene was never
     /// asked for a single frame. Nothing in the view's own state can tell
     /// that apart from a scene with nothing to draw, so the stage showed
     /// whatever was last on the glass — the grid with no rooms on it, or a

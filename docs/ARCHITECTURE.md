@@ -374,8 +374,8 @@ The view, not the scene, answers "is anybody looking at this": `OfficeSKView`
 watches window occlusion, superview, and hidden state, and suspends the render
 loop, the scene's actions, and the frame rate together when the answer is no.
 While something is moving it draws at a resting rate — 30 fps in the Aviary,
-15 on Now's stage; the fastest thing in the office is a typing hand at ten
-changes a second — and at twice that for the length of a gesture.
+10 on Now's stage; the fastest thing in the office is a typing hand at ten
+changes a second — and at 60 and 30 respectively for the length of a gesture.
 
 It also answers "is there anything to look at". An unpaused `SKView`'s display
 link fires at the display's rate whatever its frame rate says, so the only
