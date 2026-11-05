@@ -84,6 +84,88 @@ struct CodexThreadSpawnTests {
             == nil)
     }
 
+    /// Five generations of ancestors, each spawned by the one before, as a
+    /// fork five deep replays them ahead of its own header.
+    private var ancestry: [String] {
+        (1...5).map { String(format: "0198b000-0000-7000-8000-%012d", $0) }
+    }
+
+    /// A line that is not a header: the first record after one.
+    private func record(_ type: String = "response_item", padding: Int = 0) -> Data {
+        let object: [String: Any] = [
+            "timestamp": "2026-08-21T00:00:01Z",
+            "type": type,
+            "payload": ["type": "message", "text": String(repeating: "x", count: padding)],
+        ]
+        return try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    }
+
+    @Test("a fork five deep finds its own header after the five it replays")
+    func deepReplayFindsOwnHeader() throws {
+        let ancestors = ancestry
+        var lines: [Data] = []
+        for (index, id) in ancestors.enumerated() {
+            lines.append(header(id: id, parent: index == 0 ? nil : ancestors[index - 1]))
+        }
+        lines.append(header(id: childID, parent: ancestors[4]))
+        lines.append(record())
+
+        // The header is six lines long — the window of four this replaced
+        // never reached the last of them.
+        #expect(CodexThreadSpawn.parse(headerLines: lines, sessionID: childID)?.parentThreadID
+            == ancestors[4])
+
+        let root = try GitFixtures.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = root.appendingPathComponent("rollout-\(childID).jsonl")
+        var contents = Data()
+        for line in lines + [record(padding: 40_000), record()] {
+            contents.append(line)
+            contents.append(Data("\n".utf8))
+        }
+        try contents.write(to: rollout)
+
+        let read = CodexThreadSpawn.headerLines(url: rollout, chunkSize: 512)
+        // Every header line and the one record that ended the run; nothing
+        // after it is read.
+        #expect(read.count == 7)
+        #expect(CodexThreadSpawn.read(rolloutAt: rollout.path, sessionID: childID)?.parentThreadID
+            == ancestors[4])
+    }
+
+    @Test("the header ends at the first record that is not one")
+    func headerEndsAtFirstRecord() {
+        // A `session_meta` after the run is not this thread's header, whatever
+        // it says.
+        #expect(CodexThreadSpawn.parse(
+            headerLines: [record(), header(id: childID, parent: parentID)], sessionID: childID
+        ) == nil)
+        #expect(CodexThreadSpawn.parse(
+            headerLines: [header(id: childID), record(), header(id: childID, parent: parentID)],
+            sessionID: childID
+        ) == nil)
+        // A run of nothing but ancestors names no spawn for this thread.
+        let ancestors = ancestry
+        #expect(CodexThreadSpawn.parse(
+            headerLines: [header(id: ancestors[0]), header(id: ancestors[1], parent: ancestors[0])],
+            sessionID: childID
+        ) == nil)
+    }
+
+    @Test("the scan stops at its line cap on a file that is all header")
+    func headerScanIsBounded() throws {
+        let root = try GitFixtures.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = root.appendingPathComponent("rollout-\(childID).jsonl")
+        var contents = Data()
+        for index in 0..<(CodexThreadSpawn.headerLimit + 20) {
+            contents.append(header(id: String(format: "0198c000-0000-7000-8000-%012d", index)))
+            contents.append(Data("\n".utf8))
+        }
+        try contents.write(to: rollout)
+        #expect(CodexThreadSpawn.headerLines(url: rollout).count == CodexThreadSpawn.headerLimit)
+    }
+
     @Test("the variant is read back from the identity, for the Codex store only")
     func variantRoundTrip() {
         var identity = Fixtures.identity(key: Fixtures.key(.codex, childID), cwd: nil)

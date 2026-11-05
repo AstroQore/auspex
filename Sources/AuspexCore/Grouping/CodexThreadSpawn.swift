@@ -55,46 +55,123 @@ public struct CodexThreadSpawn: Sendable, Hashable {
 
     // MARK: - Reading the header
 
-    /// How many head lines are looked through. A forked thread replays its
-    /// ancestors' headers before or after its own; four is room for that and
-    /// still a bounded read.
-    static let headerWindow = 4
+    /// The most head lines looked through.
+    ///
+    /// A forked thread replays every ancestor's `session_meta` ahead of its
+    /// own, one per generation, so the header is as long as the chain is deep
+    /// — a fixed window of four lost the thread's own header at depth four.
+    /// The scan stops at the first record that is not a `session_meta`, which
+    /// is where every real header ends; this cap is only what keeps a file
+    /// that never stops being one from being read whole.
+    static let headerLimit = 64
+
+    /// The longest single header line read before the scan gives up on it.
+    ///
+    /// A `session_meta` carries the base instructions and runs to tens of
+    /// kilobytes; the first record after the header can be a tool output of
+    /// any size, and reading a megabyte of it to learn it is not a header is
+    /// the whole cost this bound exists to refuse.
+    static let headerLineLimit = 1 << 20
 
     /// The spawn the header of `sessionID`'s rollout records, or `nil` when it
     /// records none.
     ///
-    /// A header whose `id` names another thread is an ancestor's, replayed,
-    /// and is skipped — the same rule the kit's mapper applies.
+    /// The header is the leading run of `session_meta` records, and it ends at
+    /// the first line that is not one. A forked thread's run holds its
+    /// ancestors' headers, replayed, and then its own; so the thread's header
+    /// is the **last** one in the run that names this thread (or names none).
+    /// One whose `id` names another thread is an ancestor's and is never
+    /// read as this thread's — the same rule the kit's mapper applies — and a
+    /// `session_meta` after the run ended is not part of the header at all.
     public static func parse(headerLines: [Data], sessionID: String) -> CodexThreadSpawn? {
-        for line in headerLines {
+        var own: [String: Any]?
+        for line in headerLines.prefix(headerLimit) {
             guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                  object["type"] as? String == "session_meta",
-                  let payload = object["payload"] as? [String: Any]
-            else { continue }
+                  object["type"] as? String == "session_meta"
+            else { break }
+            guard let payload = object["payload"] as? [String: Any] else { continue }
             if let id = payload["id"] as? String,
                id.caseInsensitiveCompare(sessionID) != .orderedSame {
                 continue
             }
-            let source = payload["source"] as? [String: Any]
-            let subagent = source?["subagent"] as? [String: Any]
-            guard let spawn = subagent?["thread_spawn"] as? [String: Any],
-                  let parent = (spawn["parent_thread_id"] as? String)?
-                      .trimmingCharacters(in: .whitespaces),
-                  !parent.isEmpty,
-                  parent.caseInsensitiveCompare(sessionID) != .orderedSame
-            else { return nil }
-            return CodexThreadSpawn(parentThreadID: parent)
+            own = payload
         }
-        return nil
+        guard let own else { return nil }
+        let source = own["source"] as? [String: Any]
+        let subagent = source?["subagent"] as? [String: Any]
+        guard let spawn = subagent?["thread_spawn"] as? [String: Any],
+              let parent = (spawn["parent_thread_id"] as? String)?
+                  .trimmingCharacters(in: .whitespaces),
+              !parent.isEmpty,
+              parent.caseInsensitiveCompare(sessionID) != .orderedSame
+        else { return nil }
+        return CodexThreadSpawn(parentThreadID: parent)
     }
 
-    /// Reads the head of a rollout and parses it. Read-only, bounded to
-    /// ``headerWindow`` lines; nothing from the file is kept but the parent's
-    /// thread id.
+    /// Reads the head of a rollout and parses it. Read-only, and it reads no
+    /// further than the first record after the header — see ``headerLimit``;
+    /// nothing from the file is kept but the parent's thread id.
     public static func read(rolloutAt path: String, sessionID: String) -> CodexThreadSpawn? {
         guard !path.isEmpty else { return nil }
-        let lines = JSONLHeadTail.headLines(url: URL(fileURLWithPath: path), count: headerWindow)
+        let lines = headerLines(url: URL(fileURLWithPath: path))
         return parse(headerLines: lines, sessionID: sessionID)
+    }
+
+    /// The rollout's leading `session_meta` lines, plus the one line after
+    /// them that ended the run, at most ``headerLimit`` of them.
+    ///
+    /// Streams the file a chunk at a time rather than asking for a fixed
+    /// number of lines, because the line that ends the header is the one that
+    /// can be enormous and nothing past it is wanted. A line longer than
+    /// ``headerLineLimit`` ends the read as though it were that line.
+    static func headerLines(url: URL, chunkSize: Int = 16 * 1024) -> [Data] {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
+        defer { try? handle.close() }
+        var out: [Data] = []
+        // One growing buffer and two cursors — where the current line began
+        // and how far it has been searched — so a long line is scanned once,
+        // not once per chunk that extends it.
+        var buffer: [UInt8] = []
+        var lineStart = 0
+        var searched = 0
+        while out.count < headerLimit {
+            guard let chunk = try? handle.read(upToCount: chunkSize), !chunk.isEmpty else {
+                break
+            }
+            buffer.append(contentsOf: chunk)
+            while searched < buffer.count {
+                guard buffer[searched] == 0x0A else {
+                    searched += 1
+                    continue
+                }
+                if searched > lineStart {
+                    out.append(Data(buffer[lineStart..<searched]))
+                    if out.count >= headerLimit || !isSessionMeta(out[out.count - 1]) {
+                        return out
+                    }
+                }
+                searched += 1
+                lineStart = searched
+            }
+            if searched - lineStart > headerLineLimit { return out }
+            if lineStart > chunkSize {
+                buffer.removeFirst(lineStart)
+                searched -= lineStart
+                lineStart = 0
+            }
+        }
+        if lineStart < buffer.count, out.count < headerLimit {
+            out.append(Data(buffer[lineStart...]))
+        }
+        return out
+    }
+
+    /// Whether one line is a `session_meta` record.
+    private static func isSessionMeta(_ line: Data) -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+            return false
+        }
+        return object["type"] as? String == "session_meta"
     }
 
     /// Whether an identity could be a Codex-spawned thread whose header is
