@@ -77,6 +77,13 @@ public actor SessionRegistry {
     /// that would make the answer expensive, and the first grouping pass after
     /// one re-resolves every directory on the board anyway.
     private var sandboxThreads: [SessionKey: String] = [:]
+    /// Sessions in no repository whose project is not their own directory —
+    /// a run folder filed under its workspace, a folder under one of the
+    /// person's project roots — and the root they were placed under. See
+    /// ``ProjectRollup``. Handed to every frame for the reason
+    /// ``sandboxThreads`` is, and rebuilt by the first grouping pass after a
+    /// restart in the same way.
+    private var workspaceRoots: [SessionKey: String] = [:]
 
     /// The sessions whose rows are known to be in the store, and the parent
     /// each was last written with.
@@ -239,7 +246,8 @@ public actor SessionRegistry {
         BoardSnapshot(
             generatedAt: Date(),
             sessions: Array(snapshots.values),
-            sandboxThreads: sandboxThreads
+            sandboxThreads: sandboxThreads,
+            workspaceRoots: workspaceRoots
         )
     }
 
@@ -434,6 +442,16 @@ public actor SessionRegistry {
             let scratchName = placement.isProjectless ? placement.projectName : nil
             if sandboxThreads[key] != scratchName {
                 sandboxThreads[key] = scratchName
+                reclassified = true
+            }
+            // A plain directory filed under a root that is not itself moves
+            // to that root's heading without its identity changing, so the
+            // frame has to be told — the same as a folder marked as scratch.
+            let rolledUp = !placement.isProjectless && placement.gitRoot == nil
+                && placement.projectRootPath != current.identity.cwd
+                ? placement.projectRootPath : nil
+            if workspaceRoots[key] != rolledUp {
+                workspaceRoots[key] = rolledUp
                 reclassified = true
             }
 

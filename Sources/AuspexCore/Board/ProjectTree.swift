@@ -380,6 +380,10 @@ public struct ProjectTree: Sendable, Equatable {
     /// and not any member, for the reason the wall's harness sections use: one
     /// piece of work belongs in one place, and a delegation whose subagents
     /// have no directory of their own belongs where its orchestrator is.
+    ///
+    /// A workspace a plain directory rolled up to is the checkout for every
+    /// run folder under it, so sixty runs of one job are sixty rows under one
+    /// heading rather than sixty headings.
     private static func checkouts(
         in units: [TaskUnit],
         projectKey: String,
@@ -391,7 +395,8 @@ public struct ProjectTree: Sendable, Equatable {
 
         for unit in units {
             let identity = board.session(for: unit.lead.key)?.identity
-            let path = identity?.worktreePath ?? identity?.gitRoot ?? identity?.cwd
+            let path = identity?.worktreePath ?? identity?.gitRoot
+                ?? board.workspaceRoots[unit.lead.key] ?? identity?.cwd
             let id = path ?? projectKey
             if byCheckout[id] == nil {
                 byCheckout[id] = []

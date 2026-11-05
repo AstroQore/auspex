@@ -233,6 +233,7 @@ public final class AppEnvironment {
         // everything for a moment and then settling.
         catalog.onChange = { [weak self, board, catalog] claims, rules, showsIgnored in
             self?.applyScratchFolders(rules.scratchPrefixes)
+            self?.applyProjectRoots(claims.projects.flatMap(\.roots))
             board.setUserLayer(
                 claims: claims,
                 rules: rules,
@@ -599,7 +600,12 @@ public final class AppEnvironment {
                 rules: ScratchRules(home: DemoScript.homeDirectory),
                 directoryExists: { _ in true }
             )
-            : PlacementService(rules: ScratchRules(userPrefixes: catalog.rules.scratchPrefixes))
+            : PlacementService(
+                rules: ScratchRules(userPrefixes: catalog.rules.scratchPrefixes),
+                // From the first pass, so a folder the person pinned as a
+                // project is never rolled up into its workspace for a tick.
+                projectRoots: catalog.projects.flatMap(\.roots)
+            )
         self.placements = placements
         let groupingTable: any ProcessTableReading
         if mode == .demo {
@@ -621,6 +627,15 @@ public final class AppEnvironment {
     private func applyScratchFolders(_ prefixes: [String]) {
         guard let placements else { return }
         Task { await placements.setUserScratchPrefixes(prefixes) }
+    }
+
+    /// Hands the roots of the person's own projects to the placement service,
+    /// which files a plain directory under the deepest of them before rolling
+    /// it up to its workspace. See ``ProjectRollup``. The same no-op rules as
+    /// ``applyScratchFolders(_:)``.
+    private func applyProjectRoots(_ roots: [String]) {
+        guard let placements else { return }
+        Task { await placements.setUserProjectRoots(roots) }
     }
 
     /// Stops every producer and flushes what the registry has buffered.

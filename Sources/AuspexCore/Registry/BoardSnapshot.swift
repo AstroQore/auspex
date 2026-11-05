@@ -54,6 +54,15 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// like the behaviour before there was such a thing as scratch.
     public let sandboxThreads: [SessionKey: String]
 
+    /// The sessions in no repository that are filed under a root other than
+    /// their own directory, and that root — see ``ProjectRollup``.
+    ///
+    /// Carried on the frame for the reason ``sandboxThreads`` is: the answer
+    /// needs the disk and the person's project roots, and the placement
+    /// service already asked both. Empty on a frame nothing has been placed on
+    /// yet, which groups every plain directory by itself, as it always did.
+    public let workspaceRoots: [SessionKey: String]
+
     /// Where each session sits in ``sessions``.
     ///
     /// Built once with the frame. ``session(for:)`` used to be a linear scan,
@@ -122,7 +131,8 @@ public struct BoardSnapshot: Sendable, Equatable {
         generatedAt: Date,
         sessions: [SessionSnapshot],
         claims: ProjectClaims = .empty,
-        sandboxThreads: [SessionKey: String] = [:]
+        sandboxThreads: [SessionKey: String] = [:],
+        workspaceRoots: [SessionKey: String] = [:]
     ) {
         self.generatedAt = generatedAt
         self.sessions = Self.sorted(sessions)
@@ -130,6 +140,7 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = SessionTreeBuilder.build(self.sessions)
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.workspaceRoots = workspaceRoots
         self.index = Self.makeIndex(self.sessions)
     }
 
@@ -147,6 +158,7 @@ public struct BoardSnapshot: Sendable, Equatable {
         tree: SessionTree,
         claims: ProjectClaims,
         sandboxThreads: [SessionKey: String],
+        workspaceRoots: [SessionKey: String],
         index: [SessionKey: Int]? = nil
     ) {
         self.generatedAt = generatedAt
@@ -155,6 +167,7 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = tree
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.workspaceRoots = workspaceRoots
         self.index = index ?? Self.makeIndex(sessions)
     }
 
@@ -177,6 +190,7 @@ public struct BoardSnapshot: Sendable, Equatable {
             && lhs.tree == rhs.tree
             && lhs.claims == rhs.claims
             && lhs.sandboxThreads == rhs.sandboxThreads
+            && lhs.workspaceRoots == rhs.workspaceRoots
     }
 
     /// An empty board, for a view's initial state.
@@ -198,6 +212,7 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// without changing the session.
     public func saysTheSameAs(_ other: BoardSnapshot) -> Bool {
         sessions == other.sessions && claims == other.claims && sandboxThreads == other.sandboxThreads
+            && workspaceRoots == other.workspaceRoots
     }
 
     /// The same frame, placed by a different set of user projects.
@@ -210,6 +225,7 @@ public struct BoardSnapshot: Sendable, Equatable {
             tree: tree,
             claims: claims,
             sandboxThreads: sandboxThreads,
+            workspaceRoots: workspaceRoots,
             index: index
         )
     }
@@ -230,7 +246,8 @@ public struct BoardSnapshot: Sendable, Equatable {
             counts: Counts(sessions: kept),
             tree: SessionTreeBuilder.build(kept),
             claims: claims,
-            sandboxThreads: sandboxThreads
+            sandboxThreads: sandboxThreads,
+            workspaceRoots: workspaceRoots
         )
     }
 
@@ -326,7 +343,7 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// inventing a project of one. See ``CodexThreadSpawn``.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let claimed = claims.key(for: session) { return claimed }
-        if groupsByOwnDirectory(session), let own = Self.projectKey(for: session) { return own }
+        if groupsByOwnDirectory(session), let own = ownKey(for: session) { return own }
         var seen: Set<SessionKey> = [session.key]
         var current = session.identity.parent
         while let key = current, seen.insert(key).inserted {
@@ -339,7 +356,7 @@ public struct BoardSnapshot: Sendable, Equatable {
                 // parent sits in a section.
                 return PseudoProject.scratchKey(for: ancestor.key.harness)
             }
-            if !inheritsProject(ancestor), let inherited = Self.projectKey(for: ancestor) {
+            if !inheritsProject(ancestor), let inherited = ownKey(for: ancestor) {
                 return inherited
             }
             current = ancestor.identity.parent
@@ -349,6 +366,17 @@ public struct BoardSnapshot: Sendable, Equatable {
         }
         guard !session.key.harness.recordsWorkingDirectory else { return nil }
         return PseudoProject.key(for: session.key.harness)
+    }
+
+    /// The key a session's own directory gives it: the git root, then the
+    /// workspace it was rolled up to (``workspaceRoots``), then the
+    /// directory. `nil` for a session that reported none of them — an empty
+    /// string is no directory.
+    private func ownKey(for session: SessionSnapshot) -> String? {
+        if let root = session.identity.gitRoot, !root.isEmpty { return root }
+        if let root = workspaceRoots[session.key] { return root }
+        if let cwd = session.identity.cwd, !cwd.isEmpty { return cwd }
+        return nil
     }
 
     /// Whether this session's own directory can be its project key — neither
@@ -391,6 +419,8 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// Ignores the tree — see ``projectKey(for:)-(SessionSnapshot)`` for the
     /// answer a board groups by.
     public static func projectKey(for session: SessionSnapshot) -> String? {
-        session.identity.gitRoot ?? session.identity.cwd
+        if let root = session.identity.gitRoot, !root.isEmpty { return root }
+        if let cwd = session.identity.cwd, !cwd.isEmpty { return cwd }
+        return nil
     }
 }

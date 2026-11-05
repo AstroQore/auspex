@@ -54,7 +54,8 @@ public enum SceneUnits {
             generatedAt: board.generatedAt,
             sessions: leads,
             claims: board.claims,
-            sandboxThreads: board.sandboxThreads
+            sandboxThreads: board.sandboxThreads,
+            workspaceRoots: board.workspaceRoots
         )
     }
 

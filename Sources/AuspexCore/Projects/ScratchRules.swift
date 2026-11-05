@@ -51,6 +51,10 @@ public struct ScratchRules: Sendable, Equatable {
         case temporary = "temporary"
         /// A directory that is not on this Mac at all.
         case missing = "missing"
+        /// The filesystem root, a volume's root, another account's home — a
+        /// place that holds workspaces rather than being one. See
+        /// ``ProjectRollup``.
+        case root = "root"
         /// A folder the person marked as scratch in Settings.
         case userRule = "rule"
     }
