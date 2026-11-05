@@ -2,6 +2,7 @@ import AgentSessionKit
 import AgentSessionLive
 import Foundation
 import GRDB
+import Synchronization
 import Testing
 
 @testable import AuspexCore
@@ -152,6 +153,76 @@ struct ScratchRulesTests {
         // The same rules again change nothing, and so forget nothing.
         await service.setUserScratchPrefixes(["/Users/example/Downloads/"])
         #expect(await service.placement(for: key, cwd: "/Users/example/Downloads/zip-1") == nil)
+    }
+
+    // MARK: - Missing, and then not
+
+    @Test("a folder that was missing is asked about again, and found")
+    func missingIsRechecked() async throws {
+        let present = Mutex<Set<String>>([])
+        let service = PlacementService(
+            resolver: ProjectResolver(homeDirectory: "/Users/example"),
+            rules: rules,
+            directoryExists: { path in present.withLock { $0.contains(path) } }
+        )
+        let key = Fixtures.key(.claudeCode, "late")
+        let identity = Fixtures.identity(key: key, cwd: "/Users/example/work/late")
+
+        let first = await service.placements(for: [identity])
+        #expect(first[key]?.placementNote == ScratchRules.Reason.missing.rawValue)
+        // Nothing moved: the next pass has nothing to say.
+        #expect(await service.placements(for: [identity]).isEmpty)
+
+        // Still missing at the recheck: still nothing to say, rather than the
+        // same answer handed back to be written again.
+        await service.recheckMissing()
+        #expect(await service.placements(for: [identity]).isEmpty)
+
+        // The folder appears; the next sweep finds it.
+        _ = present.withLock { $0.insert("/Users/example/work/late") }
+        await service.recheckMissing()
+        let second = await service.placements(for: [identity])
+        #expect(second[key]?.isProjectless == false)
+        #expect(second[key]?.projectRootPath == "/Users/example/work/late")
+        #expect(await service.placements(for: [identity]).isEmpty)
+    }
+
+    @Test("the recheck runs on its own once a sweep interval has passed")
+    func missingRecheckOnTheClock() async throws {
+        let present = Mutex<Set<String>>([])
+        let now = Mutex(Fixtures.date(0))
+        let service = PlacementService(
+            resolver: ProjectResolver(homeDirectory: "/Users/example"),
+            rules: rules,
+            directoryExists: { path in present.withLock { $0.contains(path) } },
+            clock: { now.withLock { $0 } }
+        )
+        let key = Fixtures.key(.claudeCode, "late")
+        let identity = Fixtures.identity(key: key, cwd: "/Users/example/work/late")
+        #expect(await service.placements(for: [identity])[key]?.placementNote
+            == ScratchRules.Reason.missing.rawValue)
+
+        _ = present.withLock { $0.insert("/Users/example/work/late") }
+        // Before the interval, the verdict stands.
+        now.withLock { $0 = Fixtures.date(PlacementService.missingRecheckInterval - 1) }
+        #expect(await service.placements(for: [identity]).isEmpty)
+        now.withLock { $0 = Fixtures.date(PlacementService.missingRecheckInterval) }
+        #expect(await service.placements(for: [identity])[key]?.isProjectless == false)
+    }
+
+    @Test("a new session in a folder that came back is placed there at once")
+    func missingIsNotRemembered() async throws {
+        let present = Mutex<Set<String>>([])
+        let service = PlacementService(
+            resolver: ProjectResolver(homeDirectory: "/Users/example"),
+            rules: rules,
+            directoryExists: { path in present.withLock { $0.contains(path) } }
+        )
+        let first = await service.placement(for: Fixtures.key(.codex, "a"), cwd: "/Users/example/w/x")
+        #expect(first?.isProjectless == true)
+        _ = present.withLock { $0.insert("/Users/example/w/x") }
+        let second = await service.placement(for: Fixtures.key(.codex, "b"), cwd: "/Users/example/w/x")
+        #expect(second?.isProjectless == false)
     }
 
     // MARK: - Through the registry

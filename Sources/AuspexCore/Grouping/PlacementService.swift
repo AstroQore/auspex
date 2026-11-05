@@ -29,19 +29,38 @@ import Foundation
 /// directory they claim never reaches the resolver: it is placed as scratch
 /// and gets no `projects` row. After the resolver, one more question — a
 /// directory in no repository that is not on this Mac either is scratch too.
-/// That one needs the disk, so its answer is remembered per directory and the
-/// `stat` happens once however many sessions report the same folder.
+///
+/// ## Asking the disk
+///
+/// A directory that *is* there is remembered, so the `stat` happens once
+/// however many sessions report the same folder. A directory that is **not**
+/// there is never remembered: a missing folder is the one answer that can
+/// change for the better, so every fresh resolution asks again, and the
+/// sessions already placed as missing are asked again on every
+/// ``missingRecheckInterval`` — the cadence of the ingest layer's own full
+/// rediscovery sweep — or when a host calls ``recheckMissing()``.
 public actor PlacementService {
     private let resolver: ProjectResolver
     private var rules: ScratchRules
     private let directoryExists: @Sendable (String) -> Bool
+    private let clock: @Sendable () -> Date
     private var lastResolved: [SessionKey: String] = [:]
-    /// Whether a directory with no repository around it is on disk, by
-    /// directory. Asked once per directory, not once per session.
-    private var existence: [String: Bool] = [:]
+    /// Directories known to be on disk. Only the yes is kept — see the
+    /// type's note.
+    private var existing: Set<String> = []
+    /// What each session placed as missing was last told, so a recheck that
+    /// finds the folder still gone does not hand the same answer back.
+    private var placedMissing: [SessionKey: ProjectPlacement] = [:]
+    /// Sessions whose missing verdict is being asked again.
+    private var rechecking: Set<SessionKey> = []
+    private var lastMissingCheck: Date
+
+    /// How often the sessions placed as missing are asked about again: once
+    /// per full discovery sweep, which the ingest layer runs every minute.
+    public static let missingRecheckInterval: TimeInterval = 60
 
     /// Whether `path` names something on this Mac. The default for
-    /// ``init(resolver:rules:directoryExists:)``.
+    /// ``init(resolver:rules:directoryExists:clock:)``.
     public static let directoryExists: @Sendable (String) -> Bool = { path in
         FileManager.default.fileExists(atPath: path)
     }
@@ -53,14 +72,18 @@ public actor PlacementService {
     ///   - rules: what is scratch before a repository is even looked for.
     ///   - directoryExists: injected so the demo — whose directories are
     ///     invented — and a test can say what is on disk.
+    ///   - clock: what ``missingRecheckInterval`` is measured against.
     public init(
         resolver: ProjectResolver = ProjectResolver(),
         rules: ScratchRules = ScratchRules(),
-        directoryExists: @escaping @Sendable (String) -> Bool = PlacementService.directoryExists
+        directoryExists: @escaping @Sendable (String) -> Bool = PlacementService.directoryExists,
+        clock: @escaping @Sendable () -> Date = Date.init
     ) {
         self.resolver = resolver
         self.rules = rules
         self.directoryExists = directoryExists
+        self.clock = clock
+        self.lastMissingCheck = clock()
     }
 
     /// The placement for a session's directory, or `nil` when this session's
@@ -69,7 +92,14 @@ public actor PlacementService {
         guard !cwd.isEmpty else { return nil }
         guard lastResolved[key] != cwd else { return nil }
         lastResolved[key] = cwd
-        return await resolve(cwd: cwd, harness: key.harness)
+        let placement = await resolve(cwd: cwd, harness: key.harness)
+        let previous = rechecking.remove(key) != nil ? placedMissing[key] : nil
+        remember(placement, for: key)
+        // A recheck that found the folder still missing has nothing new to
+        // say, and saying it again would rewrite the session's row for
+        // nothing once a minute.
+        if let previous, previous == placement { return nil }
+        return placement
     }
 
     /// Resolves regardless of what was resolved before — for a caller that
@@ -77,7 +107,10 @@ public actor PlacementService {
     public func refresh(key: SessionKey, cwd: String) async -> ProjectPlacement? {
         guard !cwd.isEmpty else { return nil }
         lastResolved[key] = cwd
-        return await resolve(cwd: cwd, harness: key.harness)
+        rechecking.remove(key)
+        let placement = await resolve(cwd: cwd, harness: key.harness)
+        remember(placement, for: key)
+        return placement
     }
 
     /// Placements for every session on a board that has one to resolve,
@@ -85,8 +118,15 @@ public actor PlacementService {
     ///
     /// One pass over a snapshot, which is how a host drives this: after a
     /// frame, ask for whatever is new, and hand the result to
-    /// ``SessionRegistry/applyPlacements(_:)``.
+    /// ``SessionRegistry/applyPlacements(_:)``. Once per
+    /// ``missingRecheckInterval`` it first lets go of every missing verdict,
+    /// so a folder that came back is found on this pass.
     public func placements(for identities: [SessionIdentity]) async -> [SessionKey: ProjectPlacement] {
+        let now = clock()
+        if now.timeIntervalSince(lastMissingCheck) >= Self.missingRecheckInterval {
+            lastMissingCheck = now
+            recheckMissing()
+        }
         var out: [SessionKey: ProjectPlacement] = [:]
         for identity in identities {
             guard let cwd = identity.cwd,
@@ -113,20 +153,46 @@ public actor PlacementService {
     /// The rules in force. Test seam.
     public var scratchRules: ScratchRules { rules }
 
+    /// Asks again about every session placed under a folder that was missing.
+    ///
+    /// For a host that knows a full discovery sweep just ran; the service also
+    /// does this on its own once per ``missingRecheckInterval``. The next
+    /// ``placements(for:)`` pass resolves those sessions afresh, and hands
+    /// back only the ones whose answer changed.
+    public func recheckMissing() {
+        existing.removeAll(keepingCapacity: true)
+        for key in placedMissing.keys {
+            lastResolved[key] = nil
+            rechecking.insert(key)
+        }
+    }
+
     /// Forgets what has been resolved, so the next report of any directory
     /// resolves again.
     public func forgetAll() {
         lastResolved.removeAll(keepingCapacity: true)
-        existence.removeAll(keepingCapacity: true)
+        existing.removeAll(keepingCapacity: true)
+        placedMissing.removeAll(keepingCapacity: true)
+        rechecking.removeAll(keepingCapacity: true)
         Task { [resolver] in await resolver.invalidateAll() }
     }
 
     /// Forgets one session — a host calls this when a session is re-seeded.
     public func forget(_ key: SessionKey) {
         lastResolved[key] = nil
+        placedMissing[key] = nil
+        rechecking.remove(key)
     }
 
     // MARK: - Resolving
+
+    private func remember(_ placement: ProjectPlacement, for key: SessionKey) {
+        if placement.placementNote == ScratchRules.Reason.missing.rawValue {
+            placedMissing[key] = placement
+        } else {
+            placedMissing[key] = nil
+        }
+    }
 
     private func resolve(cwd: String, harness: Harness) async -> ProjectPlacement {
         if let match = rules.match(cwd: cwd, harness: harness) {
@@ -143,9 +209,9 @@ public actor PlacementService {
     }
 
     private func exists(_ directory: String) -> Bool {
-        if let known = existence[directory] { return known }
-        let answer = directoryExists(directory)
-        existence[directory] = answer
-        return answer
+        if existing.contains(directory) { return true }
+        guard directoryExists(directory) else { return false }
+        existing.insert(directory)
+        return true
     }
 }
