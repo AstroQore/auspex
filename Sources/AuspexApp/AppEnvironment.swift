@@ -161,6 +161,16 @@ public final class AppEnvironment {
     /// size from the machine.
     private let demoScale: Int
 
+    /// How many fabricated tasks a demo seeds on top of its own small board —
+    /// `AUSPEX_DEMO_TASKS`. See ``DemoBulkLedger``. Zero, and ignored, in a
+    /// live run.
+    private let demoTaskCount: Int
+
+    /// The pages the window turns to, when the command line said — and how
+    /// long it waits before each. See ``AppLaunchOptions/sections``.
+    var launchSections: [BoardSection] = []
+    var launchSectionDelay: Duration = .zero
+
     /// An appearance the command line asked for, which is not written down.
     ///
     /// It exists for the same reason ``AppLaunchOptions/viewMode`` does: the
@@ -184,12 +194,19 @@ public final class AppEnvironment {
         paths: AuspexPaths = .default,
         mode: Mode = .live,
         offersSignalTarget: Bool = true,
-        demoScale: Int = 1
+        demoScale: Int = 1,
+        demoTaskCount: Int? = nil
     ) {
         self.paths = paths
         self.mode = mode
         self.offersSignalTarget = offersSignalTarget
         self.demoScale = AppLaunchOptions.clampedScale(demoScale)
+        // Read here as well as from the launch options, so an offscreen
+        // renderer — which builds its own environment — seeds the same ledger
+        // a launch with the same variable would.
+        self.demoTaskCount = mode == .demo
+            ? (demoTaskCount ?? DemoBulkLedger.requestedCount(in: ProcessInfo.processInfo.environment))
+            : 0
         self.loginItem = mode == .live ? LoginItemController() : .preview()
         // The demo may not read or write `~/.auspex/`, so its catalog has no
         // stores behind it: whatever it is given lives in memory for as long
@@ -305,7 +322,13 @@ public final class AppEnvironment {
         // demo whose plan arrived a frame later would show its own empty state
         // for that frame. It writes into the in-memory store a demo makes for
         // itself and never into `~/.auspex/`.
-        if mode == .demo { try? DemoTaskLedger.seed(into: TaskRepository(store: store)) }
+        if mode == .demo {
+            try? DemoTaskLedger.seed(into: TaskRepository(store: store))
+            try? DemoBulkLedger.seed(into: TaskRepository(store: store), count: demoTaskCount)
+            // The pass the live app runs a minute after launch, run now: a
+            // demo seeded with six weeks of ledger should show it tidied.
+            if demoTaskCount > 0 { _ = try? LedgerHygiene(store: store).runPass() }
+        }
         board.startLedger(repository: TaskRepository(store: store))
         board.startMap(
             repository: MapRepository(store: store),
@@ -313,6 +336,12 @@ public final class AppEnvironment {
         )
         tasks.start(repository: TaskRepository(store: store))
         tasks.onLedgerChange = { [weak board] in board?.reloadLedger() }
+        // The Tasks page is derived only while it is the page on screen.
+        board.onNavigation = { [tasks] section, focus in
+            tasks.setFocusedProject(focus)
+            tasks.setVisible(section == .tasks)
+        }
+        board.onNavigation?(board.section, board.focusedProjectKey)
         projects.start(repository: ProjectRepository(store: store))
         // A demo reads no harness store — and no harness *config* either. The
         // page (and any offscreen render of it) would otherwise show this
@@ -480,10 +509,19 @@ public final class AppEnvironment {
     private func startMaintenance(store: AuspexStore) {
         let maintenance = StoreMaintenance(store: store)
         let board = board
-        pipelineTasks.append(Task.detached(priority: .utility) { [weak board] in
-            await maintenance.run { [weak board] result in
+        let tasks = tasks
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak tasks] in
+            await maintenance.run { [weak board, weak tasks] result in
                 switch result {
                 case .success(let pass):
+                    // A hygiene pass that marked or filed something changed
+                    // what both readers of the ledger draw.
+                    if pass.hygiene.didChange {
+                        await MainActor.run {
+                            tasks?.reload()
+                            board?.reloadLedger()
+                        }
+                    }
                     guard pass.totalDeleted > 0 else { return }
                     await board?.record(notice: Self.describe(pass))
                 case .failure(let error):
@@ -565,8 +603,8 @@ public final class AppEnvironment {
         // than once per render. The MCP server is not one of them — it reads
         // the frame when an agent asks, which is rarer than a frame by three
         // orders of magnitude.
-        board.onFrame = { [tasks] frame, units in
-            tasks.apply(units: units, board: frame)
+        board.onFrame = { [tasks] frame, units, revision in
+            tasks.apply(units: units, revision: revision, board: frame)
         }
     }
 
@@ -918,6 +956,26 @@ public struct AppLaunchOptions: Sendable {
     /// they use every day behaves.
     public var stageIdleDelay: Duration?
 
+    /// The page the window opens on — `--section tasks`, or
+    /// `AUSPEX_SECTION=tasks` — and, for a demo, how many seconds it waits on
+    /// Now before turning to it (`AUSPEX_SECTION_DELAY`).
+    ///
+    /// The delay is what lets a `sample` catch the moment a page *opens* on a
+    /// board that has already warmed up, which is when the Tasks page used to
+    /// stop answering. A comma-separated list — `projects,tasks` — turns to
+    /// each in turn, one delay apart, so a page can be measured opening from
+    /// a page other than Now. Held for the launch and never written down.
+    public var sections: [BoardSection] = []
+    public var sectionDelay: Duration = .zero
+
+    /// Whether a demo scrolls its pages by itself — `AUSPEX_AUTOSCROLL=1`,
+    /// after `AUSPEX_AUTOSCROLL_DELAY` seconds. The stall meter needs a scroll
+    /// to measure, and a scroll a script performs is the same on both sides of
+    /// a change. A demo-only switch: a live launch ignores it.
+    public var autoScrollDelay: Duration?
+    /// How long the demo scrolls before it stops — `AUSPEX_AUTOSCROLL_DURATION`.
+    public var autoScrollDuration: TimeInterval?
+
     /// Reads the flag from the command line, with an environment variable as
     /// the alternative for the case where the launcher owns the argv —
     /// `open -a Auspex` cannot pass arguments through.
@@ -942,6 +1000,11 @@ public struct AppLaunchOptions: Sendable {
         // reported as broken.
         let isDemo = rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
             || (scale ?? 1) > 1
+        func seconds(_ key: String) -> Duration? {
+            environment[key].flatMap(Double.init).map { .milliseconds(Int(max(0, $0) * 1_000)) }
+        }
+        let sections = (value(after: "--section") ?? environment["AUSPEX_SECTION"])
+            .map { $0.split(separator: ",").compactMap { BoardSection(rawValue: String($0)) } } ?? []
         return AppLaunchOptions(
             isDemo: isDemo,
             demoScale: Self.clampedScale(scale),
@@ -950,6 +1013,14 @@ public struct AppLaunchOptions: Sendable {
             showsStage: stage.flatMap(Self.stageSwitch),
             stageIdleDelay: isDemo
                 ? StageIdleCollapse.delay(seconds: environment["AUSPEX_STAGE_IDLE_DELAY"])
+                : nil,
+            sections: sections,
+            sectionDelay: isDemo ? seconds("AUSPEX_SECTION_DELAY") ?? .zero : .zero,
+            autoScrollDelay: isDemo && environment["AUSPEX_AUTOSCROLL"] == "1"
+                ? seconds("AUSPEX_AUTOSCROLL_DELAY") ?? .seconds(30)
+                : nil,
+            autoScrollDuration: isDemo
+                ? environment["AUSPEX_AUTOSCROLL_DURATION"].flatMap(Double.init)
                 : nil
         )
     }
@@ -989,6 +1060,10 @@ extension AppEnvironment {
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
         if let showsStage = options.showsStage { environment.board.showsStage = showsStage }
         if let delay = options.stageIdleDelay { environment.board.stageIdle.delay = delay }
+        environment.launchSections = options.sections
+        environment.launchSectionDelay = options.sectionDelay
+        DemoAutoScroll.delay = options.autoScrollDelay
+        DemoAutoScroll.duration = options.autoScrollDuration
         environment.appearanceOverride = options.appearance
         return environment
     }

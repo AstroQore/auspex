@@ -342,6 +342,12 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     public let dependsOn: [Int64]
     public let createdAt: Date
     public let updatedAt: Date
+    /// When the hygiene pass set this task aside as stale, if it has.
+    ///
+    /// Bookkeeping rather than a status: the task is still `todo`, and the
+    /// mark stops counting the moment anybody claims it or moves it on — see
+    /// ``isStale`` and ``LedgerHygiene``.
+    public let staleAt: Date?
 
     public init(
         id: Int64,
@@ -365,8 +371,10 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
         labels: [String] = [],
         dependsOn: [Int64] = [],
         createdAt: Date,
-        updatedAt: Date
+        updatedAt: Date,
+        staleAt: Date? = nil
     ) {
+        self.staleAt = staleAt
         self.kind = kind
         self.labels = labels
         self.dependsOn = dependsOn
@@ -404,6 +412,14 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     /// Whether anybody is holding this task.
     public var isClaimed: Bool { claimedBy != nil || claimRole != nil }
 
+    /// Whether this task is set aside as stale: marked by the hygiene pass,
+    /// and still the unclaimed `todo` it was when it was marked.
+    ///
+    /// The second half is what makes the mark safe to leave in the store
+    /// between passes: a claim or a status change ends it on the same write,
+    /// and the next pass clears the row.
+    public var isStale: Bool { staleAt != nil && status == .todo && !isClaimed }
+
     /// Whether every task this one waits on is closed.
     ///
     /// - Parameters:
@@ -436,7 +452,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
             // the same rule the store applies.
             completedAt: status == .done || status == .review ? (completedAt ?? date) : nil,
             result: result, source: source, kind: kind, labels: labels,
-            dependsOn: dependsOn, createdAt: createdAt, updatedAt: date
+            dependsOn: dependsOn, createdAt: createdAt, updatedAt: date, staleAt: staleAt
         )
     }
 
@@ -452,7 +468,7 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
             createdBy: createdBy, claimRole: claimRole, claimScope: claimScope,
             claimedBy: claimedBy, claimedAt: claimedAt, completedAt: completedAt,
             result: result, source: source, kind: kind, labels: labels,
-            dependsOn: ids, createdAt: createdAt, updatedAt: updatedAt
+            dependsOn: ids, createdAt: createdAt, updatedAt: updatedAt, staleAt: staleAt
         )
     }
 

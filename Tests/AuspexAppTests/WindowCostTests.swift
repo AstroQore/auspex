@@ -21,7 +21,7 @@ struct WindowCostTests {
 
     // MARK: - The scroll viewport
 
-    @Test("Roost scrolling has no custom placement or lazy-prefetch feedback path")
+    @Test("Roost scrolling has no custom placement path, and its lazy stack holds flat lanes")
     func roostScrollHasNoFeedbackLayout() throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -42,14 +42,29 @@ struct WindowCostTests {
 
         // The first real freeze included this path:
         // custom Layout.placeSubviews -> ScrollView sizing -> lazy prefetch ->
-        // NSHostingView.requestUpdate -> another transaction. Replacing only
-        // the custom layout proved insufficient: two real Roost scrolls still
-        // reproduced the cycle inside LazyLayoutViewCache. Both links stay
-        // absent, because either one makes the window capable of self-exciting.
+        // NSHostingView.requestUpdate -> another transaction. The custom
+        // layout stays gone.
         #expect(gate.contains("GeometryReader"))
         #expect(!gate.contains("struct ProposalOnlyLayout"))
         #expect(!gate.contains("func placeSubviews("))
-        #expect(!roost.contains("LazyVStack("))
+
+        // The page went eager after two real scrolls reproduced the cycle in
+        // LazyLayoutViewCache — on a page whose every card read the model's
+        // whole lane array, so every frame invalidated every row the cache was
+        // placing. It is lazy again, one level deep, over flat lanes compared
+        // by revision: measured on the 400-task demo, an eager stack held the
+        // main thread for 4.6 s opening the page and grew RSS by 141 MB, and
+        // the lazy one settles back to ~90 % idle the moment a scroll stops.
+        // What made the cycle possible must not come back: one lazy stack,
+        // no nested lazy containers, every row `Equatable`, and a cap on what
+        // a column draws.
+        #expect(roost.components(separatedBy: "LazyVStack(").count - 1 == 1)
+        #expect(!roost.contains("LazyHStack("))
+        #expect(!roost.contains("LazyVGrid("))
+        #expect(roost.contains("ProjectLaneView(lane: lane, model: model, board: board)\n                            .equatable()"))
+        #expect(roost.contains(".equatable()"))
+        #expect(!roost.contains("model.lanes"))
+        #expect(TaskLanes.columnLimit == 8)
     }
 
     // MARK: - The sidebar's fold

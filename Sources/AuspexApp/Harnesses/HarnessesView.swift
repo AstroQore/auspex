@@ -698,12 +698,15 @@ enum DurationText {
 }
 
 enum RelativeTimeText {
-    static func since(_ date: Date?, now: Date = Date()) -> String {
+    /// "12d ago". `showsSeconds: false` says "just now" for the first minute,
+    /// for a reading that is refreshed once a minute rather than every second.
+    static func since(_ date: Date?, now: Date = Date(), showsSeconds: Bool = true) -> String {
         guard let date else { return L10n.Time.never }
         let seconds = max(0, now.timeIntervalSince(date))
         switch seconds {
         case ..<10: return L10n.Time.justNow
-        case ..<60: return L10n.Time.secondsAgo(count: Int(seconds))
+        case ..<60:
+            return showsSeconds ? L10n.Time.secondsAgo(count: Int(seconds)) : L10n.Time.justNow
         case ..<3_600: return L10n.Time.minutesAgo(count: Int(seconds / 60))
         case ..<86_400: return L10n.Time.hoursAgo(count: Int(seconds / 3_600))
         default: return L10n.Time.daysAgo(count: Int(seconds / 86_400))

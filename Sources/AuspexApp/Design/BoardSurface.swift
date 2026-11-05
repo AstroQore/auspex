@@ -182,6 +182,9 @@ extension EnvironmentValues {
 /// A scroll view, except while the window is being rendered offscreen.
 struct BoardScroll<Content: View>: View {
     @Environment(\.isSnapshotRender) private var isSnapshotRender
+    /// Whether a demo launch may scroll this page by itself — see
+    /// ``DemoAutoScroll``. Off everywhere but the pages being measured.
+    var autoScrolls = false
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -205,7 +208,7 @@ struct BoardScroll<Content: View>: View {
             // it has — on every graph update. See ``ScrollSizeGate``.
             ScrollSizeGate {
                 ScrollView {
-                    content
+                    content.modifier(DemoAutoScroll(isEnabled: autoScrolls))
                 }
                 .scrollContentBackground(.hidden)
             }
@@ -345,5 +348,111 @@ struct CountBadge: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(value) \(label)")
+    }
+}
+
+/// A demo's own hand on the scroll wheel.
+///
+/// The stall meter (``MainThreadMeter``) answers "did a scroll drop a frame",
+/// and a scroll a person performs is a different scroll every time. This one
+/// is the same on both sides of a change: ``delay`` after the page appears it
+/// walks the page down in small steps and back up, for as long as the process
+/// runs.
+///
+/// It moves the `NSScrollView`'s clip view, which is what a trackpad does,
+/// rather than driving a SwiftUI `ScrollPosition`: a position binding turns
+/// every step into a transaction over the whole scroll view, which is a cost
+/// no person's scroll pays and which would measure the driver instead of the
+/// page.
+///
+/// Off unless a demo launch set ``delay`` — `AUSPEX_AUTOSCROLL=1`, read by
+/// ``AppLaunchOptions`` — so no live window ever scrolls itself.
+struct DemoAutoScroll: ViewModifier {
+    /// How long to wait before the first step, or `nil` for never.
+    @MainActor static var delay: Duration?
+    /// How long to keep scrolling, or `nil` for as long as the process runs —
+    /// `AUSPEX_AUTOSCROLL_DURATION`. Stopping is what shows whether a page
+    /// settles after a scroll or keeps the main thread busy on its own.
+    @MainActor static var duration: TimeInterval?
+
+    let isEnabled: Bool
+
+    func body(content: Content) -> some View {
+        if isEnabled, let delay = Self.delay {
+            content.background(DemoScrollDriver(delay: delay).frame(width: 0, height: 0))
+        } else {
+            content
+        }
+    }
+}
+
+/// The zero-sized view that finds the scroll view it sits in and scrolls it.
+private struct DemoScrollDriver: NSViewRepresentable {
+    let delay: Duration
+
+    func makeNSView(context: Context) -> DriverView { DriverView(delay: delay) }
+    func updateNSView(_ view: DriverView, context: Context) {}
+
+    final class DriverView: NSView {
+        private let delay: Duration
+        private var timer: Timer?
+        private var step: CGFloat = CGFloat(
+            ProcessInfo.processInfo.environment["AUSPEX_AUTOSCROLL_STEP"].flatMap(Double.init) ?? 24
+        )
+
+        init(delay: Duration) {
+            self.delay = delay
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            timer?.invalidate()
+            timer = nil
+            guard window != nil else { return }
+            let seconds = Double(delay.components.seconds)
+                + Double(delay.components.attoseconds) / 1e18
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                self?.start()
+            }
+        }
+
+        private func start() {
+            guard window != nil, timer == nil else { return }
+            timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+            if let duration = DemoAutoScroll.duration {
+                DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+                    self?.timer?.invalidate()
+                    self?.timer = nil
+                }
+            }
+        }
+
+        private func tick() {
+            guard let scrollView = enclosingScrollView,
+                  let document = scrollView.documentView else { return }
+            let clip = scrollView.contentView
+            let limit = max(0, min(6_000, document.frame.height - clip.bounds.height))
+            var y = clip.bounds.origin.y + step
+            // Turn round at either end: far enough to cross many lanes, near
+            // enough to repeat.
+            if y >= limit || y <= 0 {
+                y = min(max(y, 0), limit)
+                step = -step
+            }
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+            scrollView.reflectScrolledClipView(clip)
+        }
+
+        override func removeFromSuperview() {
+            timer?.invalidate()
+            timer = nil
+            super.removeFromSuperview()
+        }
     }
 }

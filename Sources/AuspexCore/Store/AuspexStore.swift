@@ -139,6 +139,10 @@ public final class AuspexStore: Sendable {
             try addEventObservedAtIndex(db)
         }
 
+        migrator.registerMigration("v11_ledger_hygiene") { db in
+            try createTaskHygieneTable(db)
+        }
+
         return migrator
     }
 
@@ -1174,6 +1178,28 @@ public final class AuspexStore: Sendable {
     /// a few seconds once rather than a scan per batch forever.
     private static func addEventObservedAtIndex(_ db: Database) throws {
         try db.create(index: "events_on_observed_at", on: "events", columns: ["observed_at"])
+    }
+
+    // MARK: - v11 schema: ledger hygiene
+
+    /// Which tasks the hygiene pass has set aside as stale, and when.
+    ///
+    /// A table of its own rather than a column on `tasks`, for two reasons.
+    /// A stale mark is Auspex's bookkeeping about a row, not a change to what
+    /// the task *is*: it must not bump the task's `version` (an agent holding
+    /// that version would be refused for nothing) and must not fire the
+    /// `board_history` triggers on `tasks`, which would write a snapshot of an
+    /// unchanged task at its old timestamp into the Map's playback. And it is
+    /// revocable by any write that moves the task on — see ``LedgerHygiene``.
+    ///
+    /// Empty on creation. The first pass after the migration marks the
+    /// backlog, in batches; see ``LedgerHygiene/runPass(now:)``.
+    private static func createTaskHygieneTable(_ db: Database) throws {
+        try db.create(table: "task_hygiene") { table in
+            table.primaryKey("task_id", .integer)
+                .references("tasks", onDelete: .cascade)
+            table.column("stale_at", .double).notNull()
+        }
     }
 
     // MARK: - Meta accessors

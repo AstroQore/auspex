@@ -60,6 +60,9 @@ struct InitialFocusPolicyTests {
             "ContextUsagePopover.swift": 1,
             "SessionTraceView.swift": 1,
             "MapView.swift": 3,
+            // The bulk-close confirmation: Review's "Close all" and "Close
+            // all old reviews" share one sheet.
+            "TasksPageView.swift": 1,
         ]
         for (file, expected) in expectedByFile {
             #expect(
@@ -70,7 +73,7 @@ struct InitialFocusPolicyTests {
             )
         }
 
-        #expect(presentationCount == 11)
+        #expect(presentationCount == 12)
         #expect(sceneCount == 3)
         #expect(policyCount == presentationCount + sceneCount)
     }
@@ -95,7 +98,7 @@ struct InitialFocusPolicyTests {
             "SessionWindowMenu.swift": 1,
             "ProjectsPageView.swift": 4, // two sheets, rename, folder picker
             "TaskDetailView.swift": 2,
-            "TasksPageView.swift": 2,
+            "TasksPageView.swift": 1, // one field for a new task or milestone
             "ContextUsagePopover.swift": 2, // opener and presented content
             "SessionTraceView.swift": 4, // three links and Family popover
             "TrajectoryInspector.swift": 1,

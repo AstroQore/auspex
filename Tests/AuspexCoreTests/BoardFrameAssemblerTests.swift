@@ -312,6 +312,35 @@ struct BoardFrameAssemblerTests {
         #expect(second.boardRevision > first.boardRevision)
     }
 
+    @Test("the units keep their revision until they move, and then take a new one")
+    func unitsRevisionFollowsTheUnits() async {
+        let assembler = BoardFrameAssembler()
+        let first = await assembler.assemble(
+            board: fixture, inputs: BoardFrameInputs(), sequence: 1
+        )
+        // Unreconciled: nothing came before it, so a consumer must take it.
+        #expect(first.unitsRevision == 0)
+
+        let again = BoardSnapshot(generatedAt: Fixtures.date(200), sessions: fixture.sessions)
+        let second = await assembler.assemble(board: again, inputs: BoardFrameInputs(), sequence: 2)
+        let third = await assembler.assemble(board: again, inputs: BoardFrameInputs(), sequence: 3)
+        #expect(second.unitsRevision != 0)
+        #expect(third.unitsRevision == second.unitsRevision)
+        #expect(third.unitGroupsRevision == second.unitGroupsRevision)
+        #expect(third.endedUnitsRevision == second.endedUnitsRevision)
+
+        var sessions = fixture.sessions
+        sessions[0].toolCallCount = 9
+        let moved = BoardSnapshot(generatedAt: Fixtures.date(300), sessions: sessions)
+        let fourth = await assembler.assemble(board: moved, inputs: BoardFrameInputs(), sequence: 4)
+        #expect(fourth.units != third.units)
+        #expect(fourth.unitsRevision != third.unitsRevision)
+        // The box compares the revision and nothing else.
+        let kept = Revisioned(revision: third.unitsRevision, value: third.units)
+        #expect(kept == Revisioned(revision: third.unitsRevision, value: fourth.units))
+        #expect(kept != Revisioned(revision: fourth.unitsRevision, value: third.units))
+    }
+
     @Test("a filter clicked over an unchanged board is not a repeat")
     func changedInputsAreNotARepeat() async {
         let assembler = BoardFrameAssembler()

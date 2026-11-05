@@ -1041,4 +1041,135 @@ struct AuspexMCPServerTests {
         #expect(await server.answer(line: RPC.line("auspex/hookEvent")) == nil)
         #expect(await host.observed.isEmpty)
     }
+
+    // MARK: - Ledger hygiene and filing discipline
+
+    @Test("tasks.create returns the open task with the same normalized title instead of a second one")
+    func createDeduplicatesWithinAProject() async throws {
+        let (server, _, store) = try makeServer()
+        let first = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Fix the login redirect"
+        ])))
+        let firstID = try #require(first["id"]?.intValue)
+        #expect(first["deduplicated"] == nil)
+
+        let again = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "  fix the Login-Redirect. "
+        ])))
+        #expect(again["id"]?.intValue == firstID)
+        #expect(again["deduplicated"]?.boolValue == true)
+        #expect(again["hint"]?.stringValue?.contains("already filed") == true)
+        #expect(try TaskRepository(store: store).tasks(limit: 100).count == 1)
+
+        // Another project, or a task that is no longer todo/doing, is not a duplicate.
+        let elsewhere = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Fix the login redirect", "project": .string(TaskProject.scratchKey)
+        ])))
+        #expect(elsewhere["id"]?.intValue != firstID)
+        #expect(elsewhere["deduplicated"] == nil)
+        _ = try TaskRepository(store: store).updateTask(id: Int64(firstID), status: .review)
+        let afterReview = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Fix the login redirect"
+        ])))
+        #expect(afterReview["id"]?.intValue != firstID)
+    }
+
+    @Test("tasks.create composes the structured brief into the body, and a bare body still works")
+    func createComposesAStructuredBrief() async throws {
+        let (server, _, _) = try makeServer()
+        let task = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Port the cart to the new checkout API",
+            "objective": "Retire the old totals endpoint.",
+            "acceptance": .array(["CartTests pass", "docs/cart.md exists"]),
+            "deliverable": "One commit on the cart branch",
+            "scope": "Sources/Cart",
+            "out_of_scope": "The mobile client",
+            "body": "The old endpoint must keep answering until the app moves."
+        ])))
+        let body = try #require(task["body"]?.stringValue)
+        #expect(body == """
+            Objective: Retire the old totals endpoint.
+
+            Acceptance:
+            - CartTests pass
+            - docs/cart.md exists
+
+            Deliverable: One commit on the cart branch
+            Scope: Sources/Cart
+            Out of scope: The mobile client
+
+            Notes:
+            The old endpoint must keep answering until the app moves.
+            """)
+
+        let plain = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
+            "title": "Something with a plain body", "body": "Just the detail."
+        ])))
+        #expect(plain["body"]?.stringValue == "Just the detail.")
+
+        let schema = try #require(AuspexMCPTools.tool(named: "tasks.create")?.json["inputSchema"]?["properties"])
+        for field in ["objective", "acceptance", "deliverable", "scope", "out_of_scope", "session_id"] {
+            #expect(schema[field] != nil, "tasks.create should accept \(field)")
+        }
+    }
+
+    @Test("an unattributed tasks.create is told to pass session_id")
+    func unattributedCreateCarriesAHint() async throws {
+        let (anonymous, _, _) = try makeServer(clientPIDs: [])
+        let created = try RPC.structured(await anonymous.answer(line: RPC.call("tasks.create", [
+            "title": "Filed by nobody in particular"
+        ])))
+        let hint = try #require(created["hint"]?.stringValue)
+        #expect(hint.contains("You are unattributed; pass session_id so this task can be claimed"))
+
+        let (attributed, _, _) = try makeServer()
+        let mine = try RPC.structured(await attributed.answer(line: RPC.call("tasks.create", [
+            "title": "Filed by a known session"
+        ])))
+        #expect(mine["hint"] == nil)
+        #expect(mine["deduplicated"] == nil)
+    }
+
+    @Test("tasks.list leaves stale tasks out, says so, and shows them on request")
+    func listLeavesStaleOut() async throws {
+        let (server, _, store) = try makeServer()
+        let ledger = TaskRepository(store: store)
+        let old = try ledger.createTask(title: "Nobody ever took this", now: Fixtures.date(-30 * 86_400))
+        let fresh = try ledger.createTask(title: "Filed this morning", now: Fixtures.date(50))
+        try LedgerHygiene(store: store).runPass(now: Fixtures.date(100))
+
+        let listed = try RPC.structured(await server.answer(line: RPC.call("tasks.list")))
+        #expect(listed["tasks"]?.arrayValue?.compactMap { $0["id"]?.intValue } == [Int(fresh.id)])
+        #expect(listed["note"]?.stringValue?.contains("1 stale task is left out") == true)
+
+        let all = try RPC.structured(await server.answer(line: RPC.call("tasks.list", [
+            "include_stale": true
+        ])))
+        let ids = all["tasks"]?.arrayValue?.compactMap { $0["id"]?.intValue } ?? []
+        #expect(Set(ids) == [Int(old.id), Int(fresh.id)])
+        let staleRow = all["tasks"]?.arrayValue?.first { $0["id"]?.intValue == Int(old.id) }
+        #expect(staleRow?["stale"]?.boolValue == true)
+        #expect(all["note"] == nil)
+    }
+
+    @Test("the tool text files tasks only to hand work out")
+    func toolTextMatchesTheSkillInvariant() async throws {
+        let list = try #require(AuspexMCPTools.tool(named: "tasks.list")?.description)
+        #expect(list.contains("you do not need this list"))
+        #expect(list.contains("implicit"))
+        #expect(!list.contains("before filing a new one"))
+        let create = try #require(AuspexMCPTools.tool(named: "tasks.create")?.description)
+        #expect(create.contains("handing to another agent"))
+        #expect(create.contains("acceptance"))
+        #expect(create.contains("out_of_scope"))
+        let complete = try #require(AuspexMCPTools.tool(named: "tasks.complete")?.description)
+        #expect(complete.contains("a commit, a file path, or a test name"))
+
+        let (server, _, _) = try makeServer()
+        let empty = try RPC.structured(await server.answer(line: RPC.call("tasks.list")))
+        let note = try #require(empty["note"]?.stringValue)
+        #expect(note.contains("implicit task"))
+        #expect(note.contains("only when you are handing work to another agent"))
+        #expect(!note.contains("otherwise file one"))
+    }
 }

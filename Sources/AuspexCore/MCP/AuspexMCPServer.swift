@@ -196,7 +196,8 @@ public actor AuspexMCPServer {
         takeover for the person to decide, never an automatic steal. Completion \
         enters Review rather than closing your own work. With no task id, keep \
         the implicit session task instead of creating one merely for the \
-        protocol. Explicit tasks remain inside their observed projects. If MCP \
+        protocol; file tasks only when you hand work to another agent. \
+        Explicit tasks remain inside their observed projects. If MCP \
         or session identity is unavailable, continue the user's work and report \
         which updates were not recorded.
         """
@@ -461,13 +462,21 @@ public actor AuspexMCPServer {
             projectKey = try await self.projectKey(arguments, caller: try await caller(arguments))
         }
         let readyOnly = try arguments.optionalBool("ready_only") ?? false
+        let includeStale = try arguments.optionalBool("include_stale") ?? false
         let label = MCPTextSanitizer.clean(
             try arguments.optionalString("label"), limit: TaskLabels.lengthLimit
         )?.lowercased()
         var tasks = try ledger.tasks(
             planID: planID, projectKey: projectKey, statuses: statuses,
-            claimedBy: claimedBy, readyOnly: readyOnly, limit: limit
+            claimedBy: claimedBy, readyOnly: readyOnly, includeStale: includeStale,
+            limit: limit
         )
+        // Said out loud rather than silently dropped: a supervisor looking for
+        // a task it filed a fortnight ago should learn where it went.
+        let hiddenStale = includeStale || claimedBy != nil || label != nil
+            || (!statuses.isEmpty && !statuses.contains(.todo))
+            ? 0
+            : try ledger.staleTaskCount(planID: planID, projectKey: projectKey)
         if let label { tasks = tasks.filter { $0.labels.contains(label) } }
         let links = Dictionary(grouping: try ledger.allLinks()) { $0.taskID }
         let pending = Dictionary(grouping: try ledger.claimRequests()) { $0.taskID }
@@ -481,12 +490,26 @@ public actor AuspexMCPServer {
                     pendingClaims: pending[$0.id] ?? []
                 )
             },
-            note: tasks.isEmpty
-                ? (readyOnly
-                    ? "Nothing here is ready: every task is either finished or waiting on one that is not. Call again without ready_only to see what is blocked."
-                    : "Nothing is filed here. If your brief named a task id it may be under an archived milestone, or in another project; otherwise file one with tasks.create.")
-                : nil
+            note: Self.listNote(isEmpty: tasks.isEmpty, readyOnly: readyOnly, hiddenStale: hiddenStale)
         ))
+    }
+
+    /// What `tasks.list` says beside its rows, when it has something to say.
+    ///
+    /// The empty answer used to end "otherwise file one with tasks.create",
+    /// which is the sentence that taught agents to file a task for every
+    /// session — the opposite of the skill's invariant. It now says what the
+    /// skill says.
+    static func listNote(isEmpty: Bool, readyOnly: Bool, hiddenStale: Int) -> String? {
+        let stale = hiddenStale > 0
+            ? " \(hiddenStale) stale task\(hiddenStale == 1 ? " is" : "s are") left out; pass include_stale to see \(hiddenStale == 1 ? "it" : "them")."
+            : ""
+        guard isEmpty else { return stale.isEmpty ? nil : String(stale.dropFirst()) }
+        if readyOnly {
+            return "Nothing here is ready: every task is either finished or waiting on one that is not. Call again without ready_only to see what is blocked." + stale
+        }
+        return "Nothing is filed here. If your brief named a task id, it may be under an archived milestone or in another project." + stale
+            + " With no task id, carry on with the user's work: Auspex already tracks your session as an implicit task. Call tasks.create only when you are handing work to another agent."
     }
 
     private func tasksGet(_ arguments: MCPArguments) async throws -> MCPJSON {
@@ -571,7 +594,19 @@ public actor AuspexMCPServer {
         )
         // A body is the one field a brief legitimately fills with paragraphs,
         // so it gets a larger cap than a message — and still a cap.
-        let body = MCPTextSanitizer.clean(try arguments.optionalString("body"), limit: 4_000)
+        // The structured brief goes into the body in one fixed layout; a body
+        // on its own is kept exactly as it was. The cap applies to the whole.
+        let brief = TaskBrief(
+            objective: MCPTextSanitizer.clean(try arguments.optionalString("objective"), limit: 500),
+            acceptance: (try arguments.optionalStringList("acceptance") ?? [])
+                .prefix(20)
+                .compactMap { MCPTextSanitizer.clean($0, limit: 300) },
+            deliverable: MCPTextSanitizer.clean(try arguments.optionalString("deliverable"), limit: 300),
+            scope: MCPTextSanitizer.clean(try arguments.optionalString("scope"), limit: 300),
+            outOfScope: MCPTextSanitizer.clean(try arguments.optionalString("out_of_scope"), limit: 500),
+            notes: MCPTextSanitizer.clean(try arguments.optionalString("body"), limit: 4_000)
+        )
+        let body = brief.composed.map { String($0.prefix(4_000)) }
         let status = try arguments.optionalEnum("status", AuspexTaskStatus.self) ?? .todo
         let priority = try Self.priority(arguments) ?? 0
         let kind = try Self.kind(arguments) ?? nil
@@ -586,13 +621,35 @@ public actor AuspexMCPServer {
         }
         let caller = try await caller(arguments)
         let project = try await projectKey(arguments, caller: caller)
-        let task = try ledger.createTask(
+        let filing = try ledger.fileTask(
             title: title, body: body, planID: planID, status: status, priority: priority,
             projectKey: project, createdBy: caller.session, source: "mcp",
-            kind: kind, labels: labels, dependsOn: dependsOn, now: now()
+            kind: kind, labels: labels, dependsOn: dependsOn, deduplicate: true, now: now()
         )
-        await host.didChangeLedger()
-        return Self.success(TaskPayload(task, projectName: await projectName(task.projectKey)))
+        if !filing.deduplicated { await host.didChangeLedger() }
+        return Self.success(TaskPayload(
+            filing.task,
+            projectName: await projectName(filing.task.projectKey),
+            deduplicated: filing.deduplicated,
+            hint: Self.createHint(caller: caller, deduplicated: filing.deduplicated)
+        ))
+    }
+
+    /// What `tasks.create` tells its caller beside the task, when there is
+    /// something it should do differently.
+    static func createHint(caller: Caller, deduplicated: Bool) -> String? {
+        var sentences: [String] = []
+        if deduplicated {
+            sentences.append(
+                "An open task with this title was already filed in this project; this is that task, not a new one."
+            )
+        }
+        if caller.session == nil {
+            sentences.append(
+                "You are unattributed; pass session_id so this task can be claimed (\(caller.evidence))."
+            )
+        }
+        return sentences.isEmpty ? nil : sentences.joined(separator: " ")
     }
 
     private func tasksClaim(_ arguments: MCPArguments) async throws -> MCPJSON {
