@@ -591,6 +591,21 @@ A milestone (`plans.*`) is an optional heading *inside* a project. The tools
 keep their old names because briefs already in flight carry them, and they are
 described as milestones in every schema string an agent reads.
 
+**Tasks are filed to hand work out, and the ledger tidies itself.** An agent
+whose brief carries no task id is already tracked as its implicit session task;
+`tasks.list`, its empty answer, the server instructions, the protocol note and
+the coordination skill all say so, and say that `plans.create` +
+`tasks.create` are for handing work to another agent. `tasks.create` returns
+the open (`todo`/`doing`) task already filed under the same normalized title in
+the project, marked `deduplicated`, and composes `objective`, `acceptance`,
+`deliverable`, `scope` and `out_of_scope` into the body in a fixed layout
+(`TaskBrief`). `LedgerHygiene`, run by `StoreMaintenance` every six hours, marks
+unclaimed to-dos untouched for a week as stale (`task_hygiene`; no status
+change, no version bump), archives milestones whose work has settled for a
+week, and leaves reviews older than two weeks with no live claimer for the
+Tasks page to fold into "Old reviews" — it never closes a task. Stale tasks are
+left out of the Tasks page, the board and `tasks.list` unless asked for.
+
 - **Transport: a Unix domain socket at `~/.auspex/mcp.sock`.** Local user
   only, never a TCP port. The running app owns the listener.
 - **`auspex --mcp-stdio`** is a thin bridge for MCP clients that speak stdio:
