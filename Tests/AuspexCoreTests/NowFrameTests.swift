@@ -302,7 +302,7 @@ struct NowFrameTests {
             units: pair,
             signals: CollaborationSignals.derive(units: pair, now: Fixtures.date(100))
         )
-        #expect(collided.mayNeedYou.map(\.sessionCount) == [2])
+        #expect(collided.collisions.map(\.sessionCount) == [2])
         #expect(Set(collided.done.map(\.row.shortID)) == ["one", "two"])
     }
 
@@ -315,9 +315,49 @@ struct NowFrameTests {
         let signals = CollaborationSignals.derive(units: units, now: Fixtures.date(100))
         let now = NowFrame.derive(units: units, signals: signals)
 
-        #expect(now.mayNeedYou.count == 1)
-        #expect(now.mayNeedYou.first?.sessionCount == 2)
+        #expect(now.collisions.count == 1)
+        #expect(now.collisions.first?.sessionCount == 2)
+        #expect(now.mayNeedYou.isEmpty)
         #expect(now.working.count == 2)
+    }
+
+    @Test("collisions fold into one summary row; single-session signals stay one line each")
+    func collisionsFoldIntoOneRow() {
+        // Two checkouts, each shared by two tasks, and one session gone quiet.
+        let atlas = "/Users/example/Code/atlas"
+        let harbor = "/Users/example/Code/harbor"
+        let units = [
+            unit("a1", [row("a1", state: .thinking, project: "atlas", directory: atlas)], task: 1),
+            unit("a2", [row("a2", state: .thinking, project: "atlas", directory: atlas)], task: 2),
+            unit("h1", [row("h1", state: .thinking, project: "harbor", directory: harbor)], task: 3),
+            unit("h2", [row("h2", state: .thinking, project: "harbor", directory: harbor)], task: 4),
+            unit("quiet", [row("quiet", state: .thinking, project: "orchard", stale: true)]),
+        ]
+        let signals = CollaborationSignals.derive(units: units, now: Fixtures.date(3_600))
+        let now = NowFrame.derive(units: units, signals: signals)
+
+        #expect(now.collisions.count == 2)
+        #expect(now.collisions.allSatisfy { $0.sessionCount == 2 })
+        #expect(now.mayNeedYou.allSatisfy { $0.sessionCount == 1 })
+        #expect(!now.mayNeedYou.isEmpty)
+        // The pill counts what a person reads: each single line, and the
+        // summary row once however many collisions are under it.
+        #expect(now.counts.mayNeedYou == now.mayNeedYou.count + 1)
+        // And a collision never hangs a balloon: it is about nobody in
+        // particular, so no balloon carries a collision's reason.
+        #expect(!now.captions.contains { caption in
+            if case .watch(let kind, _) = caption.reason {
+                return kind == .sharedDirectory || kind == .sharedBranch
+            }
+            return false
+        })
+
+        // With no collisions there is no summary row to count.
+        let alone = NowFrame.derive(units: [units[4]], signals: CollaborationSignals.derive(
+            units: [units[4]], now: Fixtures.date(3_600)
+        ))
+        #expect(alone.collisions.isEmpty)
+        #expect(alone.counts.mayNeedYou == alone.mayNeedYou.count)
     }
 
     // MARK: Stage

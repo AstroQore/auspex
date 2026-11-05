@@ -29,8 +29,12 @@ import Foundation
 ///    person marked blocked. The same rule ``AttentionState`` follows.
 /// 2. **May need you** — a ``WatchSignal`` about that one session. Observed,
 ///    allowed to be wrong, and never folded into the first bucket. A signal
-///    about several sessions at once — two tasks in one checkout — is listed
-///    here too, but claims none of them: they are still running.
+///    about several sessions at once — two tasks in one checkout, or on one
+///    branch — claims none of them, since they are still running, and is not
+///    a line of its own: every such *collision* is one of ``collisions``,
+///    which the list draws as a single summary row that opens to show them.
+///    On a busy machine they were most of the list, and drowned out the lines
+///    about one session that are actually a reason to look.
 /// 3. **Done, unseen** — the agent said it finished and nobody has opened it.
 /// 4. **Working** — the root, or something it delegated to, is active.
 /// 5. **Idle** — everything else that is still alive, counted rather than
@@ -198,7 +202,11 @@ public struct NowFrame: Sendable, Equatable {
     }
 
     public let needsYou: [Item]
+    /// Signals about one session each, one line apiece.
     public let mayNeedYou: [Item]
+    /// Signals about several sessions at once — a shared directory, a shared
+    /// branch — drawn together as one summary row under ``mayNeedYou``.
+    public let collisions: [Item]
     public let working: [Item]
     public let done: [Item]
     /// Alive and quiet, in project order — drawn only when the idle line is
@@ -235,7 +243,9 @@ public struct NowFrame: Sendable, Equatable {
     public var counts: Counts {
         var counts = Counts()
         counts.needsYou = needsYou.count
-        counts.mayNeedYou = mayNeedYou.count
+        // The single-session lines, and the collisions' summary row as one:
+        // the pill counts the rows a person has to read, not the signals.
+        counts.mayNeedYou = mayNeedYou.count + (collisions.isEmpty ? 0 : 1)
         counts.done = done.count
         counts.working = working.count
         counts.idle = idle.count
@@ -245,7 +255,8 @@ public struct NowFrame: Sendable, Equatable {
 
     /// Whether every list is empty.
     public var isEmpty: Bool {
-        needsYou.isEmpty && mayNeedYou.isEmpty && working.isEmpty && done.isEmpty && idle.isEmpty
+        needsYou.isEmpty && mayNeedYou.isEmpty && collisions.isEmpty && working.isEmpty
+            && done.isEmpty && idle.isEmpty
     }
 
     public static let empty = NowFrame(
@@ -261,6 +272,7 @@ public struct NowFrame: Sendable, Equatable {
     public init(
         needsYou: [Item],
         mayNeedYou: [Item],
+        collisions: [Item] = [],
         working: [Item],
         done: [Item],
         idle: [Item],
@@ -269,6 +281,7 @@ public struct NowFrame: Sendable, Equatable {
     ) {
         self.needsYou = needsYou
         self.mayNeedYou = mayNeedYou
+        self.collisions = collisions
         self.working = working
         self.done = done
         self.idle = idle
@@ -344,6 +357,7 @@ public struct NowFrame: Sendable, Equatable {
         // 2. May need you: one line per signal, at most one per session, and
         //    never about a session that already asked outright.
         var mayNeedYou: [Item] = []
+        var collisions: [Item] = []
         var watched: Set<SessionKey> = []
         for signal in signals {
             let keys = signal.sessionKeys
@@ -370,7 +384,7 @@ public struct NowFrame: Sendable, Equatable {
                 guard let key = present.first(where: { !claimed.contains($0) }) ?? present.first,
                       let row = rowByKey[key], let unit = unitByKey[key]
                 else { continue }
-                mayNeedYou.append(Item(
+                collisions.append(Item(
                     id: "may:\(signal.id)",
                     tone: .mayNeedYou,
                     reason: .watch(kind: signal.kind, message: signal.message),
@@ -464,6 +478,7 @@ public struct NowFrame: Sendable, Equatable {
         return NowFrame(
             needsYou: needsYou,
             mayNeedYou: mayNeedYou,
+            collisions: collisions,
             working: working,
             done: done,
             idle: idle,
@@ -599,8 +614,7 @@ public struct NowFrame: Sendable, Equatable {
             if left != right { return left > right }
             return lhs.id < rhs.id
         }
-        let single = mayNeedYou.filter { $0.sessionCount == 1 }
-        for item in needsYou + single + busiestFirst {
+        for item in needsYou + mayNeedYou + busiestFirst {
             guard captions.count < captionLimit else { break }
             guard item.hasSession, let desk = leadOf(item.row.key),
                   desks.insert(desk).inserted

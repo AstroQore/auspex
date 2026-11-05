@@ -278,6 +278,7 @@ private struct NowLists: View {
 
     @State private var showsAllWorking = false
     @State private var showsIdle = false
+    @State private var showsCollisions = false
 
     var body: some View {
         let frame = model.nowFrame
@@ -293,8 +294,8 @@ private struct NowLists: View {
                 if !frame.needsYou.isEmpty {
                     section(.needsYou, NowCopy.needsYouHeading, NowCopy.needsYouNote, frame.needsYou, selected)
                 }
-                if !frame.mayNeedYou.isEmpty {
-                    section(.mayNeedYou, NowCopy.mayNeedYouHeading, NowCopy.mayNeedYouNote, frame.mayNeedYou, selected)
+                if !frame.mayNeedYou.isEmpty || !frame.collisions.isEmpty {
+                    mayNeedYou(frame, selected: selected)
                 }
                 if !frame.working.isEmpty { working(frame.working, selected: selected) }
                 if !frame.done.isEmpty {
@@ -327,6 +328,36 @@ private struct NowLists: View {
                     onMarkSeen: item.tone == .done ? { model.markSeen(item.key) } : nil
                 )
                 .equatable()
+            }
+        }
+    }
+
+    /// The single-session signals, one line each, and every collision under
+    /// one summary row that opens to list them.
+    private func mayNeedYou(_ frame: NowFrame, selected: SessionKey?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            NowSectionHeading(
+                title: NowCopy.mayNeedYouHeading,
+                count: frame.counts.mayNeedYou,
+                note: NowCopy.mayNeedYouNote,
+                ink: NowTone.ink(.mayNeedYou)
+            )
+            ForEach(frame.mayNeedYou) { item in
+                NowRow(item: item, isSelected: selected == item.key, columns: columns) { open(item) }
+                    .equatable()
+            }
+            if !frame.collisions.isEmpty {
+                NowCollisionSummary(count: frame.collisions.count, isOpen: showsCollisions) {
+                    showsCollisions.toggle()
+                }
+                if showsCollisions {
+                    ForEach(frame.collisions) { item in
+                        NowRow(item: item, isSelected: selected == item.key, columns: columns) {
+                            open(item)
+                        }
+                        .equatable()
+                    }
+                }
             }
         }
     }
@@ -493,8 +524,37 @@ struct NowColumns: Equatable {
     }
 }
 
+/// The one row May need you draws for every collision: how many groups of
+/// sessions share a directory or a branch, and a chevron that opens the list.
+private struct NowCollisionSummary: View {
+    let count: Int
+    let isOpen: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(NowTone.mark(.mayNeedYou))
+                    .frame(width: 10, height: 10)
+                Text(NowCopy.collisions(count))
+                    .nowLine()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+            .nowRowChrome(tone: .mayNeedYou, isSelected: false)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 10))
+        .accessibilityLabel(NowCopy.collisions(count))
+        .accessibilityValue(isOpen ? NowCopy.fewer : NowCopy.collisionsShow)
+    }
+}
+
 /// One line in Needs you, May need you, Done or Idle.
-private struct NowRow: View, Equatable {
+struct NowRow: View, Equatable {
     let item: NowFrame.Item
     let isSelected: Bool
     let columns: NowColumns
