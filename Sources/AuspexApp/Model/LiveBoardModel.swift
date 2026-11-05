@@ -475,7 +475,9 @@ final class LiveBoardModel {
                     notices: (try? ledger.liveNotices()) ?? [:],
                     reports: (try? ledger.allReports()) ?? [:],
                     frame: TaskLedgerFrame(
-                        tasks: (try? ledger.tasks(limit: 1_000)) ?? [],
+                        // Stale tasks are set aside everywhere work is listed
+                        // for somebody to pick up — see ``LedgerHygiene``.
+                        tasks: (try? ledger.tasks(includeStale: false, limit: 1_000)) ?? [],
                         links: (try? ledger.allLinks()) ?? [],
                         plans: (try? ledger.plans(includingArchived: true)) ?? [],
                         pendingClaims: (try? ledger.claimRequests()) ?? []

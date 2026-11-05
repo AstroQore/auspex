@@ -2,7 +2,7 @@ import Foundation
 import GRDB
 
 /// The store's housekeeping, on a schedule: the one-time liveness purge, then
-/// retention, then retention again every few hours.
+/// retention and the task ledger's hygiene, then both again every few hours.
 ///
 /// A value with no state, so a pass can be run from a test with a fixed clock
 /// as readily as from the app's background task. Every pass reads the stored
@@ -29,6 +29,10 @@ public struct StoreMaintenance: Sendable {
         public var livenessEventsPurged: Int?
         /// What retention removed.
         public var retention: RetentionReport
+        /// What the ledger's hygiene pass marked and filed — see
+        /// ``LedgerHygiene``. Nothing it does is a deletion, so it is not in
+        /// ``totalDeleted``.
+        public var hygiene: LedgerHygiene.Report = .init()
 
         /// Rows removed by either half.
         public var totalDeleted: Int {
@@ -51,12 +55,13 @@ public struct StoreMaintenance: Sendable {
     }
 
     /// One pass: the purge if this store still needs it, then retention under
-    /// the stored policy.
+    /// the stored policy, then the ledger's hygiene.
     public func runPass(now: Date = Date()) async throws -> Pass {
         let purged = try await LivenessEventPurge(store: store).runIfNeeded(now: now)
         let policy = (try? store.retentionPolicy()) ?? .default
         let retention = try await RetentionJob(store: store, policy: policy).runBatched(now: now)
-        return Pass(livenessEventsPurged: purged, retention: retention)
+        let hygiene = try LedgerHygiene(store: store).runPass(now: now)
+        return Pass(livenessEventsPurged: purged, retention: retention, hygiene: hygiene)
     }
 
     /// Waits ``initialDelay``, then runs a pass every ``interval`` until the

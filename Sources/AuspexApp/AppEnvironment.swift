@@ -324,6 +324,9 @@ public final class AppEnvironment {
         if mode == .demo {
             try? DemoTaskLedger.seed(into: TaskRepository(store: store))
             try? DemoBulkLedger.seed(into: TaskRepository(store: store), count: demoTaskCount)
+            // The pass the live app runs a minute after launch, run now: a
+            // demo seeded with six weeks of ledger should show it tidied.
+            if demoTaskCount > 0 { try? LedgerHygiene(store: store).runPass() }
         }
         board.startLedger(repository: TaskRepository(store: store))
         board.startMap(
@@ -460,10 +463,19 @@ public final class AppEnvironment {
     private func startMaintenance(store: AuspexStore) {
         let maintenance = StoreMaintenance(store: store)
         let board = board
-        pipelineTasks.append(Task.detached(priority: .utility) { [weak board] in
-            await maintenance.run { [weak board] result in
+        let tasks = tasks
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak tasks] in
+            await maintenance.run { [weak board, weak tasks] result in
                 switch result {
                 case .success(let pass):
+                    // A hygiene pass that marked or filed something changed
+                    // what both readers of the ledger draw.
+                    if pass.hygiene.didChange {
+                        await MainActor.run {
+                            tasks?.reload()
+                            board?.reloadLedger()
+                        }
+                    }
                     guard pass.totalDeleted > 0 else { return }
                     await board?.record(notice: Self.describe(pass))
                 case .failure(let error):

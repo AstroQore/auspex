@@ -46,8 +46,12 @@ extension AuspexMCPServer {
         let doingTasks = projectTasks.filter { $0.status == .doing }
         let blockedTasks = projectTasks.filter { $0.status == .blocked }
         let reviewTasks = projectTasks.filter { $0.status == .review }
+        // Stale work is not offered as something to pick up: a task nobody
+        // took in a week is a candidate for a person to retire, not a worker's
+        // next job. See ``LedgerHygiene``.
         let readyTasks = projectTasks.filter {
-            $0.status == .todo && !$0.isClaimed && $0.isReady(closed: closed, known: known)
+            $0.status == .todo && !$0.isClaimed && !$0.isStale
+                && $0.isReady(closed: closed, known: known)
         }
         let orphanedTasks = projectTasks.filter { task in
             guard task.status.isOpen, task.status != .review, let holder = task.claimedBy else {
