@@ -631,6 +631,17 @@ final class OfficeSKView: SKView {
     /// something changed is recognised as stale when it arrives.
     private var generation = 0
 
+    /// When the scene last finished a frame, in `CACurrentMediaTime()`
+    /// seconds — what the start-up check below compares against.
+    private(set) var lastFrameAt: TimeInterval = 0
+    /// Whether a check that the render loop really started is pending.
+    private var isCheckingStart = false
+    /// How many times in a row the render loop had to be started again.
+    private var restarts = 0
+    /// How many times the render loop was found not to have started — a
+    /// number to read in a debugger when a stage looks frozen.
+    private(set) var stalledStarts = 0
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         preferredFramesPerSecond = rates.resting
@@ -709,6 +720,7 @@ final class OfficeSKView: SKView {
     /// still one; a still view starts its clock again on the next vsync. A
     /// view that is not on screen stays asleep.
     func wake() {
+        defer { checkStarted() }
         generation &+= 1
         guard isOnScreen else { return }
         isStill = false
@@ -729,6 +741,8 @@ final class OfficeSKView: SKView {
     ///   scene next changes on its own — a balloon's stopwatch ticking over,
     ///   the next beat of the room's idle motion. `nil` when nothing will.
     func frameFinished(moving: Bool, nextWake: TimeInterval?) {
+        lastFrameAt = CACurrentMediaTime()
+        restarts = 0
         guard !moving, !isInteracting, isOnScreen else { return }
         let decided = generation
         DispatchQueue.main.async { [weak self] in
@@ -747,6 +761,48 @@ final class OfficeSKView: SKView {
             // and set up its own next one.
             guard let self, decided == generation else { return }
             wake()
+        }
+    }
+
+    /// Makes sure a view that was just told to run is actually running.
+    ///
+    /// ## Why this exists
+    ///
+    /// Unpausing an `SKView` asks SpriteKit to start its display link, and
+    /// about one launch in six it did not: the view said it was running —
+    /// on screen, unpaused, fifteen frames a second — and the scene was never
+    /// asked for a single frame. Nothing in the view's own state can tell
+    /// that apart from a scene with nothing to draw, so the stage showed
+    /// whatever was last on the glass — the grid with no rooms on it, or a
+    /// room frozen mid-walk — and stayed that way for the rest of the launch,
+    /// however many board frames woke it, because waking an unpaused view
+    /// does nothing.
+    ///
+    /// So a wake that leaves the view running checks, a quarter of a second
+    /// later, that a frame has finished since; when none has, it pauses the
+    /// view and runs it again, and after that presents the scene again, and
+    /// checks again — a few times, backing off, then gives up until the next
+    /// wake. A view that is drawing never gets past the first comparison.
+    private func checkStarted() {
+        guard isOnScreen, !isPaused, !isCheckingStart else { return }
+        isCheckingStart = true
+        let askedAt = CACurrentMediaTime()
+        let delay = 0.25 * Double(1 << min(restarts, 3))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            isCheckingStart = false
+            guard isOnScreen, !isPaused, lastFrameAt < askedAt, restarts < 4 else { return }
+            restarts += 1
+            stalledStarts += 1
+            if restarts > 1, let scene {
+                presentScene(nil)
+                presentScene(scene)
+                scene.isPaused = false
+            }
+            isPaused = true
+            isPaused = false
+            preferredFramesPerSecond = isInteracting ? rates.gesture : rates.resting
+            checkStarted()
         }
     }
 
@@ -850,6 +906,7 @@ final class OfficeSKView: SKView {
         isOnScreen = true
         scene?.isPaused = false
         applyRate()
+        defer { checkStarted() }
         // Whatever brought the view back, the picture on the glass is the one
         // it had when it left: draw at least one frame, and let the scene say
         // whether there is reason to draw a second.
