@@ -3,138 +3,130 @@ import AgentSessionLive
 import AuspexCore
 import SwiftUI
 
-/// The Tasks page: the projects on this machine, the work inside each, and the
-/// live sessions on it.
+/// The Tasks page: which project, what is being done in it, where it is
+/// stuck, and what is waiting for the person to accept.
 ///
-/// ## Why a board rather than a list
+/// ## One lane per project
 ///
-/// The question this page answers is *which of the things I handed out is
-/// moving, and which is stuck*. A list sorted by anything answers it badly,
-/// because "stuck" is not a property of one row — it is the shape of the
-/// column that row is in. Four columns and a glance is the whole interaction.
+/// Everything else in this app divides by project — the wall's sections, the
+/// sidebar's tree, the scene's floor plates — so the page does too, and it
+/// does nothing else: a lane is a project, its columns are the statuses that
+/// have something in them, and a milestone is a line of chips under the
+/// lane's title and a tag on each card. The page it replaced drew a full-width
+/// band per milestone with five columns under each, most of them empty, and
+/// on a ledger of a few hundred tasks that was more empty boxes than cards.
 ///
-/// ## Why the lanes are projects
+/// ## Explicit tasks only
 ///
-/// Because everything else on this app already divides by project — the wall's
-/// sections, the sidebar's tree, the scene's floor plates — and a task board
-/// that divided by something else would be a second map of the same machine.
-/// A milestone is a sub-heading *inside* a lane: optional, and never the thing
-/// that contains the work. Nothing is "unfiled", because a task filed by an
-/// agent is filed in the project that agent was working in.
+/// A session's own work that nobody filed is on Now and the Sessions page.
+/// This page is the ledger: what somebody handed out.
 ///
-/// ## What is live and what is filed
+/// ## Cost
 ///
-/// A task's column is what somebody — a person dragging, or an agent calling
-/// `tasks.update` — *said*. The dot on its row is what its session is actually
-/// doing, read from the same board frame the wall draws. Keeping both is the
-/// point: a task filed under "doing" whose only session ended an hour ago is
-/// exactly the row this page exists to surface, and a board that overwrote one
-/// with the other could not show it.
+/// Nothing on this page derives anything. ``TasksModel`` builds every lane,
+/// column and card once, as flat values compared by revision; the lanes sit
+/// in a lazy stack and every column draws at most eight cards until it is
+/// opened. A card's body reads its value and nothing else — in particular,
+/// nothing observable, so a frame that moved one task redraws one card.
 struct TasksPageView: View {
     let model: TasksModel
     let board: LiveBoardModel
 
-    /// The width of one column. Five of them plus the gaps fit the content
-    /// column at its default width, which is what keeps a whole project
-    /// readable without a horizontal scroll — and there are five since
-    /// finishing stopped meaning closing. See ``AuspexTaskStatus/review``.
-    static let columnWidth: CGFloat = 148
+    @Environment(\.isSnapshotRender) private var isSnapshotRender
 
     var body: some View {
+        let page = model.page
         BoardScroll(autoScrolls: true) {
-            // Deliberately eager. Roost rows have dynamic heights, nested
-            // columns, drag targets and native controls. On macOS 26.5.2 a
-            // `LazyVStack` enters a self-sustaining prefetch/update cycle after
-            // a short scroll: LazyLayoutViewCache.signalPrefetch asks the
-            // hosting view for another transaction while the current one is
-            // still placing task cards. The real failure holds the main thread
-            // at 100% CPU and grows memory until the window stops answering.
-            //
-            // `VStack` has no prefetch cache to feed back. The page is already
-            // bounded by the ledger read and groups rows by project; more
-            // importantly, one project lane eagerly builds its task columns
-            // even under a lazy outer stack, so the lazy container never
-            // provided a meaningful per-card saving here.
-            VStack(alignment: .leading, spacing: 16) {
-                pageBar
+            LanesStack(isLazy: !isSnapshotRender) {
+                pageBar(page)
                 if model.isEmpty {
                     TasksEmptyState()
+                } else if page.lanes.isEmpty {
+                    EmptyStateView(
+                        title: L10n.Trace.nothingInView,
+                        detail: L10n.Tasks.scopeEmptyDetail
+                    )
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
                 } else {
-                    ForEach(visibleLanes) { lane in
+                    ForEach(page.lanes) { lane in
                         ProjectLaneView(lane: lane, model: model, board: board)
+                            .equatable()
                     }
                 }
-                UnregisteredSessionsSection(model: model, board: board)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
         }
         .background(BoardSurfaceBackground())
-    }
-
-    /// Which projects are drawn.
-    ///
-    /// A project with nothing in it is not a lane: on a machine with thirty
-    /// repositories, twenty-eight empty headings would bury the two that have
-    /// work in them. The exception is the project a person has *focused* —
-    /// they bound the window to it, so the honest answer to "what is in it" is
-    /// an empty lane saying so rather than a page that omits the thing they
-    /// asked about.
-    private var visibleLanes: [TasksModel.ProjectLane] {
-        guard let focus = board.focusedProjectKey else {
-            return model.lanes.filter { !$0.isEmpty }
+        // One confirmation for every bulk close on the page — a Review
+        // column's "Close all" and the bar's "Close all old reviews". A sheet
+        // with no default action, like the kill confirmation: Return must not
+        // close a hundred tasks.
+        .sheet(item: pendingClose) { request in
+            BulkCloseSheet(
+                count: request.ids.count,
+                onConfirm: { model.confirmPendingClose() },
+                onCancel: { model.pendingClose = nil }
+            )
+            .auspexNoInitialFocus()
         }
-        return [model.lanes.first { $0.key == focus } ?? model.emptyLane(forKey: focus)]
     }
 
-    /// The archive switch, and what the page is showing.
-    ///
-    /// In the page rather than only in the toolbar, because the toolbar of the
-    /// content column is shared with the board and a control that appears and
-    /// disappears there is a control nobody finds twice.
-    @ViewBuilder
-    private var pageBar: some View {
-        HStack(spacing: 8) {
-            Text(summary)
+    private var pendingClose: Binding<TasksModel.BulkClose?> {
+        Binding(
+            get: { model.pendingClose },
+            set: { if $0 == nil { model.pendingClose = nil } }
+        )
+    }
+
+    // MARK: The bar
+
+    /// What the page is showing, the chips that choose it, and the page-wide
+    /// actions. One panel, in the page rather than the toolbar, because the
+    /// toolbar is shared with the board and a control that comes and goes
+    /// there is one nobody finds twice.
+    private func pageBar(_ page: TaskLaneBoard) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(L10n.Tasks.summary(
+                    projects: L10n.Tasks.Summary.projects(count: page.projectCount),
+                    tasks: L10n.Projects.tasksOpen(count: page.openCount)
+                ))
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
-            Spacer(minLength: 8)
-            if board.reviewCount > 0 {
-                Button { board.openNextReview() } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "checklist")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(L10n.Tasks.reviewNext(count: board.reviewCount))
-                            .font(AuspexType.pill)
-                    }
-                    .foregroundStyle(AuspexPalette.stateWriting)
-                    .padding(.horizontal, 8)
-                    .frame(height: 20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(AuspexPalette.stateWriting.opacity(0.08))
-                    )
-                    .contentShape(Rectangle())
+                Spacer(minLength: 8)
+                if board.reviewCount > 0 {
+                    BarButton(
+                        title: L10n.Tasks.reviewNext(count: board.reviewCount),
+                        symbol: "checklist",
+                        tint: AuspexPalette.stateWriting,
+                        help: L10n.Tasks.reviewNextHelp
+                    ) { board.openNextReview() }
                 }
-                .buttonStyle(.auspex(cornerRadius: 6))
-                .help(L10n.Tasks.reviewNextHelp)
+                if !page.oldReviewIDs.isEmpty {
+                    BarButton(
+                        title: L10n.Tasks.closeOldReviews(count: page.oldReviewIDs.count),
+                        symbol: "tray.full",
+                        tint: AuspexPalette.text2,
+                        help: L10n.Tasks.oldReviewsHelp
+                    ) { model.pendingClose = TasksModel.BulkClose(ids: page.oldReviewIDs) }
+                }
+                if page.staleCount > 0 || model.showsStale {
+                    ToggleChip(
+                        title: model.showsStale
+                            ? L10n.Tasks.hideStale : L10n.Tasks.showStale(count: page.staleCount),
+                        isOn: model.showsStale,
+                        help: L10n.Tasks.staleToggleHelp
+                    ) { model.showsStale.toggle() }
+                }
+                ToggleChip(
+                    title: model.showsArchived ? L10n.Tasks.hideArchived : L10n.Tasks.showArchived,
+                    isOn: model.showsArchived,
+                    help: L10n.Tasks.archivedHelp
+                ) { model.showsArchived.toggle() }
             }
-            Button { model.showsArchived.toggle() } label: {
-                Text(model.showsArchived ? L10n.Tasks.hideArchived : L10n.Tasks.showArchived)
-                    .font(AuspexType.pill)
-                    .foregroundStyle(
-                        model.showsArchived ? AuspexPalette.text : AuspexPalette.text3
-                    )
-                    .padding(.horizontal, 8)
-                    .frame(height: 20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(model.showsArchived ? AuspexPalette.selection : .clear)
-                    )
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.auspex)
-            .help(L10n.Tasks.archivedHelp)
+            ScopeChips(scope: model.scope, counts: page.scopeCounts, model: model)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -146,46 +138,169 @@ struct TasksPageView: View {
                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
         )
     }
+}
 
-    private var summary: String {
-        let lanes = visibleLanes.count
-        let open = visibleLanes.reduce(0) { $0 + $1.openCount }
-        return L10n.Tasks.summary(
-            projects: L10n.Tasks.Summary.projects(count: lanes),
-            tasks: L10n.Projects.tasksOpen(count: open)
-        )
+/// A lazy stack on screen, an eager one in an offscreen render.
+///
+/// `ImageRenderer` has no scroll view to be lazy inside, and a picture of the
+/// page has to contain the lanes it is a picture of.
+private struct LanesStack<Content: View>: View {
+    let isLazy: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if isLazy {
+            LazyVStack(alignment: .leading, spacing: 14) { content }
+        } else {
+            VStack(alignment: .leading, spacing: 14) { content }
+        }
+    }
+}
+
+/// The four scope chips and All.
+private struct ScopeChips: View {
+    let scope: TaskScopeSelection
+    let counts: TaskLaneBoard.ScopeCounts
+    let model: TasksModel
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(TaskScope.allCases, id: \.self) { item in
+                ToggleChip(
+                    title: Self.title(item, count: counts.count(item)),
+                    isOn: scope.contains(item),
+                    tint: Self.tint(item),
+                    help: L10n.Tasks.Scope.help
+                ) { model.toggle(item) }
+            }
+            ToggleChip(
+                title: L10n.Common.all,
+                isOn: scope.isAll,
+                help: L10n.Tasks.Scope.help
+            ) { model.showEverything() }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private static func title(_ scope: TaskScope, count: Int) -> String {
+        switch scope {
+        case .review: L10n.Tasks.Scope.review(count: count)
+        case .blocked: L10n.Tasks.Scope.blocked(count: count)
+        case .inProgress: L10n.Tasks.Scope.inProgress(count: count)
+        case .unclaimed: L10n.Tasks.Scope.unclaimed(count: count)
+        }
+    }
+
+    private static func tint(_ scope: TaskScope) -> Color {
+        switch scope {
+        case .review: AuspexPalette.stateWriting
+        case .blocked: AuspexPalette.statePermission
+        case .inProgress: AuspexPalette.stateThinking
+        case .unclaimed: AuspexPalette.text2
+        }
+    }
+}
+
+/// A pill that is a switch.
+private struct ToggleChip: View {
+    let title: String
+    let isOn: Bool
+    var tint: Color = AuspexPalette.text
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(AuspexType.pill)
+                .auspexTabularDigits()
+                .foregroundStyle(isOn ? tint : AuspexPalette.text3)
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isOn ? AuspexPalette.selection : .clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(isOn ? tint.opacity(0.35) : AuspexPalette.line, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 6))
+        .help(help)
+    }
+}
+
+/// A tinted action in the page bar.
+private struct BarButton: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
+                Text(title).font(AuspexType.pill).auspexTabularDigits()
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(tint.opacity(0.08))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 6))
+        .help(help)
     }
 }
 
 // MARK: - One project
 
-/// One project: its milestones, the tasks in none of them, and four columns
-/// under each.
-private struct ProjectLaneView: View {
-    let lane: TasksModel.ProjectLane
+/// One project: its header, its milestone line, and its non-empty columns.
+///
+/// Equatable on the lane alone, so SwiftUI skips the body of every lane whose
+/// revision did not move.
+private struct ProjectLaneView: View, Equatable {
+    let lane: TaskLane
     let model: TasksModel
     let board: LiveBoardModel
 
-    @State private var isAddingMilestone = false
-    @State private var draftMilestone = ""
+    @State private var draft: Draft?
+    @State private var draftText = ""
+
+    private enum Draft { case task, milestone }
+
+    nonisolated static func == (lhs: ProjectLaneView, rhs: ProjectLaneView) -> Bool {
+        lhs.lane == rhs.lane
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             header
-            if isAddingMilestone { milestoneField }
-            ForEach(lane.groups) { group in
-                MilestoneGroupView(
-                    group: group,
-                    lane: lane,
-                    // A lane with milestones in it needs to say what the last
-                    // set of columns is, or two identical column headers look
-                    // like a rendering mistake. A lane with none says nothing:
-                    // "not in a milestone" over the only thing there is would
-                    // be a heading about an absence.
-                    namesLooseGroup: lane.groups.contains { $0.plan != nil },
-                    model: model,
-                    board: board
-                )
+            if let draft { field(for: draft) }
+            if !lane.isCollapsed {
+                if !lane.milestones.isEmpty || lane.archivedMilestoneCount > 0 {
+                    milestoneLine
+                }
+                if lane.columns.isEmpty {
+                    EmptyStateView(
+                        title: L10n.Tasks.nothingToDo,
+                        detail: L10n.Tasks.nothingFiledInProject
+                    )
+                    .frame(maxWidth: .infinity)
+                } else {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(lane.columns) { column in
+                            TaskColumnView(column: column, laneKey: lane.key, model: model, board: board)
+                                .equatable()
+                        }
+                    }
+                }
             }
         }
         .padding(14)
@@ -194,36 +309,47 @@ private struct ProjectLaneView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 7) {
-                    if let harness = lane.harness {
-                        HarnessBadge(harness: harness, size: 15)
-                    } else {
-                        Image(systemName: "folder")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(AuspexPalette.text3)
-                    }
-                    Text(lane.title)
-                        .font(AuspexType.cardTitle)
-                        .foregroundStyle(AuspexPalette.text)
-                }
-                if let subtitle = lane.subtitle {
-                    Text(subtitle)
-                        .font(AuspexType.monoSmall)
-                        .foregroundStyle(AuspexPalette.text3)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                }
+            Button { model.toggleLane(lane.key) } label: {
+                Image(systemName: lane.isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(AuspexPalette.text3)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.auspex)
+            .help(lane.isCollapsed ? L10n.Tasks.Lane.unfold : L10n.Tasks.Lane.fold)
+
+            if let harness = lane.harness {
+                HarnessBadge(harness: harness, size: 15)
+            } else {
+                Image(systemName: "folder")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+            Text(lane.title)
+                .font(AuspexType.cardTitle)
+                .foregroundStyle(AuspexPalette.text)
+                .lineLimit(1)
+            if let subtitle = lane.subtitle {
+                Text(subtitle)
+                    .font(AuspexType.monoSmall)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
             }
             Spacer(minLength: 6)
-            Text(L10n.Tasks.laneOpen(count: lane.openCount))
-                .font(AuspexType.monoCount)
-                .auspexTabularDigits()
-                .foregroundStyle(AuspexPalette.text3)
-            Button {
-                isAddingMilestone.toggle()
-            } label: {
+            LaneCounts(counts: lane.counts)
+            Button { toggleDraft(.task) } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                    .frame(width: 20, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.auspex)
+            .foregroundStyle(AuspexPalette.text3)
+            .help(L10n.Tasks.fileInProject)
+            Button { toggleDraft(.milestone) } label: {
                 Text(L10n.Tasks.milestone)
                     .font(AuspexType.pill)
                     .padding(.horizontal, 6)
@@ -236,19 +362,53 @@ private struct ProjectLaneView: View {
         }
     }
 
-    private var milestoneField: some View {
+    /// The lane's milestones as one line of chips: what used to be a band of
+    /// five columns each. A chip narrows the lane to that milestone.
+    private var milestoneLine: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(lane.milestones) { milestone in
+                let isOn = lane.milestoneFilter == milestone.id
+                Button { model.toggleMilestone(milestone.id, inLane: lane.key) } label: {
+                    Text("\(milestone.title) · \(milestone.openCount)")
+                        .font(AuspexType.caption)
+                        .foregroundStyle(isOn ? AuspexPalette.text : AuspexPalette.text2)
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .frame(height: 18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(isOn ? AuspexPalette.selection : AuspexPalette.bg2)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.auspex(cornerRadius: 5))
+                .help(L10n.Tasks.Lane.milestoneHelp)
+            }
+            if lane.archivedMilestoneCount > 0 {
+                Text(L10n.Tasks.Lane.archivedMilestones(count: lane.archivedMilestoneCount))
+                    .font(AuspexType.caption)
+                    .foregroundStyle(AuspexPalette.text3)
+                    .frame(height: 18)
+            }
+        }
+    }
+
+    private func field(for draft: Draft) -> some View {
         HStack(spacing: 8) {
-            TextField(L10n.Tasks.milestonePlaceholder, text: $draftMilestone)
-                .textFieldStyle(.plain)
-                .font(AuspexType.body)
-                .auspexSystemControlFocus()
-                .onSubmit(commit)
-            Button(L10n.Tasks.register, action: commit)
+            TextField(
+                draft == .task ? L10n.Tasks.newTaskPlaceholder : L10n.Tasks.milestonePlaceholder,
+                text: $draftText
+            )
+            .textFieldStyle(.plain)
+            .font(AuspexType.body)
+            .auspexSystemControlFocus()
+            .onSubmit(commit)
+            Button(draft == .task ? L10n.Common.add : L10n.Tasks.register, action: commit)
                 .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.stateThinking)
-                .disabled(draftMilestone.trimmingCharacters(in: .whitespaces).isEmpty)
-            Button(L10n.Common.cancel) { isAddingMilestone = false; draftMilestone = "" }
+                .disabled(draftText.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button(L10n.Common.cancel) { self.draft = nil; draftText = "" }
                 .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.text3)
@@ -260,156 +420,69 @@ private struct ProjectLaneView: View {
         )
     }
 
+    private func toggleDraft(_ kind: Draft) {
+        draft = draft == kind ? nil : kind
+        draftText = ""
+    }
+
     private func commit() {
-        model.createMilestone(title: draftMilestone, projectKey: lane.key)
-        draftMilestone = ""
-        isAddingMilestone = false
+        switch draft {
+        case .task:
+            model.createTask(title: draftText, projectKey: lane.key, planID: lane.milestoneFilter)
+        case .milestone:
+            model.createMilestone(title: draftText, projectKey: lane.key)
+        case nil:
+            break
+        }
+        draftText = ""
+        draft = nil
     }
 }
 
-// MARK: - One milestone
-
-/// A milestone's sub-header and its four columns — or, for the tasks in no
-/// milestone, the four columns on their own.
-private struct MilestoneGroupView: View {
-    let group: TasksModel.MilestoneGroup
-    let lane: TasksModel.ProjectLane
-    /// Whether the tasks in no milestone get a heading of their own.
-    var namesLooseGroup = false
-    let model: TasksModel
-    let board: LiveBoardModel
-
-    @State private var isAddingTask = false
-    @State private var draftTitle = ""
+/// "1 blocked · 5 to review · 2 doing · 3 unclaimed", only the parts that are
+/// not zero.
+private struct LaneCounts: View {
+    let counts: TaskLane.Counts
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            header
-            if group.tasks.isEmpty {
-                // One quiet line rather than four boxes with a dash in each:
-                // an empty project says one thing, and it should say it once.
-                // No symbol — the lane's own header already says what kind of
-                // thing is missing — and no box, per `EmptyStateView`.
-                EmptyStateView(
-                    title: L10n.Tasks.nothingToDo,
-                    detail: group.plan == nil
-                        ? L10n.Tasks.nothingFiledInProject
-                        : L10n.Tasks.milestoneEmpty
-                )
-                .frame(maxWidth: .infinity)
-            } else {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
-                        TaskColumnView(
-                            status: status,
-                            rows: group.column(status),
-                            model: model,
-                            board: board
-                        )
-                    }
+        HStack(spacing: 5) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                if index > 0 {
+                    Text("·").font(AuspexType.monoCount).foregroundStyle(AuspexPalette.text3)
                 }
-            }
-            if isAddingTask { newTaskField }
-        }
-        .opacity(group.isArchived ? 0.6 : 1)
-    }
-
-    /// The sub-header, when there is a milestone to head. The tasks in none get
-    /// the add button and nothing else: a heading over them would be a heading
-    /// that says "the rest".
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            if group.plan == nil, namesLooseGroup {
-                Text(L10n.Tasks.notInMilestone)
-                    .auspexLabel(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.text3)
-            }
-            if let title = group.title {
-                Text(title)
-                    .auspexLabel(AuspexType.labelSmall)
-                    .foregroundStyle(AuspexPalette.text2)
-                if let plan = group.plan {
-                    Text(plan.slug)
-                        .font(AuspexType.monoSmall)
-                        .foregroundStyle(AuspexPalette.text3)
-                        .textSelection(.enabled)
-                }
-                if group.isArchived {
-                    Text(L10n.Tasks.archived)
-                        .auspexLabel(AuspexType.labelSmall)
-                        .foregroundStyle(AuspexPalette.text3)
-                }
-                if let summary = group.summary {
-                    Text(summary)
-                        .font(AuspexType.caption)
-                        .foregroundStyle(AuspexPalette.text3)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 6)
-            Button {
-                isAddingTask.toggle()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .bold))
-                    .frame(width: 20, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.auspex)
-            .foregroundStyle(AuspexPalette.text3)
-            .help(group.plan == nil ? L10n.Tasks.fileInProject : L10n.Tasks.fileUnderMilestone)
-            if let plan = group.plan, !group.isArchived {
-                Button { model.archivePlan(id: plan.id) } label: {
-                    Image(systemName: "archivebox")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 20, height: 16)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.auspex)
-                .foregroundStyle(AuspexPalette.text3)
-                .help(L10n.Tasks.archiveMilestoneHelp)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if group.title != nil || namesLooseGroup {
-                Rectangle().fill(AuspexPalette.line).frame(height: 1).offset(y: 3)
+                Text(part.text)
+                    .font(AuspexType.monoCount)
+                    .auspexTabularDigits()
+                    .foregroundStyle(part.color)
+                    .fixedSize()
             }
         }
     }
 
-    private var newTaskField: some View {
-        HStack(spacing: 8) {
-            TextField(L10n.Tasks.newTaskPlaceholder, text: $draftTitle)
-                .textFieldStyle(.plain)
-                .font(AuspexType.body)
-                .auspexSystemControlFocus()
-                .onSubmit(commit)
-            Button(L10n.Common.add, action: commit)
-                .buttonStyle(.auspex)
-                .font(AuspexType.pill)
-                .foregroundStyle(AuspexPalette.stateThinking)
-                .disabled(draftTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+    private var parts: [(text: String, color: Color)] {
+        var parts: [(text: String, color: Color)] = []
+        if counts.blocked > 0 {
+            parts.append((L10n.Tasks.Lane.blocked(count: counts.blocked), AuspexPalette.statePermission))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous).fill(AuspexPalette.bg2)
-        )
-    }
-
-    private func commit() {
-        model.createTask(title: draftTitle, projectKey: lane.key, planID: group.plan?.id)
-        draftTitle = ""
-        isAddingTask = false
+        if counts.review > 0 {
+            parts.append((L10n.Tasks.Lane.review(count: counts.review), AuspexPalette.stateWriting))
+        }
+        if counts.doing > 0 {
+            parts.append((L10n.Tasks.Lane.doing(count: counts.doing), AuspexPalette.stateThinking))
+        }
+        if counts.unclaimed > 0 {
+            parts.append((L10n.Tasks.Lane.unclaimed(count: counts.unclaimed), AuspexPalette.text3))
+        }
+        return parts
     }
 }
 
 // MARK: - One column
 
-/// One kanban column, and the target a dragged task lands on.
-private struct TaskColumnView: View {
-    let status: AuspexTaskStatus
-    let rows: [TasksModel.TaskRow]
+/// One status column, and the target a dragged task lands on.
+private struct TaskColumnView: View, Equatable {
+    let column: TaskLaneColumn
+    let laneKey: String
     let model: TasksModel
     let board: LiveBoardModel
 
@@ -420,71 +493,150 @@ private struct TaskColumnView: View {
     // anyway.
     @Environment(\.isSnapshotRender) private var isSnapshotRender
 
+    nonisolated static func == (lhs: TaskColumnView, rhs: TaskColumnView) -> Bool {
+        lhs.column == rhs.column
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
-                Text(status.localizedLabel)
+                Text(column.status.localizedLabel)
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
+                Text("\(column.total)")
+                    .font(AuspexType.monoCount)
+                    .auspexTabularDigits()
+                    .foregroundStyle(AuspexPalette.text3)
                 Spacer(minLength: 2)
-                if !rows.isEmpty {
-                    Text("\(rows.count)")
-                        .font(AuspexType.monoCount)
-                        .auspexTabularDigits()
-                        .foregroundStyle(AuspexPalette.text3)
+                if !column.closableIDs.isEmpty {
+                    Button {
+                        model.pendingClose = TasksModel.BulkClose(ids: column.closableIDs)
+                    } label: {
+                        Text(L10n.Tasks.Column.closeAll(count: column.closableIDs.count))
+                            .font(AuspexType.labelSmall)
+                            .foregroundStyle(AuspexPalette.stateWriting)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.auspex)
+                    .help(L10n.Tasks.Column.closeAllHelp)
                 }
             }
             .padding(.horizontal, 2)
 
-            ForEach(rows) { row in
-                TaskCardView(row: row, model: model, board: board)
+            ForEach(column.cards) { card in
+                TaskCardView(card: card, model: model, board: board).equatable()
             }
-            if rows.isEmpty {
-                // Empty, and quiet about it: the column keeps enough height to
-                // be somewhere a task can be dropped, and says nothing at all.
-                // A dash in every empty column is four pieces of punctuation
-                // where the honest answer is one absence — and the frame goes
-                // with it, because a border around nothing is how a
-                // placeholder ends up looking like a control that failed to
-                // draw. See `EmptyStateView`.
-                Color.clear.frame(height: 28)
+            if column.hiddenCount > 0 {
+                FoldButton(title: L10n.Projects.Fold.more(count: column.hiddenCount)) {
+                    model.toggleColumn(column.id)
+                }
+            } else if column.isExpanded {
+                FoldButton(title: L10n.Projects.Fold.showFewer) {
+                    model.toggleColumn(column.id)
+                }
+            }
+            if !column.oldReviews.isEmpty {
+                Button { model.toggleOldReviews(laneKey) } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: column.showsOldReviews ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Text(L10n.Tasks.oldReviews(count: column.oldReviews.count))
+                            .font(AuspexType.labelSmall)
+                            .auspexTabularDigits()
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(AuspexPalette.text3)
+                    .padding(.horizontal, 4)
+                    .frame(height: 20)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.auspex)
+                .help(L10n.Tasks.oldReviewsHelp)
+                if column.showsOldReviews {
+                    ForEach(column.oldReviews) { card in
+                        TaskCardView(card: card, model: model, board: board).equatable()
+                    }
+                }
             }
         }
-        .frame(width: TasksPageView.columnWidth, alignment: .leading)
+        .frame(minWidth: 132, maxWidth: .infinity, alignment: .topLeading)
         .padding(6)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(fill)
+                .fill(isTargeted ? AuspexPalette.selection : AuspexPalette.bg1.opacity(0.6))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(stroke, lineWidth: 1)
+                .strokeBorder(
+                    isTargeted ? AuspexPalette.stateThinking.opacity(0.6) : AuspexPalette.line,
+                    lineWidth: 1
+                )
         )
-        // The chrome is gone when the column is empty, so the area a drag can
-        // be dropped on has to be declared rather than inherited from a shape
-        // that is no longer painted.
         .contentShape(Rectangle())
         // A column takes tasks. Sessions are dropped on *tasks*, not on
         // columns: "this session is working on that piece of work" is a fact
         // about one task, and a column has no id to attach it to.
         .modifier(TaskDropTarget(isEnabled: !isSnapshotRender, isTargeted: $isTargeted) { items in
             guard let id = items.compactMap(TaskDragPayload.taskID(in:)).first else { return false }
-            model.move(taskID: id, to: status)
+            model.move(taskID: id, to: column.status)
             return true
         })
     }
+}
 
-    /// A container has a background when it contains something — or when a
-    /// task is being dragged over it, which is the one moment an empty column
-    /// has to show where it is.
-    private var fill: Color {
-        if isTargeted { return AuspexPalette.selection }
-        return rows.isEmpty ? .clear : AuspexPalette.bg1.opacity(0.6)
+/// "Close 12 tasks?" — an explicit two-action confirmation with no implicit
+/// default action, the shape `KillConfirmation` set: Escape cancels, and
+/// Return does nothing until focus has moved to a button on purpose.
+private struct BulkCloseSheet: View {
+    let count: Int
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.Tasks.ConfirmClose.title(count: count))
+                .font(AuspexType.paneTitle)
+                .foregroundStyle(AuspexPalette.text)
+            Text(L10n.Tasks.ConfirmClose.detail)
+                .font(AuspexType.body)
+                .foregroundStyle(AuspexPalette.text2)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button(L10n.Common.cancel, role: .cancel, action: onCancel)
+                    .buttonStyle(.auspex)
+                    .keyboardShortcut(.cancelAction)
+                Button(L10n.Common.close, role: .destructive, action: onConfirm)
+                    .buttonStyle(.auspex)
+                    .foregroundStyle(AuspexPalette.stateWriting)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+        .background(AuspexPalette.canvas)
+        .auspexControlFocus()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(L10n.Tasks.ConfirmClose.title(count: count))
     }
+}
 
-    private var stroke: Color {
-        if isTargeted { return AuspexPalette.stateThinking.opacity(0.6) }
-        return rows.isEmpty ? .clear : AuspexPalette.line
+/// "+3 more" and "Show fewer" under a column.
+private struct FoldButton: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(AuspexType.labelSmall)
+                .auspexTabularDigits()
+                .foregroundStyle(AuspexPalette.text3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
+                .frame(height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex)
     }
 }
 
@@ -512,42 +664,55 @@ private struct TaskDropTarget: ViewModifier {
 
 // MARK: - One task
 
-/// One task: what it is, who took it, and what their session is doing.
-private struct TaskCardView: View {
-    let row: TasksModel.TaskRow
+/// One task: what it is, who has it, what they last did, and how long ago.
+///
+/// Everything it draws is on ``card``. It reads nothing observable, so the
+/// only thing that redraws it is a new revision of its own value.
+private struct TaskCardView: View, Equatable {
+    let card: TaskLaneCard
     let model: TasksModel
     let board: LiveBoardModel
 
-    @State private var isTargeted = false
     @Environment(\.isSnapshotRender) private var isSnapshotRender
 
+    nonisolated static func == (lhs: TaskCardView, rhs: TaskCardView) -> Bool {
+        lhs.card == rhs.card
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .top, spacing: 6) {
-                TaskStatusIcon(status: row.displayStatus, size: 12).padding(.top, 1)
-                Text(row.task.title)
+                TaskStatusIcon(status: card.status, size: 12).padding(.top, 1)
+                Text(card.title)
                     .font(AuspexType.rowTitle)
-                    .foregroundStyle(row.isImplicit ? AuspexPalette.text2 : AuspexPalette.text)
+                    .foregroundStyle(AuspexPalette.text)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if row.task.importance.isMarked, !row.isImplicit {
-                    TaskImportanceIcon(importance: row.task.importance, size: 11)
-                        .padding(.top, 1)
+                if card.importance.isMarked {
+                    TaskImportanceIcon(importance: card.importance, size: 11).padding(.top, 1)
                 }
             }
 
             HStack(spacing: 5) {
-                Text(row.unit?.shortID ?? row.task.shortID)
+                Text(card.shortID)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize()
-                // The mark that says nobody filed this. Quiet, and one word: an
-                // implicit row is the ordinary case on a machine where the task
-                // protocol has not been adopted, but somebody about to act on
-                // it should know there is no row in the ledger to act on.
-                if row.isImplicit {
-                    Text(L10n.Task.Card.auto)
+                if let milestone = card.milestone {
+                    Text(milestone.title)
+                        .font(AuspexType.labelSmall)
+                        .foregroundStyle(AuspexPalette.text3)
+                        .lineLimit(1)
+                        .padding(.horizontal, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(AuspexPalette.bg1)
+                        )
+                        .opacity(milestone.isArchived ? 0.6 : 1)
+                }
+                if card.isStale {
+                    Text(L10n.Tasks.Card.stale)
                         .font(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3)
                         .padding(.horizontal, 3)
@@ -556,29 +721,18 @@ private struct TaskCardView: View {
                                 .strokeBorder(AuspexPalette.line, lineWidth: 1)
                         )
                         .fixedSize()
-                        .help(L10n.Tasks.autoHelp)
+                        .help(L10n.Tasks.staleHelp)
                 }
                 Spacer(minLength: 0)
-                if let unit = row.unit, unit.memberCount > 1 {
-                    Text("↳ \(unit.subagents.count)")
+                if card.subagentCount > 0 {
+                    Text("↳ \(card.subagentCount)")
                         .font(AuspexType.monoSmall)
                         .foregroundStyle(AuspexPalette.stateDelegating)
                         .fixedSize()
                 }
             }
 
-            if let claim = row.task.claimDescription {
-                // The whole reason `claim` takes two strings. On a board of a
-                // dozen live sessions, "implementer · the TOML half" is what
-                // tells two of them apart; a session id does not.
-                Text(claim)
-                    .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.text2)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let notice = row.callingNotice {
+            if let notice = card.notice {
                 HStack(spacing: 5) {
                     NoticePill(kind: notice.kind, isCompact: true)
                     Text(notice.message)
@@ -589,44 +743,48 @@ private struct TaskCardView: View {
                 }
             }
 
-            if let unit = row.unit, unit.isClaimOrphaned {
+            if card.isOrphaned {
                 Text(L10n.Task.Filter.claimOrphaned)
                     .font(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.stateStale)
                     .help(L10n.Tasks.orphanHelp)
             }
 
-            if let result = row.task.result, !row.task.status.isOpen || row.task.status == .review {
-                Text(result)
+            if let claimer = card.claimer {
+                Button { jump(to: claimer.session) } label: {
+                    HStack(spacing: 5) {
+                        StateDot(
+                            color: claimer.state?.style.color ?? AuspexPalette.stateEnded,
+                            glows: claimer.isLive && claimer.state?.isActive == true
+                        )
+                        HarnessBadge(harness: claimer.harness, size: 13)
+                        Text(claimer.title)
+                            .font(AuspexType.caption)
+                            .foregroundStyle(claimer.isLive ? AuspexPalette.text2 : AuspexPalette.text3)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.auspex)
+                .help(L10n.Tasks.Card.claimerHelp)
+            }
+
+            if let detail = card.detail {
+                Text(detail)
                     .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.stateWriting.opacity(0.85))
-                    .lineLimit(3)
+                    .foregroundStyle(
+                        card.detailIsResult
+                            ? AuspexPalette.stateWriting.opacity(0.85) : AuspexPalette.text3
+                    )
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if !row.sessions.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(row.sessions, id: \.key) { session in
-                        Button { select(session.key) } label: {
-                            HStack(spacing: 5) {
-                                StateDot(
-                                    color: session.state.style.color,
-                                    glows: session.isAlive && !session.state.isEnded
-                                )
-                                HarnessBadge(harness: session.harness, size: 13)
-                                Text(session.title)
-                                    .font(AuspexType.caption)
-                                    .foregroundStyle(AuspexPalette.text3)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.auspex)
-                        .help("\(session.harness.displayName) — \(session.state.localizedLabel)")
-                    }
-                }
-            }
+            Text(card.age)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.text3)
+                .lineLimit(1)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -637,178 +795,78 @@ private struct TaskCardView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(borderColor, lineWidth: 1)
         )
-        .opacity(row.isImplicit ? 0.72 : 1)
-        // A derived row cannot be dragged between columns: there is no row in
-        // the ledger to move, and a card that slid across and sprang back
-        // would be worse than one that does not move.
-        .modifier(
-            TaskDragSource(
-                isEnabled: !isSnapshotRender && !row.isImplicit,
-                payload: TaskDragPayload.task(row.task.id)
-            )
-        )
-        // A session card dropped here is linked to this task. The same
-        // relationship `tasks.claim` records, made by hand.
-        .modifier(
-            TaskDropTarget(
-                isEnabled: !isSnapshotRender && !row.isImplicit,
-                isTargeted: $isTargeted
-            ) { items in
-                guard let key = items.compactMap(TaskDragPayload.sessionKey(in:)).first
-                else { return false }
-                model.link(session: key, to: row.task.id)
-                return true
-            }
-        )
-        .contextMenu {
-            if row.isImplicit {
-                // Everything below writes to a row that does not exist yet.
-                // This is the one action that makes one.
-                if let unit = row.unit {
-                    Button(L10n.Task.Menu.promote) { model.promote(unit: unit) }
-                }
-            } else {
-                if row.task.status == .review {
-                    Button(L10n.Common.close) { model.close(taskID: row.task.id) }
-                } else if row.task.status == .done {
-                    Button(L10n.Task.Menu.reopen) { model.reopen(taskID: row.task.id) }
-                }
-                if row.unit?.isClaimOrphaned == true {
-                    Button(L10n.Task.Menu.releaseClaim) { model.releaseClaim(taskID: row.task.id) }
-                }
-                Divider()
-                ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
-                    Button(L10n.Tasks.moveTo(status: status.localizedLabel)) { model.move(taskID: row.task.id, to: status) }
-                        .disabled(status == row.task.status)
-                }
-            }
-            // Re-filing by hand, which is what makes the scratch project a
-            // place work passes through rather than a place it goes to die.
-            let elsewhere = row.isImplicit
-                ? []
-                : model.lanes.filter { $0.key != row.task.projectKey }
-            if !elsewhere.isEmpty {
-                Divider()
-                Menu(L10n.Tasks.fileUnder) {
-                    ForEach(elsewhere) { lane in
-                        Button(lane.title) {
-                            model.move(taskID: row.task.id, toProjectKey: lane.key)
-                        }
-                    }
-                }
-            }
-            if !row.sessions.isEmpty, !row.isImplicit {
-                Divider()
-                ForEach(row.sessions, id: \.key) { session in
-                    Button(L10n.Tasks.unlink(title: session.title)) {
-                        model.unlink(session: session.key, from: row.task.id)
-                    }
-                }
-            }
-        }
+        // Nobody has it: quieter, so the work somebody is doing reads first.
+        .opacity(card.isUnclaimed && card.status == .todo ? 0.7 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { open() }
+        // Dragged between columns. Not a drop target itself: a drop target is
+        // a platform view, one per card is hundreds of them, and the one thing
+        // it took — a session dragged from the "not on the board" strip — is
+        // not on this page any more. "Link to task…" on a session's card does
+        // the same from where the session is.
+        .modifier(TaskDragSource(isEnabled: !isSnapshotRender, payload: TaskDragPayload.task(card.id)))
+        .contextMenu { TaskLaneCardMenu(card: card, model: model) }
     }
 
-    /// Red when a session on this task is calling for a person, blue while
-    /// something is being dropped on it, and the ordinary line otherwise.
     private var borderColor: Color {
-        if isTargeted { return AuspexPalette.stateThinking.opacity(0.7) }
-        if let notice = row.callingNotice { return NoticeStyle.color(notice.kind).opacity(0.55) }
+        if let notice = card.notice { return NoticeStyle.color(notice.kind).opacity(0.55) }
         return AuspexPalette.line
     }
 
-    private func select(_ key: SessionKey) {
+    /// The task's own page — the one the wall opens — when the board holds
+    /// the task. A stale task is not on the board, and opens nothing.
+    private func open() {
+        guard board.unit(withID: card.unitID) != nil else { return }
+        board.openUnitID = card.unitID
+    }
+
+    /// The claimer's session, on Now.
+    private func jump(to key: SessionKey) {
         board.selectedKey = key
         board.focusProject(of: key)
+        board.requestedSection = .live
     }
 }
 
-// MARK: - What is not on the board
-
-/// The live sessions no task claims.
-///
-/// Not hidden, and not silently folded into a lane. Half the value of this
-/// page is knowing what is running *outside* the work somebody wrote down — an
-/// agent nobody registered is the thing most likely to be duplicating
-/// somebody else's work — so it gets a heading of its own and a way to file
-/// each one.
-private struct UnregisteredSessionsSection: View {
+/// A card's right-click menu. Its own view, so the one value it reads that
+/// can change — the projects to re-file into — is its own dependency rather
+/// than every card's.
+private struct TaskLaneCardMenu: View {
+    let card: TaskLaneCard
     let model: TasksModel
-    let board: LiveBoardModel
 
     var body: some View {
-        let linked = Set(
-            model.lanes
-                .flatMap(\.tasks)
-                .flatMap(\.sessions)
-                .map(\.key)
-        )
-        let rows = board.rowGroups
-            .flatMap(\.rows)
-            .filter { !linked.contains($0.key) && !$0.isEnded }
-
-        if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Text(L10n.Tasks.notOnBoard)
-                        .auspexLabel(AuspexType.labelLarge)
-                        .foregroundStyle(AuspexPalette.text3)
-                    Text("\(rows.count)")
-                        .font(AuspexType.monoCount)
-                        .auspexTabularDigits()
-                        .foregroundStyle(AuspexPalette.text3)
-                    Spacer(minLength: 4)
-                    Text(L10n.Tasks.dragHint)
-                        .font(AuspexType.caption)
-                        .foregroundStyle(AuspexPalette.text3)
-                }
-                FlowLayout(spacing: 6) {
-                    ForEach(rows) { row in
-                        UnregisteredSessionChip(row: row, board: board)
+        if card.ledgerStatus == .review {
+            Button(L10n.Common.close) { model.close(taskID: card.id) }
+        } else if card.ledgerStatus == .done {
+            Button(L10n.Task.Menu.reopen) { model.reopen(taskID: card.id) }
+        }
+        if card.isStale {
+            Button(L10n.Tasks.Menu.keep) { model.keep(taskID: card.id) }
+        }
+        if card.isOrphaned {
+            Button(L10n.Task.Menu.releaseClaim) { model.releaseClaim(taskID: card.id) }
+        }
+        Divider()
+        ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
+            Button(L10n.Tasks.moveTo(status: status.localizedLabel)) {
+                model.move(taskID: card.id, to: status)
+            }
+            .disabled(status == card.ledgerStatus)
+        }
+        // Re-filing by hand, which is what makes the scratch project a place
+        // work passes through rather than a place it goes to die.
+        let elsewhere = model.projectChoices
+        if elsewhere.count > 1 {
+            Divider()
+            Menu(L10n.Tasks.fileUnder) {
+                ForEach(elsewhere) { choice in
+                    Button(choice.title) {
+                        model.move(taskID: card.id, toProjectKey: choice.key)
                     }
                 }
             }
-            .padding(14)
-            .panelChrome()
         }
-    }
-}
-
-private struct UnregisteredSessionChip: View {
-    let row: BoardRow
-    let board: LiveBoardModel
-
-    @Environment(\.isSnapshotRender) private var isSnapshotRender
-
-    var body: some View {
-        Button {
-            board.selectedKey = row.key
-            board.focusProject(of: row.key)
-        } label: {
-            HStack(spacing: 6) {
-                StateDot(color: row.state.style.color, glows: !row.isEnded)
-                HarnessBadge(harness: row.harness, size: 14)
-                Text(row.title)
-                    .font(AuspexType.caption)
-                    .foregroundStyle(AuspexPalette.text2)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(maxWidth: 190, alignment: .leading)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(AuspexPalette.bg2)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(AuspexPalette.line, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.auspex)
-        .modifier(
-            TaskDragSource(isEnabled: !isSnapshotRender, payload: TaskDragPayload.session(row.key))
-        )
     }
 }
 
@@ -864,28 +922,27 @@ enum TaskDragPayload {
 /// The projects are the submenus, so a task's name is read next to the project
 /// that gives it meaning. Anything already linked is dropped from the list: an
 /// item that does nothing is a menu telling somebody a lie about what happens
-/// next.
+/// next. Read from the ledger, not from the Tasks page, so it is right whether
+/// or not that page has been opened.
 struct LinkToTaskMenu: View {
     let key: SessionKey
     let tasks: TasksModel
 
     var body: some View {
-        let lanes = tasks.lanes.filter { !$0.isEmpty }
-        if lanes.isEmpty {
+        let projects = tasks.linkTargets
+        if projects.isEmpty {
             Button(L10n.Tasks.linkToTask) {}
                 .disabled(true)
                 .help(L10n.Tasks.linkDisabledHelp)
         } else {
             Menu(L10n.Tasks.linkToTask) {
-                ForEach(lanes) { lane in
-                    let available = lane.tasks.filter { row in
-                        !row.sessions.contains { $0.key == key }
-                    }
+                ForEach(projects) { project in
+                    let available = project.tasks.filter { !$0.sessions.contains(key) }
                     if !available.isEmpty {
-                        Menu(lane.title) {
-                            ForEach(available) { row in
-                                Button(row.task.title) {
-                                    tasks.link(session: key, to: row.task.id)
+                        Menu(project.title) {
+                            ForEach(available) { task in
+                                Button(task.title) {
+                                    tasks.link(session: key, to: task.id)
                                 }
                             }
                         }
@@ -895,7 +952,6 @@ struct LinkToTaskMenu: View {
         }
     }
 }
-
 
 /// A drag source that can be switched off — see ``TaskDropTarget``.
 private struct TaskDragSource: ViewModifier {

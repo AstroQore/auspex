@@ -209,8 +209,18 @@ final class LiveBoardModel {
         didSet {
             guard oldValue != section else { return }
             drawnModeChanged(from: Self.drawnMode(section: oldValue, viewMode: viewMode))
+            onNavigation?(section, focusedProjectKey)
         }
     }
+
+    /// Called when the page or the focused project changes, for the models
+    /// that do work only for one page — the Tasks page rebuilds only while it
+    /// is the page on screen. See `TasksModel.setVisible(_:)`.
+    @ObservationIgnored var onNavigation: ((BoardSection, String?) -> Void)?
+
+    /// A page a view asked the window to turn to — the claimer line on a task
+    /// card jumps to that session on Now. `RootView` applies it and clears it.
+    var requestedSection: BoardSection?
 
     /// The mode actually on screen, which is the one the assembler builds for.
     ///
@@ -403,7 +413,11 @@ final class LiveBoardModel {
     /// that room; three properties would be three chances for the sidebar and
     /// the scene to be looking at different projects.
     var focusedProjectKey: String? {
-        didSet { if oldValue != focusedProjectKey { scheduleAssembly() } }
+        didSet {
+            guard oldValue != focusedProjectKey else { return }
+            scheduleAssembly()
+            onNavigation?(section, focusedProjectKey)
+        }
     }
 
     /// The one ledger bucket the board is showing, set by clicking a summary

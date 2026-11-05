@@ -335,6 +335,12 @@ public final class AppEnvironment {
         )
         tasks.start(repository: TaskRepository(store: store))
         tasks.onLedgerChange = { [weak board] in board?.reloadLedger() }
+        // The Tasks page is derived only while it is the page on screen.
+        board.onNavigation = { [tasks] section, focus in
+            tasks.setFocusedProject(focus)
+            tasks.setVisible(section == .tasks)
+        }
+        board.onNavigation?(board.section, board.focusedProjectKey)
         projects.start(repository: ProjectRepository(store: store))
         // A demo reads no harness store — and no harness *config* either. The
         // page (and any offscreen render of it) would otherwise show this

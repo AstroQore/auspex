@@ -259,6 +259,11 @@ struct RootView: View {
                 model.focusedProjectKey = nil
             }
         }
+        .onChange(of: model.requestedSection) { _, requested in
+            guard let requested else { return }
+            section = requested
+            model.requestedSection = nil
+        }
         .onChange(of: section) { _, new in
             model.section = new ?? .live
             // "All sessions" is the same board with its history opened out, so
