@@ -110,7 +110,7 @@ public enum DemoBulkLedger {
                 continue
             case 45..<55:
                 try ledger.claimTask(
-                    id: task.id, role: "implementer", scope: "the \(pick(objects))",
+                    id: task.id, role: "implementer", scope: pick(objects),
                     by: pick(demoKeys), projectKey: project, now: at(0.5)
                 )
             case 55..<58:
