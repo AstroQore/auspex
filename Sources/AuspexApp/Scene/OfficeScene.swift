@@ -455,6 +455,22 @@ final class OfficeScene: SKScene {
         office.frameFinished(moving: moving, nextWake: moving ? nil : nextWake)
     }
 
+    /// Lands everybody mid-walk in their seat and every sliding desk at the
+    /// end of its slide. The view calls it when it stops its clock for good,
+    /// so a picture held while nobody is looking is never half a walk — see
+    /// ``SceneDirector/settleMotion()``.
+    func settleMotion() {
+        director.settleMotion()
+    }
+
+    /// How many people are mid-walk. For the tests that stand in for a pair of
+    /// eyes.
+    var walkerCount: Int { director.walkerCount }
+
+    /// Whether `key` is drawn in their place rather than being carried to it.
+    /// Likewise.
+    func isSeated(_ key: SessionKey) -> Bool { director.isSeated(key) }
+
     /// When the picture next changes with nobody touching it, in
     /// `CACurrentMediaTime()` seconds.
     private var nextWake: TimeInterval? {

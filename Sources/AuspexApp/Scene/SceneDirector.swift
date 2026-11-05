@@ -130,6 +130,10 @@ final class SceneDirector {
     /// Which of a suite's rooms are switched on.
     private var options = SceneZoneOptions.all
 
+    /// Where each place's node is going, in scene coordinates — the end of a
+    /// slide that is still in flight. What a pause lands it on.
+    private var deskTargets: [String: CGPoint] = [:]
+
     init(world: SKNode, theme: SceneTheme) {
         self.world = world
         self.theme = theme
@@ -205,17 +209,39 @@ final class SceneDirector {
         let present = Set(board.sessions.map(\.key))
         departed.formIntersection(present)
 
-        var moved = applyOnce(board, attention: attention)
-        if collectDepartures() {
-            moved = applyOnce(board, attention: attention) || moved
-        }
-        return moved
+        let moved = applyOnce(board, attention: attention)
+        return settleDepartures() || moved
     }
 
     /// Re-lays the last board out, for a walk that finished between frames.
-    private func refresh() {
-        guard let board = lastBoard else { return }
-        _ = applyOnce(board, attention: lastAttention)
+    ///
+    /// - Returns: whether the layout moved.
+    @discardableResult
+    func refresh() -> Bool {
+        guard let board = lastBoard else { return false }
+        let moved = applyOnce(board, attention: lastAttention)
+        return settleDepartures() || moved
+    }
+
+    /// Takes everybody standing at a door with nobody carrying them off the
+    /// map, laying it out again until nobody is left standing there.
+    ///
+    /// Every pass that can leave somebody at a door ends here — a board
+    /// frame, a walk that arrived, a walk cancelled or never started because
+    /// it was off screen. It used to run after a board frame only, so a
+    /// re-layout triggered by somebody *else* arriving could leave the queue
+    /// behind them standing at the door in a walking pose until the next
+    /// frame — which, on a board where nothing is happening, never came.
+    /// Bounded, because each pass can only remove people.
+    private func settleDepartures() -> Bool {
+        guard let board = lastBoard else { return false }
+        var moved = false
+        var passes = 0
+        while passes < 8, collectDepartures() {
+            moved = applyOnce(board, attention: lastAttention) || moved
+            passes += 1
+        }
+        return moved
     }
 
     @discardableResult
@@ -483,6 +509,7 @@ final class SceneDirector {
 
         for (id, node) in desks where !live.contains(id) {
             desks.removeValue(forKey: id)
+            deskTargets.removeValue(forKey: id)
             // A desk that has left the plan fades rather than blinking out —
             // the difference between an office closing for the night and a view
             // that dropped a frame.
@@ -520,6 +547,7 @@ final class SceneDirector {
         live.insert(id)
         let scenePoint = SceneGeometry.scene(from: anchor)
         rects[id] = Self.deskRect(at: scenePoint, scale: scale)
+        deskTargets[id] = scenePoint
         let node: DeskNode
         if let existing = desks[id] {
             node = existing
@@ -1030,6 +1058,47 @@ final class SceneDirector {
     func settleWalks() {
         cancelEveryWalk()
         lastPlace = Self.places(of: frame)
+        // Somebody who was being carried to a door is now standing at it,
+        // and standing at a door with nobody carrying you is leaving. A
+        // re-layout without them can start walks of its own — the queue
+        // closing up — and a settle is a promise that nobody is mid-stride,
+        // so those land too.
+        guard let board = lastBoard else { return }
+        var passes = 0
+        while passes < 8, collectDepartures() {
+            _ = applyOnce(board, attention: lastAttention)
+            cancelEveryWalk()
+            lastPlace = Self.places(of: frame)
+            passes += 1
+        }
+    }
+
+    /// Puts everything that is between two places in the place it was going
+    /// to: every walker in their seat, every sliding desk at the end of its
+    /// slide.
+    ///
+    /// Called when the view stops its clock for good — hidden, occluded,
+    /// folded away. A paused scene keeps its actions where they were, so a
+    /// walk paused halfway resumes halfway whenever the clock next runs, and
+    /// a still taken in between is a person frozen mid-stride on the open
+    /// floor. Landing them is the same picture the walk was going to end on.
+    func settleMotion() {
+        settleWalks()
+        for (id, node) in desks where node.action(forKey: "move") != nil {
+            node.removeAction(forKey: "move")
+            if let target = deskTargets[id] { node.position = target }
+        }
+    }
+
+    /// How many people are mid-walk. For the tests that stand in for a pair
+    /// of eyes.
+    var walkerCount: Int { walkers.count }
+
+    /// Whether the person `key` is drawn at their place right now rather than
+    /// being carried there. Likewise.
+    func isSeated(_ key: SessionKey) -> Bool {
+        guard walkers[key] == nil, let node = deskBySession[key] else { return false }
+        return node.look.map { !$0.isAway && !$0.isVacant } ?? false
     }
 
     /// Rings one desk and unrings the rest.

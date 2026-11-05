@@ -131,6 +131,12 @@ struct SceneContainerView: View {
         // alive would keep a scene rendering behind the cards — which is a
         // whole core spent on a picture nobody is looking at.
         .onDisappear { commands.pause() }
+        // And the other half: SwiftUI can take a view off screen and put the
+        // same one back — a section switched away from and back to, a column
+        // reshuffled — and a view paused on the way out has to be asked
+        // again on the way in, or it holds its last picture until the next
+        // board frame happens to arrive, which on a quiet board is never.
+        .onAppear { commands.resume() }
     }
 
     // MARK: Chrome
@@ -400,6 +406,9 @@ final class SceneCommands {
     /// Stops the clock, for the moment SwiftUI takes the view off screen
     /// without taking it away.
     var pause: () -> Void = {}
+    /// Asks the view whether it is on screen again, for the moment SwiftUI
+    /// puts it back.
+    var resume: () -> Void = {}
 }
 
 /// The canvas itself: a scroll view over an `SKView`.
@@ -454,6 +463,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         commands.setZoom = { [weak scene] zoom in scene?.setZoom(zoom) }
         commands.jump = { [weak scene] point in scene?.jump(toLayoutPoint: point) }
         commands.pause = { [weak view] in view?.suspend() }
+        commands.resume = { [weak view] in view?.refreshPaused() }
         return view
     }
 
@@ -625,6 +635,11 @@ final class OfficeSKView: SKView {
         isPaused = true
         scene?.isPaused = true
         preferredFramesPerSecond = 1
+        // Whatever was between two places lands in the second one. A paused
+        // scene keeps its actions where they were, and the picture this view
+        // holds — and shows again the moment it comes back — would otherwise
+        // be somebody frozen mid-stride on the open floor.
+        officeScene?.settleMotion()
     }
 
     /// Recomputes whether the scene should be running, from the window.
