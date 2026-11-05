@@ -86,6 +86,23 @@ final class OfficeScene: SKScene {
     /// Who a watch signal is about, for the stage's ordering.
     private var stageWatched: Set<SessionKey> = []
 
+    /// The strip the stage is composed for: the view's own bounds when there
+    /// is a view, and the last size it was told about otherwise.
+    ///
+    /// The view's bounds rather than the scene's `size`. A `resizeFill`
+    /// scene's size follows its view's on SpriteKit's schedule, not on the
+    /// view's, so a board frame arriving between the two composed the stage
+    /// for a strip the view was no longer — a few points wide during a
+    /// layout pass — and every later frame put it back to that size: the
+    /// grid with no rooms on it.
+    private var stageSize: CGSize {
+        if let bounds = view?.bounds.size, bounds.width > 0, bounds.height > 0 { return bounds }
+        return lastViewSize
+    }
+
+    /// The last size the view reported.
+    private var lastViewSize: CGSize = .zero
+
     /// How much air a fit leaves around what it frames. None on the stage:
     /// its composition is already laid out for the strip, edge to edge.
     var fitPadding: CGFloat { composesStage ? 1 : SceneViewport.fitPadding }
@@ -136,6 +153,7 @@ final class OfficeScene: SKScene {
     /// the offscreen renderer.
     func viewSizeChanged(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
+        lastViewSize = size
         cameraController.setViewSize(size)
         // The stage is laid out *for* the strip, so a strip of a new size is
         // a new composition rather than the old one seen through a wider
@@ -149,7 +167,7 @@ final class OfficeScene: SKScene {
     func setStageWatched(_ watched: Set<SessionKey>) {
         guard composesStage, watched != stageWatched else { return }
         stageWatched = watched
-        restage(size: size)
+        restage(size: stageSize)
     }
 
     /// Composes the stage again from the last board, for a strip that
@@ -200,8 +218,11 @@ final class OfficeScene: SKScene {
         for session in board.sessions { byKey[session.key] = session }
         sessions = byKey
 
-        if composesStage, size.width > 0, size.height > 0 {
-            director.stage = SceneDirector.StageInput(size: size, watched: stageWatched)
+        if composesStage {
+            let strip = stageSize
+            if strip.width > 0, strip.height > 0 {
+                director.stage = SceneDirector.StageInput(size: strip, watched: stageWatched)
+            }
         }
         let moved = director.apply(board, attention: attention)
         overviewIsStale = true
@@ -436,6 +457,13 @@ final class OfficeScene: SKScene {
             if !hasFitted { fitAll() }
             cameraController.mirror(host.viewport)
             director.setCameraScale(cameraController.node.xScale)
+        }
+        // A stage composed for a strip the view no longer is — a resize that
+        // reached the view and not the scene — is composed again before the
+        // frame that would show it.
+        if composesStage, let strip = view?.bounds.size, strip.width > 0, strip.height > 0,
+           director.stage?.size != strip {
+            restage(size: strip)
         }
         // At most one hit test per drawn frame, however many times the pointer
         // moved between them.
