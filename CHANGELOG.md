@@ -60,6 +60,15 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 - The retention policy (14 days of events, 2,000 per session, 30 days of
   search text) is finally applied: a minute after launch and every six hours,
   in small batches that never hold the database for long.
+- **No session is titled with its id any more.** A session with no title,
+  no prompt and no project is called by its harness and start time —
+  "Codex · 14:32" — and a harness title that is just the thread's UUID is
+  skipped; a prompt headline is its first line, at most 60 characters.
+- A Codex sub-agent forked several levels deep is recognised again: its
+  header is read up to the end of the replayed ancestors' headers instead of
+  the first four lines. A folder that was missing when a session was placed
+  is looked for again every minute, so the session joins its project once
+  the folder is back.
 - **Scratch folders are no longer projects.** The home directory, the Codex
   desktop's `~/Documents/Codex` chats, Claude Desktop's scratch workspaces,
   `/root`, `/workspace`, `/tmp`, and folders that are no longer on disk each
@@ -73,6 +82,27 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ### Changed
 
+- **One Projectless section instead of a project per chat folder.** Every
+  session that is in no project — a Codex desktop chat folder, a Claude
+  Desktop scratch workspace, the home folder, a session with no folder at
+  all, a cloud bot — is now filed in one *Projectless* section (中文「无项目」)
+  that sits after the real projects in the sidebar, on the Ledger, on Now and
+  in the Aviary. It replaces the per-harness "Codex · scratch", "Cursor ·
+  scratch" and "Grok Bot" sections and the "No project" residue. The sidebar
+  shows it as one folded row with a count; opened, its rows lead with the
+  harness's badge, and a chat folder's name is the row's directory rather
+  than a heading. Codex auto reviews whose thread is not on the board are
+  counted as "+N helper sessions" instead of listed. Tasks filed under any of
+  the old keys are shown, and refiled once, under Projectless.
+- **Plain folders roll up to their workspace.** A directory in no git
+  repository is filed under the workspace that holds it — two levels below
+  the home (or below a mounted volume), cut at the first hidden folder — so a
+  job that runs in a fresh dated folder every hour is one project, not one
+  per run. A folder you made a project of is kept as its own, at any depth,
+  and a workspace that is no longer on disk is Projectless. The project rows
+  earlier builds stored per folder are folded into their workspaces once, in
+  the background, with their sessions and tasks; repositories and your own
+  projects are not touched.
 - Claude Cowork is no longer tailed live. Cowork runs in the cloud by default
   since it merged with Chat, and the workspace tree under Claude.app's
   container has held no new transcript since July 2026; watching it cost a
