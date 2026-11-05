@@ -460,9 +460,9 @@ private struct MenuBarRow: View {
     /// is the last resort: on a machine with four sessions in one checkout it
     /// is the same row four times.
     private var title: String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        if let task = session.brief.firstPrompt, !task.isEmpty { return task }
-        return BoardGrouping.projectName(for: session) ?? session.key.sessionID
+        // The board's own ladder, so the panel and the card agree and neither
+        // headlines a session with its id.
+        BoardRowBuilder.title(for: session, project: BoardGrouping.projectName(for: session))
     }
 
     /// What it last said, or failing that where it is and what it is doing.

@@ -688,13 +688,10 @@ final class OfficeScene: SKScene {
 
     // MARK: - Nameplate copy
 
-    /// What the harness called this session, or the project it is in, or its
-    /// own id — the same fallback chain a card's title uses, so hovering a desk
-    /// and reading a card cannot disagree.
+    /// The same fallback chain a card's title uses, so hovering a desk and
+    /// reading a card cannot disagree — and neither shows a bare id.
     private static func title(for session: SessionSnapshot) -> String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        if let project = BoardGrouping.projectName(for: session) { return project }
-        return String(session.key.sessionID.prefix(12))
+        BoardRowBuilder.title(for: session, project: BoardGrouping.projectName(for: session))
     }
 
     private static func detail(for session: SessionSnapshot) -> String {

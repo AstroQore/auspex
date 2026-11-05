@@ -350,13 +350,11 @@ public enum BoardGrouping {
         )
     }
 
-    /// What a delegation section is called: the root's own title, or the
-    /// project it is in, or its session id — the same ladder a card climbs, so
-    /// a header and the card under it never disagree.
+    /// What a delegation section is called: the same ladder a card climbs —
+    /// ``BoardRowBuilder/title(for:project:brief:now:)`` — so a header and the
+    /// card under it never disagree, and neither is ever a bare id.
     private static func treeTitle(for session: SessionSnapshot) -> String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        if let project = projectName(for: session) { return project }
-        return session.key.sessionID
+        BoardRowBuilder.title(for: session, project: projectName(for: session))
     }
 
     /// The short name a card and a section header show for a project: the

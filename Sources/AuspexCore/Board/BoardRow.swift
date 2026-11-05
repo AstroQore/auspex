@@ -352,7 +352,8 @@ public struct BoardRowBuilder: Sendable {
             // "Projectless" is a section, not a name for what a session did:
             // a row titled with it would say its heading again.
             project: key.map(PseudoProject.isProjectless) == true ? nil : project,
-            brief: brief
+            brief: brief,
+            now: now
         )
         let notice = notices[session.key]
         // A report is a claim about *now*. Once the session has spoken in
@@ -459,14 +460,18 @@ public struct BoardRowBuilder: Sendable {
     /// a dead link.
     private func parent(of session: SessionSnapshot) -> BoardRow.Parent? {
         guard let key = session.identity.parent, let snapshot = bySession[key] else { return nil }
-        if let title = snapshot.identity.title, !title.isEmpty {
-            return BoardRow.Parent(key: key, title: title)
-        }
-        return BoardRow.Parent(key: key, title: String(key.sessionID.prefix(10)))
+        // The parent's own headline, by the same ladder its card climbs — a
+        // chip naming a session by its id names nothing a reader can find.
+        let projectKey = board.projectKey(for: snapshot)
+        let project = projectKey.map(PseudoProject.isProjectless) == true
+            ? nil : projectKey.map(BoardGrouping.projectName(forPath:))
+        let title = Self.title(for: snapshot, project: project, brief: brief(for: snapshot), now: now)
+        return BoardRow.Parent(key: key, title: title)
     }
 
-    /// The headline: what the harness called this session, or what it was
-    /// asked to do, or the project it is in, or its own id.
+    /// The headline: what the harness called this session, or the first line
+    /// of what it was asked to do, or the project it is in, or which harness
+    /// it is and when it started.
     ///
     /// The assignment sits above the project on purpose. A harness title is a
     /// name somebody — or something — chose for this session; the first
@@ -474,8 +479,13 @@ public struct BoardRowBuilder: Sendable {
     /// is neither: on a board where five sessions share a checkout it is the
     /// same headline five times, which is a wall a person cannot read.
     ///
-    /// Never invented. A session whose store recorded none of the three shows
-    /// its own id, which at least identifies it.
+    /// **Never an id.** A harness that titles a thread with its own UUID has
+    /// not named it, so such a title is skipped like an empty one — see
+    /// ``isIdentifier(_:of:)``. A session with nothing at all to go on is
+    /// "Codex · 14:32": which harness, and when it started, which together
+    /// find it in a list in a way `01a18c9c-92c` never did. The id is still
+    /// on the card and in the trace header, where it is a fact rather than a
+    /// headline.
     public static func title(for session: SessionSnapshot, project: String?) -> String {
         title(for: session, project: project, brief: session.brief)
     }
@@ -488,15 +498,131 @@ public struct BoardRowBuilder: Sendable {
     /// empty brief and whose body came from a reconstructed one would show the
     /// assignment twice, which is the one thing
     /// ``SessionBrief/followUpPrompt`` exists to prevent.
+    ///
+    /// - Parameter now: the frame's instant, which decides whether the last
+    ///   rung needs a date beside its time. `nil` always writes the date.
     public static func title(
         for session: SessionSnapshot,
         project: String?,
-        brief: SessionBrief
+        brief: SessionBrief,
+        now: Date? = nil
     ) -> String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        if let task = brief.firstPrompt, !task.isEmpty { return task }
-        if let project { return project }
-        return String(session.key.sessionID.prefix(12))
+        if let title = session.identity.title, !title.isEmpty, !isIdentifier(title, of: session) {
+            return title
+        }
+        if let headline = headline(of: brief.firstPrompt) { return headline }
+        if let project, !project.isEmpty { return project }
+        return fallbackTitle(
+            harness: session.key.harness,
+            at: session.startedAt ?? session.lastEventAt,
+            now: now
+        )
+    }
+
+    /// The longest prompt headline, in characters, before it is cut.
+    public static let headlineLimit = 60
+
+    /// The first line of a prompt with anything in it, cut to
+    /// ``headlineLimit`` characters — `nil` for a prompt that is all
+    /// whitespace or absent.
+    ///
+    /// One pass that stops as soon as the headline is known, because it runs
+    /// for every row on every frame and a prompt can be a pasted file: what it
+    /// costs is bounded by the headline, not by the prompt.
+    public static func headline(of prompt: String?) -> String? {
+        guard let prompt, !prompt.isEmpty else { return nil }
+        var line = ""
+        var kept = 0
+        var looked = 0
+        for character in prompt {
+            looked += 1
+            // A prompt that opens with this much blank space has no headline
+            // worth the scan.
+            if looked > 4_096 { break }
+            if character.isNewline {
+                if kept > 0 { break }
+                continue
+            }
+            if kept == 0, character.isWhitespace { continue }
+            line.append(character)
+            kept += 1
+            if kept > headlineLimit { break }
+        }
+        guard kept > 0 else { return nil }
+        guard kept > headlineLimit else { return trimmingTrailingSpace(line) }
+        return trimmingTrailingSpace(String(line.prefix(headlineLimit - 1))) + "…"
+    }
+
+    private static func trimmingTrailingSpace(_ text: String) -> String {
+        var text = text
+        while let last = text.last, last.isWhitespace { text.removeLast() }
+        return text
+    }
+
+    /// Whether a title is an identifier rather than a name: the session's own
+    /// id or a prefix of it, or anything shaped like a UUID or a bare hex id.
+    ///
+    /// Codex titles a thread nobody named with the thread's id, and a board
+    /// that took that at its word drew a column of `01a18c9c-92c…`. Asked of
+    /// every titled row on every frame, so it allocates nothing and stops at
+    /// the first character a name would have and an id would not.
+    public static func isIdentifier(_ title: String, of session: SessionSnapshot) -> Bool {
+        let id = session.key.sessionID
+        if title == id { return true }
+        if title.utf8.count >= 6, id.hasPrefix(title) { return true }
+        return looksLikeIdentifier(title)
+    }
+
+    /// A UUID or a prefix of one (`01a18c9c-92c`), or sixteen or more hex
+    /// digits in a row.
+    static func looksLikeIdentifier(_ text: String) -> Bool {
+        var group = 0
+        var firstGroup: Int?
+        var digits = 0
+        for byte in text.utf8 {
+            switch byte {
+            case UInt8(ascii: "0")...UInt8(ascii: "9"),
+                 UInt8(ascii: "a")...UInt8(ascii: "f"),
+                 UInt8(ascii: "A")...UInt8(ascii: "F"):
+                group += 1
+                digits += 1
+            case UInt8(ascii: "-"):
+                guard group > 0 else { return false }
+                if firstGroup == nil { firstGroup = group }
+                group = 0
+            default:
+                return false
+            }
+        }
+        guard group > 0 else { return false }
+        guard let firstGroup else { return digits >= 16 }
+        return firstGroup == 8
+    }
+
+    /// The last rung of the ladder: "Codex · 14:32", or "Codex · 11-05 14:32"
+    /// for a session that did not start on the frame's day.
+    ///
+    /// When the session *started*, not how long ago: a title is compared on
+    /// every frame and must not change while the session sits still, and a
+    /// board with nothing happening on it is not republished — so "5 min ago"
+    /// would be the wrong number by the time anybody read it. Digits only, so
+    /// the line reads the same in every language the app speaks.
+    public static func fallbackTitle(
+        harness: Harness,
+        at: Date?,
+        now: Date?,
+        timeZone: TimeZone = .current
+    ) -> String {
+        guard let at else { return harness.displayName }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let parts = calendar.dateComponents([.month, .day, .hour, .minute], from: at)
+        let time = String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+        if let now, calendar.isDate(now, inSameDayAs: at) {
+            return "\(harness.displayName) · \(time)"
+        }
+        let day = String(format: "%02d-%02d", parts.month ?? 0, parts.day ?? 0)
+        return "\(harness.displayName) · \(day) \(time)"
     }
 
     /// What is happening, in the harness's own words.
