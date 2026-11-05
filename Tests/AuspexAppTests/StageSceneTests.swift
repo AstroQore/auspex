@@ -156,4 +156,32 @@ struct StageSceneTests {
         #expect(abs(scene.zoom - scene.composition.zoom) < 0.001)
         #expect(scene.viewport.showsAll(of: scene.contentBounds))
     }
+
+    @Test("Balloons on the stage never overlap each other or the strip's chrome")
+    func stageBalloonsDoNotOverlap() {
+        // Six people side by side, every one with a long sentence to say.
+        let people = (0..<6).map { Self.session("p\($0)", state: .toolCalling(name: "Bash")) }
+        let (_, scene) = Self.stage(Self.board(people))
+        var captions: [SessionKey: SceneCaption] = [:]
+        for (index, person) in people.enumerated() {
+            captions[person.key] = SceneCaption(
+                tone: index == 3 ? .needsYou : .working,
+                lead: "Claude Code",
+                body: "Bash “swift test --filter StageSceneTests”",
+                since: Date().addingTimeInterval(-42)
+            )
+        }
+        scene.setCaptions(captions)
+        scene.update(CACurrentMediaTime())
+
+        let drawn = scene.drawnCaptions
+        #expect(drawn.frames.count + drawn.dots == 6)
+        #expect(drawn.frames.count >= 3)
+        for (index, frame) in drawn.frames.enumerated() {
+            for other in drawn.frames[(index + 1)...] { #expect(!frame.intersects(other)) }
+            for area in scene.captionSafeAreas { #expect(!frame.intersects(area)) }
+        }
+        // The one asking for the reader is never the one folded away.
+        #expect(scene.drawnCaptionPlacement(for: people[3].key) != .dot)
+    }
 }

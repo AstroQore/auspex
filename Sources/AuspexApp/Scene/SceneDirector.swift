@@ -336,6 +336,7 @@ final class SceneDirector {
         // the old occupant's balloon, and the person who moved to a bench must
         // take theirs with them.
         if !captions.isEmpty || !captioned.isEmpty { syncCaptions() }
+        if moved { captionsNeedLayout = true }
         return moved
     }
 
@@ -384,6 +385,7 @@ final class SceneDirector {
             node.setCaption(nil, now: now)
         }
         captioned = next
+        captionsNeedLayout = true
     }
 
     /// Whether one balloon should hang in place of another on the same desk.
@@ -407,12 +409,45 @@ final class SceneDirector {
     func tickCaptions(now: Date) -> TimeInterval? {
         var hold: TimeInterval?
         for (key, node) in captioned where !node.isHidden {
-            node.refreshCaption(now: now)
+            if node.refreshCaption(now: now) { captionsNeedLayout = true }
             guard let since = captions[key]?.since else { continue }
             let next = NowFrame.compactDurationHold(now.timeIntervalSince(since))
             hold = min(hold ?? next, next)
         }
         return hold
+    }
+
+    /// Whether the balloons have to be placed again — see ``layoutCaptions(visible:safeAreas:)``.
+    private(set) var captionsNeedLayout = false
+
+    /// Places the balloons the camera can see so none covers another or the
+    /// strip's chrome — see ``CaptionLayout``.
+    ///
+    /// Six balloons at most, so this is a handful of rectangle tests; it runs
+    /// on a drawn frame after anything that could move one — new balloons,
+    /// new words, a layout, the camera — and not otherwise.
+    ///
+    /// - Parameters:
+    ///   - visible: the camera's rectangle, in scene coordinates.
+    ///   - safeAreas: what no balloon may cover, in scene coordinates.
+    func layoutCaptions(visible: CGRect, safeAreas: [CGRect]) {
+        captionsNeedLayout = false
+        var items: [CaptionLayout.Item] = []
+        var nodes: [String: DeskNode] = [:]
+        var line: CGFloat = 0
+        var flipOffset: CGFloat = 0
+        for node in captioned.values where !node.isHidden {
+            guard let rect = node.captionFrame, let priority = node.captionPriority else { continue }
+            items.append(CaptionLayout.Item(id: node.slotID, rect: rect, priority: priority))
+            nodes[node.slotID] = node
+            line = max(line, node.captionLine)
+            flipOffset = max(flipOffset, node.captionFlipOffset)
+        }
+        guard !items.isEmpty else { return }
+        let placements = CaptionLayout.resolve(
+            items, bounds: visible, safeAreas: safeAreas, line: line, flipOffset: flipOffset
+        )
+        for (id, placement) in placements { nodes[id]?.setCaptionPlacement(placement) }
     }
 
     // MARK: Leaving
@@ -1011,6 +1046,7 @@ final class SceneDirector {
             let now = Date()
             for node in captioned.values where !node.isHidden { node.refreshCaption(now: now) }
         }
+        if !captioned.isEmpty { captionsNeedLayout = true }
         for floor in frame.floors {
             guard let node = floors[floor.id] else { continue }
             let onScreen = rect.intersects(SceneGeometry.scene(from: floor.frame))
@@ -1226,6 +1262,7 @@ final class SceneDirector {
         lastCameraScale = scale
         for node in desks.values { node.setCameraScale(scale) }
         overflow?.setCameraScale(scale)
+        captionsNeedLayout = true
         for floor in frame.floors {
             floors[floor.id]?.setCameraScale(scale, width: floor.frame.width)
         }

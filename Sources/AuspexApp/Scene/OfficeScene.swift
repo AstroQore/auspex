@@ -455,6 +455,14 @@ final class OfficeScene: SKScene {
         // After the cull, so only what is on screen stirs.
         director.beat(at: currentTime)
 
+        // And after the stopwatches, whose new words may have widened one.
+        if director.captionsNeedLayout {
+            director.layoutCaptions(
+                visible: live.visibleRect,
+                safeAreas: composesStage ? stageSafeAreas(live) : []
+            )
+        }
+
         // A scene nobody is touching publishes nothing: the minimap is a
         // SwiftUI view, and handing it an equal value thirty times a second
         // would be thirty comparisons of every room for no redraw.
@@ -490,6 +498,34 @@ final class OfficeScene: SKScene {
         office.frameFinished(moving: moving, nextWake: moving ? nil : nextWake)
     }
 
+    /// What no balloon on the stage may cover, in scene coordinates: the tag
+    /// row along the top — the view's name and hint on the left, its fold
+    /// chevron on the right — the legend in the bottom right, and the
+    /// `+N rooms` tile.
+    private func stageSafeAreas(_ viewport: SceneViewport) -> [CGRect] {
+        let visible = viewport.visibleRect
+        guard viewport.zoom > 0, visible.width > 0 else { return [] }
+        let perPoint = 1 / viewport.zoom
+        let insets = StageComposer.Insets.stage
+        var areas = [
+            CGRect(
+                x: visible.minX, y: visible.maxY - insets.top * perPoint,
+                width: visible.width, height: insets.top * perPoint
+            ),
+            CGRect(
+                x: visible.maxX - Self.legendWidth * perPoint, y: visible.minY,
+                width: Self.legendWidth * perPoint, height: insets.bottom * perPoint
+            ),
+        ]
+        if let tile = director.composition.overflowTile {
+            areas.append(SceneGeometry.scene(from: tile))
+        }
+        return areas
+    }
+
+    /// How wide the stage's legend is, in view points, with its margin.
+    private static let legendWidth: CGFloat = 340
+
     /// Lands everybody mid-walk in their seat and every sliding desk at the
     /// end of its slide. The view calls it when it stops its clock for good,
     /// so a picture held while nobody is looking is never half a walk — see
@@ -513,6 +549,30 @@ final class OfficeScene: SKScene {
     func showsCaption(over key: SessionKey) -> Bool {
         director.desk(for: key)?.hasCaption ?? false
     }
+
+    /// Where each balloon the scene draws is, in scene coordinates, and how
+    /// many are folded into dots. Likewise.
+    var drawnCaptions: (frames: [CGRect], dots: Int) {
+        var frames: [CGRect] = []
+        var dots = 0
+        for slot in director.frame.slots {
+            guard let key = slot.session, let node = director.desk(for: key), node.showsCaption
+            else { continue }
+            if let frame = node.drawnCaptionFrame { frames.append(frame) } else { dots += 1 }
+        }
+        return (frames, dots)
+    }
+
+    /// Where the balloon over `key` was placed, `nil` when there is none.
+    /// Likewise.
+    func drawnCaptionPlacement(for key: SessionKey) -> CaptionLayout.Placement? {
+        guard let node = director.desk(for: key), node.showsCaption else { return nil }
+        return node.drawnCaptionFrame == nil ? .dot : .lines(0)
+    }
+
+    /// What no balloon on the stage may cover, for the camera as it is.
+    /// Likewise.
+    var captionSafeAreas: [CGRect] { composesStage ? stageSafeAreas(cameraController.viewport) : [] }
 
     /// When the picture next changes with nobody touching it, in
     /// `CACurrentMediaTime()` seconds.
