@@ -644,13 +644,26 @@ final class LiveBoardModel {
     /// What ``rowGroups`` used to be for. The rows are still derived — the
     /// sidebar draws them, and so does an opened card's member list — but the
     /// top-level unit of the board is a piece of work rather than a process.
-    private(set) var unitGroups: [TaskUnitGroup] = []
+    var unitGroups: [TaskUnitGroup] { unitGroupsBox.value }
 
     /// The units whose sessions have all stopped with nothing outstanding.
-    private(set) var endedUnits: [TaskUnit] = []
+    var endedUnits: [TaskUnit] { endedUnitsBox.value }
 
     /// Every unit on the frame, in board order, before the filter bar.
-    private(set) var units: [TaskUnit] = []
+    var units: [TaskUnit] { unitsBox.value }
+
+    /// The three unit-shaped values, each held with the revision the
+    /// assembler published it under.
+    ///
+    /// Boxed so that the comparison `@Observable` makes on assignment is one
+    /// number rather than every unit on the board and every member row inside
+    /// each — see ``Revisioned``. A `sample` of the Tasks page had
+    /// `TaskUnit.__derived_struct_equals` under `adopt(_:)` on every frame in
+    /// which any session moved, and it was there twice: once for the `!=`
+    /// that decided whether to assign, once more inside the setter.
+    private(set) var unitsBox = Revisioned<[TaskUnit]>(revision: 0, value: [])
+    private(set) var unitGroupsBox = Revisioned<[TaskUnitGroup]>(revision: 0, value: [])
+    private(set) var endedUnitsBox = Revisioned<[TaskUnit]>(revision: 0, value: [])
 
     /// Material changes since the global cursor the person last cleared.
     private(set) var catchUp = CatchUpSnapshot(
@@ -685,7 +698,10 @@ final class LiveBoardModel {
     private(set) var sceneBoard: BoardSnapshot = .empty
 
     /// Every unit on the frame by id, for the detail page and the palette.
-    private(set) var unitIndex: [String: TaskUnit] = [:]
+    ///
+    /// Published under the units' own revision: it is a function of them.
+    var unitIndex: [String: TaskUnit] { unitIndexBox.value }
+    private(set) var unitIndexBox = Revisioned<[String: TaskUnit]>(revision: 0, value: [:])
 
     /// What the wall is narrowed to beyond its project.
     var filters = TaskFilters.none {
@@ -831,7 +847,10 @@ final class LiveBoardModel {
     /// Called once per adopted frame with the raw board and the units the wall
     /// just drew, for readers that are not views — the Tasks page keeps its
     /// rows in step with the wall here.
-    var onFrame: ((BoardSnapshot, [TaskUnit]) -> Void)?
+    ///
+    /// The third argument is the units' revision, so a reader can tell "the
+    /// same units again" without comparing them.
+    var onFrame: ((BoardSnapshot, [TaskUnit], UInt64) -> Void)?
 
     // MARK: Assembly
 
@@ -994,10 +1013,24 @@ final class LiveBoardModel {
         let nextNowCounts = frame.now.counts
         if nowCounts != nextNowCounts { nowCounts = nextNowCounts }
         if rowGroups != frame.rowGroups { rowGroups = frame.rowGroups }
-        if unitGroups != frame.unitGroups { unitGroups = frame.unitGroups }
-        if endedUnits != frame.endedUnits { endedUnits = frame.endedUnits }
-        let unitsMoved = units != frame.units
-        if unitsMoved { units = frame.units }
+        // Revisions, not values: the assembler compared these on its own
+        // executor and stamped the answer. Zero is a frame nothing was
+        // reconciled against, which counts as moved — see
+        // ``AssembledBoardFrame/unitsRevision``.
+        if let box = Self.moved(unitGroupsBox, frame.unitGroupsRevision, frame.unitGroups) {
+            unitGroupsBox = box
+        }
+        if let box = Self.moved(endedUnitsBox, frame.endedUnitsRevision, frame.endedUnits) {
+            endedUnitsBox = box
+        }
+        let unitsMoved: Bool
+        if let box = Self.moved(unitsBox, frame.unitsRevision, frame.units) {
+            unitsBox = box
+            unitIndexBox = Revisioned(revision: box.revision, value: frame.unitIndex)
+            unitsMoved = true
+        } else {
+            unitsMoved = false
+        }
         if unitsMoved, viewMode == .perch { map.apply(units: frame.units) }
         // These are observed by the header and Catch-up sheet. Observation
         // invalidates on any write, even an equal value, so the assembler's
@@ -1005,7 +1038,6 @@ final class LiveBoardModel {
         if catchUp != frame.catchUp { catchUp = frame.catchUp }
         if humanWorkQueue != frame.humanQueue { humanWorkQueue = frame.humanQueue }
         if watchSignals != frame.watchSignals { watchSignals = frame.watchSignals }
-        if unitIndex != frame.unitIndex { unitIndex = frame.unitIndex }
         if unitsMoved {
             reviewOrdering.reconcile(units: frame.units)
             let nextReviewCount = frame.units.count { $0.isInReview }
@@ -1032,7 +1064,7 @@ final class LiveBoardModel {
         // for a frame that says the same thing. The units and not only the
         // board, because a task claimed over MCP changes the page without
         // changing a single session.
-        if boardMoved || unitsMoved { onFrame?(frame.board, frame.units) }
+        if boardMoved || unitsMoved { onFrame?(frame.board, frame.units, unitsBox.revision) }
 
         if !hasEverSeenSession, !board.sessions.isEmpty { hasEverSeenSession = true }
 
@@ -1049,6 +1081,18 @@ final class LiveBoardModel {
         lastTraceEventAt = session.lastEventAt
         reloadTrace()
         if viewMode == .trajectory { trajectory.refresh(isAlive: session.isAlive) }
+    }
+
+    /// The box to assign when a frame's revision says the value moved, or
+    /// `nil` when it did not. An unreconciled frame (revision zero) is given a
+    /// fresh revision here, so what is stored is never zero once assigned.
+    private static func moved<Value>(
+        _ current: Revisioned<Value>,
+        _ revision: UInt64,
+        _ value: Value
+    ) -> Revisioned<Value>? {
+        guard revision == 0 || revision != current.revision else { return nil }
+        return Revisioned(revision: revision == 0 ? RevisionCounter.next() : revision, value: value)
     }
 
     /// Waits until every frame the model has asked for has been assigned.

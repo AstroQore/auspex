@@ -76,6 +76,8 @@ final class TasksModel {
     /// The wall's units, by id. The live half of every row on this page, and
     /// the whole of the rows the ledger has never heard of.
     private var units: [String: TaskUnit] = [:]
+    /// Which revision of the board's units ``units`` was built from.
+    private var unitsRevision: UInt64 = 0
     /// The units nobody filed a task for, in board order — see
     /// ``TaskUnit/Origin/implicit(_:)``.
     private var implicitUnits: [TaskUnit] = []
@@ -245,12 +247,16 @@ final class TasksModel {
     /// its own executor, once, and this is the same values by reference. What
     /// used to be here — a title and a project derived per session per frame —
     /// was exactly the always-on cost `AGENTS.md` § 4.1 exists to prevent.
-    func apply(units: [TaskUnit], board: BoardSnapshot) {
+    func apply(units: [TaskUnit], revision: UInt64, board: BoardSnapshot) {
         var changed = false
         if board.claims != claims {
             claims = board.claims
             changed = true
         }
+        // The same units under the same revision are the same units: the
+        // assembler compared them already, off the main actor.
+        guard revision != unitsRevision || changed else { return }
+        unitsRevision = revision
         var next: [String: TaskUnit] = [:]
         next.reserveCapacity(units.count)
         var implicit: [TaskUnit] = []
@@ -258,7 +264,6 @@ final class TasksModel {
             next[unit.id] = unit
             if unit.origin.isImplicit { implicit.append(unit) }
         }
-        guard next != self.units || implicit != implicitUnits || changed else { return }
         self.units = next
         implicitUnits = implicit
         rebuild()

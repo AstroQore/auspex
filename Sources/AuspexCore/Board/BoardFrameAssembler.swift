@@ -238,6 +238,23 @@ public struct AssembledBoardFrame: Sendable, Equatable {
     /// executor and stamps the answer here.
     public let boardRevision: UInt64
 
+    /// Which version of ``units`` — and of ``unitIndex``, which is a function
+    /// of them — this frame carries; and of ``unitGroups`` and ``endedUnits``.
+    ///
+    /// The same bargain ``boardRevision`` makes, for the values that are the
+    /// most expensive to compare on the main actor: every unit carries its
+    /// lead row and every member row. ``sharing(_:boardRevision:)`` keeps a
+    /// revision exactly when it kept the value, so a consumer that compares
+    /// these instead of the arrays is comparing one number.
+    ///
+    /// Zero means *unreconciled*: a frame derived with nothing before it — the
+    /// first one, or one a test builds by hand — has no revision to inherit,
+    /// and a consumer must treat it as moved. Zero rather than a fresh number
+    /// so that deriving the same frame twice still produces equal values.
+    public let unitsRevision: UInt64
+    public let unitGroupsRevision: UInt64
+    public let endedUnitsRevision: UInt64
+
     /// `true` when this frame draws exactly what the one before it drew.
     ///
     /// Also an answer rather than a question, and for the same reason: a
@@ -275,10 +292,16 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         attention: [SessionKey: AttentionState] = [:],
         olderHidden: Int = 0,
         boardRevision: UInt64 = 1,
+        unitsRevision: UInt64? = nil,
+        unitGroupsRevision: UInt64? = nil,
+        endedUnitsRevision: UInt64? = nil,
         isRepeat: Bool = false,
         assembledFor: BoardViewMode = .board,
         includesOffice: Bool? = nil
     ) {
+        self.unitsRevision = unitsRevision ?? 0
+        self.unitGroupsRevision = unitGroupsRevision ?? 0
+        self.endedUnitsRevision = endedUnitsRevision ?? 0
         self.now = now
         self.includesOffice = includesOffice ?? (assembledFor == .scene)
         self.unitGroups = unitGroups
@@ -346,8 +369,13 @@ public struct AssembledBoardFrame: Sendable, Equatable {
         let modeMoved = assembledFor != previous.assembledFor
             || includesOffice != previous.includesOffice
         if modeMoved { isRepeat = false }
-        let sharedUnits = kept(units, previous.units)
-        let unitsMoved = sharedUnits != previous.units
+        // Each of these is compared once. `kept` would compare again to learn
+        // what it already knew, and the revisions below need the answer too.
+        let unitsMoved = units != previous.units
+        let unitGroupsMoved = unitGroups != previous.unitGroups
+        let endedUnitsMoved = endedUnits != previous.endedUnits
+        if unitsMoved || unitGroupsMoved || endedUnitsMoved { isRepeat = false }
+        let sharedUnits = unitsMoved ? units : previous.units
         let shared = AssembledBoardFrame(
             sequence: sequence,
             board: boardMoved ? board : previous.board,
@@ -360,10 +388,12 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             sessionIndex: boardMoved ? sessionIndex : previous.sessionIndex,
             groups: kept(groups, previous.groups),
             rowGroups: kept(rowGroups, previous.rowGroups),
-            unitGroups: kept(unitGroups, previous.unitGroups),
-            endedUnits: kept(endedUnits, previous.endedUnits),
+            unitGroups: unitGroupsMoved ? unitGroups : previous.unitGroups,
+            endedUnits: endedUnitsMoved ? endedUnits : previous.endedUnits,
             units: sharedUnits,
-            unitIndex: kept(unitIndex, previous.unitIndex),
+            // A function of the units and nothing else — the same reasoning
+            // as `sessionIndex` and the board.
+            unitIndex: unitsMoved ? unitIndex : previous.unitIndex,
             filterOptions: kept(filterOptions, previous.filterOptions),
             // The same rule ``board`` follows, and for the same reason: a
             // reduced frame carries `generatedAt`, which moves on every tick,
@@ -381,11 +411,27 @@ public struct AssembledBoardFrame: Sendable, Equatable {
             attention: kept(attention, previous.attention),
             olderHidden: olderHidden,
             boardRevision: boardMoved ? boardRevision &+ 1 : previous.boardRevision,
+            unitsRevision: Self.revision(
+                moved: unitsMoved, previous: previous.unitsRevision
+            ),
+            unitGroupsRevision: Self.revision(
+                moved: unitGroupsMoved, previous: previous.unitGroupsRevision
+            ),
+            endedUnitsRevision: Self.revision(
+                moved: endedUnitsMoved, previous: previous.endedUnitsRevision
+            ),
             isRepeat: isRepeat && olderHidden == previous.olderHidden,
             assembledFor: assembledFor,
             includesOffice: includesOffice
         )
         return shared
+    }
+
+    /// The previous revision when the value did not move, and a fresh one when
+    /// it did — or when the previous one was the unreconciled zero, which a
+    /// consumer treats as moved every time it sees it.
+    private static func revision(moved: Bool, previous: UInt64) -> UInt64 {
+        moved || previous == 0 ? RevisionCounter.next() : previous
     }
 }
 

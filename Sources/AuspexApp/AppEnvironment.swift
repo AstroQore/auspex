@@ -545,8 +545,8 @@ public final class AppEnvironment {
         // than once per render. The MCP server is not one of them — it reads
         // the frame when an agent asks, which is rarer than a frame by three
         // orders of magnitude.
-        board.onFrame = { [tasks] frame, units in
-            tasks.apply(units: units, board: frame)
+        board.onFrame = { [tasks] frame, units, revision in
+            tasks.apply(units: units, revision: revision, board: frame)
         }
     }
 
