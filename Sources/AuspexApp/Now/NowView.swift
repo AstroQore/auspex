@@ -38,6 +38,10 @@ struct NowView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Whether the window can be seen — what the live stopwatches and the
+    /// breathing dots run on. Written only when it changes.
+    @State private var isVisible = false
+
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
@@ -74,6 +78,10 @@ struct NowView: View {
                 StageIdleProbe(controller: model.stageIdle).frame(width: 0, height: 0)
             }
         }
+        .background {
+            NowWindowProbe { isVisible = $0 }.frame(width: 0, height: 0)
+        }
+        .environment(\.nowIsVisible, isVisible)
     }
 
     static func foldAnimation(reduceMotion: Bool) -> Animation? {
@@ -568,7 +576,8 @@ struct NowRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: columns.spacing) {
+        NowBodyCounter.count(.row)
+        return HStack(spacing: columns.spacing) {
             Circle()
                 .fill(NowTone.mark(item.tone))
                 .frame(width: columns.dot, height: columns.dot)
@@ -633,6 +642,10 @@ struct NowRow: View, Equatable {
         } else if let since = item.since {
             if case .watch(.staleSession, _) = item.reason {
                 NowElapsed(since: since, format: L10n.Now.idleFor(duration:))
+            } else if item.tone == .needsYou {
+                // How long somebody has been waiting on the reader: the one
+                // number on this list that should be seen to grow.
+                NowLiveElapsed(since: since)
             } else {
                 NowElapsed(since: since)
             }
@@ -663,7 +676,7 @@ struct NowRow: View, Equatable {
 
 /// One running family: its root, what it is doing, for how long, how many
 /// subagents are folded under it, and how full its context is.
-private struct NowWorkingRow: View, Equatable {
+struct NowWorkingRow: View, Equatable {
     let item: NowFrame.Item
     let isSelected: Bool
     let columns: NowColumns
@@ -674,21 +687,20 @@ private struct NowWorkingRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: columns.spacing) {
-            Circle()
-                .fill(NowTone.mark(.working))
+        NowBodyCounter.count(.row)
+        return HStack(spacing: columns.spacing) {
+            NowBreathingDot(size: columns.dot)
                 .frame(width: columns.dot, height: columns.dot)
             NowProjectCell(row: item.row, width: columns.project)
             NowHarnessCell(harness: item.row.harness, width: columns.harness)
             NowActivityText(activity: item.activity)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 0) {
+            Group {
                 if let since = item.since {
-                    NowElapsed(since: since)
+                    NowLiveElapsed(since: since, suffix: " · ↳\(item.subagents)")
                 } else {
-                    Text(verbatim: "—").nowMetric()
+                    Text(verbatim: "— · ↳\(item.subagents)").nowMetric()
                 }
-                Text(" · ↳\(item.subagents)").nowMetric()
             }
             .frame(width: columns.turn, alignment: .leading)
             NowContextBar(gauge: item.row.context)
@@ -763,8 +775,14 @@ private struct NowHarnessCell: View {
 }
 
 /// `WebSearch 「OpenAI Dots API」` — the tool in mono, its argument after it.
+///
+/// A new activity fades in over the old one in a fifth of a second, so a row
+/// that moved on from one tool to the next can be seen to have changed rather
+/// than having to be re-read. Instant under Reduce Motion.
 private struct NowActivityText: View {
     let activity: NowFrame.Activity
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -778,6 +796,8 @@ private struct NowActivityText: View {
             }
         }
         .nowLine()
+        .contentTransition(.opacity)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: activity)
     }
 }
 
