@@ -684,8 +684,14 @@ extension HarnessInstaller {
     /// It never tells an agent to do anything Auspex cannot do: no shell
     /// commands, no paths, no "run this". Everything is a tool call the server
     /// itself advertises.
+    ///
+    /// The first line carries ``protocolNoteRevision``. Whether a harness has
+    /// the current note is still decided by comparing the whole text — see
+    /// `noteState` — so the number is for a person reading the file, and for
+    /// the suite to prove that every older wording reads as one to replace.
     public static func protocolNote(for harness: Harness) -> String {
         """
+        <!-- auspex task-protocol note, revision \(protocolNoteRevision) -->
         ## Auspex
 
         Auspex watches every agent session on this Mac and exposes an MCP server
@@ -699,18 +705,28 @@ extension HarnessInstaller {
            need. It posts a macOS notification and moves your session into the
            right bucket on their board. Nothing else can tell "waiting for a
            human" apart from "thinking hard".
-        2. **Use the `auspex-coordination` skill for tracked work.** When a brief
-           names an Auspex task id, load that skill and follow its
-           Supervisor/Worker/Reviewer playbook. Discover the connected server's
-           capabilities and treat MCP as the state source; the skill is guidance.
-        3. **Do not manufacture coordination.** With no task id, continue the
-           user's work under the implicit session task. Do not create or claim an
-           explicit task merely to satisfy this note. Agent completion enters
-           Review; it does not close the task.
+        2. **A task id in your brief means tracked work.** Claim that task with
+           `tasks.claim`, load the `auspex-coordination` skill, and follow its
+           Supervisor/Worker/Reviewer playbook. Treat MCP as the state source;
+           the skill is guidance.
+        3. **No task id: just do the work.** Auspex already watches this
+           session as its implicit session task. Do not list, create or claim
+           tasks to satisfy this note. Call `plans.create` and `tasks.create`
+           only when you are handing work to another agent, and put the new task
+           id in that agent's brief. Agent completion enters Review; it does not
+           close the task.
         4. **Degrade honestly.** If MCP is unavailable or `sessions.self` cannot
            resolve this process, continue the user's task and say which board
            updates were not recorded. Never impersonate another session or claim
            a notification, task update, or completion the server rejected.
         """
     }
+
+    /// Which wording of the note this build installs. Bumped whenever the text
+    /// changes, so an installed note can say how old it is.
+    ///
+    /// Revision 3 stopped the note being read as "find or file a task before
+    /// you start": an agent with no task id is already tracked, and files
+    /// tasks only to hand work to another agent.
+    public static let protocolNoteRevision = 3
 }

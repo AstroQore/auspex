@@ -288,13 +288,20 @@ public enum AuspexMCPTools {
         name: Name.tasksList,
         title: "List tasks",
         description: """
-            What is on the board, grouped by the project each task is in. Call \
-            this at the start of a session: if your brief named a task id, \
-            claim it; if it did not, look for the task that describes what you \
-            were asked to do before filing a new one.
+            What is on the board, grouped by the project each task is in.
 
-            With no arguments it lists every project's tasks. Pass 'project' \
-            to see only the one you are working in.
+            If your brief names a task id, read it with tasks.get and claim \
+            it. If it does not, you do not need this list: carry on with the \
+            user's work. Auspex already watches your session as an implicit \
+            task. Read the list when you are about to hand work to other \
+            agents — so you reuse a task instead of filing a duplicate — or \
+            when the user asks about the board. Never file a task just to \
+            have something to claim.
+
+            With no arguments it lists every project's tasks, leaving out \
+            stale ones (unclaimed to-dos nobody touched for a week); pass \
+            'include_stale' to see those. Pass 'project' to see only the one \
+            you are working in.
             """,
         inputSchema: .object([
             "type": "object",
@@ -328,6 +335,13 @@ public enum AuspexMCPTools {
                     "type": "string",
                     "description": "Only tasks carrying this label."
                 ]),
+                "include_stale": .object([
+                    "type": "boolean",
+                    "description": """
+                        Include tasks set aside as stale: to-dos nobody ever \
+                        claimed, untouched for a week. Default false.
+                        """
+                ]),
                 "limit": limitProperty(default: 100)
             ])
         ])
@@ -355,8 +369,22 @@ public enum AuspexMCPTools {
         name: Name.tasksCreate,
         title: "File a task",
         description: """
-            File one unit of work. The id that comes back is what you put in \
-            the worker's brief.
+            File one unit of work you are handing to another agent. The id \
+            that comes back is what you put in that agent's brief.
+
+            Only file a task when you are splitting work up for somebody else, \
+            usually after plans.create. Do not file one for the work you are \
+            doing yourself or to satisfy a protocol: Auspex already tracks your \
+            session as an implicit task. Filing a title that matches an open \
+            task in the same project returns that task, with deduplicated: \
+            true, instead of a second one.
+
+            Write it as a brief. 'objective' is one sentence. 'acceptance' \
+            needs at least one item, each a checkable outcome — a test passes, \
+            a file exists, a number is reached — rather than something to \
+            avoid; put the boundaries in 'out_of_scope'. Add 'deliverable' \
+            and 'scope' when they help. Auspex stores these in the body in a \
+            fixed layout; 'body' on its own still works.
 
             It is filed in **the project you are working in** — Auspex works \
             that out from your session, the same way it decides which section \
@@ -368,10 +396,41 @@ public enum AuspexMCPTools {
         inputSchema: .object([
             "type": "object",
             "properties": .object([
-                "title": .object(["type": "string", "description": "What has to be done."]),
+                "title": .object([
+                    "type": "string",
+                    "description": "What has to be done, as a verb and its object: 'Port the cart to the new API'."
+                ]),
+                "objective": .object([
+                    "type": "string",
+                    "description": "Why this task exists, in one sentence."
+                ]),
+                "acceptance": .object([
+                    "type": "array",
+                    "items": .object(["type": "string"]),
+                    "description": """
+                        At least one checkable outcome that means the task is \
+                        finished: 'CartTests pass', 'docs/cart.md exists', \
+                        'p95 under 200 ms'. Outcomes, not prohibitions.
+                        """
+                ]),
+                "deliverable": .object([
+                    "type": "string",
+                    "description": "What the worker hands back: a commit, a file, a report."
+                ]),
+                "scope": .object([
+                    "type": "string",
+                    "description": "Which files, subsystem or worktree the work stays inside."
+                ]),
+                "out_of_scope": .object([
+                    "type": "string",
+                    "description": "The boundaries: what this task deliberately does not touch."
+                ]),
                 "body": .object([
                     "type": "string",
-                    "description": "The detail a worker needs. Up to 4000 characters."
+                    "description": """
+                        Any further detail a worker needs, stored after the \
+                        structured fields. Up to 4000 characters in all.
+                        """
                 ]),
                 "project": projectProperty,
                 "plan": .object([
@@ -390,7 +449,8 @@ public enum AuspexMCPTools {
                 "importance": importanceProperty,
                 "kind": kindProperty,
                 "labels": labelsProperty,
-                "depends_on": dependsOnProperty
+                "depends_on": dependsOnProperty,
+                "session_id": sessionIDProperty
             ]),
             "required": .array(["title"])
         ])
@@ -509,8 +569,9 @@ public enum AuspexMCPTools {
         title: "Finish a task",
         description: """
             Say that you have finished a task, and record in one line what you \
-            actually did. That line is what the person reads instead of \
-            opening your transcript, so write it for them.
+            actually did and one piece of evidence a reviewer can check: a \
+            commit, a file path, or a test name. That line is what the person \
+            reads instead of opening your transcript, so write it for them.
 
             **This asks for a review; it does not close anything.** The task \
             moves to 'review', stays counted as open, and waits for a person. \
@@ -523,7 +584,11 @@ public enum AuspexMCPTools {
                 "task_id": .object(["type": "integer"]),
                 "result": .object([
                     "type": "string",
-                    "description": "What you finished, in one sentence."
+                    "description": """
+                        What you did, plus one checkable piece of evidence: \
+                        'Added retry to the uploader; commit 3f2a1c8, \
+                        UploaderTests.retriesOnce passes.'
+                        """
                 ]),
                 "expected_version": expectedVersionProperty,
                 "session_id": sessionIDProperty

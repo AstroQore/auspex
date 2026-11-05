@@ -28,9 +28,55 @@ extension TaskRepository {
         dependsOn: [Int64] = [],
         now: Date = Date()
     ) throws -> AuspexTask {
+        try fileTask(
+            title: title, body: body, planID: planID, status: status, priority: priority,
+            projectID: projectID, projectKey: projectKey, createdBy: createdBy, source: source,
+            kind: kind, labels: labels, dependsOn: dependsOn, deduplicate: false, now: now
+        ).task
+    }
+
+    /// What ``fileTask(title:body:planID:status:priority:projectID:projectKey:createdBy:source:kind:labels:dependsOn:deduplicate:now:)``
+    /// did: the task, and whether it is one that was already there.
+    public struct Filing: Sendable, Equatable {
+        public let task: AuspexTask
+        public let deduplicated: Bool
+    }
+
+    /// Files a task — or, with `deduplicate`, returns the open one already
+    /// filed under the same title in the same project.
+    ///
+    /// "Open" is `todo` or `doing`: work nobody has finished and nobody is
+    /// waiting on a person for. "The same title" is the same after
+    /// ``TaskTitle/normalized(_:)``, so an agent re-filing its brief with a
+    /// full stop added does not produce a second row. The check and the
+    /// insert are one transaction, so two agents filing the same task at
+    /// once cannot both win.
+    public func fileTask(
+        title: String,
+        body: String? = nil,
+        planID: Int64? = nil,
+        status: AuspexTaskStatus = .todo,
+        priority: Int = 0,
+        projectID: Int64? = nil,
+        projectKey: String? = nil,
+        createdBy: SessionKey? = nil,
+        source: String? = nil,
+        kind: TaskKind? = nil,
+        labels: [String] = [],
+        dependsOn: [Int64] = [],
+        deduplicate: Bool,
+        now: Date = Date()
+    ) throws -> Filing {
         try dbWriter.write { db in
             let key = try projectKey
                 ?? planID.flatMap { try Self.plan(id: $0, in: db)?.projectKey }
+            if deduplicate,
+               let existing = try Self.openTask(titled: title, inProject: key, in: db) {
+                return Filing(
+                    task: try Self.attachDependencies(to: [existing], in: db)[0],
+                    deduplicated: true
+                )
+            }
             try db.execute(
                 sql: """
                     INSERT INTO tasks
@@ -56,8 +102,26 @@ extension TaskRepository {
             guard let task = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
-            return try Self.attachDependencies(to: [task], in: db)[0]
+            return Filing(task: try Self.attachDependencies(to: [task], in: db)[0], deduplicated: false)
         }
+    }
+
+    /// The oldest `todo` or `doing` task in a project whose title normalizes
+    /// to the same string as `title`.
+    static func openTask(titled title: String, inProject key: String?, in db: Database) throws -> AuspexTask? {
+        let wanted = TaskTitle.normalized(title)
+        guard !wanted.isEmpty else { return nil }
+        let projectClause = key == nil ? "tasks.project_key IS NULL" : "tasks.project_key = ?"
+        let arguments: StatementArguments = key.map { [$0] } ?? []
+        return try Row.fetchAll(
+            db,
+            sql: taskSelect + " WHERE " + projectClause
+                + " AND tasks.status IN ('todo', 'doing') ORDER BY tasks.id ASC",
+            arguments: arguments
+        )
+        .lazy
+        .compactMap(AuspexTask.init(row:))
+        .first { TaskTitle.normalized($0.title) == wanted }
     }
 
     /// Every task column, and the stale mark beside it.

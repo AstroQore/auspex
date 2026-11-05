@@ -86,14 +86,27 @@ struct TaskPayload: Encodable {
     let pendingClaims: [TaskClaimRequestPayload]?
     /// Present on tasks.claim so a success cannot be mistaken for ownership.
     let claimOutcome: String?
+    /// `true` when the hygiene pass has set this task aside — see
+    /// ``LedgerHygiene``. Absent otherwise.
+    let stale: Bool?
+    /// `true` on tasks.create when an open task with the same title was
+    /// already filed in the project, and this is that task.
+    let deduplicated: Bool?
+    /// One sentence for the caller about what to do differently next time.
+    let hint: String?
 
     init(
         _ task: AuspexTask,
         sessions: [SessionKey]? = nil,
         projectName: String? = nil,
         pendingClaims: [TaskClaimRequest] = [],
-        claimOutcome: String? = nil
+        claimOutcome: String? = nil,
+        deduplicated: Bool = false,
+        hint: String? = nil
     ) {
+        self.stale = task.isStale ? true : nil
+        self.deduplicated = deduplicated ? true : nil
+        self.hint = hint
         self.id = task.id
         self.version = task.version
         self.shortID = task.shortID

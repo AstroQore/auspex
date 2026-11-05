@@ -8,7 +8,7 @@ struct CoordinationSkillResourceTests {
     @Test("the shipped resource is complete, versioned, and teaches the three roles")
     func bundledPackageLoads() throws {
         let package = try CoordinationSkillResource.package()
-        #expect(package.version == "1.2.0")
+        #expect(package.version == "1.3.0")
         #expect(package.contentHash.count == 64)
         #expect(package.files.map(\.relativePath) == ["SKILL.md"])
 
@@ -29,5 +29,13 @@ struct CoordinationSkillResourceTests {
         #expect(text.contains("MCP unavailable"))
         #expect(text.contains("sessions.self(session_id=<id>)"))
         #expect(text.contains("CODEX_THREAD_ID"))
+        // 1.3.0: tasks are briefs a worker can act on and a reviewer can check,
+        // and they are filed only to hand work out.
+        #expect(text.contains("## How to write a task"))
+        #expect(text.contains("acceptance"))
+        #expect(text.contains("out_of_scope"))
+        #expect(text.contains("deduplicated"))
+        #expect(text.contains("include_stale"))
+        #expect(text.contains("Create tasks only when you are handing work to"))
     }
 }

@@ -2,7 +2,7 @@
 name: auspex-coordination
 description: Coordinate Supervisor, Worker, and Reviewer work through Auspex when a brief names an Auspex task, when handing work to another agent, or when reviewing shared task progress. Auspex remains the task state source; this skill is only the operating playbook.
 metadata:
-  version: 1.2.0
+  version: 1.3.0
 ---
 
 # Auspex Coordination
@@ -26,7 +26,8 @@ Auspex has two layers:
    schemas. Never invent a call because this playbook mentions a newer tool.
 3. If the brief includes an Auspex task id, use it. If it does not, keep the
    implicit session task: do not create or claim an explicit task merely to
-   satisfy this protocol.
+   satisfy this protocol. Create tasks only when you are handing work to
+   another agent.
 4. Never claim work already held by another live session. Inspect the task and
    peer context, then ask for a handoff or use `tasks.release` only when the
    owner is deliberately giving it up and the server permits the transition.
@@ -60,9 +61,11 @@ When the brief names a task id:
 5. Call `auspex.report` with the immediate focus and progress only when those
    facts are useful to a person scanning the board.
 
-When there is no task id, do the requested work normally. Use `auspex.notify`
-when the person is needed, but do not search for or manufacture a task unless
-the user explicitly asks for project coordination.
+When there is no task id, do the requested work normally. Auspex already
+watches the session as its implicit session task. Use `auspex.notify` when the
+person is needed, but do not call `tasks.list` looking for a task to claim, and
+do not manufacture one, unless the user explicitly asks for project
+coordination.
 
 ## Worker playbook
 
@@ -97,10 +100,12 @@ the user explicitly asks for project coordination.
 ## Supervisor playbook
 
 1. Call `overview.get` before decomposing work. Reuse an existing matching plan
-   or task instead of duplicating it.
+   or task instead of duplicating it. `tasks.create` returns the open task
+   already filed under the same title in the project, marked
+   `deduplicated: true`, rather than a second one.
 2. Create a plan only for a real decomposition. Create one bounded task per
-   worker with objective, scope, dependencies, acceptance criteria, and a task
-   id in the worker brief.
+   worker, written as described in "How to write a task" below, and put its
+   task id in the worker brief.
 3. Make scopes non-overlapping where possible: separate files, subsystems,
    worktrees, or read-only review. If overlap is intentional, name the owner of
    the shared boundary.
@@ -109,6 +114,33 @@ the user explicitly asks for project coordination.
    reported progress have different provenance.
 5. Surface collisions, blocked dependencies, orphaned claims, and Review work
    to the person. Do not automatically kill, steal, or reassign a session.
+
+## How to write a task
+
+A task is a brief another agent will act on and a person will check. Pass the
+structured fields to `tasks.create`; Auspex stores them in the body in a fixed
+layout, so every reader sees the same shape.
+
+- `title`: a verb and its object — "Port the cart to the new checkout API",
+  not "Cart" or "Work on checkout".
+- `objective`: one sentence saying why the task exists.
+- `acceptance`: at least one item, each a checkable outcome — a test passes, a
+  file exists, a number is reached ("CartTests pass", "docs/cart.md exists",
+  "p95 under 200 ms"). Write what must be true, not what to avoid.
+- `deliverable`: what the worker hands back — a commit, a file, a report.
+- `scope`: the files, subsystem or worktree the work stays inside.
+- `out_of_scope`: the boundaries — what this task deliberately leaves alone.
+  Prohibitions belong here, not in `acceptance`.
+- Pass `session_id` when `sessions.self` could not resolve you; a task filed
+  by an unattributed caller cannot be traced back to who handed it out.
+
+When the work is finished, `tasks.complete` takes a `result` that says what was
+done plus one piece of evidence a reviewer can check: a commit, a file path, or
+a test name.
+
+Unclaimed to-dos nobody touched for a week are set aside as stale and left out
+of `tasks.list` unless `include_stale` is passed. A stale task is not closed;
+claiming it, or a person keeping it, brings it back.
 
 ## Reviewer playbook
 
