@@ -75,6 +75,21 @@ final class OfficeScene: SKScene {
     /// Whether the system asked for less motion.
     private(set) var reduceMotion = false
 
+    /// Whether this scene is Now's stage rather than the aviary.
+    ///
+    /// The stage composes its own frame — the rooms with people in them,
+    /// urgent ones first, packed to fit the strip — rather than drawing the
+    /// map, and keeps it framed as it changes. See ``StageComposition``. Set
+    /// once, before the first board.
+    var composesStage = false
+
+    /// Who a watch signal is about, for the stage's ordering.
+    private var stageWatched: Set<SessionKey> = []
+
+    /// How much air a fit leaves around what it frames. None on the stage:
+    /// its composition is already laid out for the strip, edge to edge.
+    var fitPadding: CGFloat { composesStage ? 1 : SceneViewport.fitPadding }
+
     /// How much of the world beyond the window keeps animating, so that a pan
     /// does not reveal a room in the middle of catching up.
     private static let cullMargin: CGFloat = 240
@@ -122,6 +137,36 @@ final class OfficeScene: SKScene {
     func viewSizeChanged(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         cameraController.setViewSize(size)
+        // The stage is laid out *for* the strip, so a strip of a new size is
+        // a new composition rather than the old one seen through a wider
+        // window.
+        restage(size: size)
+        if !hasFitted { fitAll() }
+        cameraDidChange()
+    }
+
+    /// Tells the stage who the watch signals are about.
+    func setStageWatched(_ watched: Set<SessionKey>) {
+        guard composesStage, watched != stageWatched else { return }
+        stageWatched = watched
+        restage(size: size)
+    }
+
+    /// Composes the stage again from the last board, for a strip that
+    /// changed size or a change in who is being watched.
+    private func restage(size: CGSize) {
+        guard composesStage, size.width > 0, size.height > 0 else { return }
+        director.stage = SceneDirector.StageInput(size: size, watched: stageWatched)
+        guard director.needsStageRefresh else { return }
+        if director.refresh() { layoutMoved() }
+        requestFrame()
+    }
+
+    /// Everything that follows from the floor plan having moved.
+    private func layoutMoved() {
+        cameraController.setContentRect(director.contentRect)
+        host?.setWorld(director.frame.contentRect)
+        rebuildBackdrop()
         if !hasFitted { fitAll() }
         cameraDidChange()
     }
@@ -155,23 +200,23 @@ final class OfficeScene: SKScene {
         for session in board.sessions { byKey[session.key] = session }
         sessions = byKey
 
+        if composesStage, size.width > 0, size.height > 0 {
+            director.stage = SceneDirector.StageInput(size: size, watched: stageWatched)
+        }
         let moved = director.apply(board, attention: attention)
         overviewIsStale = true
-        if moved {
-            cameraController.setContentRect(director.contentRect)
-            host?.setWorld(director.frame.contentRect)
-            rebuildBackdrop()
-            if !hasFitted { fitAll() }
-            cameraDidChange()
-        }
+        if moved { layoutMoved() }
 
         // Focus before selection: a session that has just been picked in the
         // sidebar is usually in the project that was picked with it, and
         // framing the room first means the desk is already on screen by the
         // time the selection asks whether it needs to be.
+        //
+        // Not on the stage: its board is already narrowed to the focused
+        // project, so the composition *is* that room, framed.
         if self.focusedProject != .some(focusedProject) {
             self.focusedProject = .some(focusedProject)
-            apply(focus: focusedProject, animated: true)
+            if !composesStage { apply(focus: focusedProject, animated: true) }
         }
 
         if self.selected != selected {
@@ -260,13 +305,16 @@ final class OfficeScene: SKScene {
         }
     }
 
-    /// Frames the whole building.
+    /// Frames the whole building — or, on the stage, the whole composition,
+    /// at exactly the zoom it was laid out for.
     func fitAll(animated: Bool = false) {
         cameraController.setViewSize(size)
         let current = viewport
         guard current.content.width > 0, current.size.width > 0 else { return }
         hasFitted = true
-        setViewport(current.fitted(), animated: animated, framingEverything: true)
+        setViewport(
+            current.fitted(padding: fitPadding), animated: animated, framingEverything: true
+        )
     }
 
     /// Steps the zoom by rungs of the ladder, for the overlay's buttons and
@@ -293,25 +341,12 @@ final class OfficeScene: SKScene {
         setViewport(viewport.focused(on: rect.insetBy(dx: -110, dy: -80)), animated: animated)
     }
 
-    /// Frames Now's stage: the office at half its own scale — close enough
-    /// that a person is a person and their balloon is a sentence, far enough
-    /// to see the room around them — centred on `key`'s desk when there is one
-    /// to centre on.
-    ///
-    /// Not ``fitAll(animated:)``: a whole building fitted into a strip 380
-    /// points tall is a picture of a building, with nobody in it legible.
-    func frameStage(on key: SessionKey?) {
-        cameraController.setViewSize(size)
-        var next = viewport.zoomed(to: Self.stageZoom)
-        if let key, let rect = director.deskRect(for: key) {
-            next = next.centered(on: CGPoint(x: rect.midX, y: rect.midY + 30))
-        }
-        hasFitted = true
-        setViewport(next)
+    /// Frames Now's stage: its whole composition, which was laid out for the
+    /// strip at the zoom the strip is drawn at — so the camera keeps it framed
+    /// as it changes, until the reader pans or zooms themselves.
+    func frameStage() {
+        fitAll()
     }
-
-    /// The stage's zoom: a rung of the ladder, so the pixel art stays whole.
-    static let stageZoom: CGFloat = 0.5
 
     /// Frames one project's room, or the whole building when there is no
     /// project to frame.
@@ -471,6 +506,14 @@ final class OfficeScene: SKScene {
     /// Likewise.
     func isSeated(_ key: SessionKey) -> Bool { director.isSeated(key) }
 
+    /// The stage as it was last composed. Likewise.
+    var composition: StageComposition { director.composition }
+
+    /// Whether a balloon hangs over the desk `key` is drawn at. Likewise.
+    func showsCaption(over key: SessionKey) -> Bool {
+        director.desk(for: key)?.hasCaption ?? false
+    }
+
     /// When the picture next changes with nobody touching it, in
     /// `CACurrentMediaTime()` seconds.
     private var nextWake: TimeInterval? {
@@ -594,7 +637,11 @@ final class OfficeScene: SKScene {
         // way clicking it in the sidebar does. The camera only moves if the
         // room is not already on screen — a click on a desk in the room the
         // reader is watching should not fly anywhere.
-        if let room = director.room(for: key) {
+        //
+        // Not on the stage: there a click opens the session and nothing else.
+        // Focusing the project would narrow the whole of Now to it, and the
+        // strip would recompose around one room under the pointer.
+        if !composesStage, let room = director.room(for: key) {
             claimFocus(room.projectKey)
             let rect = SceneGeometry.scene(from: room.frame)
             if !viewport.showsAll(of: rect) {

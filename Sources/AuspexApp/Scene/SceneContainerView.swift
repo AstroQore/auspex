@@ -20,9 +20,9 @@ struct SceneContainerView: View {
     var chrome: Chrome = .full
     /// Now's balloons, by the desk they hang over. Empty in the aviary.
     var captions: [SessionKey: SceneCaption] = [:]
-    /// The desk Now's stage opens on. Read once, the first time there is a
-    /// board to frame.
-    var stageFocus: SessionKey?
+    /// Who Now's *may need you* list is about, which the stage orders its
+    /// rooms by. Empty in the aviary.
+    var stageWatched: Set<SessionKey> = []
 
     /// The aviary draws its own zoom controls, legend and minimap. Now's
     /// stage is a fixed-height window onto the same office with its own
@@ -83,7 +83,7 @@ struct SceneContainerView: View {
                 zones: zones,
                 attention: attention,
                 captions: captions,
-                stageFocus: stageFocus,
+                stageWatched: stageWatched,
                 frameAsStage: chrome == .stage,
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
@@ -420,7 +420,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let zones: SceneZoneOptions
     let attention: [SessionKey: AttentionState]
     let captions: [SessionKey: SceneCaption]
-    let stageFocus: SessionKey?
+    let stageWatched: Set<SessionKey>
     let frameAsStage: Bool
     let commands: SceneCommands
     let onSelect: (SessionKey?) -> Void
@@ -449,10 +449,12 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> SceneCanvasView {
         let theme = SceneTheme.resolved(for: appearance)
         let scene = OfficeScene(theme: theme)
+        scene.composesStage = frameAsStage
         let view = SceneCanvasView(
             scene: scene, frame: CGRect(x: 0, y: 0, width: 900, height: 640)
         )
         view.skView.rates = frameAsStage ? .stage : .aviary
+        view.fitPadding = scene.fitPadding
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
@@ -485,6 +487,9 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
+        // Who is being watched goes first: the stage orders its rooms by it,
+        // and the board below should be composed with the answer it gives.
+        scene.setStageWatched(stageWatched)
         scene.update(
             board: board,
             selected: selected,
@@ -498,13 +503,13 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         // its session at.
         scene.setCaptions(captions)
         // A stage is framed once, when it first has a room to frame; after
-        // that the camera is the reader's.
+        // that the composition keeps itself framed, until the reader pans
+        // or zooms.
         if frameAsStage, !context.coordinator.framedStage, !board.sessions.isEmpty {
             context.coordinator.framedStage = true
-            let focus = stageFocus
             // Next turn of the run loop, once the card has given the view
             // its real size.
-            DispatchQueue.main.async { [weak scene] in scene?.frameStage(on: focus) }
+            DispatchQueue.main.async { [weak scene] in scene?.frameStage() }
         }
     }
 

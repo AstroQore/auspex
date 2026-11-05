@@ -130,9 +130,35 @@ final class SceneDirector {
     /// Which of a suite's rooms are switched on.
     private var options = SceneZoneOptions.all
 
+    /// What Now's stage is composed for: the strip's size, and who a watch
+    /// signal is about. `nil` in the aviary, which draws the whole map.
+    struct StageInput: Equatable {
+        var size: CGSize
+        var watched: Set<SessionKey>
+    }
+
+    /// Set when this director draws Now's stage rather than the map — see
+    /// ``StageComposition``. Changing it lays the last board out again.
+    var stage: StageInput? {
+        didSet {
+            guard stage != oldValue else { return }
+            stageInputMoved = true
+        }
+    }
+
+    /// Whether ``stage`` changed since the board was last laid out.
+    private var stageInputMoved = false
+
+    /// The stage as it was last composed. ``StageComposition/empty`` in the
+    /// aviary.
+    private(set) var composition: StageComposition = .empty
+
     /// Where each place's node is going, in scene coordinates — the end of a
     /// slide that is still in flight. What a pause lands it on.
     private var deskTargets: [String: CGPoint] = [:]
+
+    /// The `+N rooms` tile, while the stage has rooms it could not fit.
+    private var overflow: StageOverflowNode?
 
     init(world: SKNode, theme: SceneTheme) {
         self.world = world
@@ -165,6 +191,8 @@ final class SceneDirector {
         for node in tables.values { node.removeFromParent() }
         for node in tethers.values { node.removeFromParent() }
         for node in walkers.values { node.removeFromParent() }
+        overflow?.removeFromParent()
+        overflow = nil
         desks.removeAll()
         floors.removeAll()
         zones.removeAll()
@@ -213,7 +241,8 @@ final class SceneDirector {
         return settleDepartures() || moved
     }
 
-    /// Re-lays the last board out, for a walk that finished between frames.
+    /// Re-lays the last board out — for a walk that finished between frames,
+    /// or a stage whose strip changed size.
     ///
     /// - Returns: whether the layout moved.
     @discardableResult
@@ -248,9 +277,26 @@ final class SceneDirector {
     private func applyOnce(
         _ board: BoardSnapshot, attention: [SessionKey: AttentionState]
     ) -> Bool {
-        let next = layout.update(
-            with: board, zones: options, attention: attention, departed: departed
-        )
+        stageInputMoved = false
+        let next: SceneFrame
+        if let stage {
+            // The stage composes its own frame from the same board: only the
+            // people, one desk each, urgent rooms first, packed to fit the
+            // strip. Its desks are keyed by session, so nobody walks — a
+            // person whose room moves up the strip slides there.
+            composition = StageComposer.compose(
+                board: board,
+                attention: attention,
+                watched: stage.watched,
+                viewSize: stage.size
+            )
+            next = composition.frame
+        } else {
+            composition = .empty
+            next = layout.update(
+                with: board, zones: options, attention: attention, departed: departed
+            )
+        }
         let moved = next != frame
         frame = next
 
@@ -262,6 +308,7 @@ final class SceneDirector {
         if moved {
             syncDesks()
             syncArcs()
+            syncOverflow()
             hitIndex = SceneHitIndex(
                 frame: frame,
                 deskSize: DeskNode.hitSize,
@@ -292,6 +339,10 @@ final class SceneDirector {
         return moved
     }
 
+    /// Whether ``stage`` changed since the last layout, so the scene knows
+    /// to lay the board out again without waiting for one.
+    var needsStageRefresh: Bool { stageInputMoved && lastBoard != nil }
+
     // MARK: Captions
 
     /// Hangs Now's balloons. Nothing is touched when they are the ones already
@@ -312,16 +363,38 @@ final class SceneDirector {
     private func syncCaptions() {
         let now = Date()
         var next: [SessionKey: DeskNode] = [:]
+        // One balloon per person. On the stage a subagent's balloon hangs over
+        // the person it is folded into, and when two land on one desk the more
+        // urgent one is the one that hangs.
+        var byNode: [ObjectIdentifier: (key: SessionKey, caption: SceneCaption, node: DeskNode)] = [:]
         for (key, caption) in captions {
-            guard let node = deskBySession[key] else { continue }
-            node.setCaption(caption, now: now)
-            next[key] = node
+            guard let node = deskBySession[key]
+                ?? composition.deskFor[key].flatMap({ deskBySession[$0] })
+            else { continue }
+            let id = ObjectIdentifier(node)
+            if let held = byNode[id], !Self.outranks(caption, key, held.caption, held.key) { continue }
+            byNode[id] = (key, caption, node)
+        }
+        for entry in byNode.values {
+            entry.node.setCaption(entry.caption, now: now)
+            next[entry.key] = entry.node
         }
         let keep = Set(next.values.map(ObjectIdentifier.init))
         for node in captioned.values where !keep.contains(ObjectIdentifier(node)) {
             node.setCaption(nil, now: now)
         }
         captioned = next
+    }
+
+    /// Whether one balloon should hang in place of another on the same desk.
+    private static func outranks(
+        _ caption: SceneCaption, _ key: SessionKey,
+        _ other: SceneCaption, _ otherKey: SessionKey
+    ) -> Bool {
+        let rank = SceneCaption.rank(caption.tone)
+        let otherRank = SceneCaption.rank(other.tone)
+        if rank != otherRank { return rank > otherRank }
+        return key.description < otherKey.description
     }
 
     /// Advances the stopwatch on every balloon the camera can see. Called from
@@ -581,6 +654,25 @@ final class SceneDirector {
         let width = DeskNode.hitSize.width * scale
         let height = DeskNode.hitSize.height * scale + 40
         return CGRect(x: point.x - width / 2, y: point.y - 12, width: width, height: height)
+    }
+
+    // MARK: The stage's overflow
+
+    /// Puts up, moves or takes down the `+N rooms` tile.
+    private func syncOverflow() {
+        guard let tile = composition.overflowTile, composition.hiddenRooms > 0 else {
+            overflow?.removeFromParent()
+            overflow = nil
+            return
+        }
+        let node = overflow ?? {
+            let created = StageOverflowNode(theme: theme)
+            created.setCameraScale(lastCameraScale)
+            floorLayer.addChild(created)
+            overflow = created
+            return created
+        }()
+        node.update(rect: SceneGeometry.scene(from: tile), count: composition.hiddenRooms, theme: theme)
     }
 
     // MARK: Tethers
@@ -1133,6 +1225,7 @@ final class SceneDirector {
         guard abs(scale - lastCameraScale) > 0.0001 else { return }
         lastCameraScale = scale
         for node in desks.values { node.setCameraScale(scale) }
+        overflow?.setCameraScale(scale)
         for floor in frame.floors {
             floors[floor.id]?.setCameraScale(scale, width: floor.frame.width)
         }
@@ -1404,6 +1497,60 @@ private final class FloorNode: SKNode {
         if counts.delegating > 0 { parts.append(L10n.Aviary.Floor.delegating(count: counts.delegating)) }
         parts.append(L10n.Aviary.Room.live(count: counts.live))
         return parts.joined(separator: " · ")
+    }
+}
+
+/// The stage's `+N rooms` tile: the rooms with people in them that the strip
+/// could not hold, counted in the corner they would have filled.
+///
+/// Drawn at the size it is on the screen, like a nameplate, because it is
+/// read rather than looked at.
+@MainActor
+private final class StageOverflowNode: SKNode {
+    private let back = SKShapeNode()
+    private let label = SKLabelNode()
+    private var lastCount = -1
+    private var lastRect: CGRect = .null
+    private var lastTheme: String?
+
+    init(theme: SceneTheme) {
+        super.init()
+        back.lineWidth = 1
+        back.zPosition = 0
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode = .center
+        label.zPosition = 1
+        zPosition = 3
+        addChild(back)
+        addChild(label)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("StageOverflowNode is not archived") }
+
+    /// `rect` is the tile in scene coordinates, sized for the composition's
+    /// own zoom; the words inside are kept the size they are on screen.
+    func update(rect: CGRect, count: Int, theme: SceneTheme) {
+        guard rect != lastRect || count != lastCount || theme.id != lastTheme else { return }
+        lastRect = rect
+        lastCount = count
+        lastTheme = theme.id
+        position = CGPoint(x: rect.midX, y: rect.midY)
+        let local = CGRect(x: -rect.width / 2, y: -rect.height / 2, width: rect.width, height: rect.height)
+        back.path = CGPath(
+            roundedRect: local, cornerWidth: rect.height / 2, cornerHeight: rect.height / 2,
+            transform: nil
+        )
+        back.fillColor = theme.panel.withAlphaComponent(0.9)
+        back.strokeColor = theme.hairlineStrong
+        label.attributedText = SceneText.label(
+            L10n.Now.Stage.moreRooms(count: count), size: 11, color: theme.textSecondary
+        )
+    }
+
+    /// Keeps the words the size they are on the screen.
+    func setCameraScale(_ scale: CGFloat) {
+        label.setScale(max(0.4, min(2.5, scale)))
     }
 }
 

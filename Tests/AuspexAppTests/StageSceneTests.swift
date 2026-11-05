@@ -9,7 +9,8 @@ import Testing
 
 @testable import AuspexApp
 
-/// What a pause does to anybody who was between two places.
+/// Now's stage as the scene draws it, and what a pause does to anybody who
+/// was between two places.
 @MainActor
 @Suite("Stage scene")
 struct StageSceneTests {
@@ -106,5 +107,53 @@ struct StageSceneTests {
         #expect(scene.hasDeparted(Self.key("walker")))
         // And nobody is left in the queue for a door.
         #expect(!scene.map.seats.contains { $0.kind == .gate && $0.session != nil })
+    }
+
+    // MARK: - The stage
+
+    /// A canvas the size of the design's stage, drawing `board` as the stage.
+    private static func stage(_ board: BoardSnapshot) -> (SceneCanvasView, OfficeScene) {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        let scene = OfficeScene(theme: theme)
+        scene.composesStage = true
+        let view = SceneCanvasView(scene: scene, frame: CGRect(x: 0, y: 0, width: 1_020, height: 380))
+        view.fitPadding = scene.fitPadding
+        view.layoutSubtreeIfNeeded()
+        update(scene, board)
+        view.layoutSubtreeIfNeeded()
+        scene.frameStage()
+        scene.update(CACurrentMediaTime())
+        return (view, scene)
+    }
+
+    @Test("The stage draws people, one desk each, with the subagents folded into their parent")
+    func stageDrawsOnlyPeople() {
+        let parent = Self.key("parent")
+        let board = Self.board([
+            Self.session("parent", state: .delegating(children: 1)),
+            Self.session("child", parent: parent, state: .toolCalling(name: "Grep")),
+            Self.session("resting", state: .idle),
+            Self.session("finished", state: .ended(reason: .exited)),
+            Self.session("elsewhere", project: "/Users/example/Code/harbor", state: .ended(reason: .exited)),
+        ])
+        let (_, scene) = Self.stage(board)
+        #expect(Set(scene.map.slots.compactMap(\.session)) == [parent, Self.key("resting")])
+        #expect(scene.map.slots.allSatisfy { $0.isOccupied })
+        #expect(scene.map.floors.map(\.title) == ["atlas"])
+        #expect(scene.map.seats.isEmpty)
+        #expect(scene.map.slots.first { $0.session == parent }?.childCount == 1)
+
+        // The child's balloon hangs over the parent it is folded into.
+        scene.setCaptions([Self.key("child"): SceneCaption(tone: .working, lead: nil, body: "Grep", since: nil)])
+        #expect(scene.showsCaption(over: parent))
+    }
+
+    @Test("The stage is framed to its composition, and the composition fills the strip")
+    func stageIsFramed() {
+        let board = Self.board((0..<5).map { Self.session("s\($0)", state: .thinking) })
+        let (_, scene) = Self.stage(board)
+        #expect(scene.composition.zoom == 1)
+        #expect(abs(scene.zoom - scene.composition.zoom) < 0.001)
+        #expect(scene.viewport.showsAll(of: scene.contentBounds))
     }
 }

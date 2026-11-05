@@ -65,6 +65,16 @@ struct SceneCaption: Equatable {
         return result
     }
 
+    /// How urgent a balloon is, for deciding which of two hangs on one desk.
+    /// Higher is more urgent.
+    static func rank(_ tone: Tone) -> Int {
+        switch tone {
+        case .working: 0
+        case .mayNeedYou: 1
+        case .needsYou: 2
+        }
+    }
+
     /// The balloon's fill. Working is the board's own ink — near-black on a
     /// light office, near-white on a dark one — so it reads as speech rather
     /// than as a state colour; the other two are their list's mark.

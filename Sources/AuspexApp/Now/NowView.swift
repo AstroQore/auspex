@@ -97,11 +97,11 @@ private struct NowStage: View {
     var body: some View {
         // Six at most, already chosen and ordered by the frame; this only
         // turns each into the words it prints.
-        let captions = model.nowFrame.captions
+        let frame = model.nowFrame
         NowStageScene(
             model: model,
-            captions: Self.balloons(captions),
-            focus: captions.first?.deskKey
+            captions: Self.balloons(frame.captions),
+            watched: Self.watched(frame)
         )
         .equatable()
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -112,6 +112,13 @@ private struct NowStage: View {
             .overlay(alignment: .topLeading) { tag.padding(.leading, 18).padding(.top, 14) }
             .overlay(alignment: .topTrailing) { collapse.padding(.trailing, 12).padding(.top, 12) }
             .overlay(alignment: .bottomTrailing) { legend.padding(.trailing, 18).padding(.bottom, 14) }
+    }
+
+    /// The sessions a single-session watch signal is about: the stage puts
+    /// their rooms after the ones that need the reader and before the ones
+    /// merely working.
+    static func watched(_ frame: NowFrame) -> Set<SessionKey> {
+        Set(frame.mayNeedYou.lazy.filter { $0.sessionCount == 1 }.map(\.key))
     }
 
     static func balloons(_ captions: [NowFrame.Caption]) -> [SessionKey: SceneCaption] {
@@ -195,14 +202,14 @@ private struct NowStage: View {
 private struct NowStageScene: View, Equatable {
     let model: LiveBoardModel
     let captions: [SessionKey: SceneCaption]
-    let focus: SessionKey?
+    let watched: Set<SessionKey>
 
     nonisolated static func == (lhs: NowStageScene, rhs: NowStageScene) -> Bool {
-        lhs.model === rhs.model && lhs.captions == rhs.captions && lhs.focus == rhs.focus
+        lhs.model === rhs.model && lhs.captions == rhs.captions && lhs.watched == rhs.watched
     }
 
     var body: some View {
-        SceneContainerView(model: model, chrome: .stage, captions: captions, stageFocus: focus)
+        SceneContainerView(model: model, chrome: .stage, captions: captions, stageWatched: watched)
     }
 }
 

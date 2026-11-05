@@ -1699,9 +1699,17 @@ public struct SceneLayout: Sendable, Equatable {
     }
 
     private static func title(for key: FloorKey) -> String {
-        switch key {
-        case .project(let path): BoardGrouping.projectName(forPath: path)
-        case .unplaced: unplacedFloorTitle
-        }
+        floorTitle(projectKey: key.projectKey)
+    }
+
+    /// What a room's nameplate says for the project `projectKey` names, or
+    /// for the room of sessions no directory could be found for.
+    ///
+    /// One function for every picture of the office — the aviary's suites
+    /// and Now's stage both name a room with it — so the two cannot call the
+    /// same project two different things.
+    static func floorTitle(projectKey: String?) -> String {
+        guard let projectKey else { return unplacedFloorTitle }
+        return BoardGrouping.projectName(forPath: projectKey)
     }
 }
