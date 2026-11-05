@@ -408,27 +408,66 @@ public final class AppEnvironment {
     /// sidebar's name map should stop offering those names as soon as it can.
     /// The person's own projects are read now and protected; the rules are
     /// the ones the grouping pass was just given.
+    ///
+    /// Then, once per store as well, the plain-directory rows are folded into
+    /// their workspace roots — see ``ProjectRollupMigration``. After the purge,
+    /// in the same task, because both rewrite the same rows and the second
+    /// should see what the first left.
     private func startScratchPurge(store: AuspexStore) {
         let purge = ScratchProjectPurge(store: store)
+        let rollup = ProjectRollupMigration(store: store)
         let rules = ScratchRules(userPrefixes: catalog.rules.scratchPrefixes)
         let protectedRoots = catalog.projects.flatMap(\.roots)
         let board = board
         let projects = projects
-        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak projects] in
+        let tasks = tasks
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak projects, weak tasks] in
             do {
-                guard let report = try await purge.runIfNeeded(
+                if let report = try await purge.runIfNeeded(
                     rules: rules,
                     protectedRoots: protectedRoots
-                ), report.projectsRemoved > 0 else { return }
-                await projects?.refreshNames()
-                let noun = report.projectsRemoved == 1 ? "folder" : "folders"
-                await board?.record(
-                    notice: "Auspex stopped listing \(report.projectsRemoved) scratch \(noun) as projects."
-                )
+                ), report.projectsRemoved > 0 {
+                    await projects?.refreshNames()
+                    let noun = report.projectsRemoved == 1 ? "folder" : "folders"
+                    await board?.record(
+                        notice: "Auspex stopped listing \(report.projectsRemoved) scratch \(noun) as projects."
+                    )
+                }
             } catch {
                 await board?.record(notice: "Scratch folders could not be tidied: \(error).")
             }
+            do {
+                guard let report = try await rollup.runIfNeeded(
+                    rules: rules,
+                    protectedRoots: protectedRoots
+                ), report.changedAnything else { return }
+                await projects?.refreshNames()
+                // Tasks were refiled under the roots their folders rolled up
+                // to; both readers of the ledger have to see that.
+                await tasks?.reload()
+                await board?.reloadLedger()
+                await board?.record(notice: Self.describe(report))
+            } catch {
+                await board?.record(notice: "Project folders could not be rolled up: \(error).")
+            }
         })
+    }
+
+    /// One roll-up pass, as counts. Never a path: the folders are the
+    /// person's, and a diagnostic line is no place for them.
+    nonisolated private static func describe(_ report: ProjectRollupMigration.Report) -> String {
+        var parts: [String] = []
+        if report.projectsMerged > 0 {
+            parts.append("folded \(report.projectsMerged) folder rows into their workspaces")
+        }
+        if report.projectsCleared > 0 {
+            parts.append("moved \(report.projectsCleared) folder rows to Projectless")
+        }
+        let moved = report.sessionsMoved + report.sessionsUnassigned
+        if moved > 0 { parts.append("refiled \(moved) sessions") }
+        let refiled = report.tasksMoved + report.plansMoved
+        if refiled > 0 { parts.append("refiled \(refiled) tasks and milestones") }
+        return "Auspex " + parts.joined(separator: ", ") + "."
     }
 
     /// Trims the stored history, off the main actor and at utility priority.

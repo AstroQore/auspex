@@ -66,4 +66,9 @@ public enum StoreMetaKey {
     /// earlier builds wrote for scratch directories. Its value is when that
     /// finished; only its presence is consulted.
     public static let scratchProjectsPurged = "scratch_projects_purged_at"
+
+    /// Set once ``ProjectRollupMigration`` has folded the `projects` rows
+    /// earlier builds wrote for plain directories into their workspace roots.
+    /// Its value is when that finished; only its presence is consulted.
+    public static let projectsRolledUp = "projects_rolled_up_at"
 }
