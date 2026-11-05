@@ -41,7 +41,7 @@ struct TasksPageView: View {
     static let columnWidth: CGFloat = 148
 
     var body: some View {
-        BoardScroll {
+        BoardScroll(autoScrolls: true) {
             // Deliberately eager. Roost rows have dynamic heights, nested
             // columns, drag targets and native controls. On macOS 26.5.2 a
             // `LazyVStack` enters a self-sustaining prefetch/update cycle after

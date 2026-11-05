@@ -541,6 +541,19 @@ if arguments.contains("--help") || arguments.contains("-h") {
                             launch; the switch in Now's header still works. What
                             the performance budget for Now with and without the
                             stage is measured with.
+              --section <live|allSessions|projects|tasks|harnesses|settings>
+                            Open the window on this page. `AUSPEX_SECTION` does
+                            the same. In a demo, `AUSPEX_SECTION_DELAY=<seconds>`
+                            waits on Now first, so a sample can catch the page
+                            opening on a board that has warmed up.
+            Demo-only variables, for measuring the Tasks page:
+              AUSPEX_DEMO_TASKS=<N>
+                            Seed N fabricated tasks under N/10 milestones across
+                            forty fabricated projects (capped at 2000).
+              AUSPEX_AUTOSCROLL=1
+                            Scroll the Tasks page down and up by itself, after
+                            `AUSPEX_AUTOSCROLL_DELAY` seconds (default 30), so the
+                            stall meter has the same scroll to measure every run.
               --render-scene <path> [seconds] [project] [crowd=N] [appearance=…]
                             Render the scene view's office to a PNG, offscreen,
                             from the demo board at `seconds` into its loop

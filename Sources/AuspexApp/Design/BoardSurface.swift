@@ -182,6 +182,9 @@ extension EnvironmentValues {
 /// A scroll view, except while the window is being rendered offscreen.
 struct BoardScroll<Content: View>: View {
     @Environment(\.isSnapshotRender) private var isSnapshotRender
+    /// Whether a demo launch may scroll this page by itself — see
+    /// ``DemoAutoScroll``. Off everywhere but the pages being measured.
+    var autoScrolls = false
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -208,6 +211,7 @@ struct BoardScroll<Content: View>: View {
                     content
                 }
                 .scrollContentBackground(.hidden)
+                .modifier(DemoAutoScroll(isEnabled: autoScrolls))
             }
         }
     }
@@ -345,5 +349,44 @@ struct CountBadge: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(value) \(label)")
+    }
+}
+
+/// A demo's own hand on the scroll wheel.
+///
+/// The stall meter (``MainThreadMeter``) answers "did a scroll drop a frame",
+/// and a scroll a person performs is a different scroll every time. This one
+/// is the same on both sides of a change: after ``delay`` it walks the page
+/// down in small steps and back up, for as long as the process runs.
+///
+/// Off unless a demo launch set ``delay`` — `AUSPEX_AUTOSCROLL=1`, read by
+/// ``AppLaunchOptions`` — so no live window ever scrolls itself.
+struct DemoAutoScroll: ViewModifier {
+    /// How long to wait before the first step, or `nil` for never.
+    @MainActor static var delay: Duration?
+
+    let isEnabled: Bool
+    @State private var position = ScrollPosition(edge: .top)
+
+    func body(content: Content) -> some View {
+        if isEnabled, let delay = Self.delay {
+            content
+                .scrollPosition($position)
+                .task {
+                    try? await Task.sleep(for: delay)
+                    var offset: CGFloat = 0
+                    var step: CGFloat = 24
+                    while !Task.isCancelled {
+                        offset = max(0, offset + step)
+                        position.scrollTo(y: offset)
+                        // Turn round at the top, and every 6 000 points: far
+                        // enough to cross many lanes, near enough to repeat.
+                        if offset == 0 || offset > 6_000 { step = -step }
+                        try? await Task.sleep(for: .milliseconds(16))
+                    }
+                }
+        } else {
+            content
+        }
     }
 }

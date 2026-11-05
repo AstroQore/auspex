@@ -149,6 +149,13 @@ struct RootView: View {
             .auspexNoInitialFocus()
         }
         .task { environment.start() }
+        // A page the command line asked for, after the wait it asked for —
+        // see ``AppLaunchOptions/section``. Nothing at all on a plain launch.
+        .task {
+            guard let launch = environment.launchSection else { return }
+            try? await Task.sleep(for: environment.launchSectionDelay)
+            section = launch
+        }
         .task { await clock.run() }
         .task { routeNotifications() }
         // Nothing at all unless `AUSPEX_STALL_LOG=1` asked for it — see
