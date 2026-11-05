@@ -166,8 +166,8 @@ struct ProjectsPageView: View {
             .map { key in
                 ProjectTree.Project(
                     key: key,
-                    name: key == TaskProject.scratchKey
-                        ? L10n.Common.scratch
+                    name: TaskProject.isProjectless(key)
+                        ? L10n.Common.projectless
                         : BoardGrouping.projectName(forPath: key),
                     checkouts: [],
                     harnesses: [],
@@ -408,7 +408,7 @@ private struct AutomaticProjectRow: View {
     var body: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(project.name)
+                Text(CoreVocabulary.localized(project.name))
                     .font(AuspexType.rowTitle)
                     .foregroundStyle(AuspexPalette.text)
                 Text(subtitle)
@@ -440,10 +440,10 @@ private struct AutomaticProjectRow: View {
 
     /// The line under the name: the directory, or why there is not one.
     private var subtitle: String {
-        if project.key == TaskProject.scratchKey {
-            return L10n.Projects.scratchSubtitle
+        if TaskProject.isProjectless(project.key) {
+            return L10n.Projects.projectlessSubtitle
         }
-        return PseudoProject.isPseudo(project.key) ? L10n.Projects.noDirectory : project.key
+        return project.key
     }
 }
 

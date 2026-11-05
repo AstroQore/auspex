@@ -267,7 +267,7 @@ struct ScratchRulesTests {
         #expect(projectID == nil)
         let frame = await registry.snapshot()
         let session = try #require(frame.session(for: key))
-        #expect(frame.projectKey(for: session) == PseudoProject.scratchKey(for: .codex))
+        #expect(frame.projectKey(for: session) == PseudoProject.projectlessKey)
         #expect(frame.sandboxThreadName(for: session) == "~")
     }
 }

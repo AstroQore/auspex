@@ -21,21 +21,36 @@ import Foundation
 public enum TaskProject {
     // MARK: - The last resort
 
-    /// The key a task takes when there is nothing at all to resolve it from:
-    /// no project named, no session on the other end of the socket, no
-    /// directory anywhere in the chain.
+    /// The key earlier builds gave a task when there was nothing at all to
+    /// resolve it from: no project named, no session on the other end of the
+    /// socket, no directory anywhere in the chain.
     ///
-    /// Not a path, so it can never collide with one — the same guarantee
-    /// ``PseudoProject/prefix`` makes. It exists so that "we do not know" is a
-    /// named place a person can find their tasks in and move them out of,
-    /// rather than a `NULL` that every reader has to invent a heading for.
+    /// Such a task is now filed under ``PseudoProject/projectlessKey`` — the
+    /// same Projectless section the board files a session with no project
+    /// under, because "this work is in no project" is one fact whoever is
+    /// asking. Ledger rows that still carry this key read as Projectless, and
+    /// ``canonicalKey(_:)`` folds them into it.
     public static let scratchKey = "auspex-scratch"
 
-    /// What the scratch key is called on screen.
+    /// What the scratch key was called on screen.
     public static let scratchName = "Scratch"
 
-    /// Whether a key is the scratch project.
+    /// Whether a key is the old scratch project.
     public static func isScratch(_ key: String) -> Bool { key == scratchKey }
+
+    /// Whether a key files a task under Projectless — the key itself, the old
+    /// scratch key, or a per-harness key an earlier build wrote.
+    public static func isProjectless(_ key: String) -> Bool {
+        isScratch(key) || PseudoProject.isProjectless(key)
+    }
+
+    /// `key` with every spelling of Projectless folded into
+    /// ``PseudoProject/projectlessKey``, and an empty key read as one too. A
+    /// real project key is returned unchanged.
+    public static func canonicalKey(_ key: String?) -> String {
+        guard let key, !key.isEmpty else { return PseudoProject.projectlessKey }
+        return isProjectless(key) ? PseudoProject.projectlessKey : key
+    }
 
     // MARK: - Naming
 
@@ -46,7 +61,7 @@ public enum TaskProject {
     /// component otherwise — and only answers for the one key a board can
     /// never produce.
     public static func displayName(forKey key: String, in board: BoardSnapshot) -> String {
-        isScratch(key) ? scratchName : board.projectDisplayName(forKey: key)
+        isProjectless(key) ? PseudoProject.projectlessName : board.projectDisplayName(forKey: key)
     }
 
     /// The path to show under the name, or `nil` when the key is not one.
@@ -55,7 +70,7 @@ public enum TaskProject {
     /// nothing; showing either as a path would be showing a path that does not
     /// exist.
     public static func subtitle(forKey key: String) -> String? {
-        guard !isScratch(key), !PseudoProject.isPseudo(key) else { return nil }
+        guard !isProjectless(key) else { return nil }
         return key
     }
 
@@ -70,9 +85,8 @@ public enum TaskProject {
     ///   - session: the session doing the filing, when Auspex worked out which
     ///     one that is.
     ///   - board: the frame both answers come from.
-    /// - Returns: a key, always. ``scratchKey`` when nothing else resolved,
-    ///   because a task with no project is exactly the row this change exists
-    ///   to abolish.
+    /// - Returns: a key, always. ``PseudoProject/projectlessKey`` when nothing
+    ///   else resolved: a named place, never a `NULL`.
     public static func resolve(
         explicit: String?,
         session: SessionKey?,
@@ -83,14 +97,9 @@ public enum TaskProject {
            let key = board.projectKey(for: snapshot) {
             return key
         }
-        // A session Auspex can see but cannot place — no directory of its own,
-        // no ancestor with one — still belongs to its harness rather than to
-        // nowhere. `projectKey(for:)` says so only for a harness whose store
-        // records no directory; this says it for the session whose directory
-        // simply has not arrived yet, which is a gap in the evidence and not a
-        // reason to lose the task.
-        if let session { return PseudoProject.key(for: session.harness) }
-        return scratchKey
+        // A session Auspex cannot see, or nothing at all: the task is still
+        // filed somewhere a person can find it and move it out of.
+        return PseudoProject.projectlessKey
     }
 
     /// The board key a caller's `project` argument names, or `nil` when
@@ -98,8 +107,8 @@ public enum TaskProject {
     ///
     /// Four spellings, in the order they are unambiguous:
     ///
-    /// 1. A ``PseudoProject`` key, verbatim — the one non-path key the board
-    ///    produces on its own.
+    /// 1. A ``PseudoProject`` key or the old scratch key, as Projectless — the
+    ///    one non-path key the board produces on its own.
     /// 2. A path, absolute or `~`-relative. Normalised and then run through
     ///    the claims, so naming a folder inside a project a person made files
     ///    the task in *that* project rather than in a second one alongside it.
@@ -112,8 +121,10 @@ public enum TaskProject {
     public static func key(named reference: String, in board: BoardSnapshot) -> String? {
         let trimmed = reference.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        if isScratch(trimmed) { return scratchKey }
-        if PseudoProject.isPseudo(trimmed) { return trimmed }
+        if isProjectless(trimmed) { return PseudoProject.projectlessKey }
+        if trimmed.caseInsensitiveCompare(PseudoProject.projectlessName) == .orderedSame {
+            return PseudoProject.projectlessKey
+        }
 
         if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
             let path = ProjectPath.normalize(trimmed)

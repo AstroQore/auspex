@@ -99,6 +99,12 @@ struct BoardView: View {
         }
     }
 
+    /// What Projectless counts and does not show: its detached helper runs.
+    /// `nil` for every other section, and for a Projectless with none.
+    private func helperNote(_ group: TaskUnitGroup) -> String? {
+        group.helperCount > 0 ? L10n.Projects.helperSessions(count: group.helperCount) : nil
+    }
+
     /// One section: its header, then its milestones, then their cards — unless
     /// it is past the fold and has not been reached yet, in which case the
     /// header is the whole of it.
@@ -110,7 +116,8 @@ struct BoardView: View {
                 title: CoreVocabulary.localized(group.title),
                 subtitle: isOpen ? group.subtitle.map(CoreVocabulary.localized) : "\(group.unitCount)",
                 liveCount: isOpen ? group.liveCount : nil,
-                harness: group.harness
+                harness: group.harness,
+                note: isOpen ? helperNote(group) : nil
             )
             if isOpen {
                 ForEach(group.milestones) { milestone in
@@ -294,7 +301,7 @@ struct EndedTaskRow: View, Equatable {
                     .fixedSize()
             }
             if let project = unit.lead.project {
-                Text(project)
+                Text(CoreVocabulary.localized(project))
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
                     .lineLimit(1)
@@ -397,12 +404,22 @@ struct BoardSectionHeader: View {
     var subtitle: String?
     var liveCount: Int?
     let harness: Harness?
+    /// A quiet second fact after the count — Projectless's helper runs —
+    /// which unlike ``subtitle`` is drawn whether or not anything is live.
+    var note: String?
 
-    init(title: String, subtitle: String? = nil, liveCount: Int? = nil, harness: Harness?) {
+    init(
+        title: String,
+        subtitle: String? = nil,
+        liveCount: Int? = nil,
+        harness: Harness?,
+        note: String? = nil
+    ) {
         self.title = title
         self.subtitle = subtitle
         self.liveCount = liveCount
         self.harness = harness
+        self.note = note
     }
 
     /// The header for a section the grouping produced.
@@ -439,6 +456,13 @@ struct BoardSectionHeader: View {
                     .font(AuspexType.monoCount)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize()
+            }
+            if let note {
+                Text(note)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AuspexPalette.text3)
+                    .fixedSize()
+                    .help(L10n.Projects.helperSessionsHelp)
             }
             Rectangle()
                 .fill(AuspexPalette.line)

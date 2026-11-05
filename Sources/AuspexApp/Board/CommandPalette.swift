@@ -108,7 +108,7 @@ enum PaletteSearch {
         var seenProjects: Set<String> = []
         for unit in units {
             guard let key = unit.projectKey, seenProjects.insert(key).inserted else { continue }
-            let name = TaskProject.displayName(forKey: key, in: board)
+            let name = CoreVocabulary.localized(TaskProject.displayName(forKey: key, in: board))
             guard query.isEmpty || name.lowercased().contains(query) else { continue }
             items.append(
                 PaletteItem(
@@ -179,7 +179,7 @@ enum PaletteSearch {
     }
 
     private static func projectName(_ unit: TaskUnit, _ board: BoardSnapshot) -> String? {
-        unit.projectKey.map { TaskProject.displayName(forKey: $0, in: board) }
+        unit.projectKey.map { CoreVocabulary.localized(TaskProject.displayName(forKey: $0, in: board)) }
     }
 
     private static func viewItems() -> [PaletteItem] {

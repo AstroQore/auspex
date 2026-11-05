@@ -279,12 +279,12 @@ struct SceneLayoutTests {
         #expect(frame.floors[1].occupancy == 1)
     }
 
-    @Test("A session with no directory anywhere lands on the unplaced floor")
+    @Test("A session with no directory anywhere lands on the Projectless floor")
     func sessionsWithNoProject() {
         var layout = SceneLayout()
         let frame = layout.update(with: Self.board([Self.session("nowhere", project: nil)]))
-        #expect(frame.floors.map(\.title) == [SceneLayout.unplacedFloorTitle])
-        #expect(frame.floors.first?.projectKey == nil)
+        #expect(frame.floors.map(\.title) == [PseudoProject.projectlessName])
+        #expect(frame.floors.first?.projectKey == PseudoProject.projectlessKey)
     }
 
     @Test("Desks wrap onto a second row once the floor is full")

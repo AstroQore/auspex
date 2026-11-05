@@ -263,20 +263,16 @@ public enum BoardGrouping {
             byProject[path]?.append(session)
         }
 
-        // Pinned projects first, and the board's own urgency order inside each
-        // half: pinning is a promotion out of that order, not a replacement
-        // for it.
-        var groups = snapshot.claims.pinnedFirst(order) { $0 }.map { path in
-            // A pseudo project has no path to show under its title and no
-            // path to show *as* one — the harness's own name is the whole of
-            // what there is to say, and repeating it as a subtitle would be a
-            // second line saying the first line again.
-            let harness = PseudoProject.harness(forKey: path)
-            return BoardGroup(
+        // Pinned projects first, then the board's own urgency order, and
+        // Projectless after every project whatever is happening in it.
+        let ordered = PseudoProject.projectlessLast(snapshot.claims.pinnedFirst(order) { $0 })
+        var groups = ordered.map { path in
+            // Projectless has no path to show under its title and no path to
+            // show *as* one.
+            BoardGroup(
                 id: "project:\(path)",
                 title: snapshot.projectDisplayName(forKey: path),
-                subtitle: harness == nil ? path : nil,
-                harness: harness,
+                subtitle: PseudoProject.isPseudo(path) ? nil : path,
                 sessions: byProject[path] ?? []
             )
         }

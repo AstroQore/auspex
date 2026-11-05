@@ -82,6 +82,9 @@ struct ProjectsSidebar: View {
                     ForEach(project.checkouts) { checkout in
                         checkoutBlock(project: project, checkout: checkout)
                     }
+                    if project.helperCount > 0 {
+                        HelperRow(count: project.helperCount)
+                    }
                 }
             }
             if !tree.ungrouped.isEmpty {
@@ -115,7 +118,8 @@ struct ProjectsSidebar: View {
         _ units: [SidebarUnit],
         id: String,
         depth: Int,
-        finished: Int
+        finished: Int,
+        showsHarness: Bool = false
     ) -> some View {
         let fold = SidebarFold.make(
             rows: units.count,
@@ -123,7 +127,7 @@ struct ProjectsSidebar: View {
             isOpen: openedInFull.contains(id)
         )
         ForEach(units.prefix(fold.shown)) { unit in
-            unitRow(unit, depth: depth)
+            unitRow(unit, depth: depth, showsHarness: showsHarness)
             // The sessions, for a task somebody opened — or for everybody,
             // when the wall's density switch is on. Never by default: a
             // delegation of four used to be four rows in a 180-point column,
@@ -147,10 +151,11 @@ struct ProjectsSidebar: View {
     }
 
     /// One piece of work.
-    private func unitRow(_ unit: SidebarUnit, depth: Int) -> some View {
+    private func unitRow(_ unit: SidebarUnit, depth: Int, showsHarness: Bool) -> some View {
         UnitRow(
             unit: unit,
             depth: depth,
+            showsHarness: showsHarness,
             isSelected: selectedKey == unit.lead,
             isExpanded: board.isExpanded(unit),
             onSelect: { onSelectSession(unit.lead) },
@@ -242,7 +247,10 @@ struct ProjectsSidebar: View {
                 checkout.units,
                 id: checkout.id,
                 depth: isImplied ? 1 : 2,
-                finished: checkout.hiddenCount
+                finished: checkout.hiddenCount,
+                // A Projectless row has no project to say what it is part of,
+                // so it says whose it is instead.
+                showsHarness: project.isProjectless
             )
         }
     }
@@ -363,6 +371,14 @@ private struct ProjectRow: View {
                 AttentionPill(count: project.doneReportedCount, attention: Self.reported)
             } else if project.liveCount > 0 {
                 LivePill(count: project.liveCount)
+            } else if project.isProjectless, project.sessionCount > 0 {
+                // Projectless is one folded row, so it says how much is in
+                // it even when none of it is running — the count the old
+                // "No project" heading carried.
+                Text("\(project.sessionCount)")
+                    .font(AuspexType.monoCount)
+                    .auspexTabularDigits()
+                    .foregroundStyle(AuspexPalette.text3)
             }
             // After the live count, and quieter than it. A project with tasks
             // filed against it and nothing running is a project somebody meant
@@ -425,6 +441,9 @@ private struct CheckoutRow: View {
 private struct UnitRow: View, Equatable {
     let unit: SidebarUnit
     let depth: Int
+    /// Lead with the harness's badge rather than the status ring — for a
+    /// Projectless row, where whose session it is is the first thing to know.
+    var showsHarness = false
     let isSelected: Bool
     let isExpanded: Bool
     let onSelect: () -> Void
@@ -433,12 +452,16 @@ private struct UnitRow: View, Equatable {
 
     nonisolated static func == (lhs: UnitRow, rhs: UnitRow) -> Bool {
         lhs.unit == rhs.unit && lhs.depth == rhs.depth && lhs.isSelected == rhs.isSelected
-            && lhs.isExpanded == rhs.isExpanded
+            && lhs.isExpanded == rhs.isExpanded && lhs.showsHarness == rhs.showsHarness
     }
 
     var body: some View {
         TreeRow(depth: depth, isLit: isSelected, action: onSelect) {
-            TaskStatusIcon(status: unit.status, size: 12)
+            if showsHarness {
+                HarnessBadge(harness: unit.leadHarness, size: 14, isMuted: !unit.isWorking)
+            } else {
+                TaskStatusIcon(status: unit.status, size: 12)
+            }
             Text(unit.title)
                 .font(AuspexType.row)
                 .foregroundStyle(isSelected ? AuspexPalette.text : AuspexPalette.text2)
@@ -672,6 +695,30 @@ struct MoreRow: View {
         return parts.count == 2
             ? L10n.Projects.Fold.separator(first: parts[0], second: parts[1])
             : parts.first ?? ""
+    }
+}
+
+/// The end of the Projectless branch: the helper runs it holds and does not
+/// list — see ``TaskUnit/isDetachedHelper``.
+///
+/// A line of text rather than a control. There is nothing to open: the runs
+/// are reviews of threads that are not on the board, and the count is there
+/// so the branch does not quietly hold more than it shows.
+private struct HelperRow: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(L10n.Projects.helperSessions(count: count))
+                .font(AuspexType.row)
+                .foregroundStyle(AuspexPalette.text3)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+        }
+        .padding(.leading, 10 + 14)
+        .padding(.trailing, 10)
+        .frame(height: 28)
+        .help(L10n.Projects.helperSessionsHelp)
     }
 }
 

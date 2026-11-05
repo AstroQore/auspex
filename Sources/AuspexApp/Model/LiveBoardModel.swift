@@ -1306,7 +1306,7 @@ final class LiveBoardModel {
 
     /// What the focused project is called, for the crumb over the wall.
     var focusedProjectName: String? {
-        focusedProjectKey.map(board.projectDisplayName(forKey:))
+        focusedProjectKey.map { CoreVocabulary.localized(board.projectDisplayName(forKey: $0)) }
     }
 
     /// Every session on the current frame, by key.

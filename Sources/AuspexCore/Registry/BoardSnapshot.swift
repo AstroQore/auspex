@@ -286,27 +286,28 @@ public struct BoardSnapshot: Sendable, Equatable {
         Dictionary(grouping: sessions) { $0.key.harness }
     }
 
-    /// Sessions grouped by project — the git root when one is known, and the
-    /// working directory otherwise.
+    /// Sessions grouped by project — the git root when one is known, the
+    /// workspace a plain directory rolls up to, and the working directory
+    /// otherwise. Every session is in it: one with no project of its own is
+    /// under ``PseudoProject/projectlessKey``.
     ///
     /// The git root is preferred so that three sessions in three worktrees of
     /// one repository group together instead of looking like three projects.
-    /// Sessions whose adapter has recorded neither are in
-    /// ``ungroupedSessions`` rather than under a made-up key.
     public var byProject: [String: [SessionSnapshot]] {
         Dictionary(grouping: sessions.filter { projectKey(for: $0) != nil }) {
             projectKey(for: $0) ?? ""
         }
     }
 
-    /// Sessions that can be placed under no project: no directory of their
-    /// own, and no ancestor with one either.
+    /// Sessions that can be placed under no key at all. Always empty since
+    /// every such session files under Projectless; kept for the readers that
+    /// still ask.
     public var ungroupedSessions: [SessionSnapshot] {
         sessions.filter { projectKey(for: $0) == nil }
     }
 
     /// The grouping key for one session, falling back to its ancestors and
-    /// then to the harness itself.
+    /// then to Projectless.
     ///
     /// A delegated session frequently records no directory at all — a Claude
     /// subagent has no process and no cwd line, and a spawned harness may not
@@ -314,33 +315,28 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// parent is working on. So an unplaceable child takes the key of the
     /// nearest ancestor that has one.
     ///
-    /// What is left after that walk is of two kinds, and they are not the
-    /// same. A session whose directory is *missing* is genuinely unplaceable
-    /// and belongs in the residue. A session of a harness that records no
-    /// directory *at all* — Grok Bot, whose conversations run on xAI's
-    /// servers — is not missing anything, and filing every bot on the machine
-    /// under a heading that means "could not be placed" would say something
-    /// false about the store and bury the sessions that really could not be.
-    /// Those take a ``PseudoProject`` key instead.
-    ///
     /// A user project's claim is asked first, at every step of that walk: a
     /// person who put a directory in a project meant its sessions and the
     /// subagents they spawn, and a child that inherited its parent's automatic
     /// key while its parent moved into a project would be the one row on the
     /// board in the wrong place.
-    /// A third kind was hiding inside the first. A Codex desktop thread has a
-    /// directory, and it is `~/Documents/Codex/<date>/<name>` — a folder the
-    /// app made for that one conversation. Grouping by it gives a project per
-    /// conversation, so it is refused as a key and the session goes to a
-    /// scratch ``PseudoProject`` instead. A person who *claimed* that
-    /// directory still gets their claim: the rule below the user is the only
-    /// one this overrides.
     ///
-    /// A Codex thread another thread spawned is the fourth kind: it reports a
-    /// directory, and the directory is not what it is working on — its parent
-    /// is. It never groups by its own, takes its nearest placeable ancestor's,
-    /// and with none on the board goes to its harness's scratch rather than
-    /// inventing a project of one. See ``CodexThreadSpawn``.
+    /// A session's own key is its git root, then the workspace a plain
+    /// directory was rolled up to (``workspaceRoots``), then its directory.
+    /// Two kinds of session never group by their own directory. A scratch
+    /// thread — a Codex desktop conversation's folder, a Claude Desktop
+    /// scratch workspace, the home directory — has a directory that is not a
+    /// project; a Codex thread another thread spawned has one that is not what
+    /// it is working on (see ``CodexThreadSpawn``). Both take their nearest
+    /// placeable ancestor's key, and a child of a scratch thread is in that
+    /// thread.
+    ///
+    /// Everything left after that walk is **Projectless**: a scratch thread
+    /// with no project above it, a session with no directory and no ancestor
+    /// with one, a harness whose store records no directory at all (Grok Bot).
+    /// One key, ``PseudoProject/projectlessKey``, for all of them — which is
+    /// why this never answers `nil`. The optional is kept for the callers that
+    /// were written against the residue.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let claimed = claims.key(for: session) { return claimed }
         if groupsByOwnDirectory(session), let own = ownKey(for: session) { return own }
@@ -349,29 +345,25 @@ public struct BoardSnapshot: Sendable, Equatable {
         while let key = current, seen.insert(key).inserted {
             guard let ancestor = self.session(for: key) else { break }
             if let claimed = claims.key(for: ancestor) { return claimed }
-            if isSandbox(ancestor) {
-                // A child of a scratch thread is in that thread. Inheriting
-                // the *directory* would put it back under a folder name, and
-                // falling past it would strand it in the residue while its
-                // parent sits in a section.
-                return PseudoProject.scratchKey(for: ancestor.key.harness)
-            }
+            // A child of a scratch thread is in that thread. Inheriting the
+            // *directory* would put it back under a folder name.
+            if isSandbox(ancestor) { return PseudoProject.projectlessKey }
             if !inheritsProject(ancestor), let inherited = ownKey(for: ancestor) {
                 return inherited
             }
             current = ancestor.identity.parent
         }
-        if !groupsByOwnDirectory(session) {
-            return PseudoProject.scratchKey(for: session.key.harness)
-        }
-        guard !session.key.harness.recordsWorkingDirectory else { return nil }
-        return PseudoProject.key(for: session.key.harness)
+        return PseudoProject.projectlessKey
+    }
+
+    /// Whether a session is filed under Projectless.
+    public func isProjectless(_ session: SessionSnapshot) -> Bool {
+        projectKey(for: session).map(PseudoProject.isProjectless) ?? true
     }
 
     /// The key a session's own directory gives it: the git root, then the
-    /// workspace it was rolled up to (``workspaceRoots``), then the
-    /// directory. `nil` for a session that reported none of them — an empty
-    /// string is no directory.
+    /// workspace it was rolled up to, then the directory. `nil` for a session
+    /// that reported none of them — an empty string is no directory.
     private func ownKey(for session: SessionSnapshot) -> String? {
         if let root = session.identity.gitRoot, !root.isEmpty { return root }
         if let root = workspaceRoots[session.key] { return root }
@@ -396,17 +388,15 @@ public struct BoardSnapshot: Sendable, Equatable {
         sandboxThreads[session.key] != nil
     }
 
-    /// The folder a scratch session is running in, when it is running in one.
-    ///
-    /// What a card shows in place of a project name: `zhe` says which of the
-    /// day's threads this is, where "Codex · scratch" — already the section
-    /// heading above it — would say nothing twice.
+    /// The folder a scratch session is running in, when it is running in one
+    /// — `zhe` for a Codex desktop thread. Not a heading and not a title: the
+    /// session is under Projectless, and its row carries the directory.
     public func sandboxThreadName(for session: SessionSnapshot) -> String? {
         sandboxThreads[session.key]
     }
 
-    /// What to call a project key: the name a person gave it, then the
-    /// harness a pseudo key stands for, then the key's last path component.
+    /// What to call a project key: the name a person gave it, then
+    /// "Projectless" for a pseudo key, then the key's last path component.
     ///
     /// Every surface that heads a section goes through here, so renaming a
     /// project in the Projects page renames it on the wall, in the sidebar, in

@@ -319,6 +319,19 @@ public struct TaskUnit: Identifiable, Sendable, Equatable {
     /// Whether the unit still has work in it as far as a person is concerned.
     public var isOpen: Bool { status.isOpen }
 
+    /// Whether this unit is a helper run cut off from what it helps: a Codex
+    /// Auto Review whose thread is not on the board, so nothing folded it
+    /// under a parent and it surfaced as a piece of work of its own.
+    ///
+    /// Nobody assigned it and nobody acts on it. Projectless counts these
+    /// rather than listing them — see ``TaskUnitGrouping`` and
+    /// ``ProjectTree`` — unless one of them wants a person, which no rule
+    /// here is allowed to hide.
+    public var isDetachedHelper: Bool {
+        origin.isImplicit && lead.variantLabel == SessionVariantLabel.autoReview
+            && lead.parent == nil && !needsPerson
+    }
+
     /// Which bucket the header counts it in.
     ///
     /// The same five the ledger has always used, asked of a unit rather than
@@ -363,6 +376,9 @@ public struct SidebarUnit: Identifiable, Sendable, Equatable {
     public let lead: SessionKey
     /// What the lead is doing, for the dot's colour.
     public let leadState: SessionState
+    /// Whose session the lead is — the badge a Projectless row leads with,
+    /// where there is no project to say what the work is part of.
+    public let leadHarness: Harness
     /// How many sessions are folded in besides the lead.
     public let subagentCount: Int
     /// Whether anything in it is running right now.
@@ -400,6 +416,7 @@ public struct SidebarUnit: Identifiable, Sendable, Equatable {
         self.attention = unit.attention
         self.lead = unit.lead.key
         self.leadState = unit.lead.state
+        self.leadHarness = unit.lead.harness
         self.subagentCount = unit.subagents.count
         self.isWorking = unit.counts.working > 0
         // Only when there is more than one: a task with a single session has
@@ -425,6 +442,10 @@ public struct TaskUnitGroup: Identifiable, Sendable, Equatable {
     /// The milestone runs, in order. A run with no title is the ordinary case
     /// — the units under no milestone — and draws no sub-heading.
     public let milestones: [Milestone]
+    /// Helper runs the section holds and does not draw: Projectless's
+    /// detached auto reviews — see ``TaskUnit/isDetachedHelper``. `0` for
+    /// every other section.
+    public let helperCount: Int
 
     /// Every unit in the section, in order.
     public var units: [TaskUnit] { milestones.flatMap(\.units) }
@@ -450,7 +471,8 @@ public struct TaskUnitGroup: Identifiable, Sendable, Equatable {
         subtitle: String? = nil,
         harness: Harness? = nil,
         liveCount: Int,
-        milestones: [Milestone]
+        milestones: [Milestone],
+        helperCount: Int = 0
     ) {
         self.id = id
         self.title = title
@@ -458,5 +480,6 @@ public struct TaskUnitGroup: Identifiable, Sendable, Equatable {
         self.harness = harness
         self.liveCount = liveCount
         self.milestones = milestones
+        self.helperCount = max(0, helperCount)
     }
 }

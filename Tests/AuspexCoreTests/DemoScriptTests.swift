@@ -148,7 +148,7 @@ struct DemoScriptTests {
         #expect(tools == [String?.none])
     }
 
-    @Test("the demo board puts the cloud bot under a section of its own")
+    @Test("the demo board puts the cloud bot under Projectless, last")
     func grokBotGroupsUnderAPseudoProject() {
         let script = DemoScript.make(startedAt: epoch)
         let reducer = SessionStateReducer()
@@ -169,7 +169,9 @@ struct DemoScriptTests {
             generatedAt: epoch, sessions: Array(snapshots.values).sorted { $0.key.sessionID < $1.key.sessionID })
 
         let titles = BoardGrouping.groups(for: board, groupBy: .project).map(\.title)
-        #expect(titles.contains("Grok Bot"))
+        #expect(titles.last == PseudoProject.projectlessName)
+        #expect(titles.count { $0 == PseudoProject.projectlessName } == 1)
+        #expect(!titles.contains("Grok Bot"))
         #expect(!titles.contains(BoardGrouping.noProjectTitle))
     }
 

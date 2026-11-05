@@ -311,8 +311,9 @@ final class TasksModel {
         // tells them apart is what the row is allowed to do.
         var implicitByProject: [String: [TaskUnit]] = [:]
         for unit in implicitUnits {
-            let key = unit.projectKey.flatMap { claims.key(forPath: $0) ?? $0 }
-                ?? TaskProject.scratchKey
+            let key = TaskProject.canonicalKey(
+                unit.projectKey.flatMap { claims.key(forPath: $0) ?? $0 }
+            )
             implicitByProject[key, default: []].append(unit)
         }
         for task in latest.tasks {
@@ -373,7 +374,11 @@ final class TasksModel {
 
     /// The project a stored task is drawn in.
     private func project(of task: AuspexTask) -> String {
-        guard let key = task.projectKey, !key.isEmpty else { return TaskProject.scratchKey }
+        // Every spelling of "no project" — none at all, the old scratch key,
+        // a harness's own key — is one lane, the board's Projectless.
+        guard let key = task.projectKey, !TaskProject.isProjectless(key), !key.isEmpty else {
+            return PseudoProject.projectlessKey
+        }
         return claims.key(forPath: key) ?? key
     }
 
@@ -468,7 +473,7 @@ final class TasksModel {
     /// its own title, because the frame arrives eight times a second and the
     /// title changes about once a month.
     private func name(forKey key: String) -> String {
-        if TaskProject.isScratch(key) { return L10n.Common.scratch }
+        if TaskProject.isProjectless(key) { return L10n.Common.projectless }
         return claims.name(forKey: key) ?? BoardGrouping.projectName(forPath: key)
     }
 

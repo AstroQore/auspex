@@ -16,8 +16,8 @@ import Foundation
 ///
 /// So these are asked *before* the resolver. A directory that matches is
 /// placed as scratch — ``ProjectPlacement/isProjectless`` — which means no
-/// `projects` row and a section under the harness's own scratch heading
-/// (``PseudoProject/scratchKey(for:)``). The session is still on the board;
+/// `projects` row and a place in the one Projectless section
+/// (``PseudoProject/projectlessKey``). The session is still on the board;
 /// only the project it would have invented is gone.
 ///
 /// ## What is here, and what is not

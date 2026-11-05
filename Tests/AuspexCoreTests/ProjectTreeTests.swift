@@ -173,13 +173,14 @@ struct ProjectTreeTests {
         #expect(unit.members.map(\.key) == [parent.key, child.key])
     }
 
-    @Test("a session with no directory and no placed ancestor is ungrouped, not dropped")
+    @Test("a session with no directory and no placed ancestor is Projectless, not dropped")
     func anOrphanWithNoDirectoryIsKept() {
         let orphan = session(.antigravity, "orphan")
         let tree = tree(board([orphan]))
 
-        #expect(tree.projects.isEmpty)
-        #expect(tree.ungrouped.map(\.lead) == [orphan.key])
+        #expect(tree.projects.map(\.key) == [PseudoProject.projectlessKey])
+        #expect(tree.projects.first?.checkouts.first?.units.map(\.lead) == [orphan.key])
+        #expect(tree.ungrouped.isEmpty)
         #expect(!tree.isEmpty)
     }
 
@@ -265,8 +266,11 @@ struct ProjectTreeTests {
             session(.antigravity, "over", state: .ended(reason: .exited), isAlive: false, at: 10)
         ]))
 
-        #expect(tree.ungrouped.map(\.lead.sessionID) == ["live"])
-        #expect(tree.ungroupedHidden == 1)
+        let checkout = tree.projects.first?.checkouts.first
+        #expect(tree.projects.first?.isProjectless == true)
+        #expect(checkout?.units.map(\.lead.sessionID) == ["live"])
+        #expect(checkout?.hiddenCount == 1)
+        #expect(tree.projects.first?.sessionCount == 2)
     }
 
     @Test("a checkout's badge counts every session in it, listed or not")

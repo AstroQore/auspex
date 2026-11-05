@@ -75,13 +75,13 @@ struct GroupingIntegrationTests {
         let session = try #require(frame.session(for: key))
         #expect(frame.isSandbox(session))
         #expect(frame.sandboxThreadName(for: session) == "zhe")
-        #expect(frame.projectKey(for: session) == PseudoProject.scratchKey(for: .codex))
+        #expect(frame.projectKey(for: session) == PseudoProject.projectlessKey)
         // The directory is still on the identity; it is only refused as a
         // grouping key.
         #expect(session.identity.cwd == "/Users/example/Documents/Codex/2026-08-21/zhe")
         #expect(session.identity.gitRoot == nil)
         #expect(BoardGrouping.groups(for: frame, groupBy: .project).map(\.title)
-            == ["Codex · scratch"])
+            == [PseudoProject.projectlessName])
         await registry.stop()
 
         // And no project row for the folder: the `projects` table indexes the
@@ -392,7 +392,8 @@ struct GroupingIntegrationTests {
 
         await registry.ingest(started(parent))
         await registry.ingest(started(child, cwd: nil))
-        #expect(await registry.snapshot().ungroupedSessions.map(\.key) == [child])
+        #expect(await registry.snapshot().byProject[PseudoProject.projectlessKey]?.map(\.key)
+            == [child])
 
         await registry.applyLinks([
             ProcessLink(

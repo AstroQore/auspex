@@ -348,6 +348,9 @@ struct SessionCard: View, Equatable {
 
     /// The project chip's text: the project, and the branch when one is known.
     private func placeLabel(project: String) -> String {
+        // Through the vocabulary: a session in no project is "Projectless",
+        // a word Core spells in English.
+        let project = CoreVocabulary.localized(project)
         guard let branch = row.branch, !branch.isEmpty else { return project }
         return "\(project) · \(branch)"
     }

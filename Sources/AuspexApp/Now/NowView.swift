@@ -673,7 +673,7 @@ private struct NowProjectCell: View {
     let width: CGFloat
 
     var body: some View {
-        Text(row.project ?? row.shortID)
+        Text(row.project.map(CoreVocabulary.localized) ?? row.shortID)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(AuspexPalette.text)
             .lineLimit(1)

@@ -105,8 +105,11 @@ struct BoardSnapshotTests {
 
         #expect(board.byProject["/Users/example/Code/widget"]?.count == 2)
         #expect(board.byProject["/Users/example/scratch"]?.map(\.key) == [looseCwd])
-        #expect(board.byProject.count == 2)
-        #expect(board.ungroupedSessions.map(\.key) == [nowhere])
+        // The one with no directory is filed under Projectless, not under a
+        // made-up project.
+        #expect(board.byProject.count == 3)
+        #expect(board.byProject[PseudoProject.projectlessKey]?.map(\.key) == [nowhere])
+        #expect(board.ungroupedSessions.isEmpty)
 
         #expect(board.byHarness[.claudeCode]?.map(\.key) == [repoA])
         #expect(board.byHarness.keys.count == 4)

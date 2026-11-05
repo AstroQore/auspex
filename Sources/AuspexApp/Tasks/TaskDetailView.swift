@@ -266,7 +266,10 @@ struct TaskDetailView: View {
             property(L10n.Task.Filter.importance, unit.importance.localizedLabel)
             if let kind = unit.kind { property(L10n.TaskDetail.kind, kind.localizedLabel) }
             if let key = unit.projectKey {
-                property(L10n.Common.project, TaskProject.displayName(forKey: key, in: board.board))
+                property(
+                    L10n.Common.project,
+                    CoreVocabulary.localized(TaskProject.displayName(forKey: key, in: board.board))
+                )
             }
             if let milestone = unit.planTitle { property(L10n.Tasks.milestone, milestone) }
             if let claim = unit.claim {

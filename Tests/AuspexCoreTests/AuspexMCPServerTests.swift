@@ -857,14 +857,14 @@ struct AuspexMCPServerTests {
         #expect(capsule["activity"]?["detail"]?.stringValue?.contains("/Users/") == false)
     }
 
-    @Test("unattributed callers may create Scratch work but cannot author later mutations")
+    @Test("unattributed callers may create Projectless work but cannot author later mutations")
     func unresolvedWritesFailClosedExceptCreation() async throws {
         let (server, _, _) = try makeServer(clientPIDs: [])
         let created = try RPC.structured(await server.answer(line: RPC.call("tasks.create", [
             "title": "A task from an unattributed coordinator"
         ])))
         let id = try #require(created["id"]?.intValue)
-        #expect(created["project"]?.stringValue == TaskProject.scratchKey)
+        #expect(created["project"]?.stringValue == PseudoProject.projectlessKey)
 
         let update = try RPC.failureText(await server.answer(line: RPC.call("tasks.update", [
             "task_id": .int(Int64(id)), "status": "doing"

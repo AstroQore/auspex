@@ -284,7 +284,7 @@ struct CodexThreadSpawnTests {
         #expect(spawns.readCount == 1)
     }
 
-    @Test("a spawned thread whose parent is not on the board goes to its harness's scratch")
+    @Test("a spawned thread whose parent is not on the board goes to Projectless")
     func orphanedSpawn() throws {
         var identity = Fixtures.identity(
             key: Fixtures.key(.codex, childID), cwd: "/Users/example/Code/widget"
@@ -293,6 +293,6 @@ struct CodexThreadSpawnTests {
         identity.variant = "spawn:\(parentID)"
         let session = SessionStateReducer.initialSnapshot(identity: identity)
         let frame = BoardSnapshot(generatedAt: Fixtures.date(0), sessions: [session])
-        #expect(frame.projectKey(for: session) == PseudoProject.scratchKey(for: .codex))
+        #expect(frame.projectKey(for: session) == PseudoProject.projectlessKey)
     }
 }

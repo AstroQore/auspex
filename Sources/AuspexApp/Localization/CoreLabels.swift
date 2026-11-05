@@ -557,6 +557,7 @@ enum CoreVocabulary {
         case ProjectTree.unknownCheckoutTitle: return L10n.Board.Group.unknownCheckout
         case SessionVariantLabel.autoReview: return L10n.Session.autoReview
         case TaskProject.scratchName: return L10n.Common.scratch
+        case PseudoProject.projectlessName: return L10n.Common.projectless
         default: return title
         }
     }

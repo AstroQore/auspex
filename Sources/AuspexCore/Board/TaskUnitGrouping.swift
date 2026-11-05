@@ -91,7 +91,14 @@ public enum TaskUnitGrouping {
     }
 
     /// Project sections, ordered by the rank of their first unit — so the
-    /// repository holding the blocked task is at the top.
+    /// repository holding the blocked task is at the top — with Projectless
+    /// after all of them.
+    ///
+    /// Projectless is one section whatever filed a unit there: a scratch
+    /// thread, a session with no directory, a task a ledger entry from an
+    /// earlier build put under a harness's own key. Its detached helper runs
+    /// are counted on the section rather than drawn — see
+    /// ``TaskUnit/isDetachedHelper``.
     private static func projectGroups(
         _ units: [TaskUnit],
         board: BoardSnapshot
@@ -99,10 +106,16 @@ public enum TaskUnitGrouping {
         var order: [String] = []
         var byProject: [String: [TaskUnit]] = [:]
         var ungrouped: [TaskUnit] = []
+        var helpers = 0
 
         for unit in units {
-            guard let key = unit.projectKey else {
+            guard let raw = unit.projectKey else {
                 ungrouped.append(unit)
+                continue
+            }
+            let key = TaskProject.canonicalKey(raw)
+            if PseudoProject.isProjectless(key), unit.isDetachedHelper, unit.bucket != .ended {
+                helpers += 1
                 continue
             }
             if byProject[key] == nil {
@@ -111,15 +124,20 @@ public enum TaskUnitGrouping {
             }
             byProject[key]?.append(unit)
         }
+        if helpers > 0, byProject[PseudoProject.projectlessKey] == nil {
+            byProject[PseudoProject.projectlessKey] = []
+            order.append(PseudoProject.projectlessKey)
+        }
 
-        var groups = board.claims.pinnedFirst(order) { $0 }.map { key -> TaskUnitGroup in
-            let harness = PseudoProject.harness(forKey: key)
+        let ordered = PseudoProject.projectlessLast(board.claims.pinnedFirst(order) { $0 })
+        var groups = ordered.map { key -> TaskUnitGroup in
+            let isProjectless = PseudoProject.isProjectless(key)
             return group(
                 id: "project:\(key)",
                 title: TaskProject.displayName(forKey: key, in: board),
-                subtitle: harness == nil ? TaskProject.subtitle(forKey: key) : nil,
-                harness: harness,
-                units: byProject[key] ?? []
+                subtitle: isProjectless ? nil : TaskProject.subtitle(forKey: key),
+                units: byProject[key] ?? [],
+                helperCount: isProjectless ? helpers : 0
             )
         }
         if !ungrouped.isEmpty {
@@ -139,7 +157,8 @@ public enum TaskUnitGrouping {
         title: String,
         subtitle: String? = nil,
         harness: Harness? = nil,
-        units: [TaskUnit]
+        units: [TaskUnit],
+        helperCount: Int = 0
     ) -> TaskUnitGroup {
         var order: [Int64?] = []
         var byPlan: [Int64?: [TaskUnit]] = [:]
@@ -165,7 +184,8 @@ public enum TaskUnitGrouping {
             subtitle: subtitle,
             harness: harness,
             liveCount: units.count { $0.counts.live > 0 },
-            milestones: milestones
+            milestones: milestones,
+            helperCount: helperCount
         )
     }
 }
