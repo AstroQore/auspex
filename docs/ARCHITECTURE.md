@@ -391,6 +391,22 @@ seconds the room stirs, about three in five idle things on screen play once,
 and the picture is still again — a loop would keep the clock running forever.
 Working motion stays looped, because it is the signal.
 
+Now's stage is the same scene drawing a different frame. It is not a window
+onto the map: `StageComposer` (Core, pure) composes one from the same reduced
+board — only people (alive and not over, or explicitly asking for a person),
+one desk each, no annexes and so no walking, subagents folded into their
+parent's `↳N`, rooms and the people in them ordered *needs you → may need
+you → working → idle* from the top left — laid out for the strip at 1× when
+it fits and ½× when it must, with what still does not fit counted on a
+`+N rooms` tile. The canvas keeps that composition framed until the reader
+pans or zooms. Its balloons are placed by `CaptionLayout` (Core, pure) so
+none covers another or the strip's chrome: a balloon tries where it hangs,
+one line up, one line down — flipped to the left of its person near the
+right-hand edge — and folds into a dot that opens under the pointer when
+none is free. When the view stops its clock for good it first lands
+anything between two places — walkers in their seats, sliding desks at the
+end of the slide — so the picture it holds is never half a walk.
+
 Now's stage goes one step further and leaves the window. `StageIdleCollapse`
 (Core) folds it into a one-line strip after 150 s with no mouse, scroll or key
 input in the window, or when its chevron is clicked; a click on the strip opens
