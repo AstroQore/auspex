@@ -75,15 +75,23 @@ public struct DemoScript: Sendable, Equatable {
     ///   - scale: how many times to run the cast. `1` is the demo as written;
     ///     `12` is roughly the size a busy machine reaches. See
     ///     ``scaledBlueprints(_:)``.
+    ///   - cast: which sessions to run — see ``Cast``.
     public static func make(
         seed: UInt64 = DemoScript.defaultSeed,
         startedAt: Date,
         generation: Int = 0,
-        scale: Int = 1
+        scale: Int = 1,
+        cast: Cast = .standard
     ) -> DemoScript {
         var rng = SeededRandom(seed: seed &+ UInt64(bitPattern: Int64(generation)))
         var steps: [Step] = []
-        for blueprint in scaledBlueprints(scale) {
+        let blueprints: [Blueprint]
+        switch cast {
+        case .standard: blueprints = scaledBlueprints(scale)
+        case .liveliness: blueprints = Blueprint.liveliness
+        case .quiet: blueprints = Blueprint.liveliness.map(\.quieted)
+        }
+        for blueprint in blueprints {
             var writer = Writer(
                 blueprint: blueprint,
                 startedAt: startedAt,
@@ -100,6 +108,28 @@ public struct DemoScript: Sendable, Equatable {
         }
         let end = steps.last?.offset ?? 0
         return DemoScript(steps: steps, duration: end + 6, seed: seed)
+    }
+
+    /// Which sessions a demo runs.
+    ///
+    /// The standard cast is a tour: every harness, every state, a delegation,
+    /// a permission wall, all inside two minutes, after which the board holds
+    /// its last frame. That is the right board to look at and the wrong one to
+    /// *measure* on — the performance budget has a row for "three people
+    /// working, the rest idle", and the tour passes through that shape for a
+    /// few seconds at most. ``liveliness`` holds it: three sessions that keep
+    /// working for ten minutes and ten that went quiet straight away.
+    /// ``quiet`` is the same thirteen with nobody working, which is the
+    /// budget's "everybody idle" row.
+    public enum Cast: String, Sendable, Equatable, CaseIterable {
+        case standard
+        case liveliness
+        case quiet
+
+        /// The cast a launch named, or `nil` for a name that is not one.
+        public init?(named raw: String) {
+            self.init(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
     }
 
     private init(steps: [Step], duration: TimeInterval, seed: UInt64) {
@@ -971,6 +1001,112 @@ extension DemoScript.Blueprint {
             startDelay: 3.4
         )
     ]
+}
+
+// MARK: - The measuring cast
+
+extension DemoScript.Blueprint {
+    /// Three sessions that keep working and ten that are idle — see
+    /// ``DemoScript/Cast/liveliness``.
+    ///
+    /// The three cycle through the three working poses — reasoning, a tool
+    /// open, a file being written — for ten minutes, never silent long enough
+    /// to go stale, so the stage always has exactly three people whose motion
+    /// is a loop. The ten each run one short turn in the opening half second
+    /// and stop: alive, finished, nothing outstanding.
+    static let liveliness: [DemoScript.Blueprint] = {
+        let workers: [(Harness, String, String, String)] = [
+            (.claudeCode, "7a1e0c55-3d2b-4f60-8c19-2b7d4e0f9a11", "/Users/example/Code/atlas", "Index the tile cache"),
+            (.codex, "019a7c2e-55d1-7b30-9e84-c1f0a2b3d4e5", "/Users/example/Code/atlas", "Port the renderer"),
+            (.cursor, "c4d81e2f907a3b65", "/Users/example/Code/ledger", "Tidy the migrations"),
+        ]
+        let resting: [(Harness, String, String)] = [
+            (.claudeCode, "0b7f1a2c-9e3d-4c58-a6b1-7d2e9f0c3a01", "/Users/example/Code/atlas"),
+            (.claudeCode, "0b7f1a2c-9e3d-4c58-a6b1-7d2e9f0c3a02", "/Users/example/Code/ledger"),
+            (.codex, "019a7c2e-0000-7b30-9e84-c1f0a2b30003", "/Users/example/Code/ledger"),
+            (.codex, "019a7c2e-0000-7b30-9e84-c1f0a2b30004", "/Users/example/Code/harbor"),
+            (.cursor, "e19a0c7d55b24f05", "/Users/example/Code/harbor"),
+            (.grokBuild, "grok-build-0000-0006", "/Users/example/Code/harbor"),
+            (.antigravity, "conv:2026-08-19:a10007", "/Users/example/Code/orchard"),
+            (.claudeCode, "0b7f1a2c-9e3d-4c58-a6b1-7d2e9f0c3a08", "/Users/example/Code/orchard"),
+            (.codex, "019a7c2e-0000-7b30-9e84-c1f0a2b30009", "/Users/example/Code/orchard"),
+            (.cursor, "e19a0c7d55b24f10", "/Users/example/Code/atlas"),
+        ]
+
+        // One cycle is about ten seconds; sixty of them is ten minutes, which
+        // is longer than any measurement the budget asks for.
+        let cycle: [DemoScript.Beat] = [
+            .think(2.6),
+            .tool("Read", .fileRead, "Sources/Tiles/Cache.swift", 2.4),
+            .write("Sources/Tiles/Cache.swift", 2.8),
+            .tool("Bash", .shell, "swift test --filter Tiles", 2.2),
+        ]
+        var working: [DemoScript.Blueprint] = []
+        for (index, worker) in workers.enumerated() {
+            let (harness, id, path, title) = worker
+            working.append(
+                DemoScript.Blueprint(
+                    harness: harness,
+                    sessionID: id,
+                    cwd: path,
+                    gitRoot: path,
+                    branch: "main",
+                    title: title,
+                    model: nil,
+                    pid: 47_000 + pid_t(index),
+                    entrypoint: "terminal",
+                    variant: "cli",
+                    prologue: [.prompt(title), .think(0.4)],
+                    live: [.prompt(title)] + Array(repeating: cycle, count: 60).flatMap { $0 },
+                    startDelay: 0.3 + Double(index) * 0.7
+                )
+            )
+        }
+        let idle = resting.enumerated().map { index, entry in
+            let (harness, id, path) = entry
+            return DemoScript.Blueprint(
+                harness: harness,
+                sessionID: id,
+                cwd: path,
+                gitRoot: path,
+                branch: "main",
+                title: "Quiet session \(index + 1)",
+                model: nil,
+                pid: 47_100 + pid_t(index),
+                entrypoint: "terminal",
+                variant: "cli",
+                prologue: [
+                    .prompt("Summarise what changed since yesterday"),
+                    .think(0.4),
+                    .say("Nothing that needs you; the build is green."),
+                    .endTurn
+                ],
+                live: [],
+                startDelay: 0
+            )
+        }
+        return working + idle
+    }()
+
+    /// The same session, finishing its opening turn and doing nothing more.
+    var quieted: DemoScript.Blueprint {
+        guard !live.isEmpty else { return self }
+        return DemoScript.Blueprint(
+            harness: harness,
+            sessionID: sessionID,
+            cwd: cwd,
+            gitRoot: gitRoot,
+            branch: branch,
+            title: title,
+            model: model,
+            pid: pid,
+            entrypoint: entrypoint,
+            variant: variant,
+            prologue: prologue + [.endTurn],
+            live: [],
+            startDelay: 0
+        )
+    }
 }
 
 // MARK: - Compilation
