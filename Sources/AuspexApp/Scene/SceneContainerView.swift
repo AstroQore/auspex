@@ -490,15 +490,32 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         // Who is being watched goes first: the stage orders its rooms by it,
         // and the board below should be composed with the answer it gives.
         scene.setStageWatched(stageWatched)
-        scene.update(
+        // The room only when something the room draws moved. This body is
+        // invalidated by the balloons and the selection as well as by the
+        // board, and an update with an unchanged board used to put the whole
+        // floor plan back through the layout to find that nothing had moved.
+        let inputs = Coordinator.Inputs(
             board: board,
             selected: selected,
             focusedProject: focusedProject,
             reduceMotion: reduceMotion,
-            theme: SceneTheme.resolved(for: appearance),
+            theme: SceneTheme.resolved(for: appearance).id,
             zones: zones,
             attention: attention
         )
+        if context.coordinator.inputs != inputs {
+            context.coordinator.inputs = inputs
+            context.coordinator.sceneUpdates += 1
+            scene.update(
+                board: board,
+                selected: selected,
+                focusedProject: focusedProject,
+                reduceMotion: reduceMotion,
+                theme: SceneTheme.resolved(for: appearance),
+                zones: zones,
+                attention: attention
+            )
+        }
         // After the board, so a balloon lands on the desk this frame seats
         // its session at.
         scene.setCaptions(captions)
@@ -515,6 +532,22 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
 
     final class Coordinator {
         var framedStage = false
+        /// What the scene was last updated with.
+        var inputs: Inputs?
+        /// How many times the scene was actually updated. For the tests.
+        var sceneUpdates = 0
+
+        /// Everything ``OfficeScene/update(board:selected:focusedProject:reduceMotion:theme:zones:attention:)``
+        /// draws from.
+        struct Inputs: Equatable {
+            let board: BoardSnapshot
+            let selected: SessionKey?
+            let focusedProject: String?
+            let reduceMotion: Bool
+            let theme: String
+            let zones: SceneZoneOptions
+            let attention: [SessionKey: AttentionState]
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
