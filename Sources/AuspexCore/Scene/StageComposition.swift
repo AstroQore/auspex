@@ -19,8 +19,9 @@ import Foundation
 ///
 /// So the stage composes its own frame from the same board:
 ///
-/// - **Only people.** A session is on the stage when it is alive and not over,
-///   or when it is explicitly asking for a person. A room is drawn when it has
+/// - **Only people.** A session is on the stage when it is alive and not over
+///   — and, if it is merely idle, heard from within ``idleLinger`` — or when
+///   it is explicitly asking for a person. A room is drawn when it has
 ///   somebody in it, with one desk per person and no vacancies.
 /// - **No annexes.** Everybody sits at their own desk — the pose, the screen
 ///   and the balloon already say what the meeting room and the garden say on
@@ -225,9 +226,33 @@ public enum StageComposer {
         var tone: Tone { people.map(\.tone).min() ?? .idle }
     }
 
+    /// How long a person with nothing to say keeps their desk after their
+    /// last event.
+    ///
+    /// "Alive" is a process, and a desktop app keeps one process behind every
+    /// chat it has open: on a real board that is dozens of sessions nobody
+    /// has touched for days, and a room of them buries the two that are
+    /// working. A quiet session stays long enough to be seen stopping, then
+    /// leaves the stage; the lists and the Aviary still have it.
+    public static let idleLinger: TimeInterval = 15 * 60
+
     /// Whether a session is a person on the stage at all.
-    static func isOnStage(_ session: SessionSnapshot, attention: AttentionState?) -> Bool {
-        (session.isAlive && !session.state.isEnded) || attention?.wantsPerson == true
+    ///
+    /// - Parameters:
+    ///   - watched: whether the session is on the *may need you* list.
+    ///   - now: the board's own clock, so the answer is the board's.
+    static func isOnStage(
+        _ session: SessionSnapshot,
+        attention: AttentionState?,
+        watched: Bool = false,
+        now: Date
+    ) -> Bool {
+        if attention?.wantsPerson == true { return true }
+        guard session.isAlive, !session.state.isEnded else { return false }
+        if session.state.isActive || watched { return true }
+        if case .waitingPermission = session.state { return true }
+        guard let last = session.lastEventAt else { return true }
+        return now.timeIntervalSince(last) <= idleLinger
     }
 
     /// What one session, on its own, is doing.
@@ -249,7 +274,12 @@ public enum StageComposer {
         attention: [SessionKey: AttentionState],
         watched: Set<SessionKey>
     ) -> [Room] {
-        let onStage = board.sessions.filter { isOnStage($0, attention: attention[$0.key]) }
+        let onStage = board.sessions.filter {
+            isOnStage(
+                $0, attention: attention[$0.key], watched: watched.contains($0.key),
+                now: board.generatedAt
+            )
+        }
         guard !onStage.isEmpty else { return [] }
         var byKey: [SessionKey: SessionSnapshot] = [:]
         for session in onStage { byKey[session.key] = session }

@@ -272,6 +272,26 @@ struct StageCompositionTests {
         }
     }
 
+    @Test("A quiet session leaves the stage a while after its last event; a busy or watched one stays")
+    func longIdleSessionsLeaveTheStage() {
+        func heard(_ id: String, minutesAgo: Double, state: SessionState = .idle) -> SessionSnapshot {
+            var session = Self.session(id, state: state)
+            session.lastEventAt = Self.epoch.addingTimeInterval(-minutesAgo * 60)
+            return session
+        }
+        let board = Self.board([
+            heard("fresh", minutesAgo: 5),
+            heard("stale", minutesAgo: 600),
+            heard("watched", minutesAgo: 600),
+            heard("busy", minutesAgo: 600, state: .thinking)
+        ])
+        let stage = StageComposer.compose(
+            board: board, watched: [Self.key("watched")], viewSize: Self.strip
+        )
+        let keys = Set(stage.frame.slots.compactMap(\.session))
+        #expect(keys == [Self.key("fresh"), Self.key("watched"), Self.key("busy")])
+    }
+
     @Test("Nobody on the stage is an empty composition")
     func emptyBoardIsEmpty() {
         let board = Self.board([Self.session("done", state: .ended(reason: .exited))])
