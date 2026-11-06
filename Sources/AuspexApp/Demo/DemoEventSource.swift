@@ -25,6 +25,9 @@ actor DemoEventSource {
     /// ``DemoScript/make(seed:startedAt:generation:scale:)``.
     private let scale: Int
 
+    /// Which sessions to run — see ``DemoScript/Cast``.
+    private let cast: DemoScript.Cast
+
     /// The real `/bin/sleep` one demo session borrows a pid from, so that
     /// Interrupt and Kill can be tried by hand. See ``DemoSignalTarget``.
     private let signalTarget = DemoSignalTarget()
@@ -46,12 +49,14 @@ actor DemoEventSource {
         continuation: AsyncStream<AgentEvent>.Continuation,
         seed: UInt64 = DemoScript.defaultSeed,
         scale: Int = 1,
+        cast: DemoScript.Cast = .standard,
         lendsProcess: Bool = true,
         onLoop: (@Sendable () async -> Void)? = nil
     ) {
         self.continuation = continuation
         self.seed = seed
         self.scale = scale
+        self.cast = cast
         self.lendsProcess = lendsProcess
         self.onLoop = onLoop
     }
@@ -75,7 +80,8 @@ actor DemoEventSource {
             seed: seed,
             startedAt: Date(),
             generation: generation,
-            scale: scale
+            scale: scale,
+            cast: cast
         )
         let start = ContinuousClock.now
         var lentPID = false

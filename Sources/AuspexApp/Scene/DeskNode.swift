@@ -197,6 +197,15 @@ final class DeskNode: SKNode {
     private let caption = SKNode()
     private let captionBack = SKShapeNode()
     private let captionLabel = SKLabelNode()
+    /// The balloon folded into a dot, when there is nowhere free to hang it —
+    /// see ``CaptionLayout``.
+    private let captionDot = SKShapeNode(circleOfRadius: 5)
+    /// Where the balloon hangs before anything moves it, in this node's space.
+    private var captionBase: CGPoint = .zero
+    /// Where ``CaptionLayout`` put it.
+    private var captionPlacement: CaptionLayout.Placement = .lines(0)
+    /// How wide the balloon is, in its own points, at its current words.
+    private var captionWidth: CGFloat = 0
     private var captionValue: SceneCaption?
     /// The words last set on the label, so a tick that would set the same
     /// string sets nothing.
@@ -302,7 +311,8 @@ final class DeskNode: SKNode {
         bubbleBase = bubble.position
         // Over the head, where the state bubble would be: the balloon says the
         // same thing in words, so the two never show at once.
-        caption.position = CGPoint(x: bubble.position.x - 6, y: bubble.position.y - 2)
+        captionBase = CGPoint(x: bubble.position.x - 6, y: bubble.position.y - 2)
+        caption.position = captionBase
     }
 
     /// Puts out whatever this place is made of, and takes away what it is not.
@@ -827,6 +837,18 @@ final class DeskNode: SKNode {
 
     /// Shows or hides the nameplate over the desk.
     func setHovered(_ hovered: Bool, title: String = "", detail: String = "") {
+        // A balloon folded into a dot opens under the pointer instead: the
+        // dot is what said there was something to read here, and the words
+        // are what the pointer came for.
+        if captionPlacement == .dot, captionValue != nil {
+            let open = hovered
+            if isDotOpen != open {
+                isDotOpen = open
+                applyCaptionPlacement()
+            }
+            nameplate.isHidden = true
+            return
+        }
         // The nameplate and the balloon say overlapping things in the same
         // place; under the pointer the nameplate wins, and the balloon comes
         // back when the pointer leaves.
@@ -861,6 +883,9 @@ final class DeskNode: SKNode {
     func setCameraScale(_ scale: CGFloat) {
         nameplate.setScale(max(0.4, min(2.5, scale)))
         caption.setScale(max(0.4, min(2.5, scale)))
+        // A line of balloons is measured in the balloon's own points, so a
+        // balloon moved off its line moves with the zoom.
+        if captionPlacement != .lines(0) { applyCaptionPlacement() }
     }
 
     private func buildNameplate() {
@@ -905,6 +930,13 @@ final class DeskNode: SKNode {
         let toneChanged = next?.tone != captionValue?.tone
         captionValue = next
         if toneChanged, let next { paintCaption(next.tone) }
+        if next == nil {
+            // Taken down: the next balloon here starts where balloons hang.
+            captionWidth = 0
+            isDotOpen = false
+            captionPlacement = .lines(0)
+            applyCaptionPlacement()
+        }
         captionText = ""
         refreshCaption(now: now)
         applyCaptionVisibility()
@@ -914,39 +946,171 @@ final class DeskNode: SKNode {
     /// Whether a balloon is hanging here, shown or not.
     var hasCaption: Bool { captionValue != nil }
 
+    /// Whether the balloon is drawn at all — there is one, somebody is here
+    /// to say it, and the pointer has not swapped it for the nameplate.
+    var showsCaption: Bool { isCaptionShown }
+
+    /// How urgent the balloon here is, for ``CaptionLayout``.
+    var captionPriority: CaptionLayout.Priority? {
+        captionValue.map { SceneCaption.priority($0.tone) }
+    }
+
+    /// Where the balloon hangs before anything moves it, in the coordinates
+    /// of this node's parent — which on the map is the world.
+    var captionFrame: CGRect? {
+        guard isCaptionShown, captionWidth > 0 else { return nil }
+        let scale = caption.xScale
+        return CGRect(
+            x: position.x + captionBase.x * xScale,
+            y: position.y + captionBase.y * yScale,
+            width: captionWidth * scale * xScale,
+            height: Self.captionHeight * scale * yScale
+        )
+    }
+
+    /// Where the balloon is drawn right now, in the parent's coordinates —
+    /// `nil` when it is not drawn as a balloon at all. For the tests that
+    /// stand in for a pair of eyes.
+    var drawnCaptionFrame: CGRect? {
+        guard let frame = captionFrame else { return nil }
+        return CaptionLayout.frame(
+            of: frame, at: captionPlacement, line: captionLine, flipOffset: captionFlipOffset
+        )
+    }
+
+    /// How far right of a flipped balloon's left edge its tail is, in the
+    /// parent's coordinates — see ``CaptionLayout/frame(of:at:line:flipOffset:)``.
+    var captionFlipOffset: CGFloat { Self.captionFlipTail * caption.xScale * xScale }
+
+    /// Where a balloon hung to the left of its person keeps its tail, in the
+    /// balloon's own points from the node's origin: as far right of the head
+    /// as the balloon hung the usual way starts left of it.
+    private static let captionFlipTail: CGFloat = 12
+
+    /// Whether the balloon is drawn hung to the left of its person.
+    private var isCaptionFlipped = false
+
+    /// How far one line of balloons is, in the parent's coordinates.
+    var captionLine: CGFloat {
+        (Self.captionHeight + Self.captionLeading) * caption.yScale * yScale
+    }
+
+    /// Moves the balloon to where ``CaptionLayout`` put it.
+    func setCaptionPlacement(_ placement: CaptionLayout.Placement) {
+        guard placement != captionPlacement else { return }
+        captionPlacement = placement
+        if placement != .dot { isDotOpen = false }
+        applyCaptionPlacement()
+    }
+
+    /// How tall a balloon is, in its own points, and the air between two
+    /// lines of them.
+    private static let captionHeight: CGFloat = 20
+    private static let captionLeading: CGFloat = 4
+
+    /// Whether the pointer has opened a balloon that was folded into a dot.
+    private var isDotOpen = false
+
+    private func applyCaptionPlacement() {
+        switch captionPlacement {
+        case .lines(let lines), .flipped(let lines):
+            caption.position = CGPoint(
+                x: captionBase.x,
+                y: captionBase.y + CGFloat(lines) * (Self.captionHeight + Self.captionLeading)
+                    * caption.yScale
+            )
+            caption.zPosition = 15
+            captionBack.isHidden = false
+            captionLabel.isHidden = false
+            captionDot.isHidden = true
+            let flipped: Bool
+            if case .flipped = captionPlacement { flipped = true } else { flipped = false }
+            if flipped != isCaptionFlipped {
+                isCaptionFlipped = flipped
+                drawCaptionBalloon()
+            }
+        case .dot:
+            if isCaptionFlipped {
+                // Opened under the pointer it hangs the usual way.
+                isCaptionFlipped = false
+                drawCaptionBalloon()
+            }
+            caption.position = captionBase
+            // Opened under the pointer, it is drawn over whatever it would
+            // have covered — that is what the pointer asked to see.
+            caption.zPosition = isDotOpen ? 25 : 15
+            captionBack.isHidden = !isDotOpen
+            captionLabel.isHidden = !isDotOpen
+            captionDot.isHidden = isDotOpen
+        }
+    }
+
     /// Re-sets the balloon's words if its stopwatch has moved on to a new
     /// reading. At most one label write per balloon per call, and none when
     /// the reading is the same.
-    func refreshCaption(now: Date) {
-        guard let value = captionValue else { return }
+    ///
+    /// - Returns: whether the words changed, and with them perhaps the
+    ///   balloon's width.
+    @discardableResult
+    func refreshCaption(now: Date) -> Bool {
+        guard let value = captionValue else { return false }
         let text = value.text(now: now)
-        guard text != captionText else { return }
+        guard text != captionText else { return false }
         captionText = text
         captionLabel.attributedText = value.attributed(text, theme: theme)
-        let width = ceil(captionLabel.frame.width) + 16
-        let height: CGFloat = 20
-        let path = CGMutablePath()
-        // A speech balloon whose sharp corner is the tail: the bottom-left
-        // corner sits on the node's origin, over the person's head.
-        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        captionWidth = ceil(captionLabel.frame.width) + 16
+        drawCaptionBalloon()
+        return true
+    }
+
+    /// Draws the balloon's shape for its words, hung the way it is placed.
+    ///
+    /// A speech balloon whose sharp corner is the tail. Hung the usual way the
+    /// bottom-left corner sits on the node's origin, over the person's head,
+    /// and the words run right; flipped, the bottom-right corner sits just
+    /// right of the head and the words run left of it.
+    private func drawCaptionBalloon() {
+        let width = captionWidth
+        let height = Self.captionHeight
+        guard width > 0 else { return }
+        let rect = isCaptionFlipped
+            ? CGRect(x: Self.captionFlipTail - width, y: 0, width: width, height: height)
+            : CGRect(x: 0, y: 0, width: width, height: height)
         let radius: CGFloat = 8
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
-        path.addArc(
-            tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
-            tangent2End: CGPoint(x: rect.maxX, y: rect.minY + radius), radius: radius
-        )
-        path.addArc(
-            tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
-            tangent2End: CGPoint(x: rect.maxX - radius, y: rect.maxY), radius: radius
-        )
-        path.addArc(
-            tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
-            tangent2End: CGPoint(x: rect.minX, y: rect.maxY - radius), radius: radius
-        )
+        let path = CGMutablePath()
+        if isCaptionFlipped {
+            path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+            path.addArc(
+                tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+                tangent2End: CGPoint(x: rect.maxX - radius, y: rect.maxY), radius: radius
+            )
+            path.addArc(
+                tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+                tangent2End: CGPoint(x: rect.minX, y: rect.maxY - radius), radius: radius
+            )
+            path.addArc(
+                tangent1End: CGPoint(x: rect.minX, y: rect.minY),
+                tangent2End: CGPoint(x: rect.minX + radius, y: rect.minY), radius: radius
+            )
+        } else {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+            path.addArc(
+                tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
+                tangent2End: CGPoint(x: rect.maxX, y: rect.minY + radius), radius: radius
+            )
+            path.addArc(
+                tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+                tangent2End: CGPoint(x: rect.maxX - radius, y: rect.maxY), radius: radius
+            )
+            path.addArc(
+                tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+                tangent2End: CGPoint(x: rect.minX, y: rect.maxY - radius), radius: radius
+            )
+        }
         path.closeSubpath()
         captionBack.path = path
-        captionLabel.position = CGPoint(x: 8, y: height / 2)
+        captionLabel.position = CGPoint(x: rect.minX + 8, y: height / 2)
     }
 
     private func applyCaptionVisibility() {
@@ -957,6 +1121,8 @@ final class DeskNode: SKNode {
         let dark = theme.isDark
         captionBack.fillColor = SceneCaption.fill(tone, dark: dark)
         captionBack.strokeColor = .clear
+        captionDot.fillColor = SceneCaption.fill(tone, dark: dark)
+        captionDot.strokeColor = theme.canvas
     }
 
     private func buildCaption() {
@@ -967,6 +1133,12 @@ final class DeskNode: SKNode {
         captionLabel.zPosition = 1
         caption.addChild(captionBack)
         caption.addChild(captionLabel)
+        // Where the balloon's tail would be, a little above the head.
+        captionDot.position = CGPoint(x: 6, y: 6)
+        captionDot.lineWidth = 1.5
+        captionDot.zPosition = 2
+        captionDot.isHidden = true
+        caption.addChild(captionDot)
         // Above the furniture of every desk around it, and under any
         // nameplate the pointer raises — see ``setHovered(_:title:detail:)``.
         caption.zPosition = 15

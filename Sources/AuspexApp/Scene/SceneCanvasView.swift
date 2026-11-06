@@ -88,6 +88,10 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     /// keeps the zoom they chose and simply shows more of the world.
     private(set) var isFramingEverything = false
 
+    /// How much air a fit leaves around the world. The map's own padding by
+    /// default; none for Now's stage, whose world is already the strip.
+    var fitPadding: CGFloat = SceneViewport.fitPadding
+
     /// Until when the office is worth drawing at the display's rate rather than
     /// at its resting thirty frames a second.
     private var busyUntil: TimeInterval?
@@ -269,7 +273,7 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     /// Frames the whole building.
     func fit(animated: Bool) {
         guard !geometry.isEmpty else { return }
-        apply(viewport.fitted(), animated: animated, framingEverything: true)
+        apply(viewport.fitted(padding: fitPadding), animated: animated, framingEverything: true)
     }
 
     /// Keeps a framed building framed.
@@ -283,7 +287,7 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     private func keepFraming() {
         guard isFramingEverything, !geometry.isEmpty else { return }
         let current = viewport
-        let fitted = current.fitted()
+        let fitted = current.fitted(padding: fitPadding)
         guard abs(fitted.zoom - current.zoom) > 0.0001
             || abs(fitted.center.x - current.center.x) > 0.5
             || abs(fitted.center.y - current.center.y) > 0.5
@@ -395,8 +399,13 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     }
 
     /// A click, from the document view.
+    ///
+    /// It stops a flight but does not end a fit: a click is a question about
+    /// a person, not a move of the camera, and a framed office that stopped
+    /// keeping itself framed because somebody clicked a desk in it would
+    /// drift out of frame the next time the window or the board changed.
     func click(atWindowPoint point: CGPoint, clickCount: Int) {
-        cancelFlight()
+        flight = nil
         scene.click(atLayoutPoint: layoutPoint(fromWindow: point), clickCount: clickCount)
     }
 

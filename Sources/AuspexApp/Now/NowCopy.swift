@@ -87,6 +87,11 @@ enum NowCopy {
 
     static var allClear: String { L10n.Now.allClear }
 
+    /// May need you's one row for every collision.
+    static func collisions(_ count: Int) -> String { L10n.Now.Watch.collisions(count: count) }
+    /// What opening that row does, read aloud while it is closed.
+    static var collisionsShow: String { L10n.Now.Stage.expand }
+
     // MARK: Lines
 
     static var waitingPermission: String { L10n.Now.waitingPermission }

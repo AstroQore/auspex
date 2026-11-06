@@ -20,9 +20,9 @@ struct SceneContainerView: View {
     var chrome: Chrome = .full
     /// Now's balloons, by the desk they hang over. Empty in the aviary.
     var captions: [SessionKey: SceneCaption] = [:]
-    /// The desk Now's stage opens on. Read once, the first time there is a
-    /// board to frame.
-    var stageFocus: SessionKey?
+    /// Who Now's *may need you* list is about, which the stage orders its
+    /// rooms by. Empty in the aviary.
+    var stageWatched: Set<SessionKey> = []
 
     /// The aviary draws its own zoom controls, legend and minimap. Now's
     /// stage is a fixed-height window onto the same office with its own
@@ -83,7 +83,7 @@ struct SceneContainerView: View {
                 zones: zones,
                 attention: attention,
                 captions: captions,
-                stageFocus: stageFocus,
+                stageWatched: stageWatched,
                 frameAsStage: chrome == .stage,
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
@@ -131,6 +131,12 @@ struct SceneContainerView: View {
         // alive would keep a scene rendering behind the cards — which is a
         // whole core spent on a picture nobody is looking at.
         .onDisappear { commands.pause() }
+        // And the other half: SwiftUI can take a view off screen and put the
+        // same one back — a section switched away from and back to, a column
+        // reshuffled — and a view paused on the way out has to be asked
+        // again on the way in, or it holds its last picture until the next
+        // board frame happens to arrive, which on a quiet board is never.
+        .onAppear { commands.resume() }
     }
 
     // MARK: Chrome
@@ -400,6 +406,9 @@ final class SceneCommands {
     /// Stops the clock, for the moment SwiftUI takes the view off screen
     /// without taking it away.
     var pause: () -> Void = {}
+    /// Asks the view whether it is on screen again, for the moment SwiftUI
+    /// puts it back.
+    var resume: () -> Void = {}
 }
 
 /// The canvas itself: a scroll view over an `SKView`.
@@ -411,7 +420,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let zones: SceneZoneOptions
     let attention: [SessionKey: AttentionState]
     let captions: [SessionKey: SceneCaption]
-    let stageFocus: SessionKey?
+    let stageWatched: Set<SessionKey>
     let frameAsStage: Bool
     let commands: SceneCommands
     let onSelect: (SessionKey?) -> Void
@@ -440,10 +449,12 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> SceneCanvasView {
         let theme = SceneTheme.resolved(for: appearance)
         let scene = OfficeScene(theme: theme)
+        scene.composesStage = frameAsStage
         let view = SceneCanvasView(
             scene: scene, frame: CGRect(x: 0, y: 0, width: 900, height: 640)
         )
         view.skView.rates = frameAsStage ? .stage : .aviary
+        view.fitPadding = scene.fitPadding
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
@@ -454,6 +465,7 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         commands.setZoom = { [weak scene] zoom in scene?.setZoom(zoom) }
         commands.jump = { [weak scene] point in scene?.jump(toLayoutPoint: point) }
         commands.pause = { [weak view] in view?.suspend() }
+        commands.resume = { [weak view] in view?.refreshPaused() }
         return view
     }
 
@@ -475,31 +487,67 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
-        scene.update(
+        // Who is being watched goes first: the stage orders its rooms by it,
+        // and the board below should be composed with the answer it gives.
+        scene.setStageWatched(stageWatched)
+        // The room only when something the room draws moved. This body is
+        // invalidated by the balloons and the selection as well as by the
+        // board, and an update with an unchanged board used to put the whole
+        // floor plan back through the layout to find that nothing had moved.
+        let inputs = Coordinator.Inputs(
             board: board,
             selected: selected,
             focusedProject: focusedProject,
             reduceMotion: reduceMotion,
-            theme: SceneTheme.resolved(for: appearance),
+            theme: SceneTheme.resolved(for: appearance).id,
             zones: zones,
             attention: attention
         )
+        if context.coordinator.inputs != inputs {
+            context.coordinator.inputs = inputs
+            context.coordinator.sceneUpdates += 1
+            scene.update(
+                board: board,
+                selected: selected,
+                focusedProject: focusedProject,
+                reduceMotion: reduceMotion,
+                theme: SceneTheme.resolved(for: appearance),
+                zones: zones,
+                attention: attention
+            )
+        }
         // After the board, so a balloon lands on the desk this frame seats
         // its session at.
         scene.setCaptions(captions)
         // A stage is framed once, when it first has a room to frame; after
-        // that the camera is the reader's.
+        // that the composition keeps itself framed, until the reader pans
+        // or zooms.
         if frameAsStage, !context.coordinator.framedStage, !board.sessions.isEmpty {
             context.coordinator.framedStage = true
-            let focus = stageFocus
             // Next turn of the run loop, once the card has given the view
             // its real size.
-            DispatchQueue.main.async { [weak scene] in scene?.frameStage(on: focus) }
+            DispatchQueue.main.async { [weak scene] in scene?.frameStage() }
         }
     }
 
     final class Coordinator {
         var framedStage = false
+        /// What the scene was last updated with.
+        var inputs: Inputs?
+        /// How many times the scene was actually updated. For the tests.
+        var sceneUpdates = 0
+
+        /// Everything ``OfficeScene/update(board:selected:focusedProject:reduceMotion:theme:zones:attention:)``
+        /// draws from.
+        struct Inputs: Equatable {
+            let board: BoardSnapshot
+            let selected: SessionKey?
+            let focusedProject: String?
+            let reduceMotion: Bool
+            let theme: String
+            let zones: SceneZoneOptions
+            let attention: [SessionKey: AttentionState]
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -539,11 +587,14 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
 ///   vsync. The scene reports which frames were still; see
 ///   `OfficeScene.didFinishUpdate()`.
 ///
-/// The resting rate is thirty in the aviary and fifteen on Now's stage: the
-/// fastest thing in the office is a typing hand at ten changes a second, and
-/// the stage is a strip a third the height of the window that sits on the
-/// default screen all day. A gesture gets twice the resting rate, for as long
-/// as it lasts.
+/// The resting rate is thirty in the aviary and ten on Now's stage: the
+/// fastest thing in the office is a typing hand at about ten changes a
+/// second, and the stage is a strip a third the height of the window that
+/// sits on the default screen all day. Every frame it draws is also a Core
+/// Animation commit of the window it sits in, which is the larger half of
+/// what a running stage costs: measured with three people working, ten
+/// frames a second instead of fifteen took about 1.2 % process CPU off. A
+/// gesture gets thirty, for as long as it lasts.
 final class OfficeSKView: SKView {
     /// How fast the office is drawn while something in it moves, and while a
     /// hand is on it.
@@ -558,7 +609,7 @@ final class OfficeSKView: SKView {
         /// Now's stage: a strip over the lists, open all day on the default
         /// screen, where a picture that is glanced at does not need the
         /// aviary's rate.
-        static let stage = Rates(resting: 15, gesture: 30)
+        static let stage = Rates(resting: 10, gesture: 30)
     }
 
     /// Which pair of rates this view runs at.
@@ -582,6 +633,17 @@ final class OfficeSKView: SKView {
     /// Bumped by every wake, so a decision to stop that was taken before
     /// something changed is recognised as stale when it arrives.
     private var generation = 0
+
+    /// When the scene last finished a frame, in `CACurrentMediaTime()`
+    /// seconds — what the start-up check below compares against.
+    private(set) var lastFrameAt: TimeInterval = 0
+    /// Whether a check that the render loop really started is pending.
+    private var isCheckingStart = false
+    /// How many times in a row the render loop had to be started again.
+    private var restarts = 0
+    /// How many times the render loop was found not to have started — a
+    /// number to read in a debugger when a stage looks frozen.
+    private(set) var stalledStarts = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -625,6 +687,11 @@ final class OfficeSKView: SKView {
         isPaused = true
         scene?.isPaused = true
         preferredFramesPerSecond = 1
+        // Whatever was between two places lands in the second one. A paused
+        // scene keeps its actions where they were, and the picture this view
+        // holds — and shows again the moment it comes back — would otherwise
+        // be somebody frozen mid-stride on the open floor.
+        officeScene?.settleMotion()
     }
 
     /// Recomputes whether the scene should be running, from the window.
@@ -656,6 +723,7 @@ final class OfficeSKView: SKView {
     /// still one; a still view starts its clock again on the next vsync. A
     /// view that is not on screen stays asleep.
     func wake() {
+        defer { checkStarted() }
         generation &+= 1
         guard isOnScreen else { return }
         isStill = false
@@ -676,6 +744,8 @@ final class OfficeSKView: SKView {
     ///   scene next changes on its own — a balloon's stopwatch ticking over,
     ///   the next beat of the room's idle motion. `nil` when nothing will.
     func frameFinished(moving: Bool, nextWake: TimeInterval?) {
+        lastFrameAt = CACurrentMediaTime()
+        restarts = 0
         guard !moving, !isInteracting, isOnScreen else { return }
         let decided = generation
         DispatchQueue.main.async { [weak self] in
@@ -694,6 +764,48 @@ final class OfficeSKView: SKView {
             // and set up its own next one.
             guard let self, decided == generation else { return }
             wake()
+        }
+    }
+
+    /// Makes sure a view that was just told to run is actually running.
+    ///
+    /// ## Why this exists
+    ///
+    /// Unpausing an `SKView` asks SpriteKit to start its display link, and
+    /// about one launch in six it did not: the view said it was running —
+    /// on screen, unpaused, at its resting rate — and the scene was never
+    /// asked for a single frame. Nothing in the view's own state can tell
+    /// that apart from a scene with nothing to draw, so the stage showed
+    /// whatever was last on the glass — the grid with no rooms on it, or a
+    /// room frozen mid-walk — and stayed that way for the rest of the launch,
+    /// however many board frames woke it, because waking an unpaused view
+    /// does nothing.
+    ///
+    /// So a wake that leaves the view running checks, a quarter of a second
+    /// later, that a frame has finished since; when none has, it pauses the
+    /// view and runs it again, and after that presents the scene again, and
+    /// checks again — a few times, backing off, then gives up until the next
+    /// wake. A view that is drawing never gets past the first comparison.
+    private func checkStarted() {
+        guard isOnScreen, !isPaused, !isCheckingStart else { return }
+        isCheckingStart = true
+        let askedAt = CACurrentMediaTime()
+        let delay = 0.25 * Double(1 << min(restarts, 3))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            isCheckingStart = false
+            guard isOnScreen, !isPaused, lastFrameAt < askedAt, restarts < 4 else { return }
+            restarts += 1
+            stalledStarts += 1
+            if restarts > 1, let scene {
+                presentScene(nil)
+                presentScene(scene)
+                scene.isPaused = false
+            }
+            isPaused = true
+            isPaused = false
+            preferredFramesPerSecond = isInteracting ? rates.gesture : rates.resting
+            checkStarted()
         }
     }
 
@@ -797,6 +909,7 @@ final class OfficeSKView: SKView {
         isOnScreen = true
         scene?.isPaused = false
         applyRate()
+        defer { checkStarted() }
         // Whatever brought the view back, the picture on the glass is the one
         // it had when it left: draw at least one frame, and let the scene say
         // whether there is reason to draw a second.

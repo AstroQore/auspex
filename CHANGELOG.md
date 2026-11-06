@@ -36,6 +36,17 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ### Fixed
 
+- **Now's stage no longer freezes on launch.** About one launch in six the
+  office's SpriteKit view was unpaused without its render loop starting, so
+  the stage showed its last picture — often an empty grid — for the rest of
+  the launch. The view now checks that a frame follows a wake and restarts
+  its loop when none does.
+- **Nobody is left frozen mid-stride on the office floor.** Somebody walking
+  out of a suite's door could be left standing at it in a walking pose until
+  the next board frame — on a quiet board, indefinitely — and a walk paused
+  when the view stopped its clock resumed halfway. Departures are now
+  collected after every re-layout, and the scene lands every walker in its
+  seat when the view stops.
 - **Codex and `cursor-agent` sessions can claim, finish and notify.** Neither
   harness writes its pid anywhere Auspex reads, so their MCP calls could never
   be attributed and every `tasks.claim`, `tasks.complete` and `auspex.notify`
@@ -103,6 +114,23 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   earlier builds stored per folder are folded into their workspaces once, in
   the background, with their sessions and tasks; repositories and your own
   projects are not touched.
+- **Now's stage shows the people, not the building.** It used to be a strip
+  of the Aviary's map at half scale, which on a real board was mostly empty
+  desks — their owners resting in a lounge the strip cut off — with the one
+  person working half under its top edge. It now composes its own picture:
+  only sessions that are alive or asking for you, one desk each, a room per
+  project that has someone in it, urgent rooms first, sub-agents folded into
+  their parent's `↳N`, framed to fit at 1× or ½× with a `+N rooms` tile for
+  whatever does not. Balloons no longer cover each other or the stage's own
+  chrome: they move a line up or down, hang to the left near the right-hand
+  edge, or fold into a dot that opens under the pointer. Working people keep
+  their typing loop; the Aviary is unchanged.
+- **Now's lists feel live.** The stopwatches on Working and Needs you rows
+  tick every second while the window is visible, a working row's dot
+  breathes, and a row's activity fades in when it changes. May need you
+  folds every "shares a directory / branch" signal into one row that opens
+  to list them, so the single-session signals are not drowned out.
+
 - Claude Cowork is no longer tailed live. Cowork runs in the cloud by default
   since it merged with Chat, and the workspace tree under Claude.app's
   container has held no new transcript since July 2026; watching it cost a

@@ -38,6 +38,10 @@ struct NowView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Whether the window can be seen — what the live stopwatches and the
+    /// breathing dots run on. Written only when it changes.
+    @State private var isVisible = false
+
     var body: some View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
@@ -74,6 +78,10 @@ struct NowView: View {
                 StageIdleProbe(controller: model.stageIdle).frame(width: 0, height: 0)
             }
         }
+        .background {
+            NowWindowProbe { isVisible = $0 }.frame(width: 0, height: 0)
+        }
+        .environment(\.nowIsVisible, isVisible)
     }
 
     static func foldAnimation(reduceMotion: Bool) -> Animation? {
@@ -97,11 +105,11 @@ private struct NowStage: View {
     var body: some View {
         // Six at most, already chosen and ordered by the frame; this only
         // turns each into the words it prints.
-        let captions = model.nowFrame.captions
+        let frame = model.nowFrame
         NowStageScene(
             model: model,
-            captions: Self.balloons(captions),
-            focus: captions.first?.deskKey
+            captions: Self.balloons(frame.captions),
+            watched: Self.watched(frame)
         )
         .equatable()
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -112,6 +120,13 @@ private struct NowStage: View {
             .overlay(alignment: .topLeading) { tag.padding(.leading, 18).padding(.top, 14) }
             .overlay(alignment: .topTrailing) { collapse.padding(.trailing, 12).padding(.top, 12) }
             .overlay(alignment: .bottomTrailing) { legend.padding(.trailing, 18).padding(.bottom, 14) }
+    }
+
+    /// The sessions a single-session watch signal is about: the stage puts
+    /// their rooms after the ones that need the reader and before the ones
+    /// merely working.
+    static func watched(_ frame: NowFrame) -> Set<SessionKey> {
+        Set(frame.mayNeedYou.lazy.filter { $0.sessionCount == 1 }.map(\.key))
     }
 
     static func balloons(_ captions: [NowFrame.Caption]) -> [SessionKey: SceneCaption] {
@@ -195,14 +210,14 @@ private struct NowStage: View {
 private struct NowStageScene: View, Equatable {
     let model: LiveBoardModel
     let captions: [SessionKey: SceneCaption]
-    let focus: SessionKey?
+    let watched: Set<SessionKey>
 
     nonisolated static func == (lhs: NowStageScene, rhs: NowStageScene) -> Bool {
-        lhs.model === rhs.model && lhs.captions == rhs.captions && lhs.focus == rhs.focus
+        lhs.model === rhs.model && lhs.captions == rhs.captions && lhs.watched == rhs.watched
     }
 
     var body: some View {
-        SceneContainerView(model: model, chrome: .stage, captions: captions, stageFocus: focus)
+        SceneContainerView(model: model, chrome: .stage, captions: captions, stageWatched: watched)
     }
 }
 
@@ -271,6 +286,7 @@ private struct NowLists: View {
 
     @State private var showsAllWorking = false
     @State private var showsIdle = false
+    @State private var showsCollisions = false
 
     var body: some View {
         let frame = model.nowFrame
@@ -286,8 +302,8 @@ private struct NowLists: View {
                 if !frame.needsYou.isEmpty {
                     section(.needsYou, NowCopy.needsYouHeading, NowCopy.needsYouNote, frame.needsYou, selected)
                 }
-                if !frame.mayNeedYou.isEmpty {
-                    section(.mayNeedYou, NowCopy.mayNeedYouHeading, NowCopy.mayNeedYouNote, frame.mayNeedYou, selected)
+                if !frame.mayNeedYou.isEmpty || !frame.collisions.isEmpty {
+                    mayNeedYou(frame, selected: selected)
                 }
                 if !frame.working.isEmpty { working(frame.working, selected: selected) }
                 if !frame.done.isEmpty {
@@ -320,6 +336,36 @@ private struct NowLists: View {
                     onMarkSeen: item.tone == .done ? { model.markSeen(item.key) } : nil
                 )
                 .equatable()
+            }
+        }
+    }
+
+    /// The single-session signals, one line each, and every collision under
+    /// one summary row that opens to list them.
+    private func mayNeedYou(_ frame: NowFrame, selected: SessionKey?) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            NowSectionHeading(
+                title: NowCopy.mayNeedYouHeading,
+                count: frame.counts.mayNeedYou,
+                note: NowCopy.mayNeedYouNote,
+                ink: NowTone.ink(.mayNeedYou)
+            )
+            ForEach(frame.mayNeedYou) { item in
+                NowRow(item: item, isSelected: selected == item.key, columns: columns) { open(item) }
+                    .equatable()
+            }
+            if !frame.collisions.isEmpty {
+                NowCollisionSummary(count: frame.collisions.count, isOpen: showsCollisions) {
+                    showsCollisions.toggle()
+                }
+                if showsCollisions {
+                    ForEach(frame.collisions) { item in
+                        NowRow(item: item, isSelected: selected == item.key, columns: columns) {
+                            open(item)
+                        }
+                        .equatable()
+                    }
+                }
             }
         }
     }
@@ -486,8 +532,37 @@ struct NowColumns: Equatable {
     }
 }
 
+/// The one row May need you draws for every collision: how many groups of
+/// sessions share a directory or a branch, and a chevron that opens the list.
+private struct NowCollisionSummary: View {
+    let count: Int
+    let isOpen: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(NowTone.mark(.mayNeedYou))
+                    .frame(width: 10, height: 10)
+                Text(NowCopy.collisions(count))
+                    .nowLine()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(AuspexPalette.text3)
+            }
+            .nowRowChrome(tone: .mayNeedYou, isSelected: false)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.auspex(cornerRadius: 10))
+        .accessibilityLabel(NowCopy.collisions(count))
+        .accessibilityValue(isOpen ? NowCopy.fewer : NowCopy.collisionsShow)
+    }
+}
+
 /// One line in Needs you, May need you, Done or Idle.
-private struct NowRow: View, Equatable {
+struct NowRow: View, Equatable {
     let item: NowFrame.Item
     let isSelected: Bool
     let columns: NowColumns
@@ -501,7 +576,8 @@ private struct NowRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: columns.spacing) {
+        NowBodyCounter.count(.row)
+        return HStack(spacing: columns.spacing) {
             Circle()
                 .fill(NowTone.mark(item.tone))
                 .frame(width: columns.dot, height: columns.dot)
@@ -566,6 +642,10 @@ private struct NowRow: View, Equatable {
         } else if let since = item.since {
             if case .watch(.staleSession, _) = item.reason {
                 NowElapsed(since: since, format: L10n.Now.idleFor(duration:))
+            } else if item.tone == .needsYou {
+                // How long somebody has been waiting on the reader: the one
+                // number on this list that should be seen to grow.
+                NowLiveElapsed(since: since)
             } else {
                 NowElapsed(since: since)
             }
@@ -596,7 +676,7 @@ private struct NowRow: View, Equatable {
 
 /// One running family: its root, what it is doing, for how long, how many
 /// subagents are folded under it, and how full its context is.
-private struct NowWorkingRow: View, Equatable {
+struct NowWorkingRow: View, Equatable {
     let item: NowFrame.Item
     let isSelected: Bool
     let columns: NowColumns
@@ -607,21 +687,20 @@ private struct NowWorkingRow: View, Equatable {
     }
 
     var body: some View {
-        HStack(spacing: columns.spacing) {
-            Circle()
-                .fill(NowTone.mark(.working))
+        NowBodyCounter.count(.row)
+        return HStack(spacing: columns.spacing) {
+            NowBreathingDot(size: columns.dot)
                 .frame(width: columns.dot, height: columns.dot)
             NowProjectCell(row: item.row, width: columns.project)
             NowHarnessCell(harness: item.row.harness, width: columns.harness)
             NowActivityText(activity: item.activity)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            HStack(spacing: 0) {
+            Group {
                 if let since = item.since {
-                    NowElapsed(since: since)
+                    NowLiveElapsed(since: since, suffix: " · ↳\(item.subagents)")
                 } else {
-                    Text(verbatim: "—").nowMetric()
+                    Text(verbatim: "— · ↳\(item.subagents)").nowMetric()
                 }
-                Text(" · ↳\(item.subagents)").nowMetric()
             }
             .frame(width: columns.turn, alignment: .leading)
             NowContextBar(gauge: item.row.context)
@@ -696,8 +775,14 @@ private struct NowHarnessCell: View {
 }
 
 /// `WebSearch 「OpenAI Dots API」` — the tool in mono, its argument after it.
+///
+/// A new activity fades in over the old one in a fifth of a second, so a row
+/// that moved on from one tool to the next can be seen to have changed rather
+/// than having to be re-read. Instant under Reduce Motion.
 private struct NowActivityText: View {
     let activity: NowFrame.Activity
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
@@ -711,6 +796,8 @@ private struct NowActivityText: View {
             }
         }
         .nowLine()
+        .contentTransition(.opacity)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: activity)
     }
 }
 

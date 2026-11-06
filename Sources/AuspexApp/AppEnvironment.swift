@@ -171,6 +171,9 @@ public final class AppEnvironment {
     var launchSections: [BoardSection] = []
     var launchSectionDelay: Duration = .zero
 
+    /// Which sessions the demo runs — see ``AppLaunchOptions/demoCast``.
+    private let demoCast: DemoScript.Cast
+
     /// An appearance the command line asked for, which is not written down.
     ///
     /// It exists for the same reason ``AppLaunchOptions/viewMode`` does: the
@@ -195,7 +198,8 @@ public final class AppEnvironment {
         mode: Mode = .live,
         offersSignalTarget: Bool = true,
         demoScale: Int = 1,
-        demoTaskCount: Int? = nil
+        demoTaskCount: Int? = nil,
+        demoCast: DemoScript.Cast = .standard
     ) {
         self.paths = paths
         self.mode = mode
@@ -207,6 +211,7 @@ public final class AppEnvironment {
         self.demoTaskCount = mode == .demo
             ? (demoTaskCount ?? DemoBulkLedger.requestedCount(in: ProcessInfo.processInfo.environment))
             : 0
+        self.demoCast = demoCast
         self.loginItem = mode == .live ? LoginItemController() : .preview()
         // The demo may not read or write `~/.auspex/`, so its catalog has no
         // stores behind it: whatever it is given lives in memory for as long
@@ -809,11 +814,17 @@ public final class AppEnvironment {
     ) {
         let ledger = TaskRepository(store: store)
         let board = board
+        // The measuring cast says nothing out loud: its whole point is a
+        // board of three people working and ten resting, and the tour's
+        // notices name sessions it does not have.
+        let speaks = demoCast == .standard
         let source = DemoEventSource(
             continuation: continuation,
             scale: demoScale,
+            cast: demoCast,
             lendsProcess: offersSignalTarget,
             onLoop: { [weak board] in
+                guard speaks else { return }
                 let now = Date()
                 let notices = DemoScript.notices(now: now)
                 for notice in notices.values.sorted(by: {
@@ -920,6 +931,13 @@ public struct AppLaunchOptions: Sendable {
     /// had. `1` is the demo exactly as written.
     public var demoScale: Int = 1
 
+    /// Which sessions the demo runs — `--demo-cast liveliness`, or
+    /// `AUSPEX_DEMO_CAST`. See ``DemoScript/Cast``: the default is the tour,
+    /// `liveliness` holds the "three working, ten idle" board the stage's
+    /// performance budget is measured on, and `quiet` the same board with
+    /// nobody working. Naming a cast asks for a demo.
+    public var demoCast: DemoScript.Cast = .standard
+
     /// Which way to look at the board on launch, when the command line said.
     ///
     /// It exists because the performance budget is a gate: "scene on screen,
@@ -994,12 +1012,14 @@ public struct AppLaunchOptions: Sendable {
         let scale = (value(after: "--demo-scale") ?? environment["AUSPEX_DEMO_SCALE"])
             .flatMap(Int.init)
         let stage = value(after: "--stage") ?? environment["AUSPEX_STAGE"]
+        let cast = (value(after: "--demo-cast") ?? environment["AUSPEX_DEMO_CAST"])
+            .flatMap(DemoScript.Cast.init(named:))
         // A scale asks for a demo. Nobody types `--demo-scale 12` meaning
         // "and also tail my real stores", and a flag that silently did
         // nothing without a second flag beside it is a flag that gets
         // reported as broken.
         let isDemo = rest.contains("--demo") || environment["AUSPEX_DEMO"] == "1"
-            || (scale ?? 1) > 1
+            || (scale ?? 1) > 1 || (cast ?? .standard) != .standard
         func seconds(_ key: String) -> Duration? {
             environment[key].flatMap(Double.init).map { .milliseconds(Int(max(0, $0) * 1_000)) }
         }
@@ -1008,6 +1028,7 @@ public struct AppLaunchOptions: Sendable {
         return AppLaunchOptions(
             isDemo: isDemo,
             demoScale: Self.clampedScale(scale),
+            demoCast: cast ?? .standard,
             viewMode: (named ?? environment["AUSPEX_VIEW"]).flatMap(BoardViewMode.init(named:)),
             appearance: appearance.flatMap(AppearanceMode.init(rawValue:)),
             showsStage: stage.flatMap(Self.stageSwitch),
@@ -1055,7 +1076,9 @@ extension AppEnvironment {
     /// asked for.
     @MainActor
     public static func launched(_ options: AppLaunchOptions = .current()) -> AppEnvironment {
-        let environment = AppEnvironment(mode: options.mode, demoScale: options.demoScale)
+        let environment = AppEnvironment(
+            mode: options.mode, demoScale: options.demoScale, demoCast: options.demoCast
+        )
         environment.followsVisibility = true
         if let viewMode = options.viewMode { environment.board.viewMode = viewMode }
         if let showsStage = options.showsStage { environment.board.showsStage = showsStage }
