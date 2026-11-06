@@ -216,4 +216,31 @@ struct ProjectRollupMigrationTests {
         #expect(!again.changedAnything)
         #expect(try roots(store) == [workspace])
     }
+
+    @Test("tasks still filed under a chat folder join Projectless, once")
+    func scratchTaskKeysFold() async throws {
+        let store = try AuspexStore(inMemory: true)
+        let chat = "/Users/example/Documents/Codex/2026-10-13/j-k"
+        let pinned = "/Users/example/Documents/Codex/2026-10-14/kept"
+        let chatTask = try task(store, "chat", key: chat)
+        let chatPlan = try plan(store, "chat-plan", key: chat)
+        let homeTask = try task(store, "home", key: "/Users/example")
+        let pinnedTask = try task(store, "pinned", key: pinned)
+        let realTask = try task(store, "real", key: workspace)
+        let goneTask = try task(store, "gone", key: "/Users/example/work/retired/run-1")
+
+        let migration = ProjectRollupMigration(store: store)
+        let report = try #require(try await migration.foldScratchTaskKeysIfNeeded(
+            rules: rules, protectedRoots: [pinned]
+        ))
+        #expect(report.tasksMoved == 2)
+        #expect(report.plansMoved == 1)
+        #expect(try key(ofTask: chatTask, store) == PseudoProject.projectlessKey)
+        #expect(try key(ofPlan: chatPlan, store) == PseudoProject.projectlessKey)
+        #expect(try key(ofTask: homeTask, store) == PseudoProject.projectlessKey)
+        #expect(try key(ofTask: pinnedTask, store) == pinned)
+        #expect(try key(ofTask: realTask, store) == workspace)
+        #expect(try key(ofTask: goneTask, store) == "/Users/example/work/retired/run-1")
+        #expect(try await migration.foldScratchTaskKeysIfNeeded(rules: rules, protectedRoots: []) == nil)
+    }
 }

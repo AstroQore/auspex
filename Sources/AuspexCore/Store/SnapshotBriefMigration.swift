@@ -71,4 +71,9 @@ public enum StoreMetaKey {
     /// earlier builds wrote for plain directories into their workspace roots.
     /// Its value is when that finished; only its presence is consulted.
     public static let projectsRolledUp = "projects_rolled_up_at"
+
+    /// Set once ``ProjectRollupMigration`` has refiled the tasks and
+    /// milestones still filed under a scratch folder into Projectless. Its
+    /// value is when that finished; only its presence is consulted.
+    public static let scratchTaskKeysFolded = "scratch_task_keys_folded_at"
 }

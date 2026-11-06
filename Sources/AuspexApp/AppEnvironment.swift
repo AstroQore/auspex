@@ -471,10 +471,21 @@ public final class AppEnvironment {
                 await board?.record(notice: "Scratch folders could not be tidied: \(error).")
             }
             do {
-                guard let report = try await rollup.runIfNeeded(
+                var report = try await rollup.runIfNeeded(
                     rules: rules,
                     protectedRoots: protectedRoots
-                ), report.changedAnything else { return }
+                ) ?? ProjectRollupMigration.Report()
+                // Ledger rows still filed under a chat folder join the one
+                // Projectless lane — on a store the roll-up already ran over
+                // as well.
+                if let folded = try await rollup.foldScratchTaskKeysIfNeeded(
+                    rules: rules,
+                    protectedRoots: protectedRoots
+                ) {
+                    report.tasksMoved += folded.tasksMoved
+                    report.plansMoved += folded.plansMoved
+                }
+                guard report.changedAnything else { return }
                 await projects?.refreshNames()
                 // Tasks were refiled under the roots their folders rolled up
                 // to; both readers of the ledger have to see that.

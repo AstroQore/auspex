@@ -190,6 +190,76 @@ public struct ProjectRollupMigration: Sendable {
         return report
     }
 
+    // MARK: - Scratch task keys
+
+    /// Refiles, once per store, every task and milestone still filed under a
+    /// scratch folder — a dated chat folder, the home — into Projectless.
+    ///
+    /// A ledger row can outlive the `projects` row its key named: the scratch
+    /// purge removed the row and left the key, and the Tasks page then drew a
+    /// lane per chat folder beside the one Projectless lane the board files
+    /// those sessions under. Only a key the rules call scratch for every
+    /// harness moves; a key at or under one of the person's own project roots
+    /// stays, and so does any other path — a folder that is merely missing is
+    /// still the best name its task has.
+    ///
+    /// Separate from ``runIfNeeded(rules:protectedRoots:directoryExists:batchSize:now:)``
+    /// and stamped under its own key, so a store the roll-up already ran over
+    /// is caught up too. The filesystem is not asked.
+    ///
+    /// - Returns: what moved, or `nil` when the pass had already run.
+    @discardableResult
+    public func foldScratchTaskKeysIfNeeded(
+        rules: ScratchRules,
+        protectedRoots: [String],
+        now: Date = Date()
+    ) async throws -> Report? {
+        let done = try await dbWriter.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT value FROM meta WHERE key = ?",
+                arguments: [StoreMetaKey.scratchTaskKeysFolded]
+            ) != nil
+        }
+        guard !done else { return nil }
+        let keys = try await dbWriter.read { db in
+            try String.fetchAll(db, sql: """
+                SELECT DISTINCT project_key FROM tasks WHERE project_key LIKE '/%'
+                UNION
+                SELECT DISTINCT project_key FROM plans WHERE project_key LIKE '/%'
+                """)
+        }
+        let protected = protectedRoots.map(ProjectPath.normalize).filter { !$0.isEmpty }
+        let scratch = keys.filter { key in
+            let path = ProjectResolver.standardized(key)
+            if protected.contains(where: { ProjectPath.contains($0, path) }) { return false }
+            return rules.match(cwd: path, harness: nil) != nil
+        }.sorted()
+        return try await dbWriter.write { db -> Report in
+            var report = Report()
+            for key in scratch {
+                try db.execute(
+                    sql: "UPDATE tasks SET project_key = ? WHERE project_key = ?",
+                    arguments: [PseudoProject.projectlessKey, key]
+                )
+                report.tasksMoved += db.changesCount
+                try db.execute(
+                    sql: "UPDATE plans SET project_key = ? WHERE project_key = ?",
+                    arguments: [PseudoProject.projectlessKey, key]
+                )
+                report.plansMoved += db.changesCount
+            }
+            try db.execute(
+                sql: """
+                    INSERT INTO meta (key, value) VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                arguments: [StoreMetaKey.scratchTaskKeysFolded, String(now.timeIntervalSince1970)]
+            )
+            return report
+        }
+    }
+
     // MARK: - Deciding
 
     /// One `projects` row, with the harnesses of the sessions in it.
