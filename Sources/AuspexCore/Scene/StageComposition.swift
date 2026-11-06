@@ -251,7 +251,9 @@ public enum StageComposer {
         guard session.isAlive, !session.state.isEnded else { return false }
         if session.state.isActive || watched { return true }
         if case .waitingPermission = session.state { return true }
-        guard let last = session.lastEventAt else { return true }
+        // Never heard from at all is a transcript a probe found a process
+        // for, not a person who just stopped.
+        guard let last = session.lastEventAt else { return false }
         return now.timeIntervalSince(last) <= idleLinger
     }
 

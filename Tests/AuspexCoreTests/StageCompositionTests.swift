@@ -29,8 +29,16 @@ struct StageCompositionTests {
                 gitRoot: project
             ),
             state: state,
-            isAlive: isAlive && !state.isEnded
+            isAlive: isAlive && !state.isEnded,
+            lastEventAt: epoch
         )
+    }
+
+    /// A session a probe found a process for and no event ever came from.
+    private static func silent(_ id: String) -> SessionSnapshot {
+        var session = session(id)
+        session.lastEventAt = nil
+        return session
     }
 
     private static func key(_ id: String) -> SessionKey {
@@ -281,6 +289,7 @@ struct StageCompositionTests {
         }
         let board = Self.board([
             heard("fresh", minutesAgo: 5),
+            Self.silent("silent"),
             heard("stale", minutesAgo: 600),
             heard("watched", minutesAgo: 600),
             heard("busy", minutesAgo: 600, state: .thinking)

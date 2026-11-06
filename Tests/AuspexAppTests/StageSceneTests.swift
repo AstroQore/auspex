@@ -39,7 +39,8 @@ struct StageSceneTests {
                 title: "Demo \(id)"
             ),
             state: state,
-            isAlive: !state.isEnded
+            isAlive: !state.isEnded,
+            lastEventAt: epoch
         )
     }
 
