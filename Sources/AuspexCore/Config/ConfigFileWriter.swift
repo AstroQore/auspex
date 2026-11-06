@@ -35,7 +35,11 @@ struct ConfigFileWriter: Sendable {
         verify: (Data) -> String? = { _ in nil },
         transform: (String) throws -> String
     ) -> Outcome {
-        let url = URL(fileURLWithPath: path)
+        // Through a link, to the file it names: an atomic write to the link's
+        // own path would replace the link with a copy, and a person who
+        // points several harnesses' instruction files at one shared file
+        // would find them quietly forked.
+        let url = URL(fileURLWithPath: path).resolvingSymlinksInPath()
         let existing = try? String(contentsOf: url, encoding: .utf8)
 
         do {

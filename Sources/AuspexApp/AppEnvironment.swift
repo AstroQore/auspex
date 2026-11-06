@@ -368,6 +368,7 @@ public final class AppEnvironment {
             detected: harnesses.detected,
             isEnabled: mode == .live
         )
+        if mode == .live { refreshInstalledGuidance() }
 
         // Buffered generously: a harness flushing a whole turn can put a few
         // hundred events in flight before the registry drains any of them, and
@@ -432,6 +433,40 @@ public final class AppEnvironment {
             startScratchPurge(store: store)
             startMaintenance(store: store)
         }
+    }
+
+    /// Brings the note and the skill Auspex installed into each harness up to
+    /// this build's wording, when what is there is older — see
+    /// ``HarnessInstaller/refreshOutdated(for:)``. Off the main actor: it is a
+    /// handful of small files, but they are files.
+    private func refreshInstalledGuidance() {
+        let installer = HarnessInstaller(
+            homeDirectory: paths.homeDirectory,
+            paths: paths,
+            command: MCPController.bridgeCommand,
+            coordinationSkill: CoordinationSkillResource.load()
+        )
+        let board = board
+        let setup = setup
+        let harnesses = harnesses
+        pipelineTasks.append(Task.detached(priority: .utility) { [weak board, weak setup, weak harnesses] in
+            let reports = installer.refreshOutdated()
+            guard !reports.isEmpty else { return }
+            let updated = reports.filter { $0.succeeded && $0.didChange }.count
+            let failed = reports.count - updated
+            var parts: [String] = []
+            if updated > 0 {
+                parts.append("Auspex updated \(updated) installed agent \(updated == 1 ? "guide" : "guides") to this build's wording.")
+            }
+            if failed > 0 {
+                parts.append("\(failed) could not be updated; see Harnesses.")
+            }
+            let notice = parts.joined(separator: " ")
+            await board?.record(notice: notice)
+            if let detected = await harnesses?.detected {
+                await setup?.refresh(detected: detected)
+            }
+        })
     }
 
     /// Removes, once per store, the project rows earlier builds wrote for

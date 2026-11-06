@@ -382,6 +382,71 @@ struct HarnessInstallerTests {
         #expect(!after.contains("Do not manufacture coordination."))
     }
 
+    @Test("an outdated note and skill are refreshed on their own; absent and newer ones are left alone")
+    func outdatedGuidanceRefreshesItself() throws {
+        let sandbox = try Sandbox()
+        // Codex: a note from before notes carried a revision.
+        try sandbox.write("""
+            # Mine
+
+            <!-- >>> auspex >>> -->
+            ## Auspex
+
+            file one with `tasks.create` only if none does.
+            <!-- <<< auspex <<< -->
+            """, to: ".codex/AGENTS.md")
+        // Claude Code: a note a newer build wrote.
+        let newer = """
+            # Mine
+
+            <!-- >>> auspex >>> -->
+            <!-- auspex task-protocol note, revision \(HarnessInstaller.protocolNoteRevision + 1) -->
+            ## Auspex, later
+            <!-- <<< auspex <<< -->
+            """
+        try sandbox.write(newer, to: ".claude/CLAUDE.md")
+        let old = try skill(version: "1.2.0", body: "# Old playbook\n")
+        #expect(sandbox.installer(skill: old).install(.codex, .coordinationSkill).succeeded)
+
+        let installer = sandbox.installer(skill: try skill(version: "1.10.0", body: "# Current\n"))
+        #expect(installer.isOutdated(.codex, .protocolNote))
+        #expect(!installer.isOutdated(.claudeCode, .protocolNote))
+        #expect(installer.isOutdated(.codex, .coordinationSkill))
+        #expect(!installer.isOutdated(.claudeCode, .coordinationSkill))
+
+        let reports = installer.refreshOutdated()
+        #expect(reports.count == 2)
+        #expect(reports.allSatisfy { $0.succeeded && $0.didChange && $0.backupPath != nil })
+        #expect(installer.offer(.codex, .protocolNote).state == .installed)
+        #expect(installer.offer(.codex, .coordinationSkill).state == .installed)
+        #expect(try sandbox.read(".codex/AGENTS.md").hasPrefix("# Mine"))
+        #expect(try sandbox.read(".claude/CLAUDE.md") == newer)
+        #expect(!sandbox.exists(".claude/skills/auspex-coordination"))
+        #expect(installer.refreshOutdated().isEmpty)
+
+        // An older build meeting the newer skill does not roll it back.
+        #expect(!sandbox.installer(skill: old).isOutdated(.codex, .coordinationSkill))
+    }
+
+    @Test("a note is written through a symbolic link, which stays a link")
+    func noteFollowsALink() throws {
+        let sandbox = try Sandbox()
+        try sandbox.write("# Shared\n", to: ".agents/AGENTS.md")
+        let link = sandbox.home.appendingPathComponent(".codex/AGENTS.md")
+        try FileManager.default.createDirectory(
+            at: link.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: link, withDestinationURL: sandbox.home.appendingPathComponent(".agents/AGENTS.md")
+        )
+
+        #expect(sandbox.installer.install(.codex, .protocolNote).didChange)
+        let values = try link.resourceValues(forKeys: [.isSymbolicLinkKey])
+        #expect(values.isSymbolicLink == true)
+        #expect(try sandbox.read(".agents/AGENTS.md").contains("<!-- >>> auspex >>> -->"))
+        #expect(try sandbox.read(".agents/AGENTS.md").hasPrefix("# Shared"))
+    }
+
     @Test("a harness with nowhere to write says why instead of failing quietly")
     func unavailableRowsExplainThemselves() throws {
         let sandbox = try Sandbox()

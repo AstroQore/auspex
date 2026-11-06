@@ -372,6 +372,66 @@ public struct HarnessInstaller: Sendable {
         }
     }
 
+    // MARK: - Keeping what is installed current
+
+    /// Whether what is installed is Auspex's own and older than this build's.
+    ///
+    /// Only the two pieces that are prose an agent reads — the note and the
+    /// skill — and only when the installed copy says it is older: a note with
+    /// a lower revision (or from before notes carried one), a skill with a
+    /// lower version. A newer copy, left by a newer build that also runs on
+    /// this Mac, is not "outdated" and is never rolled back.
+    public func isOutdated(_ harness: Harness, _ piece: Piece) -> Bool {
+        let offer = offer(harness, piece)
+        guard case let .installedElsewhere(what) = offer.state, let path = offer.path else {
+            return false
+        }
+        switch piece {
+        case .protocolNote:
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+                  let body = Self.noteFence.body(in: text)
+            else { return false }
+            return Self.revision(ofNote: body) < Self.protocolNoteRevision
+        case .coordinationSkill:
+            guard let coordinationSkill,
+                  let installed = what.split(separator: " ").last, installed.hasPrefix("v")
+            else { return false }
+            return installed.dropFirst().compare(coordinationSkill.version, options: .numeric)
+                == .orderedAscending
+        case .mcpServer, .hooks:
+            return false
+        }
+    }
+
+    /// Rewrites every outdated note and skill among `harnesses`, each with
+    /// the backup an install by hand would have made.
+    ///
+    /// A person who installed the note agreed to Auspex keeping a fenced
+    /// paragraph in that file; what the paragraph says is Auspex's to keep
+    /// right, and a wording that misleads agents should not wait for someone
+    /// to find a button. Nothing absent is installed and nothing outside the
+    /// fence, or the skill's own directory, is touched.
+    ///
+    /// - Returns: one report per piece it tried to rewrite.
+    @discardableResult
+    public func refreshOutdated(for harnesses: [Harness] = Harness.allCases) -> [Report] {
+        var reports: [Report] = []
+        for harness in harnesses {
+            for piece in [Piece.protocolNote, .coordinationSkill] where isOutdated(harness, piece) {
+                reports.append(install(harness, piece))
+            }
+        }
+        return reports
+    }
+
+    /// The revision a fenced note says it is; zero for one from before notes
+    /// said.
+    static func revision(ofNote body: String) -> Int {
+        let marker = "auspex task-protocol note, revision "
+        guard let range = body.range(of: marker) else { return 0 }
+        return Int(body[range.upperBound...].prefix { $0.isNumber }) ?? 0
+    }
+
     /// Removes one piece, restoring the file to what it was without it.
     public func uninstall(_ harness: Harness, _ piece: Piece) -> Report {
         let offer = offer(harness, piece)
