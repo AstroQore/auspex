@@ -76,6 +76,29 @@ struct LedgerHygieneTests {
         #expect(rows == 0)
     }
 
+    @Test("editing or moving a stale task brings it back before the next pass")
+    func editRevokesTheMarkImmediately() throws {
+        let (store, repository) = try ledger()
+        let edited = try repository.createTask(title: "Retitled later", now: now.addingTimeInterval(-9 * day))
+        let moved = try repository.createTask(title: "Moved later", now: now.addingTimeInterval(-9 * day))
+        let untouched = try repository.createTask(title: "Still forgotten", now: now.addingTimeInterval(-9 * day))
+        let hygiene = LedgerHygiene(store: store)
+        #expect(try hygiene.runPass(now: now).markedStale == 3)
+
+        try repository.updateTask(id: edited.id, title: "Retitled", now: now.addingTimeInterval(60))
+        try repository.updateTask(id: moved.id, projectKey: "/Users/example/elsewhere", now: now.addingTimeInterval(60))
+
+        // The row in task_hygiene is still there; the read predicates no
+        // longer believe it, in Swift and in SQL alike.
+        #expect(try repository.task(id: edited.id)?.isStale == false)
+        #expect(try repository.task(id: moved.id)?.isStale == false)
+        #expect(try repository.task(id: untouched.id)?.isStale == true)
+        #expect(Set(try repository.tasks(includeStale: false).map(\.id)) == [edited.id, moved.id])
+        #expect(try repository.staleTaskCount() == 1)
+
+        #expect(try hygiene.runPass(now: now.addingTimeInterval(120)).cleared == 2)
+    }
+
     // MARK: Rule 2 — settled milestones
 
     @Test("a quiet milestone whose tasks are all done, stale, or long in review is archived")

@@ -416,9 +416,13 @@ public struct AuspexTask: Identifiable, Hashable, Sendable, Codable {
     /// and still the unclaimed `todo` it was when it was marked.
     ///
     /// The second half is what makes the mark safe to leave in the store
-    /// between passes: a claim or a status change ends it on the same write,
-    /// and the next pass clears the row.
-    public var isStale: Bool { staleAt != nil && status == .todo && !isClaimed }
+    /// between passes: a claim, a status change, or any edit that touches
+    /// `updatedAt` ends it on the same write, and the next pass clears the
+    /// row. Mirrors `LedgerHygiene.clearMovedOn()` and the SQL `staleClause`.
+    public var isStale: Bool {
+        guard let staleAt, status == .todo, !isClaimed else { return false }
+        return updatedAt <= staleAt
+    }
 
     /// Whether every task this one waits on is closed.
     ///

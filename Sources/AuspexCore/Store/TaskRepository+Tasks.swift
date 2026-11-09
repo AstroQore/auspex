@@ -135,11 +135,14 @@ extension TaskRepository {
           FROM tasks LEFT JOIN task_hygiene ON task_hygiene.task_id = tasks.id
         """
 
-    /// The SQL form of ``AuspexTask/isStale``: marked, and still the unclaimed
-    /// `todo` it was when it was marked.
+    /// The SQL form of ``AuspexTask/isStale``: marked, still the unclaimed
+    /// `todo` it was when it was marked, and not touched since — an edit or a
+    /// move is somebody caring about the task, and must not wait up to six
+    /// hours for `LedgerHygiene.clearMovedOn()` to notice.
     static let staleClause = """
         (task_hygiene.stale_at IS NOT NULL AND tasks.status = 'todo' \
-        AND tasks.claimed_by_key IS NULL AND tasks.claim_role IS NULL)
+        AND tasks.claimed_by_key IS NULL AND tasks.claim_role IS NULL \
+        AND tasks.updated_at <= task_hygiene.stale_at)
         """
 
     /// The tasks matching a filter, board order: by status column, then

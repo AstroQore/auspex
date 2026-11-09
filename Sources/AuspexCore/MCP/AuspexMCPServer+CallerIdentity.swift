@@ -5,6 +5,9 @@ import Foundation
 extension AuspexMCPServer {
     enum RequestScope {
         @TaskLocal static var attribution: MCPTransportAttribution = .absent
+        /// The tool this request is calling, for corroborating a caller by
+        /// what its own transcript records; `nil` outside `tools/call`.
+        @TaskLocal static var tool: String?
     }
 
     /// Who is calling, and how that was worked out.
@@ -103,7 +106,7 @@ extension AuspexMCPServer {
                 attached: roster.processIDs
             )
         }
-        let automatic: Caller
+        var automatic: Caller
         if let pid = candidatePID, let resolution = attempt?.resolution {
             automatic = Caller(
                 session: resolution.session,
@@ -119,6 +122,22 @@ extension AuspexMCPServer {
                         ?? "no session on the board owns process \($0) or any of its ancestors"
                 } ?? attributionEvidence ?? "the socket caller is not attributable"
             )
+            // The process tree stopped at a harness that could not say which
+            // of its sessions is calling. The sessions can: the one whose
+            // transcript records this very call is the caller.
+            if let pid = candidatePID, let harness = attempt?.harness,
+               let corroborated = await transcriptCorroboration(harness: harness, board: board, table: table) {
+                switch corroborated {
+                case .session(let key, let evidence):
+                    automatic = Caller(
+                        session: key,
+                        pid: pid,
+                        evidence: evidence + "; " + (attributionEvidence ?? "socket peer")
+                    )
+                case .ambiguous(let reason):
+                    automatic = Caller(session: nil, pid: pid, evidence: automatic.evidence + "; " + reason)
+                }
+            }
         }
 
         guard let raw = try arguments.optionalString("session_id") else { return automatic }
@@ -217,6 +236,99 @@ extension AuspexMCPServer {
             evidence: "self-reported, harness-corroborated by \(harness.executable) "
                 + "(process \(harness.pid)); \(because); \(attribution)"
         )
+    }
+
+    // MARK: - Corroboration by the caller's own transcript
+
+    /// What the transcripts said about who is calling.
+    enum TranscriptCorroboration: Equatable {
+        case session(SessionKey, evidence: String)
+        case ambiguous(String)
+    }
+
+    /// How recently a transcript must record the call for it to be this one.
+    /// Generous, because a harness flushes its log on its own schedule and a
+    /// tailer picks the line up on Auspex's; strict enough that yesterday's
+    /// `auspex.notify` cannot vouch for today's.
+    static let transcriptWindow: TimeInterval = 180
+
+    /// Finds the session whose transcript records the call being answered.
+    ///
+    /// The case this exists for is a desktop app's Codex: one `codex app-server`
+    /// hosts every thread the app has open, each thread gets its own Auspex
+    /// bridge, and neither the bridge's environment nor the board's pid column
+    /// says which thread spawned which. The pid walk stops there, honestly
+    /// ambiguous — and before this, every `auspex.notify` from those threads
+    /// was refused, so agents wrote "Auspex could not identify this session"
+    /// instead of posting the notification.
+    ///
+    /// But Auspex is already reading those threads' transcripts, and a tool
+    /// call is recorded there as the model emits it, before the harness runs
+    /// it. So among the harness's own live sessions — those not demonstrably
+    /// living in some other process — the one with an open call to this tool,
+    /// started within ``transcriptWindow``, is the caller. Two of them calling
+    /// the same tool at once stays ambiguous: the answer is never a guess.
+    ///
+    /// The transcript may lag the socket by a moment. When nothing matches
+    /// under a multi-session harness, the board is re-read for up to
+    /// `transcriptPatience` before giving up; only on that path, so a call
+    /// the pid walk already settled costs nothing here.
+    func transcriptCorroboration(
+        harness: HarnessProcess,
+        board: BoardSnapshot,
+        table: any ProcessTableReading
+    ) async -> TranscriptCorroboration? {
+        guard let tool = RequestScope.tool else { return nil }
+        var board = board
+        let deadline = Date().addingTimeInterval(transcriptPatience)
+        while true {
+            let matches = Self.sessionsRecordingCall(
+                to: tool, harness: harness, board: board, table: table, now: now()
+            )
+            if matches.count == 1 {
+                let key = matches[0]
+                return .session(key, evidence: "the transcript of \(key.description) records this "
+                    + "\(tool) call, and it is the only live \(harness.executable) session that does")
+            }
+            if matches.count > 1 {
+                return .ambiguous("\(matches.count) live \(harness.executable) sessions record a \(tool) "
+                    + "call right now, so none of them can be told to be this one")
+            }
+            guard harness.isMultiSession, Date() < deadline else { return nil }
+            try? await Task.sleep(for: .milliseconds(250))
+            board = await host.boardSnapshot()
+        }
+    }
+
+    /// The live sessions of `harness` whose open tool calls include one to
+    /// `tool`, as the harness spells it: the MCP name (`auspex.notify`), the
+    /// underscored name a client registers (`auspex_notify`), or a code-mode
+    /// snippet that calls `tools.mcp__auspex__auspex_notify(...)`.
+    static func sessionsRecordingCall(
+        to tool: String,
+        harness: HarnessProcess,
+        board: BoardSnapshot,
+        table: any ProcessTableReading,
+        now: Date
+    ) -> [SessionKey] {
+        let underscored = tool.replacingOccurrences(of: ".", with: "_")
+        let since = now.addingTimeInterval(-transcriptWindow)
+        return board.sessions.compactMap { session -> SessionKey? in
+            guard session.isAlive, !session.state.isEnded,
+                  harness.harnesses.contains(session.key.harness)
+            else { return nil }
+            if let recorded = session.identity.pid, recorded != harness.pid,
+               table.record(pid: recorded) != nil {
+                return nil
+            }
+            let records = session.pending.openToolCalls.values.contains { call in
+                guard call.startedAt >= since else { return false }
+                let text = call.name + " " + (call.target ?? "")
+                return text.contains("auspex") && (text.contains(tool) || text.contains(underscored))
+            }
+            return records ? session.key : nil
+        }
+        .sorted { $0.description < $1.description }
     }
 
     /// A write that changes a session's state or authors history must have an

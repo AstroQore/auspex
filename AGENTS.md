@@ -177,7 +177,14 @@ Auspex actually observes, and write nothing outside `~/.auspex/`.
   delegates to, and only under all five of these
   conditions — if a change would break any of them, it does not belong there:
   1. **A person clicked.** Never on launch, never on a timer, never while a
-     page is merely being looked at.
+     page is merely being looked at. The one thing that may happen without a
+     click is keeping a piece the person already installed *current*:
+     `HarnessInstaller.refreshOutdated` rewrites a fenced note whose recorded
+     revision, or an owned skill directory whose version, is older than this
+     build's. The click that installed it is the consent; the note's content
+     is Auspex's to keep right; nothing absent is ever installed this way,
+     nothing outside the fence or the skill directory is touched, a newer
+     copy is never rolled back, and conditions 2–5 apply in full.
   2. **Inside a region Auspex owns.** A `# >>> auspex >>>` block, one JSON
      member named `auspex`, the entries whose command runs the Auspex binary
      with `--hook`, or the exclusive `auspex-coordination` skill directory.

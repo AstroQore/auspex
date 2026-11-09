@@ -25,7 +25,11 @@ import Foundation
 public actor AuspexMCPServer {
     let host: any AuspexMCPHost
     let resolver: MCPSelfResolver
-    private let now: @Sendable () -> Date
+    let now: @Sendable () -> Date
+    /// How long a call from a process that hosts many sessions may wait for
+    /// the caller's own transcript to record it; see
+    /// `transcriptCorroboration(_:harness:board:)`.
+    let transcriptPatience: TimeInterval
 
     /// Turns harness hook payloads into board events, and remembers which
     /// sessions are blocked on a permission so the resolution can close the one
@@ -35,11 +39,13 @@ public actor AuspexMCPServer {
     public init(
         host: any AuspexMCPHost,
         resolver: MCPSelfResolver = MCPSelfResolver(),
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        transcriptPatience: TimeInterval = 2
     ) {
         self.host = host
         self.resolver = resolver
         self.now = now
+        self.transcriptPatience = transcriptPatience
     }
 
     // MARK: - JSON-RPC
@@ -220,7 +226,9 @@ public actor AuspexMCPServer {
         }
 
         do {
-            return try await run(tool: name, arguments: arguments)
+            return try await RequestScope.$tool.withValue(name) {
+                try await run(tool: name, arguments: arguments)
+            }
         } catch let failure as MCPToolFailure {
             // A tool that ran and could not answer reports through `isError`,
             // which is what an MCP client shows the model. A JSON-RPC error

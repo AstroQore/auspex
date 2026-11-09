@@ -92,7 +92,25 @@ struct MCPCallerIdentityTests {
     ) throws -> (AuspexMCPServer, TestMCPHost, AuspexStore) {
         let store = try AuspexStore(inMemory: true)
         let host = TestMCPHost(board: board, store: store, table: table, clientPIDs: clientPIDs)
-        return (AuspexMCPServer(host: host, now: { Fixtures.date(100) }), host, store)
+        return (
+            AuspexMCPServer(host: host, now: { Fixtures.date(100) }, transcriptPatience: 0),
+            host,
+            store
+        )
+    }
+
+    /// A session whose transcript has an open call to an Auspex tool, spelled
+    /// the way a code-mode harness spells it.
+    private func calling(_ snapshot: SessionSnapshot, _ snippet: String, at offset: TimeInterval = 99) -> SessionSnapshot {
+        var snapshot = snapshot
+        snapshot.pending.openToolCalls["call-\(snapshot.key.sessionID.suffix(2))"] = PendingToolCall(
+            id: "call-\(snapshot.key.sessionID.suffix(2))",
+            name: "exec",
+            kind: .shell,
+            target: snippet,
+            startedAt: Fixtures.date(offset)
+        )
+        return snapshot
     }
 
     private func hookLine(_ target: HookTarget, _ payload: [String: MCPJSON], pid: pid_t) -> Data {
@@ -269,6 +287,69 @@ struct MCPCallerIdentityTests {
             "task_id": .int(task.id), "role": "implementer"
         ])))
         #expect(claimed["claimedBy"]?.stringValue == Self.codexKey.description)
+    }
+
+    // MARK: - 1b. The transcript names the caller
+
+    @Test("under a thread server, the thread whose transcript records the call is the caller")
+    func transcriptCorroboratesAThreadServerCall() async throws {
+        let other = Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c2")
+        let (server, host, _) = try makeServer(
+            board: board(
+                calling(session(Self.codexKey), "text(await tools.mcp__auspex__auspex_notify({kind:\"done\"}))"),
+                calling(session(other), "cat README.md")
+            ),
+            table: threadServerTable()
+        )
+
+        let answer = try RPC.structured(await server.answer(line: RPC.call("auspex.notify", [
+            "kind": .string("done"), "message": .string("The worker finished.")
+        ])))
+        #expect(answer["session"]?.stringValue == Self.codexKey.description)
+        let notices = await host.notices
+        #expect(notices.map(\.session) == [Self.codexKey])
+
+        // sessions.self without a recorded call stays honestly unresolved.
+        let unresolved = try RPC.structured(await server.answer(line: RPC.call("sessions.self")))
+        #expect(unresolved["resolved"]?.boolValue == false)
+    }
+
+    @Test("two threads recording the same call at once stay ambiguous")
+    func transcriptCorroborationNeverGuesses() async throws {
+        let other = Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c2")
+        let snippet = "text(await tools.mcp__auspex__auspex_notify({kind:\"done\"}))"
+        let (server, host, _) = try makeServer(
+            board: board(calling(session(Self.codexKey), snippet), calling(session(other), snippet)),
+            table: threadServerTable()
+        )
+        let failure = try RPC.failureText(await server.answer(line: RPC.call("auspex.notify", [
+            "kind": .string("done"), "message": .string("Which of us?")
+        ])))
+        #expect(failure.contains("2 live codex sessions record a auspex.notify call"))
+        #expect(await host.notices.isEmpty)
+    }
+
+    @Test("a stale recording, an ended thread, or a thread living in another process does not count")
+    func transcriptCorroborationIsBounded() {
+        let harness = HarnessProcess(
+            pid: Self.codexPID, startTime: Fixtures.date(-30), executable: "codex",
+            harnesses: [.codex, .chatgptWork], isMultiSession: true
+        )
+        let snippet = "text(await tools.mcp__auspex__auspex_notify({}))"
+        let old = calling(session(Self.codexKey), snippet, at: 100 - AuspexMCPServer.transcriptWindow - 1)
+        var ended = calling(session(Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c3")), snippet)
+        ended.state = .ended(reason: .exited)
+        let elsewhere = calling(session(Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c4"), pid: 900), snippet)
+        let claude = calling(session(Self.claudeKey), snippet)
+        let fresh = calling(session(Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c5")), snippet)
+        var table = threadServerTable()
+        table.records.append(process(900, parent: 1, "/usr/local/bin/codex"))
+
+        let found = AuspexMCPServer.sessionsRecordingCall(
+            to: "auspex.notify", harness: harness,
+            board: board(old, ended, elsewhere, claude, fresh), table: table, now: Fixtures.date(100)
+        )
+        #expect(found == [fresh.key])
     }
 
     // MARK: - 2. A bounded self-report

@@ -56,6 +56,23 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   desktop app — a session may name itself with `session_id`, accepted only for
   a live session of the harness the connection descends from. The bundled
   coordination skill (1.2.0) says how each harness finds its own id.
+- **Codex threads inside a desktop app are recognised by their own
+  transcript.** ChatGPT's Codex runs every open thread in one `codex
+  app-server`, gives each thread its own Auspex bridge, and exports no thread
+  id to it — so the process walk ended, honestly, at "hosts many sessions",
+  and a thread that did not know its own id saw every `auspex.notify` refused
+  and told the person "Auspex could not identify this session". Auspex was
+  already reading those threads' transcripts, where a tool call is recorded
+  as the model emits it; now a call that reaches the socket from such a
+  harness is matched to the one live thread whose transcript records that
+  very call, waiting up to two seconds for the tailer to catch up. Two threads
+  recording the same call at once stay ambiguous, and a thread demonstrably
+  living in another process is never picked.
+- **Editing or moving a stale task brings it back at once.** A task the
+  hygiene pass had set aside stayed hidden from the board and from
+  `tasks.list` after somebody retitled, reprioritised or moved it, until the
+  next pass up to six hours later. Both read predicates now treat any touch
+  after the mark as revoking it, as the pass itself already did.
 - **A worker launched by another harness is no longer filed under its
   launcher.** The caller walk used to climb past a Codex worker to the Claude
   Code session that started it, and to trust the Claude session id the worker
