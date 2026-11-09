@@ -326,7 +326,7 @@ private struct ProjectLaneView: View, Equatable {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(AuspexPalette.text3)
             }
-            Text(lane.title)
+            Text(CoreVocabulary.localized(lane.title))
                 .font(AuspexType.cardTitle)
                 .foregroundStyle(AuspexPalette.text)
                 .lineLimit(1)
@@ -939,7 +939,7 @@ struct LinkToTaskMenu: View {
                 ForEach(projects) { project in
                     let available = project.tasks.filter { !$0.sessions.contains(key) }
                     if !available.isEmpty {
-                        Menu(project.title) {
+                        Menu(CoreVocabulary.localized(project.title)) {
                             ForEach(available) { task in
                                 Button(task.title) {
                                     tasks.link(session: key, to: task.id)
