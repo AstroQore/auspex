@@ -46,6 +46,7 @@ struct ScratchProjectPurgeTests {
         let chat = Fixtures.key(.codex, "chat")
         let desktop = Fixtures.key(.claudeCode, "desktop")
         let gone = Fixtures.key(.claudeCode, "gone")
+        let run = Fixtures.key(.claudeCode, "run")
         let notes = Fixtures.key(.claudeCode, "notes")
         let widget = Fixtures.key(.claudeCode, "widget")
         let claimed = Fixtures.key(.codex, "claimed")
@@ -56,6 +57,9 @@ struct ScratchProjectPurgeTests {
         try seed(store, chat, in: "/Users/example/Documents/Codex/2026-08-21/zhe")
         try seed(store, desktop, in: desktopScratch)
         try seed(store, gone, in: "/Users/example/Code/gone")
+        // A deleted run folder whose workspace is still there: the roll-up
+        // will merge it into `/Users/example/work/reports`, so it stays.
+        try seed(store, run, in: "/Users/example/work/reports/.runs/2026-09-01")
         // Undated, and nobody from Codex in it: an ordinary folder.
         try seed(store, notes, in: "/Users/example/Documents/Codex/notes")
         try seed(store, widget, in: "/Users/example/Code/widget")
@@ -67,12 +71,13 @@ struct ScratchProjectPurgeTests {
         let report = try await purge.runIfNeeded(
             rules: rules,
             protectedRoots: ["/Users/example/Documents/Codex/2026-08-22/keep"],
-            directoryExists: { $0 != "/Users/example/Code/gone" },
+            directoryExists: { !$0.hasSuffix("/gone") && !$0.hasSuffix("/2026-09-01") },
             now: Fixtures.date(0)
         )
 
         #expect(report == ScratchProjectPurge.Report(projectsRemoved: 4, sessionsUnassigned: 4))
         #expect(try projectRoots(store) == [
+            "/Users/example/work/reports/.runs/2026-09-01",
             "/Users/example/Documents/Codex/notes",
             "/Users/example/Code/widget",
             "/Users/example/Documents/Codex/2026-08-22/keep",
@@ -82,7 +87,7 @@ struct ScratchProjectPurgeTests {
             #expect(try isStored(store, key))
             #expect(try projectID(store, key) == nil)
         }
-        for key in [notes, widget, claimed] {
+        for key in [run, notes, widget, claimed] {
             #expect(try projectID(store, key) != nil)
         }
 

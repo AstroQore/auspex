@@ -166,9 +166,22 @@ public struct ScratchProjectPurge: Sendable {
             matched = row.harnesses.allSatisfy { rules.match(cwd: row.rootPath, harness: $0) != nil }
         }
         if matched { return true }
-        // A row whose directory is gone names nothing on this Mac. A root is
-        // either a repository or a plain directory, and either way the live
-        // path would place a session there as scratch now.
-        return row.rootPath.hasPrefix("/") && !directoryExists(row.rootPath)
+        // A row whose directory is gone names nothing on this Mac — unless
+        // the live path would still place it somewhere: a deleted run folder
+        // under a workspace that exists rolls up to that workspace, and the
+        // row has to survive this pass for `ProjectRollupMigration` to merge
+        // it, tasks and all. Only a row nothing would place is removed.
+        guard row.rootPath.hasPrefix("/"), !directoryExists(row.rootPath) else { return false }
+        let harnesses: [Harness?] = row.harnesses.isEmpty ? [nil] : row.harnesses.map(Optional.some)
+        return harnesses.allSatisfy { harness in
+            ProjectRollup.place(
+                directory: row.rootPath,
+                gitRoot: nil,
+                harness: harness,
+                userRoots: [],
+                rules: rules,
+                directoryExists: directoryExists
+            ).root == nil
+        }
     }
 }

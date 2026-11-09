@@ -65,9 +65,17 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
   already reading those threads' transcripts, where a tool call is recorded
   as the model emits it; now a call that reaches the socket from such a
   harness is matched to the one live thread whose transcript records that
-  very call, waiting up to two seconds for the tailer to catch up. Two threads
-  recording the same call at once stay ambiguous, and a thread demonstrably
-  living in another process is never picked.
+  very call — the same tool with this request's own words in it — waiting up
+  to two seconds for the tailer to catch up. An earlier call to the same tool
+  from another thread does not answer for it, two threads recording the same
+  call at once stay ambiguous, and a thread demonstrably living in another
+  process is never picked.
+- **A deleted run folder under a living workspace is rolled up, not dropped.**
+  The one-time scratch purge removed every project row whose folder was gone
+  before the roll-up could see it, so tasks filed under such a folder kept a
+  key no project answered to and drew their own lane. The purge now keeps a
+  row the live placement would still put somewhere, and the roll-up merges it
+  into its workspace with its tasks.
 - **Editing or moving a stale task brings it back at once.** A task the
   hygiene pass had set aside stayed hidden from the board and from
   `tasks.list` after somebody retitled, reprioritised or moved it, until the

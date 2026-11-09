@@ -126,7 +126,9 @@ extension AuspexMCPServer {
             // of its sessions is calling. The sessions can: the one whose
             // transcript records this very call is the caller.
             if let pid = candidatePID, let harness = attempt?.harness,
-               let corroborated = await transcriptCorroboration(harness: harness, board: board, table: table) {
+               let corroborated = await transcriptCorroboration(
+                   of: arguments, harness: harness, board: board, table: table
+               ) {
                 switch corroborated {
                 case .session(let key, let evidence):
                     automatic = Caller(
@@ -265,25 +267,34 @@ extension AuspexMCPServer {
     /// But Auspex is already reading those threads' transcripts, and a tool
     /// call is recorded there as the model emits it, before the harness runs
     /// it. So among the harness's own live sessions — those not demonstrably
-    /// living in some other process — the one with an open call to this tool,
-    /// started within ``transcriptWindow``, is the caller. Two of them calling
-    /// the same tool at once stays ambiguous: the answer is never a guess.
+    /// living in some other process — the one with an open call to this tool
+    /// *with these arguments*, started within ``transcriptWindow``, is the
+    /// caller. The arguments are what make it this call and not an earlier
+    /// one: thread A's `auspex.notify` from a minute ago, still open because
+    /// its finish has not been read yet, must not answer for thread B's, so a
+    /// recording has to carry this request's own words
+    /// (``fingerprints(of:)``). A request with nothing distinctive in it is
+    /// not corroborated at all. Two threads recording the same call at once
+    /// stay ambiguous: the answer is never a guess.
     ///
     /// The transcript may lag the socket by a moment. When nothing matches
     /// under a multi-session harness, the board is re-read for up to
     /// `transcriptPatience` before giving up; only on that path, so a call
     /// the pid walk already settled costs nothing here.
     func transcriptCorroboration(
+        of arguments: MCPArguments,
         harness: HarnessProcess,
         board: BoardSnapshot,
         table: any ProcessTableReading
     ) async -> TranscriptCorroboration? {
         guard let tool = RequestScope.tool else { return nil }
+        let fingerprints = Self.fingerprints(of: arguments)
+        guard !fingerprints.isEmpty else { return nil }
         var board = board
         let deadline = Date().addingTimeInterval(transcriptPatience)
         while true {
             let matches = Self.sessionsRecordingCall(
-                to: tool, harness: harness, board: board, table: table, now: now()
+                to: tool, fingerprints: fingerprints, harness: harness, board: board, table: table, now: now()
             )
             if matches.count == 1 {
                 let key = matches[0]
@@ -300,17 +311,36 @@ extension AuspexMCPServer {
         }
     }
 
+    /// The words of a request that a transcript recording of it has to carry:
+    /// the opening of every string argument of six characters or more, cut
+    /// before the first character a harness might escape differently, and
+    /// every whole number. Nothing for a request with none — `sessions.self`
+    /// cannot be corroborated this way, and says so.
+    static func fingerprints(of arguments: MCPArguments) -> [String] {
+        arguments.fields.values.compactMap { value -> String? in
+            if let text = value.stringValue {
+                let opening = text.prefix(24).prefix { !"\"'\\`\n\r\t".contains($0) }
+                return opening.count >= 6 ? String(opening) : nil
+            }
+            if let number = value.intValue { return String(number) }
+            return nil
+        }
+    }
+
     /// The live sessions of `harness` whose open tool calls include one to
-    /// `tool`, as the harness spells it: the MCP name (`auspex.notify`), the
-    /// underscored name a client registers (`auspex_notify`), or a code-mode
-    /// snippet that calls `tools.mcp__auspex__auspex_notify(...)`.
+    /// `tool` with these `fingerprints`, as the harness spells it: the MCP
+    /// name (`auspex.notify`), the underscored name a client registers
+    /// (`auspex_notify`), or a code-mode snippet that calls
+    /// `tools.mcp__auspex__auspex_notify({...})` with the arguments inline.
     static func sessionsRecordingCall(
         to tool: String,
+        fingerprints: [String],
         harness: HarnessProcess,
         board: BoardSnapshot,
         table: any ProcessTableReading,
         now: Date
     ) -> [SessionKey] {
+        guard !fingerprints.isEmpty else { return [] }
         let underscored = tool.replacingOccurrences(of: ".", with: "_")
         let since = now.addingTimeInterval(-transcriptWindow)
         return board.sessions.compactMap { session -> SessionKey? in
@@ -324,7 +354,10 @@ extension AuspexMCPServer {
             let records = session.pending.openToolCalls.values.contains { call in
                 guard call.startedAt >= since else { return false }
                 let text = call.name + " " + (call.target ?? "")
-                return text.contains("auspex") && (text.contains(tool) || text.contains(underscored))
+                guard text.contains("auspex"), text.contains(tool) || text.contains(underscored) else {
+                    return false
+                }
+                return fingerprints.allSatisfy(text.contains)
             }
             return records ? session.key : nil
         }

@@ -296,7 +296,7 @@ struct MCPCallerIdentityTests {
         let other = Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c2")
         let (server, host, _) = try makeServer(
             board: board(
-                calling(session(Self.codexKey), "text(await tools.mcp__auspex__auspex_notify({kind:\"done\"}))"),
+                calling(session(Self.codexKey), "text(await tools.mcp__auspex__auspex_notify({kind:\"done\",message:\"The worker finished.\"}))"),
                 calling(session(other), "cat README.md")
             ),
             table: threadServerTable()
@@ -314,10 +314,34 @@ struct MCPCallerIdentityTests {
         #expect(unresolved["resolved"]?.boolValue == false)
     }
 
+    @Test("another thread's earlier call to the same tool does not answer for this one")
+    func transcriptCorroborationNeedsThisRequestsWords() async throws {
+        // Thread A's notify is still open on the board; thread B's has not
+        // been read yet. B's request must not land on A.
+        let (server, host, _) = try makeServer(
+            board: board(calling(
+                session(Self.codexKey),
+                "text(await tools.mcp__auspex__auspex_notify({kind:\"done\",message:\"First one is done.\"}))"
+            )),
+            table: threadServerTable()
+        )
+        let failure = try RPC.failureText(await server.answer(line: RPC.call("auspex.notify", [
+            "kind": .string("done"), "message": .string("Second one is done.")
+        ])))
+        #expect(failure.contains("process-attributed session"))
+        #expect(await host.notices.isEmpty)
+
+        // A request with nothing distinctive in it is never corroborated.
+        #expect(AuspexMCPServer.fingerprints(of: try MCPArguments(
+            tool: AuspexMCPTools.tool(named: "auspex.notify")!,
+            raw: .object(["kind": .string("done"), "message": .string("ok")])
+        )).isEmpty)
+    }
+
     @Test("two threads recording the same call at once stay ambiguous")
     func transcriptCorroborationNeverGuesses() async throws {
         let other = Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c2")
-        let snippet = "text(await tools.mcp__auspex__auspex_notify({kind:\"done\"}))"
+        let snippet = "text(await tools.mcp__auspex__auspex_notify({kind:\"done\",message:\"Which of us?\"}))"
         let (server, host, _) = try makeServer(
             board: board(calling(session(Self.codexKey), snippet), calling(session(other), snippet)),
             table: threadServerTable()
@@ -335,7 +359,7 @@ struct MCPCallerIdentityTests {
             pid: Self.codexPID, startTime: Fixtures.date(-30), executable: "codex",
             harnesses: [.codex, .chatgptWork], isMultiSession: true
         )
-        let snippet = "text(await tools.mcp__auspex__auspex_notify({}))"
+        let snippet = "text(await tools.mcp__auspex__auspex_notify({kind:\"done\",message:\"Bounded\"}))"
         let old = calling(session(Self.codexKey), snippet, at: 100 - AuspexMCPServer.transcriptWindow - 1)
         var ended = calling(session(Fixtures.key(.codex, "0199c0de-0000-7000-8000-0000000000c3")), snippet)
         ended.state = .ended(reason: .exited)
@@ -346,7 +370,7 @@ struct MCPCallerIdentityTests {
         table.records.append(process(900, parent: 1, "/usr/local/bin/codex"))
 
         let found = AuspexMCPServer.sessionsRecordingCall(
-            to: "auspex.notify", harness: harness,
+            to: "auspex.notify", fingerprints: ["Bounded"], harness: harness,
             board: board(old, ended, elsewhere, claude, fresh), table: table, now: Fixtures.date(100)
         )
         #expect(found == [fresh.key])
