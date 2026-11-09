@@ -70,8 +70,8 @@ struct AgentsSettingsView: View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(
-                    socketPath.map { "Auspex is serving its MCP server on \($0)." }
-                        ?? "Auspex is not serving its MCP server in this process."
+                    socketPath.map { L10n.Agents.serving(path: $0) }
+                        ?? L10n.Agents.notServing
                 )
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text2)
@@ -84,7 +84,7 @@ struct AgentsSettingsView: View {
                 }
             }
             Spacer(minLength: 8)
-            Button("Open setup…", action: onOpenSetup)
+            Button(L10n.Agents.openSetup, action: onOpenSetup)
                 .buttonStyle(.auspex)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.stateThinking)
@@ -112,13 +112,10 @@ struct AgentsSettingsView: View {
                 set: { catalog.setNotifiesOnDone($0) }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Notify when an agent reports finishing")
+                    Text(L10n.Agents.notifyDone)
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.text)
-                    Text(
-                        "A session that is blocked on you always raises one. "
-                            + "It will not get unstuck on its own."
-                    )
+                    Text(L10n.Agents.notifyDoneNote)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -140,14 +137,7 @@ struct AgentsSettingsView: View {
     }
 
     private var note: some View {
-        Text(
-            "Auspex writes into a harness's own files only from here, only in a region "
-                + "it owns — a block marked `>>> auspex >>>`, one `auspex` entry in a "
-                + "JSON config, hook entries that run the Auspex binary, or the exclusive "
-                + "auspex-coordination skill directory. The skill carries an ownership "
-                + "marker, version and content hash; Auspex refuses to replace or remove "
-                + "it after any outside edit. Updates are backed up to ~/.auspex/backups/."
-        )
+        Text(L10n.Agents.note)
         .font(AuspexType.caption)
         .foregroundStyle(AuspexPalette.text3)
         .fixedSize(horizontal: false, vertical: true)
@@ -175,14 +165,14 @@ private struct AgentsSettingsGroup: View {
                     .font(AuspexType.rowStrong)
                     .foregroundStyle(AuspexPalette.text)
                 if !group.isDetected {
-                    Text("not detected")
+                    Text(L10n.Setup.notDetected)
                         .auspexLabel(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3)
                 }
                 Spacer(minLength: 0)
             }
             ForEach(group.rows) { row in
-                SettingsRow(title: row.piece.title) {
+                SettingsRow(title: row.piece.localizedTitle) {
                     if let path = row.displayPath {
                         Text(path)
                             .font(AuspexType.monoSmall)
@@ -236,11 +226,11 @@ private struct AgentsSettingsGroup: View {
     private func action(for row: SetupModel.Row) -> some View {
         switch row.state {
         case .installed:
-            Text("installed")
+            Text(L10n.Agents.installed)
                 .font(AuspexType.pill)
                 .foregroundStyle(AuspexPalette.stateWriting)
                 .fixedSize()
-            Button("Remove") {
+            Button(L10n.Common.remove) {
                 Task { await model.uninstall(row, detected: detected) }
             }
             .buttonStyle(.auspex)
@@ -249,7 +239,7 @@ private struct AgentsSettingsGroup: View {
             .disabled(model.isWorking)
             .fixedSize()
         case .installedElsewhere:
-            Button(row.piece == .coordinationSkill ? "Update" : "Replace") {
+            Button(row.piece == .coordinationSkill ? L10n.Agents.update : L10n.Agents.replace) {
                 Task { await model.install(row, detected: detected) }
             }
             .buttonStyle(.auspex)
@@ -258,7 +248,7 @@ private struct AgentsSettingsGroup: View {
             .disabled(model.isWorking)
             .fixedSize()
             if row.piece == .coordinationSkill {
-                Button("Remove") {
+                Button(L10n.Common.remove) {
                     Task { await model.uninstall(row, detected: detected) }
                 }
                 .buttonStyle(.auspex)
@@ -268,7 +258,7 @@ private struct AgentsSettingsGroup: View {
                 .fixedSize()
             }
         case .absent:
-            Button("Install") {
+            Button(L10n.Agents.install) {
                 Task { await model.install(row, detected: detected) }
             }
             .buttonStyle(.auspex)

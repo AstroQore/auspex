@@ -292,7 +292,12 @@ struct HarnessInstallerTests {
         #expect(after.contains("auspex-coordination"))
         #expect(after.contains("sessions.self"))
         #expect(after.contains("implicit session task"))
-        #expect(!after.contains("tasks.create"))
+        #expect(after.contains("revision \(HarnessInstaller.protocolNoteRevision)"))
+        // `tasks.create` is named once, and only as the way to hand work to
+        // another agent — never as something to do before starting.
+        #expect(after.components(separatedBy: "tasks.create").count == 2)
+        #expect(after.contains("handing work to another agent"))
+        #expect(!after.contains("tasks.list"))
         // The fence is an HTML comment, not a heading: `# >>> auspex >>>` in a
         // Markdown file would be an H1 in whatever the harness feeds its model.
         #expect(!after.contains("\n# >>> auspex"))
@@ -328,6 +333,118 @@ struct HarnessInstallerTests {
         #expect(!after.contains("Something an older Auspex wrote."))
         #expect(after.contains("More of mine."))
         #expect(after.hasPrefix("# Mine"))
+    }
+
+    @Test("the revision-2 note, which agents read as 'find or file a task first', reads as one to replace")
+    func previousRevisionIsOffered() throws {
+        let sandbox = try Sandbox()
+        // Revision 2, verbatim, as earlier builds installed it.
+        try sandbox.write("""
+            # Mine
+
+            <!-- >>> auspex >>> -->
+            ## Auspex
+
+            Auspex watches every agent session on this Mac and exposes an MCP server
+            called `auspex`. Passive observation works without agent cooperation;
+            MCP adds explicit coordination. Keep these invariants:
+
+            1. **Call `auspex.notify` instead of going quiet.** The moment you need
+               the person — a question (`needs_input`), something to check
+               (`needs_review`), something you cannot get past (`blocked`), or work
+               you have finished (`done`) — call it with one sentence saying what you
+               need. It posts a macOS notification and moves your session into the
+               right bucket on their board. Nothing else can tell "waiting for a
+               human" apart from "thinking hard".
+            2. **Use the `auspex-coordination` skill for tracked work.** When a brief
+               names an Auspex task id, load that skill and follow its
+               Supervisor/Worker/Reviewer playbook. Discover the connected server's
+               capabilities and treat MCP as the state source; the skill is guidance.
+            3. **Do not manufacture coordination.** With no task id, continue the
+               user's work under the implicit session task. Do not create or claim an
+               explicit task merely to satisfy this note. Agent completion enters
+               Review; it does not close the task.
+            4. **Degrade honestly.** If MCP is unavailable or `sessions.self` cannot
+               resolve this process, continue the user's task and say which board
+               updates were not recorded. Never impersonate another session or claim
+               a notification, task update, or completion the server rejected.
+            <!-- <<< auspex <<< -->
+            """, to: ".claude/CLAUDE.md")
+
+        let offer = sandbox.installer.offer(.claudeCode, .protocolNote)
+        #expect(offer.state == .installedElsewhere("a note from an older Auspex"))
+        // What the Harnesses page turns into a "Replace" button.
+        #expect(offer.state.canInstall)
+        #expect(sandbox.installer.install(.claudeCode, .protocolNote).didChange)
+        #expect(sandbox.installer.offer(.claudeCode, .protocolNote).state == .installed)
+        let after = try sandbox.read(".claude/CLAUDE.md")
+        #expect(after.contains("revision 3"))
+        #expect(!after.contains("Do not manufacture coordination."))
+    }
+
+    @Test("an outdated note and skill are refreshed on their own; absent and newer ones are left alone")
+    func outdatedGuidanceRefreshesItself() throws {
+        let sandbox = try Sandbox()
+        // Codex: a note from before notes carried a revision.
+        try sandbox.write("""
+            # Mine
+
+            <!-- >>> auspex >>> -->
+            ## Auspex
+
+            file one with `tasks.create` only if none does.
+            <!-- <<< auspex <<< -->
+            """, to: ".codex/AGENTS.md")
+        // Claude Code: a note a newer build wrote.
+        let newer = """
+            # Mine
+
+            <!-- >>> auspex >>> -->
+            <!-- auspex task-protocol note, revision \(HarnessInstaller.protocolNoteRevision + 1) -->
+            ## Auspex, later
+            <!-- <<< auspex <<< -->
+            """
+        try sandbox.write(newer, to: ".claude/CLAUDE.md")
+        let old = try skill(version: "1.2.0", body: "# Old playbook\n")
+        #expect(sandbox.installer(skill: old).install(.codex, .coordinationSkill).succeeded)
+
+        let installer = sandbox.installer(skill: try skill(version: "1.10.0", body: "# Current\n"))
+        #expect(installer.isOutdated(.codex, .protocolNote))
+        #expect(!installer.isOutdated(.claudeCode, .protocolNote))
+        #expect(installer.isOutdated(.codex, .coordinationSkill))
+        #expect(!installer.isOutdated(.claudeCode, .coordinationSkill))
+
+        let reports = installer.refreshOutdated()
+        #expect(reports.count == 2)
+        #expect(reports.allSatisfy { $0.succeeded && $0.didChange && $0.backupPath != nil })
+        #expect(installer.offer(.codex, .protocolNote).state == .installed)
+        #expect(installer.offer(.codex, .coordinationSkill).state == .installed)
+        #expect(try sandbox.read(".codex/AGENTS.md").hasPrefix("# Mine"))
+        #expect(try sandbox.read(".claude/CLAUDE.md") == newer)
+        #expect(!sandbox.exists(".claude/skills/auspex-coordination"))
+        #expect(installer.refreshOutdated().isEmpty)
+
+        // An older build meeting the newer skill does not roll it back.
+        #expect(!sandbox.installer(skill: old).isOutdated(.codex, .coordinationSkill))
+    }
+
+    @Test("a note is written through a symbolic link, which stays a link")
+    func noteFollowsALink() throws {
+        let sandbox = try Sandbox()
+        try sandbox.write("# Shared\n", to: ".agents/AGENTS.md")
+        let link = sandbox.home.appendingPathComponent(".codex/AGENTS.md")
+        try FileManager.default.createDirectory(
+            at: link.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: link, withDestinationURL: sandbox.home.appendingPathComponent(".agents/AGENTS.md")
+        )
+
+        #expect(sandbox.installer.install(.codex, .protocolNote).didChange)
+        let values = try link.resourceValues(forKeys: [.isSymbolicLinkKey])
+        #expect(values.isSymbolicLink == true)
+        #expect(try sandbox.read(".agents/AGENTS.md").contains("<!-- >>> auspex >>> -->"))
+        #expect(try sandbox.read(".agents/AGENTS.md").hasPrefix("# Shared"))
     }
 
     @Test("a harness with nowhere to write says why instead of failing quietly")

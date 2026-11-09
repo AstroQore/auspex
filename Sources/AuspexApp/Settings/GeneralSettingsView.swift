@@ -1,3 +1,4 @@
+import AuspexCore
 import SwiftUI
 
 /// Settings → General: whether the observer itself is present after login.
@@ -16,17 +17,14 @@ struct GeneralSettingsView: View {
             header
             loginCard
             note
+            languageCard
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear { loginItem.refresh() }
     }
 
     private var header: some View {
-        Text(
-            "The board can only catch work that happens while Auspex is running. "
-                + "macOS can start it at login with the menu bar and observation pipeline ready, "
-                + "without opening the board in front of whatever you were doing."
-        )
+        Text(L10n.Settings.General.intro)
         .font(AuspexType.body)
         .foregroundStyle(AuspexPalette.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -47,7 +45,7 @@ struct GeneralSettingsView: View {
                 )
             ) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Launch at login")
+                    Text(L10n.Settings.General.launchAtLogin)
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.textPrimary)
                     Text(loginItem.statusDescription)
@@ -59,7 +57,7 @@ struct GeneralSettingsView: View {
             .toggleStyle(.checkbox)
 
             if loginItem.status == .requiresApproval {
-                Button("Open Login Items", systemImage: "gear") {
+                Button(L10n.Settings.General.openLoginItems, systemImage: "gear") {
                     loginItem.openSystemSettings()
                 }
                 .buttonStyle(.auspex)
@@ -67,7 +65,7 @@ struct GeneralSettingsView: View {
             }
 
             if let error = loginItem.errorDescription {
-                Text("macOS did not change the login item: \(error)")
+                Text(L10n.Settings.General.loginError(error: error))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.statePermission)
                     .fixedSize(horizontal: false, vertical: true)
@@ -85,12 +83,42 @@ struct GeneralSettingsView: View {
         .modifier(SettingsCard())
     }
 
+    /// The interface language. Each language is labelled in itself — 简体中文,
+    /// not "Simplified Chinese" — so somebody looking for their own language
+    /// never has to read the one they are trying to leave to find it.
+    private var languageCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L10n.Settings.Language.title)
+                .auspexLabel(AuspexType.label)
+                .foregroundStyle(AuspexPalette.textTertiary)
+
+            Picker(
+                L10n.Settings.Language.title,
+                selection: Binding(
+                    get: { catalog.language },
+                    set: { catalog.setLanguage($0) }
+                )
+            ) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.endonym ?? L10n.Settings.Language.system).tag(language)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 300, alignment: .leading)
+
+            Text(L10n.Settings.Language.caption)
+                .font(AuspexType.caption)
+                .foregroundStyle(AuspexPalette.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(SettingsCard())
+    }
+
     private var note: some View {
-        Text(
-            "This registers the signed main application through ServiceManagement. "
-                + "It does not install a helper, add a LaunchAgent, change the empty entitlements, "
-                + "or grant Auspex any new access to the disk."
-        )
+        Text(L10n.Settings.General.note)
         .font(AuspexType.caption)
         .foregroundStyle(AuspexPalette.textTertiary)
         .fixedSize(horizontal: false, vertical: true)

@@ -31,15 +31,15 @@ struct SessionActionsMenu: View {
         Group {
             switch resume {
             case let .available(command, shellLine):
-                Button("Resume in \(SessionActions.terminal.name)") {
+                Button(L10n.Session.resumeIn(app: SessionActions.terminal.name)) {
                     SessionActions.resume(shellLine: shellLine, directory: directory)
                 }
-                .help("Copies the command and opens \(SessionActions.terminal.name) running it")
-                Button("Copy resume command") {
-                    CopyToast.copy(command, what: "the resume command")
+                .help(L10n.Session.resumeHelp(app: SessionActions.terminal.name))
+                Button(L10n.Session.copyResumeCommand) {
+                    CopyToast.copy(command, what: L10n.Copy.What.resumeCommand)
                 }
             case let .unavailable(reason):
-                Button("Resume in \(SessionActions.terminal.name)") {}
+                Button(L10n.Session.resumeIn(app: SessionActions.terminal.name)) {}
                     .disabled(true)
                     .help(reason)
                 Text(reason)
@@ -55,40 +55,40 @@ struct SessionActionsMenu: View {
             // at a session finds them, and this menu is where somebody looking
             // at a *card* does — a card has no room to make four identifiers
             // clickable, and a right-click is what a person tries next.
-            Button("Copy session ID") {
-                CopyToast.copy(identity.key.sessionID, what: "the session ID")
+            Button(L10n.Session.copySessionID) {
+                CopyToast.copy(identity.key.sessionID, what: L10n.Copy.What.sessionID)
             }
-            Button("Copy working directory") {
-                if let directory { CopyToast.copy(directory, what: "the working directory") }
+            Button(L10n.Session.copyWorkingDirectory) {
+                if let directory { CopyToast.copy(directory, what: L10n.Copy.What.workingDirectory) }
             }
             .disabled(directory == nil)
-            .help(directory == nil ? "This session's store records no directory" : "")
+            .help(directory == nil ? L10n.Session.noDirectory : "")
 
             Divider()
 
-            Button("Reveal working directory in Finder") {
+            Button(L10n.Session.revealDirectory) {
                 if let directory { SessionActions.reveal(directory) }
             }
             .disabled(directory == nil)
-            .help(directory == nil ? "This session's store records no directory" : "")
+            .help(directory == nil ? L10n.Session.noDirectory : "")
 
             // The transcript itself: the file Auspex is reading, which is the
             // one thing a person cannot find from anywhere else in the window
             // and the first thing they want when they doubt what it says.
-            Button("Reveal transcript in Finder") {
+            Button(L10n.Session.revealTranscript) {
                 SessionActions.reveal(identity.sourcePath)
             }
             .help(identity.sourcePath)
 
             if let directory {
-                Button("Open in \(SessionActions.terminal.name)") {
+                Button(L10n.Session.openIn(app: SessionActions.terminal.name)) {
                     SessionActions.openTerminal(at: directory)
                 }
-                .help("A window on that directory. Nothing is run in it.")
+                .help(L10n.Session.openInTerminalHelp)
             }
 
             if let editor = SessionActions.editor, let directory {
-                Button("Open in \(editor.name)") {
+                Button(L10n.Session.openIn(app: editor.name)) {
                     SessionActions.open(directory, in: editor)
                 }
             }
@@ -117,13 +117,13 @@ private struct SessionSignalItems: View {
         let availability = control.availability(for: identity)
         switch availability {
         case let .available(target):
-            Button(SessionControl.Signal.interrupt.menuTitle) { control.interrupt(identity) }
-                .help(SessionControl.interruptHelp(for: identity.key.harness, pid: target.pid))
-            Button(SessionControl.Signal.terminate.menuTitle) { control.requestKill(identity) }
-                .help("Asks first, then sends SIGTERM to pid \(target.pid)")
+            Button(SessionControl.Signal.interrupt.localizedMenuTitle) { control.interrupt(identity) }
+                .help(SessionControl.localizedInterruptHelp(for: identity.key.harness, pid: target.pid))
+            Button(SessionControl.Signal.terminate.localizedMenuTitle) { control.requestKill(identity) }
+                .help(L10n.Session.killHelp(pid: Int(target.pid)))
         case let .unavailable(reason):
-            Button(SessionControl.Signal.interrupt.menuTitle) {}.disabled(true).help(reason)
-            Button(SessionControl.Signal.terminate.menuTitle) {}.disabled(true).help(reason)
+            Button(SessionControl.Signal.interrupt.localizedMenuTitle) {}.disabled(true).help(reason)
+            Button(SessionControl.Signal.terminate.localizedMenuTitle) {}.disabled(true).help(reason)
         }
     }
 }

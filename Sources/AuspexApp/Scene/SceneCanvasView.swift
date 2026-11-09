@@ -27,6 +27,11 @@ protocol SceneViewportHost: AnyObject {
 
     /// Called once per rendered frame, before the scene reads ``viewport``.
     func advance(to time: TimeInterval)
+
+    /// Whether the camera is still on its way somewhere — a flight in
+    /// progress, or the tail of a gesture — so the frame being drawn is not
+    /// the last one worth drawing.
+    var isMoving: Bool { get }
 }
 
 /// The office on a real scroll view.
@@ -83,6 +88,10 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     /// keeps the zoom they chose and simply shows more of the world.
     private(set) var isFramingEverything = false
 
+    /// How much air a fit leaves around the world. The map's own padding by
+    /// default; none for Now's stage, whose world is already the strip.
+    var fitPadding: CGFloat = SceneViewport.fitPadding
+
     /// Until when the office is worth drawing at the display's rate rather than
     /// at its resting thirty frames a second.
     private var busyUntil: TimeInterval?
@@ -138,6 +147,19 @@ final class SceneCanvasView: NSView, SceneViewportHost {
             object: scrollView
         )
 
+        // Every way the window onto the map can move — a scroller dragged, the
+        // elastic edge settling, a flight's own writes — moves the clip view,
+        // and a still office has to draw the frame that shows it. Most of
+        // those arrive as gesture events too; the scroller and the bounce do
+        // not.
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clipViewMoved),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+
         scene.host = self
     }
 
@@ -148,6 +170,10 @@ final class SceneCanvasView: NSView, SceneViewportHost {
 
     @objc private func liveMagnifyEnded(_ note: Notification) {
         settleZoom(atWindowPoint: scrollView.lastPinchLocation)
+    }
+
+    @objc private func clipViewMoved(_ note: Notification) {
+        skView.wake()
     }
 
     // MARK: - Being looked at
@@ -219,6 +245,8 @@ final class SceneCanvasView: NSView, SceneViewportHost {
         }
     }
 
+    var isMoving: Bool { flight != nil || busyUntil != nil }
+
     func advance(to time: TimeInterval) {
         if let busyUntil, time > busyUntil {
             self.busyUntil = nil
@@ -245,7 +273,7 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     /// Frames the whole building.
     func fit(animated: Bool) {
         guard !geometry.isEmpty else { return }
-        apply(viewport.fitted(), animated: animated, framingEverything: true)
+        apply(viewport.fitted(padding: fitPadding), animated: animated, framingEverything: true)
     }
 
     /// Keeps a framed building framed.
@@ -259,7 +287,7 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     private func keepFraming() {
         guard isFramingEverything, !geometry.isEmpty else { return }
         let current = viewport
-        let fitted = current.fitted()
+        let fitted = current.fitted(padding: fitPadding)
         guard abs(fitted.zoom - current.zoom) > 0.0001
             || abs(fitted.center.x - current.center.x) > 0.5
             || abs(fitted.center.y - current.center.y) > 0.5
@@ -334,6 +362,9 @@ final class SceneCanvasView: NSView, SceneViewportHost {
         flight = next
         flightStartedAt = CACurrentMediaTime()
         written = (scrollView.magnification, scrollView.contentView.bounds.origin)
+        // A flight is advanced by the scene's clock, which a still office has
+        // stopped.
+        skView.wake()
     }
 
     /// A two-finger double tap: frame the room under the pointer, or pull back
@@ -368,8 +399,13 @@ final class SceneCanvasView: NSView, SceneViewportHost {
     }
 
     /// A click, from the document view.
+    ///
+    /// It stops a flight but does not end a fit: a click is a question about
+    /// a person, not a move of the camera, and a framed office that stopped
+    /// keeping itself framed because somebody clicked a desk in it would
+    /// drift out of frame the next time the window or the board changed.
     func click(atWindowPoint point: CGPoint, clickCount: Int) {
-        cancelFlight()
+        flight = nil
         scene.click(atLayoutPoint: layoutPoint(fromWindow: point), clickCount: clickCount)
     }
 

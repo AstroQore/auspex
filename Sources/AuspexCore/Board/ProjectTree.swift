@@ -100,8 +100,15 @@ public struct ProjectTree: Sendable, Equatable {
         /// list; the row says so too, because a list that reorders itself
         /// without explaining why is a list nobody trusts.
         public let isPinned: Bool
+        /// Helper runs filed here and not listed: Projectless's detached
+        /// auto reviews — see ``TaskUnit/isDetachedHelper``. `0` for every
+        /// real project.
+        public let helperCount: Int
 
         public var id: String { key }
+
+        /// Whether this is the Projectless section rather than a project.
+        public var isProjectless: Bool { PseudoProject.isProjectless(key) }
 
         public init(
             key: String,
@@ -110,7 +117,8 @@ public struct ProjectTree: Sendable, Equatable {
             harnesses: [Harness],
             isRepository: Bool,
             colorHex: String? = nil,
-            isPinned: Bool = false
+            isPinned: Bool = false,
+            helperCount: Int = 0
         ) {
             self.key = key
             self.name = name
@@ -119,6 +127,7 @@ public struct ProjectTree: Sendable, Equatable {
             self.isRepository = isRepository
             self.colorHex = colorHex
             self.isPinned = isPinned
+            self.helperCount = max(0, helperCount)
             self.liveCount = checkouts.reduce(0) { $0 + $1.liveCount }
             // Every session under the project, including the ones the tree
             // does not list — see ``Checkout/hiddenCount``.
@@ -291,10 +300,27 @@ public struct ProjectTree: Sendable, Equatable {
         var harnessesByProject: [String: Set<Harness>] = [:]
         var isRepositoryByProject: [String: Bool] = [:]
         var ungrouped: [TaskUnit] = []
+        var helpers = 0
 
         for unit in units {
-            guard let key = unit.projectKey else {
+            guard let raw = unit.projectKey else {
                 ungrouped.append(unit)
+                continue
+            }
+            // Every spelling of Projectless is one branch of the tree — a task
+            // an earlier build filed under a harness's own key included.
+            let key = TaskProject.canonicalKey(raw)
+            if PseudoProject.isProjectless(key), unit.isDetachedHelper, unit.bucket != .ended {
+                // Counted on the branch, never listed: nobody assigned it,
+                // and its thread is not here to fold it under. See
+                // ``TaskUnit/isDetachedHelper``. A finished one is counted
+                // with the branch's other finished work instead — the wall
+                // files it under Ended, and the two must agree.
+                helpers += 1
+                if byProject[key] == nil {
+                    byProject[key] = []
+                    order.append(key)
+                }
                 continue
             }
             if byProject[key] == nil {
@@ -313,9 +339,11 @@ public struct ProjectTree: Sendable, Equatable {
             }
         }
 
-        let projects = board.claims.pinnedFirst(order) { $0 }.map { key -> Project in
+        let ordered = PseudoProject.projectlessLast(board.claims.pinnedFirst(order) { $0 })
+        let projects = ordered.map { key -> Project in
             let units = byProject[key] ?? []
             let seen = harnessesByProject[key] ?? []
+            let isProjectless = PseudoProject.isProjectless(key)
             return Project(
                 key: key,
                 // The person's own name for the project first, then the
@@ -328,7 +356,8 @@ public struct ProjectTree: Sendable, Equatable {
                 harnesses: Harness.allCases.filter(seen.contains),
                 isRepository: isRepositoryByProject[key] ?? false,
                 colorHex: board.claims.colorHex(forKey: key),
-                isPinned: board.claims.isPinned(key)
+                isPinned: board.claims.isPinned(key),
+                helperCount: isProjectless ? helpers : 0
             )
         }
         let listedUngrouped = listable(ungrouped)
@@ -380,6 +409,14 @@ public struct ProjectTree: Sendable, Equatable {
     /// and not any member, for the reason the wall's harness sections use: one
     /// piece of work belongs in one place, and a delegation whose subagents
     /// have no directory of their own belongs where its orchestrator is.
+    ///
+    /// Two kinds of project have exactly one checkout, because the folders
+    /// their sessions ran in are not checkouts of anything. Projectless lists
+    /// every row straight under its heading — a chat folder's name is a label
+    /// on the row, not a branch of the tree. And a workspace a plain
+    /// directory rolled up to is the checkout for every run folder under it,
+    /// so sixty runs of one job are sixty rows under one heading rather than
+    /// sixty headings.
     private static func checkouts(
         in units: [TaskUnit],
         projectKey: String,
@@ -388,16 +425,21 @@ public struct ProjectTree: Sendable, Equatable {
         var order: [String] = []
         var byCheckout: [String: [TaskUnit]] = [:]
         var attributes: [String: (path: String?, branch: String?)] = [:]
+        let isProjectless = PseudoProject.isProjectless(projectKey)
 
         for unit in units {
             let identity = board.session(for: unit.lead.key)?.identity
-            let path = identity?.worktreePath ?? identity?.gitRoot ?? identity?.cwd
+            let path = isProjectless
+                ? nil
+                : identity?.worktreePath ?? identity?.gitRoot
+                    ?? board.workspaceRoots[unit.lead.key] ?? identity?.cwd
             let id = path ?? projectKey
+            let branch = isProjectless ? nil : identity?.gitBranch
             if byCheckout[id] == nil {
                 byCheckout[id] = []
                 order.append(id)
-                attributes[id] = (path, identity?.gitBranch)
-            } else if attributes[id]?.branch == nil, let branch = identity?.gitBranch {
+                attributes[id] = (path, branch)
+            } else if attributes[id]?.branch == nil, let branch {
                 attributes[id]?.branch = branch
             }
             byCheckout[id]?.append(unit)
@@ -412,12 +454,9 @@ public struct ProjectTree: Sendable, Equatable {
                 path: attribute.path,
                 branch: attribute.branch,
                 agentWorktreeTask: attribute.path.flatMap(ProjectResolver.agentWorktreeTask(in:)),
-                // A pseudo project is not a repository, so nothing under it
-                // is a checkout *of* one. A scratch thread has a path and it
-                // differs from the key — the test every real project uses —
-                // and calling it a worktree would put a branch glyph beside a
-                // folder that has no branch.
-                isWorktree: !PseudoProject.isPseudo(projectKey)
+                // Projectless is not a repository, so nothing under it is a
+                // checkout *of* one.
+                isWorktree: !isProjectless
                     && attribute.path.map { $0 != projectKey } ?? false,
                 units: listed.map(SidebarUnit.init),
                 hiddenCount: all.count - listed.count,

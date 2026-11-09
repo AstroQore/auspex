@@ -61,7 +61,12 @@ extension AuspexTask {
             kind: (row["kind"] as String?).flatMap(TaskKind.init(rawValue:)),
             labels: TaskLabels.decode(row["labels"]),
             createdAt: Date(timeIntervalSince1970: createdAt),
-            updatedAt: Date(timeIntervalSince1970: updatedAt)
+            updatedAt: Date(timeIntervalSince1970: updatedAt),
+            // Present when the read joined `task_hygiene` — see
+            // ``TaskRepository/taskSelect`` — and absent otherwise.
+            staleAt: row.hasColumn("stale_at")
+                ? (row["stale_at"] as Double?).map(Date.init(timeIntervalSince1970:))
+                : nil
         )
     }
 }

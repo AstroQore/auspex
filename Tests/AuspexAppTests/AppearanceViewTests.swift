@@ -170,6 +170,41 @@ struct AppearanceLaunchOptionTests {
     }
 }
 
+/// The command line's stage switch.
+///
+/// Now with the office and Now with the lists only are two rows of the
+/// performance budget, and without this the second can only be reached by a
+/// click.
+@Suite("Stage launch option")
+struct StageLaunchOptionTests {
+    @Test("--stage off opens Now with the lists only")
+    func flagIsRead() {
+        let options = AppLaunchOptions.current(
+            arguments: ["Auspex", "--demo", "--stage", "off"], environment: [:]
+        )
+        #expect(options.showsStage == false)
+        #expect(AppLaunchOptions.current(
+            arguments: ["Auspex", "--stage", "on"], environment: [:]
+        ).showsStage == true)
+    }
+
+    @Test("The environment variable does the same, for launchers that own argv")
+    func environmentIsRead() {
+        let options = AppLaunchOptions.current(
+            arguments: ["Auspex"], environment: ["AUSPEX_STAGE": "OFF"]
+        )
+        #expect(options.showsStage == false)
+    }
+
+    @Test("Nothing said, or nonsense, leaves the screen's default alone")
+    func absentMeansTheDefault() {
+        #expect(AppLaunchOptions.current(arguments: ["Auspex"], environment: [:]).showsStage == nil)
+        #expect(AppLaunchOptions.current(
+            arguments: ["Auspex", "--stage", "banana"], environment: [:]
+        ).showsStage == nil)
+    }
+}
+
 /// The command line's demo scale.
 ///
 /// It exists so the performance budget can be measured at the size a real

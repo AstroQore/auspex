@@ -13,9 +13,8 @@ struct MapHistoryInspector: View {
             } else {
                 EmptyStateView(
                     symbol: "clock.arrow.circlepath",
-                    title: "Building this Perch moment…",
-                    detail:
-                        "The board state at the playhead will appear here. History is read-only."
+                    title: L10n.Perch.History.building,
+                    detail: L10n.Perch.History.buildingDetail
                 )
                 .centredInPane()
             }
@@ -40,39 +39,43 @@ struct MapHistoryInspector: View {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("MOMENT · BOARD")
+                        Text(L10n.Perch.History.momentBoard.uppercased())
                             .auspexLabel(AuspexType.labelSmall)
                             .foregroundStyle(AuspexPalette.stateStale)
                     }
                     Spacer()
-                    Text("HISTORY")
+                    Text(L10n.Perch.history.uppercased())
                         .auspexLabel(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.stateStale)
                 }
 
-                Text(moment.event.timestamp.formatted(date: .omitted, time: .standard))
+                Text(AppLocale.time(moment.event.timestamp))
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
                     .foregroundStyle(AuspexPalette.text)
                 Text(
-                    "event \(moment.index + 1) / \(moment.count) · \(moment.eventsAhead) events behind Live"
+                    L10n.Perch.History.since(
+                        index: moment.index + 1,
+                        count: moment.count,
+                        behind: moment.eventsAhead
+                    )
                 )
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.text3)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    fact("Live sessions", "\(liveCount)")
-                    fact("Needs you", "\(needsYou)")
-                    fact("Tools open", "\(openTools)")
-                    fact("Ended", "\(ended)")
+                    fact(L10n.Perch.History.liveSessions, "\(liveCount)")
+                    fact(L10n.Now.needsYou, "\(needsYou)")
+                    fact(L10n.Perch.History.toolsOpen, "\(openTools)")
+                    fact(L10n.Board.Ended.title, "\(ended)")
                 }
 
                 if !map.eventsSincePlayhead.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("SINCE THIS MOMENT").auspexLabel(AuspexType.labelSmall)
+                        Text(L10n.Perch.History.sinceMoment.uppercased()).auspexLabel(AuspexType.labelSmall)
                         ForEach(Array(map.eventsSincePlayhead.enumerated()), id: \.offset) {
                             _, event in
                             HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                Text(event.timestamp.formatted(date: .omitted, time: .standard))
+                                Text(AppLocale.time(event.timestamp))
                                     .font(AuspexType.monoSmall)
                                     .foregroundStyle(AuspexPalette.text3)
                                 Text(event.label)
@@ -86,7 +89,7 @@ struct MapHistoryInspector: View {
 
                 if let card {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("SELECTED · CURRENT SPATIAL MEMORY").auspexLabel(AuspexType.labelSmall)
+                        Text(L10n.Perch.History.selected.uppercased()).auspexLabel(AuspexType.labelSmall)
                         HStack(spacing: 8) {
                             HarnessBadge(
                                 harness: card.harness, size: 22, isMuted: card.state.isEnded)
@@ -95,15 +98,15 @@ struct MapHistoryInspector: View {
                             StatePill(
                                 state: card.state, isStale: card.isStale, showsChildCount: false)
                         }
-                        MetaField(key: "board", value: map.selectedBoard?.name ?? "All boards")
+                        MetaField(key: L10n.Perch.History.board, value: map.selectedBoard?.name ?? L10n.Perch.allBoards)
                         MetaField(
-                            key: "position",
+                            key: L10n.Perch.History.position,
                             value: "\(Int(card.position.x)), \(Int(card.position.y))")
                     }
                 }
 
                 Text(
-                    "Membership, state, tasks, and rules are historical. Card positions and camera stay current. History cannot Resume or edit dependencies."
+                    L10n.Perch.History.note
                 )
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
@@ -113,11 +116,11 @@ struct MapHistoryInspector: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 HStack {
-                    Button("Fork board here") { map.forkAtPlayhead() }
+                    Button(L10n.Perch.fork) { map.forkAtPlayhead() }
                         .font(AuspexType.pill)
                         .buttonStyle(.auspex(cornerRadius: 8))
                     Spacer()
-                    Button("Jump to Live") { map.jumpToLive() }
+                    Button(L10n.Perch.jumpToLive) { map.jumpToLive() }
                         .font(AuspexType.pill)
                         .buttonStyle(.auspex(cornerRadius: 8))
                 }

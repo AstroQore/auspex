@@ -203,12 +203,11 @@ final class SetupModel {
         let changed = reports.count { $0.didChange }
         if failures.isEmpty {
             summary = changed == 0
-                ? "Nothing to change — everything ticked was already in place."
-                : "Wrote \(changed) \(changed == 1 ? "change" : "changes"). "
-                    + "Backups are in ~/.auspex/backups/."
+                ? L10n.Setup.Summary.nothing
+                : L10n.Setup.Summary.wrote(count: changed)
         } else {
             summary = failures
-                .map { "\($0.harness.displayName): \($0.failure ?? "failed")" }
+                .map { "\($0.harness.displayName): \($0.failure ?? L10n.Setup.Summary.failed)" }
                 .joined(separator: " · ")
         }
     }

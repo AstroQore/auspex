@@ -319,31 +319,36 @@ struct BootstrapSelectionTests {
 
     private let day: TimeInterval = 86_400
 
-    @Test("this week's work is kept whole, and the cap falls on the history behind it")
-    func recentSessionsOutrankTheCap() throws {
+    @Test("this week's work is loaded whole, and the history behind it is not")
+    func historyOutsideTheWindowStaysInTheStore() throws {
         let repository = try AuspexStore(inMemory: true).sessions
         let now = Fixtures.date(30 * 86_400)
         var recent: [SessionKey] = []
         for index in 0..<4 {
             recent.append(try store(repository, "recent-\(index)", lastEventAt: 30 * day - Double(index) * 3_600))
         }
-        var old: [SessionKey] = []
         for index in 0..<4 {
-            old.append(try store(repository, "old-\(index)", lastEventAt: 10 * day - Double(index) * 3_600))
+            _ = try store(repository, "old-\(index)", lastEventAt: 10 * day - Double(index) * 3_600)
         }
 
+        // A cap with room to spare is not filled with history: a relaunch
+        // holds the working set, and the rest is read from the store when
+        // something asks for it.
         let kept = try repository.fetchForBootstrap(now: now, window: 7 * 86_400, cap: 6)
-        let keys = Set(kept.map(\.key))
+        #expect(kept.map(\.key) == recent)
+    }
 
-        #expect(kept.count == 6)
-        // Every recent one, whatever the cap: a flat "newest six" would have
-        // been the same answer here only by luck, and would drop the oldest of
-        // this week's work on a busier machine.
-        #expect(recent.allSatisfy { keys.contains($0) })
-        // The rest of the budget goes to the most recent history, in order.
-        #expect(keys.contains(old[0]))
-        #expect(keys.contains(old[1]))
-        #expect(!keys.contains(old[2]))
+    @Test("the cap still bounds a working set larger than it, newest first")
+    func capBoundsTheWorkingSet() throws {
+        let repository = try AuspexStore(inMemory: true).sessions
+        let now = Fixtures.date(30 * 86_400)
+        var recent: [SessionKey] = []
+        for index in 0..<4 {
+            recent.append(try store(repository, "recent-\(index)", lastEventAt: 30 * day - Double(index) * 3_600))
+        }
+
+        let kept = try repository.fetchForBootstrap(now: now, window: 7 * 86_400, cap: 2)
+        #expect(kept.map(\.key) == Array(recent.prefix(2)))
     }
 
     @Test("a session still running is kept however long it has been quiet")
@@ -358,14 +363,19 @@ struct BootstrapSelectionTests {
 
         let kept = try repository.fetchForBootstrap(now: now, window: 7 * 86_400, cap: 1)
         #expect(kept.map(\.key) == [alive])
+        // Without the cap it is still first, ahead of newer finished work.
+        let all = try repository.fetchForBootstrap(now: now, window: 7 * 86_400, cap: nil)
+        #expect(all.count == 4)
+        #expect(all.first?.key == alive)
     }
 
-    @Test("no cap means everything")
-    func noCapReturnsEverything() throws {
+    @Test("no cap means the whole working set, and only that")
+    func noCapReturnsTheWorkingSet() throws {
         let repository = try AuspexStore(inMemory: true).sessions
         for index in 0..<5 {
-            _ = try store(repository, "session-\(index)", lastEventAt: Double(index))
+            _ = try store(repository, "session-\(index)", lastEventAt: 29 * day + Double(index))
         }
+        _ = try store(repository, "last-month", lastEventAt: Double(1))
         #expect(try repository.fetchForBootstrap(now: Fixtures.date(30 * 86_400), cap: nil).count == 5)
     }
 }

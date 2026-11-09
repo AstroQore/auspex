@@ -41,6 +41,7 @@ Resources/
   Info.plist               Bundle metadata; com.astroqore.auspex
   Auspex.entitlements      Deliberately empty — see § 5
 Scripts/build_app.sh       swift build → .app bundle → Sparkle → codesign → sandbox assert
+Scripts/lint_localization.py  Fails `swift test` on a user-facing literal in Sources/AuspexApp
 Scripts/release_app.sh     Bump, close the changelog, branch, tag. Builds nothing (§ 9)
 Scripts/generate_update_feed.sh  One archive → one signed appcast item (§ 9)
 RELEASING.md               The release runbook, secrets, and the Sparkle key
@@ -59,13 +60,14 @@ Both targets compile in Swift 6 language mode; keep it that way.
 
 ### 3.1 Dependencies, and the `agent-session-kit` pin
 
-Three, all pinned in `Package.swift`:
+Four, all pinned in `Package.swift`:
 
 | Package | Pin | Why |
 | --- | --- | --- |
 | `GRDB.swift` | `from: 7.0.0` | The local store. |
 | `agent-session-kit` | `exact: "0.7.0"` | The harness adapters and the live pipeline. |
 | `Sparkle` | `exact: "2.9.4"` | In-app updates (§ 9). |
+| `auspex-i18n` | `exact: "0.3.0"` | Every user-facing string, English and Simplified Chinese (§ 6). |
 
 `Package.resolved` is gitignored, so a release built from a clean checkout of
 a tag has nothing but `Package.swift` to tell it which dependency versions to
@@ -175,7 +177,14 @@ Auspex actually observes, and write nothing outside `~/.auspex/`.
   delegates to, and only under all five of these
   conditions — if a change would break any of them, it does not belong there:
   1. **A person clicked.** Never on launch, never on a timer, never while a
-     page is merely being looked at.
+     page is merely being looked at. The one thing that may happen without a
+     click is keeping a piece the person already installed *current*:
+     `HarnessInstaller.refreshOutdated` rewrites a fenced note whose recorded
+     revision, or an owned skill directory whose version, is older than this
+     build's. The click that installed it is the consent; the note's content
+     is Auspex's to keep right; nothing absent is ever installed this way,
+     nothing outside the fence or the skill directory is touched, a newer
+     copy is never rolled back, and conditions 2–5 apply in full.
   2. **Inside a region Auspex owns.** A `# >>> auspex >>>` block, one JSON
      member named `auspex`, the entries whose command runs the Auspex binary
      with `--hook`, or the exclusive `auspex-coordination` skill directory.
@@ -209,6 +218,17 @@ Auspex actually observes, and write nothing outside `~/.auspex/`.
 - **Transcripts are sensitive.** Session content is source code and whatever
   was pasted into a prompt. It stays in the local database; it is never logged
   at whole-message granularity and never leaves the machine.
+- **Every user-facing string comes from `auspex-i18n`.** Views call the
+  generated `L10n` API (`Text(L10n.Common.cancel)`), never a literal; a new
+  string is added to that repository's `catalog/en.json` and `zh-Hans.json`
+  first, released, and the pin bumped. Values Core defines are shown through
+  the app-side mappings in `Sources/AuspexApp/Localization/CoreLabels.swift` —
+  Core's own `title`/`label` stay English, because MCP and the tests read
+  them. Harness, company and product names, MCP tool text, CLI output, logs
+  and anything written into a harness's files are not translated.
+  `Scripts/lint_localization.py`, run by `swift test`, fails on a hardcoded
+  word under `Sources/AuspexApp`. The Language setting lives in
+  `AuspexSettings`, never `UserDefaults`.
 - **JSONL parsing must be O(n).** Session logs grow to tens of megabytes and
   are tailed continuously. Use a moving cursor; never `removeSubrange` in a
   read loop.

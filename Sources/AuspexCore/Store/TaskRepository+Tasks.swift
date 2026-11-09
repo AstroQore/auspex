@@ -28,9 +28,55 @@ extension TaskRepository {
         dependsOn: [Int64] = [],
         now: Date = Date()
     ) throws -> AuspexTask {
+        try fileTask(
+            title: title, body: body, planID: planID, status: status, priority: priority,
+            projectID: projectID, projectKey: projectKey, createdBy: createdBy, source: source,
+            kind: kind, labels: labels, dependsOn: dependsOn, deduplicate: false, now: now
+        ).task
+    }
+
+    /// What ``fileTask(title:body:planID:status:priority:projectID:projectKey:createdBy:source:kind:labels:dependsOn:deduplicate:now:)``
+    /// did: the task, and whether it is one that was already there.
+    public struct Filing: Sendable, Equatable {
+        public let task: AuspexTask
+        public let deduplicated: Bool
+    }
+
+    /// Files a task — or, with `deduplicate`, returns the open one already
+    /// filed under the same title in the same project.
+    ///
+    /// "Open" is `todo` or `doing`: work nobody has finished and nobody is
+    /// waiting on a person for. "The same title" is the same after
+    /// ``TaskTitle/normalized(_:)``, so an agent re-filing its brief with a
+    /// full stop added does not produce a second row. The check and the
+    /// insert are one transaction, so two agents filing the same task at
+    /// once cannot both win.
+    public func fileTask(
+        title: String,
+        body: String? = nil,
+        planID: Int64? = nil,
+        status: AuspexTaskStatus = .todo,
+        priority: Int = 0,
+        projectID: Int64? = nil,
+        projectKey: String? = nil,
+        createdBy: SessionKey? = nil,
+        source: String? = nil,
+        kind: TaskKind? = nil,
+        labels: [String] = [],
+        dependsOn: [Int64] = [],
+        deduplicate: Bool,
+        now: Date = Date()
+    ) throws -> Filing {
         try dbWriter.write { db in
             let key = try projectKey
                 ?? planID.flatMap { try Self.plan(id: $0, in: db)?.projectKey }
+            if deduplicate,
+               let existing = try Self.openTask(titled: title, inProject: key, in: db) {
+                return Filing(
+                    task: try Self.attachDependencies(to: [existing], in: db)[0],
+                    deduplicated: true
+                )
+            }
             try db.execute(
                 sql: """
                     INSERT INTO tasks
@@ -56,47 +102,93 @@ extension TaskRepository {
             guard let task = try Self.task(id: id, in: db) else {
                 throw TaskLedgerError.notFound("task \(id)")
             }
-            return try Self.attachDependencies(to: [task], in: db)[0]
+            return Filing(task: try Self.attachDependencies(to: [task], in: db)[0], deduplicated: false)
         }
     }
 
+    /// The oldest `todo` or `doing` task in a project whose title normalizes
+    /// to the same string as `title`.
+    static func openTask(titled title: String, inProject key: String?, in db: Database) throws -> AuspexTask? {
+        let wanted = TaskTitle.normalized(title)
+        guard !wanted.isEmpty else { return nil }
+        let projectClause = key == nil ? "tasks.project_key IS NULL" : "tasks.project_key = ?"
+        let arguments: StatementArguments = key.map { [$0] } ?? []
+        return try Row.fetchAll(
+            db,
+            sql: taskSelect + " WHERE " + projectClause
+                + " AND tasks.status IN ('todo', 'doing') ORDER BY tasks.id ASC",
+            arguments: arguments
+        )
+        .lazy
+        .compactMap(AuspexTask.init(row:))
+        .first { TaskTitle.normalized($0.title) == wanted }
+    }
+
+    /// Every task column, and the stale mark beside it.
+    ///
+    /// One spelling for every read that decodes an ``AuspexTask``, so a task
+    /// cannot be stale on one page and fresh on another because two queries
+    /// joined differently. `task_hygiene` has no column a `WHERE` on `tasks`
+    /// would make ambiguous.
+    static let taskSelect = """
+        SELECT tasks.*, task_hygiene.stale_at AS stale_at
+          FROM tasks LEFT JOIN task_hygiene ON task_hygiene.task_id = tasks.id
+        """
+
+    /// The SQL form of ``AuspexTask/isStale``: marked, still the unclaimed
+    /// `todo` it was when it was marked, and not touched since — an edit or a
+    /// move is somebody caring about the task, and must not wait up to six
+    /// hours for `LedgerHygiene.clearMovedOn()` to notice.
+    static let staleClause = """
+        (task_hygiene.stale_at IS NOT NULL AND tasks.status = 'todo' \
+        AND tasks.claimed_by_key IS NULL AND tasks.claim_role IS NULL \
+        AND tasks.updated_at <= task_hygiene.stale_at)
+        """
+
     /// The tasks matching a filter, board order: by status column, then
     /// priority, then most recently touched.
+    ///
+    /// `includeStale` is `true` by default because most callers are Auspex's
+    /// own — a dependency check, a detail page — and must see every row. The
+    /// surfaces that list work for somebody to pick up — the Tasks page, the
+    /// board, `tasks.list` — pass `false` unless asked; see ``LedgerHygiene``.
     public func tasks(
         planID: Int64? = nil,
         projectKey: String? = nil,
         statuses: [AuspexTaskStatus] = [],
         claimedBy: SessionKey? = nil,
         readyOnly: Bool = false,
+        includeStale: Bool = true,
         limit: Int = 500
     ) throws -> [AuspexTask] {
         try dbWriter.read { db in
-            var sql = "SELECT * FROM tasks"
+            var sql = Self.taskSelect
             var clauses: [String] = []
+            if !includeStale { clauses.append("NOT \(Self.staleClause)") }
             var arguments = StatementArguments()
             if let planID {
-                clauses.append("plan_id = ?")
+                clauses.append("tasks.plan_id = ?")
                 arguments += [planID]
             }
             if let projectKey {
-                clauses.append("project_key = ?")
+                clauses.append("tasks.project_key = ?")
                 arguments += [projectKey]
             }
             if !statuses.isEmpty {
                 let placeholders = Array(repeating: "?", count: statuses.count).joined(separator: ", ")
-                clauses.append("status IN (\(placeholders))")
+                clauses.append("tasks.status IN (\(placeholders))")
                 arguments += StatementArguments(statuses.map(\.rawValue))
             }
             if let claimedBy {
-                clauses.append("claimed_by_key = ?")
+                clauses.append("tasks.claimed_by_key = ?")
                 arguments += [claimedBy.description]
             }
             if !clauses.isEmpty { sql += " WHERE " + clauses.joined(separator: " AND ") }
             sql += """
-                 ORDER BY CASE status
+                 ORDER BY CASE tasks.status
                             WHEN 'todo' THEN 0 WHEN 'doing' THEN 1
                             WHEN 'blocked' THEN 2 WHEN 'review' THEN 3 ELSE 4 END,
-                          priority DESC, updated_at DESC, id DESC
+                          tasks.priority DESC, tasks.updated_at DESC, tasks.id DESC
                  LIMIT ?
                 """
             arguments += [limit]
@@ -404,8 +496,56 @@ extension TaskRepository {
     // MARK: - Shared task statements
 
     static func task(id: Int64, in db: Database) throws -> AuspexTask? {
-        try Row.fetchOne(db, sql: "SELECT * FROM tasks WHERE id = ?", arguments: [id])
+        try Row.fetchOne(db, sql: taskSelect + " WHERE tasks.id = ?", arguments: [id])
             .flatMap(AuspexTask.init(row:))
+    }
+
+    /// How many tasks matching a filter are set aside as stale — what a
+    /// listing that left them out says it left out.
+    public func staleTaskCount(planID: Int64? = nil, projectKey: String? = nil) throws -> Int {
+        try dbWriter.read { db in
+            var sql = """
+                SELECT COUNT(*) FROM tasks
+                  LEFT JOIN task_hygiene ON task_hygiene.task_id = tasks.id
+                 WHERE
+                """ + " " + Self.staleClause
+            var arguments = StatementArguments()
+            if let planID {
+                sql += " AND tasks.plan_id = ?"
+                arguments += [planID]
+            }
+            if let projectKey {
+                sql += " AND tasks.project_key = ?"
+                arguments += [projectKey]
+            }
+            return try Int.fetchOne(db, sql: sql, arguments: arguments) ?? 0
+        }
+    }
+
+    /// Keeps a stale task on the board: the person looked at it and said it
+    /// still matters.
+    ///
+    /// Clears the mark and touches the task, so the next hygiene pass measures
+    /// its seven days from now rather than marking it again on the spot. A
+    /// line in the history says who decided, which is what stops the same
+    /// task being kept and re-marked forever without anybody noticing.
+    @discardableResult
+    public func keepTask(id: Int64, by session: SessionKey? = nil, now: Date = Date()) throws -> AuspexTask {
+        try dbWriter.write { db in
+            guard try Self.task(id: id, in: db) != nil else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            try db.execute(sql: "DELETE FROM task_hygiene WHERE task_id = ?", arguments: [id])
+            try db.execute(
+                sql: "UPDATE tasks SET updated_at = ? WHERE id = ?",
+                arguments: [now.timeIntervalSince1970, id]
+            )
+            try Self.appendLog(taskID: id, actor: session, kind: "kept", message: nil, at: now, in: db)
+            guard let task = try Self.task(id: id, in: db) else {
+                throw TaskLedgerError.notFound("task \(id)")
+            }
+            return try Self.attachDependencies(to: [task], in: db)[0]
+        }
     }
 
     static func assertVersion(_ expected: Int64?, of task: AuspexTask) throws {

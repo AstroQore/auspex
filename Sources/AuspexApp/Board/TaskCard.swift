@@ -96,7 +96,11 @@ struct TaskCard: View, Equatable {
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
-            "\(unit.title), \(unit.status.label), \(unit.memberCount) sessions"
+            L10n.Task.Card.accessibility(
+                title: unit.title,
+                status: unit.status.localizedLabel,
+                count: unit.memberCount
+            )
         )
     }
 
@@ -166,12 +170,12 @@ struct TaskCard: View, Equatable {
                 // Nobody has started. The one true thing to say is when it was
                 // filed; a harness mark here would be naming an agent that has
                 // never touched it.
-                Text("unclaimed")
+                Text(L10n.Task.Filter.unclaimed)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize()
                 separator
-                Text("filed")
+                Text(L10n.Task.Card.filed)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize()
@@ -188,7 +192,7 @@ struct TaskCard: View, Equatable {
     /// warning — but a person about to close it should know that there is no
     /// task behind it to close.
     private var autoTag: some View {
-        Text("auto")
+        Text(L10n.Task.Card.auto)
             .font(AuspexType.labelSmall)
             .foregroundStyle(AuspexPalette.text3)
             .padding(.horizontal, 4)
@@ -198,7 +202,7 @@ struct TaskCard: View, Equatable {
                     .strokeBorder(AuspexPalette.line, lineWidth: 1)
             )
             .fixedSize()
-            .help("Auspex worked this out from a delegation. Nobody filed a task for it.")
+            .help(L10n.Task.Card.autoHelp)
     }
 
     /// The line the worker wrote when it finished — what a reviewer reads
@@ -231,16 +235,16 @@ struct TaskCard: View, Equatable {
         if lead.latestPrompt != nil || lead.latestAssistant != nil || lead.reportedFocus != nil {
             VStack(alignment: .leading, spacing: 3) {
                 if let asked = lead.latestPrompt {
-                    TaskLedgerLine(key: "asked", text: asked, tint: AuspexPalette.text2)
+                    TaskLedgerLine(key: L10n.Ledger.asked, text: asked, tint: AuspexPalette.text2)
                 }
                 if let focus = lead.reportedFocus {
                     TaskLedgerLine(
-                        key: "doing",
+                        key: L10n.Ledger.doing,
                         text: "\(NoticeStyle.selfReportedMark) \(focus)",
                         tint: AuspexPalette.text2
                     )
                 } else if let said = lead.latestAssistant, !unit.isInReview {
-                    TaskLedgerLine(key: "said", text: said, tint: AuspexPalette.text3)
+                    TaskLedgerLine(key: L10n.Ledger.said, text: said, tint: AuspexPalette.text3)
                 }
             }
         }
@@ -305,8 +309,8 @@ struct TaskCard: View, Equatable {
             .buttonStyle(.auspex(cornerRadius: 6))
             .help(
                 isExpanded
-                    ? "Fold the sessions back into the card"
-                    : "\(unit.memberCount) sessions are working on this — open the list"
+                    ? L10n.Task.Card.foldSessions
+                    : L10n.Task.Card.openSessions(count: unit.memberCount)
             )
         }
     }
@@ -404,7 +408,7 @@ struct TaskCard: View, Equatable {
                 )
             }
             if unit.counts.total > 1 {
-                MetaField(key: "live", value: "\(unit.counts.live)/\(unit.counts.total)")
+                MetaField(key: L10n.Meta.live, value: "\(unit.counts.live)/\(unit.counts.total)")
             }
             Spacer(minLength: 4)
             Text("\(TokenFormat.compact(unit.tokensIn))/\(TokenFormat.compact(unit.tokensOut))")
@@ -412,16 +416,16 @@ struct TaskCard: View, Equatable {
                 .auspexTabularDigits()
                 .foregroundStyle(AuspexPalette.text3)
                 .fixedSize()
-                .help("Tokens in / out, across every session on this task")
+                .help(L10n.Task.Card.tokensHelp)
         }
     }
 
     private var elapsedLabel: String {
         switch unit.status {
-        case .done: "ran for"
-        case .blocked: "waiting"
-        case .review: "finished"
-        case .todo, .doing: "elapsed"
+        case .done: L10n.Session.Elapsed.ranFor
+        case .blocked: L10n.Session.Elapsed.waiting
+        case .review: L10n.Task.Card.finished
+        case .todo, .doing: L10n.Session.Elapsed.elapsed
         }
     }
 
@@ -453,7 +457,7 @@ struct TaskMemberRow: View, Equatable {
             HStack(spacing: 8) {
                 HarnessBadge(harness: row.harness, size: 14, isMuted: row.isEnded)
                 if isLead {
-                    Text("lead")
+                    Text(L10n.Task.Card.lead)
                         .font(AuspexType.labelSmall)
                         .foregroundStyle(AuspexPalette.text3)
                         .fixedSize()
@@ -481,7 +485,7 @@ struct TaskMemberRow: View, Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex(cornerRadius: 5))
-        .help("Open this session's transcript")
+        .help(L10n.Task.Card.openTranscript)
     }
 }
 

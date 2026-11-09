@@ -84,7 +84,7 @@ actor AgentNotifier {
 
         let content = UNMutableNotificationContent()
         content.title = title ?? Self.headline(for: notice)
-        content.subtitle = notice.kind.label
+        content.subtitle = notice.kind.localizedLabel
         content.body = notice.message
         content.categoryIdentifier = Action.category
         content.userInfo = [Self.sessionKeyInfoKey: notice.session.description]
@@ -115,10 +115,10 @@ actor AgentNotifier {
     static func headline(for notice: AgentNotice) -> String {
         let harness = notice.session.harness.displayName
         switch notice.kind {
-        case .needsInput: return "\(harness) is waiting on you"
-        case .needsReview: return "\(harness) wants a review"
-        case .blocked: return "\(harness) is blocked"
-        case .done: return "\(harness) finished"
+        case .needsInput: return L10n.Notification.waitingOnYou(harness: harness)
+        case .needsReview: return L10n.Notification.wantsReview(harness: harness)
+        case .blocked: return L10n.Notification.blocked(harness: harness)
+        case .done: return L10n.Notification.finished(harness: harness)
         }
     }
 
@@ -144,12 +144,12 @@ actor AgentNotifier {
             actions: [
                 UNNotificationAction(
                     identifier: Action.show,
-                    title: "Show",
+                    title: L10n.Notification.show,
                     options: [.foreground]
                 ),
                 UNNotificationAction(
                     identifier: Action.copyResume,
-                    title: "Copy resume command",
+                    title: L10n.Session.copyResumeCommand,
                     options: []
                 )
             ],

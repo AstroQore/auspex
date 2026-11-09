@@ -248,7 +248,8 @@ jobs:
           bin_dir="$(swift build -c release --show-bin-path)"
           bash Scripts/smoke_test_app_bundle.sh \
             "$archived_app" \
-            "$bin_dir/Auspex_AuspexApp.bundle"
+            "$bin_dir/Auspex_AuspexApp.bundle" \
+            "$bin_dir/auspex-i18n_AuspexLocalization.bundle"
 
       - name: Checksum the archive
         shell: bash

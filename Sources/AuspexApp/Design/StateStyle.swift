@@ -85,7 +85,7 @@ extension SessionState {
         case .idle:
             StateStyle(
                 color: AuspexPalette.stateIdle,
-                label: "Idle",
+                label: L10n.Now.idle,
                 glyph: "·",
                 symbolName: "pause",
                 motion: .steady(0.35),
@@ -94,7 +94,7 @@ extension SessionState {
         case .thinking:
             StateStyle(
                 color: AuspexPalette.stateThinking,
-                label: "Thinking",
+                label: L10n.State.thinking,
                 glyph: "◌",
                 symbolName: "brain",
                 motion: .breathe,
@@ -103,7 +103,7 @@ extension SessionState {
         case .toolCalling:
             StateStyle(
                 color: AuspexPalette.stateTool,
-                label: "Tool",
+                label: L10n.State.tool,
                 glyph: "›_",
                 symbolName: "wrench.adjustable",
                 motion: .sweep(width: 7),
@@ -112,7 +112,7 @@ extension SessionState {
         case .writingFile:
             StateStyle(
                 color: AuspexPalette.stateWriting,
-                label: "Writing",
+                label: L10n.State.writing,
                 glyph: "✎",
                 symbolName: "square.and.pencil",
                 motion: .sweep(width: 5),
@@ -125,7 +125,7 @@ extension SessionState {
                 // things rather than as something the session is doing, and the
                 // pill's job is the second one; the number rides in the badge
                 // beside the word.
-                label: "Delegating",
+                label: L10n.State.delegating,
                 glyph: "↳",
                 symbolName: "arrow.triangle.branch",
                 motion: .ticks(count: max(1, min(children, 8))),
@@ -134,7 +134,7 @@ extension SessionState {
         case .waitingPermission:
             StateStyle(
                 color: AuspexPalette.statePermission,
-                label: "Needs you",
+                label: L10n.Now.needsYou,
                 glyph: "!",
                 symbolName: "exclamationmark.triangle.fill",
                 motion: .strobe,
@@ -143,7 +143,7 @@ extension SessionState {
         case .ended:
             StateStyle(
                 color: AuspexPalette.stateEnded,
-                label: "Ended",
+                label: L10n.Board.Ended.title,
                 glyph: "■",
                 symbolName: "stop.fill",
                 motion: .steady(0.35),
@@ -164,11 +164,11 @@ extension SessionState {
         case .toolCalling(let name):
             name
         case .writingFile(let path):
-            path.map { ($0 as NSString).lastPathComponent } ?? "file"
+            path.map { ($0 as NSString).lastPathComponent } ?? L10n.State.file
         case .delegating(let children):
-            children == 1 ? "1 child session" : "\(children) child sessions"
+            L10n.State.childSessions(count: children)
         case .waitingPermission(let tool):
-            tool ?? "a tool"
+            tool ?? L10n.Now.Watch.aTool
         }
     }
 
@@ -197,23 +197,18 @@ enum StateCopy {
     static func explanation(for state: SessionState) -> String? {
         switch state {
         case .idle:
-            "Idle — nothing outstanding, and the process is still there. "
-                + "You can keep talking in that terminal."
+            L10n.State.Explain.idle
         case .ended:
-            "Ended — the process is gone. Nothing more will happen in that "
-                + "terminal; only Resume brings the work back."
+            L10n.State.Explain.ended
         case .waitingPermission:
-            "Needs you — it will make no further progress until somebody "
-                + "answers."
+            L10n.State.Explain.needsYou
         case .thinking, .toolCalling, .writingFile, .delegating:
             nil
         }
     }
 
     /// The tag beside a working session that has gone quiet.
-    static let stale =
-        "Stale — it says it is working and has said nothing for a while. "
-            + "A long build looks exactly like this, and so does a wedged one."
+    static var stale: String { L10n.State.Explain.stale }
 }
 
 /// The state pill: a lit dot and one word.
@@ -266,8 +261,8 @@ struct StatePill: View {
                 .strokeBorder(style.color.opacity(0.25), lineWidth: 1)
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(state.label)
-        .help(StateCopy.explanation(for: state) ?? state.label)
+        .accessibilityLabel(state.localizedLabel)
+        .help(StateCopy.explanation(for: state) ?? state.localizedLabel)
     }
 }
 
@@ -306,7 +301,7 @@ struct StateDot: View {
 /// would mean throwing away what the session was actually doing.
 struct StaleTag: View {
     var body: some View {
-        Text("Stale")
+        Text(L10n.State.stale)
             .font(AuspexType.pill)
             .foregroundStyle(AuspexPalette.stateStale)
             .padding(.horizontal, 7)
@@ -317,7 +312,7 @@ struct StaleTag: View {
                     style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5])
                 )
             )
-            .accessibilityLabel("Stale: no events recently")
+            .accessibilityLabel(L10n.State.staleAccessibility)
             .help(StateCopy.stale)
     }
 }

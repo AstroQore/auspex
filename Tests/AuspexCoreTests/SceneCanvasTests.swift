@@ -145,7 +145,7 @@ struct SceneCanvasTests {
     func unplacedRoomCanBeFocused() {
         var layout = SceneLayout()
         let frame = layout.update(with: Self.board([Self.session("a", project: nil)]))
-        #expect(frame.focusRect(forProject: nil) != nil)
+        #expect(frame.focusRect(forProject: PseudoProject.projectlessKey) != nil)
     }
 
     @Test("A point inside a room finds that room, and a point outside finds none")

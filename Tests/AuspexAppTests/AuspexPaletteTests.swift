@@ -200,6 +200,29 @@ struct AuspexPaletteTests {
 
     // MARK: - Colour arithmetic
 
+    /// Now's count pills are words on a wash of their own hue, and the
+    /// section headings are the same ink on the board. Both are text a person
+    /// reads to decide whether to get up, so they are held to AA, not to the
+    /// graphical floor.
+    @Test("Now's three inks clear AA on their washes and on the ground, in both")
+    func nowInksAreReadable() {
+        let tones: [(ink: AuspexPalette.Name, wash: AuspexPalette.Name)] = [
+            (.nowNeedsInk, .nowNeedsWash), (.nowMaybeInk, .nowMaybeWash), (.nowDoneInk, .nowDoneWash)
+        ]
+        for scheme in Scheme.allCases {
+            for tone in tones {
+                let onWash = contrast(tone.ink, on: tone.wash, scheme)
+                #expect(onWash >= 4.5, "\(tone.ink.rawValue) on its wash in \(scheme): \(round2(onWash))")
+                let onGround = contrast(tone.ink, on: .bg0, scheme)
+                #expect(onGround >= 4.5, "\(tone.ink.rawValue) on bg0 in \(scheme): \(round2(onGround))")
+            }
+            // The marks are dots, bars and balloon fills: graphical objects.
+            for mark in [AuspexPalette.Name.nowNeeds, .nowMaybe, .nowDone] where scheme == .dark {
+                #expect(contrast(mark, on: .bg0, scheme) >= 3)
+            }
+        }
+    }
+
     enum Scheme: CaseIterable, CustomStringConvertible {
         case dark, light
         var description: String { self == .dark ? "dark" : "light" }

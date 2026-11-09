@@ -69,6 +69,9 @@ struct AuspexSettingsView: View {
         .frame(minWidth: 460, minHeight: 360)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(AuspexPalette.canvas)
+        // Rebuilt when the language changes — this is where it is changed —
+        // while `pane` above keeps the reader on the pane they were using.
+        .id(catalog.language)
     }
 
     // MARK: The chrome
@@ -86,11 +89,11 @@ struct AuspexSettingsView: View {
                     Image(systemName: shown.systemImage)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(AuspexPalette.text3)
-                    Text(shown.title)
+                    Text(shown.localizedTitle)
                         .font(AuspexType.paneTitle)
                         .foregroundStyle(AuspexPalette.text)
                 }
-                Text(shown.subtitle)
+                Text(shown.localizedSubtitle)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -98,16 +101,16 @@ struct AuspexSettingsView: View {
             ViewThatFits(in: .horizontal) {
                 SegmentedPicker(
                     selection: Binding(get: { shown }, set: { pane = $0 }),
-                    options: panes.map { ($0, $0.title) }
+                    options: panes.map { ($0, $0.localizedTitle) }
                 )
                 .fixedSize()
 
                 Picker(
-                    "Settings pane",
+                    L10n.Settings.paneMenu,
                     selection: Binding(get: { shown }, set: { pane = $0 })
                 ) {
                     ForEach(panes) { option in
-                        Label(option.title, systemImage: option.systemImage).tag(option)
+                        Label(option.localizedTitle, systemImage: option.systemImage).tag(option)
                     }
                 }
                 .pickerStyle(.menu)
@@ -199,21 +202,14 @@ struct CharactersSettingsView: View {
                 .font(AuspexType.cardTitle)
                 .foregroundStyle(AuspexPalette.textPrimary)
 
-            Text(
-                "Every agent in the office is drawn either from a character package — a folder "
-                    + "with a character.json and one frame strip per pose — or from Auspex's own "
-                    + "figures, which are composed in code from the harness's accent. Drop a "
-                    + "package into the characters folder and it appears here without a "
-                    + "relaunch. The built-in figures are always installed, never miss a pose, "
-                    + "and can be chosen for a harness exactly the way a package can."
-            )
+            Text(L10n.Characters.intro)
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.textSecondary)
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
-                Button("Open characters folder", systemImage: "folder") { openFolder() }
-                Button("Reload", systemImage: "arrow.clockwise") {
+                Button(L10n.Characters.openFolder, systemImage: "folder") { openFolder() }
+                Button(L10n.Characters.reload, systemImage: "arrow.clockwise") {
                     CharacterPreview.invalidate()
                     library.reload()
                 }
@@ -224,7 +220,7 @@ struct CharactersSettingsView: View {
 
             if let error = library.selectionErrorDescription {
                 Label(
-                    "Your choice is in effect but could not be saved: \(error)",
+                    L10n.Characters.saveError(error: error),
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(AuspexType.body)
@@ -235,11 +231,10 @@ struct CharactersSettingsView: View {
     }
 
     private var headline: String {
-        guard !packages.isEmpty else { return "The built-in figures, and no packages yet." }
+        guard !packages.isEmpty else { return L10n.Characters.Headline.none }
         let mine = packages.count { $0.source == .user }
-        let noun = packages.count == 1 ? "package" : "packages"
-        guard mine > 0 else { return "\(packages.count) \(noun), all shipped with Auspex." }
-        return "\(packages.count) \(noun), \(mine) of them yours."
+        guard mine > 0 else { return L10n.Characters.Headline.shipped(count: packages.count) }
+        return L10n.Characters.Headline.mine(count: packages.count, mine: mine)
     }
 
     // MARK: Per-harness defaults
@@ -247,9 +242,8 @@ struct CharactersSettingsView: View {
     private var harnessDefaults: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsSectionHeader(
-                title: "Default per harness",
-                detail: "Automatic uses whichever package names the harness, "
-                    + "and the built-in figures while none does."
+                title: L10n.Characters.defaultPerHarness,
+                detail: L10n.Characters.defaultDetail
             )
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -271,7 +265,7 @@ struct CharactersSettingsView: View {
     @ViewBuilder
     private var packageGrid: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SettingsSectionHeader(title: "Installed")
+            SettingsSectionHeader(title: L10n.Characters.installed)
             // The built-in figures come first and are always here. They are a
             // character one can choose, not a footnote about what happens when
             // a character is missing, so they are shown as a card among the
@@ -292,10 +286,8 @@ struct CharactersSettingsView: View {
             }
             if packages.isEmpty {
                 EmptyStateView(
-                    title: "No packages yet.",
-                    detail: "A package is a folder holding character.json and one frame "
-                        + "strip per pose. Any pose you have not drawn falls back to the "
-                        + "figures above."
+                    title: L10n.Characters.noPackages,
+                    detail: L10n.Characters.noPackagesDetail
                 )
                 .frame(maxWidth: .infinity)
             }
@@ -304,17 +296,14 @@ struct CharactersSettingsView: View {
 
     private var folderNote: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("Where they live")
+            Text(L10n.Characters.whereTheyLive)
                 .auspexLabel(AuspexType.labelSmall)
                 .foregroundStyle(AuspexPalette.textTertiary)
             Text(library.charactersDirectory.path)
                 .font(AuspexType.monoSmall)
                 .foregroundStyle(AuspexPalette.textSecondary)
                 .textSelection(.enabled)
-            Text(
-                "Auspex only ever reads this folder. A package here replaces a built-in one "
-                    + "with the same id."
-            )
+            Text(L10n.Characters.folderNote)
             .font(AuspexType.body)
             .foregroundStyle(AuspexPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
@@ -345,7 +334,7 @@ private struct HarnessCharacterRow: View {
     /// makes "Automatic" a statement rather than a shrug.
     private var automaticDescription: String {
         library.catalog.automaticPackage(for: harness)?.displayName
-            ?? CharacterChoice.builtInDisplayName
+            ?? CharacterChoice.localizedBuiltInDisplayName
     }
 
     var body: some View {
@@ -365,8 +354,8 @@ private struct HarnessCharacterRow: View {
                 .lineLimit(2)
         } action: {
             Picker("", selection: binding) {
-                Text("Automatic (recommended)").tag(CharacterChoice.automatic)
-                Text(CharacterChoice.builtInDisplayName).tag(CharacterChoice.builtIn)
+                Text(L10n.Characters.automaticRecommended).tag(CharacterChoice.automatic)
+                Text(CharacterChoice.localizedBuiltInDisplayName).tag(CharacterChoice.builtIn)
                 if !choices.isEmpty {
                     Divider()
                     ForEach(choices) { package in
@@ -384,16 +373,16 @@ private struct HarnessCharacterRow: View {
     private var subtitle: String {
         switch library.selection.choice(for: harness) {
         case .automatic:
-            return "Automatic · \(automaticDescription)"
+            return L10n.Characters.automatic(name: automaticDescription)
         case .builtIn:
-            return "\(CharacterChoice.builtInDisplayName) · drawn in code"
+            return L10n.Characters.drawnInCode(name: CharacterChoice.localizedBuiltInDisplayName)
         case .package(let id):
             // A choice that outlived its folder. Saying so beats both silently
             // reverting the picker and quietly drawing something else.
             guard library.catalog.package(id: id) != nil else {
-                return "\(id) is not installed · using \(automaticDescription)"
+                return L10n.Characters.notInstalled(id: id, name: automaticDescription)
             }
-            return "Chosen"
+            return L10n.Characters.chosen
         }
     }
 
@@ -423,24 +412,21 @@ private struct BuiltInCharacterCard: View {
                     .lineLimit(2)
                 // Where a package shows its id. The rig has none: it is not a
                 // folder, and saying so is more use than an invented one.
-                Text("Built-in · drawn in code")
+                Text(L10n.Characters.builtInCode)
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
 
                 FlowLayout(spacing: 5, lineSpacing: 5) {
-                    CharacterChip("Person", tint: AuspexPalette.stateDelegating)
+                    CharacterChip(L10n.Characters.Kind.person, tint: AuspexPalette.stateDelegating)
                     CharacterChip("32 px", tint: AuspexPalette.textSecondary)
                 }
 
-                Text("All 8 poses, always.")
+                Text(L10n.Characters.allPosesAlways)
                     .font(.system(size: 10))
                     .foregroundStyle(AuspexPalette.textTertiary)
 
-                Text(
-                    "Composed from each harness's own accent — the figure above is the shape, "
-                        + "not the colour."
-                )
+                Text(L10n.Characters.accentNote)
                 .font(.system(size: 10))
                 .foregroundStyle(AuspexPalette.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -475,8 +461,8 @@ private struct CharacterCard: View {
                 // need a second line, and a pill that broke its own word into
                 // "BUILT- / IN" is what an `HStack` does instead.
                 FlowLayout(spacing: 5, lineSpacing: 5) {
-                    CharacterChip(package.manifest.kind.displayName, tint: accent)
-                    CharacterChip(package.source.displayName, tint: AuspexPalette.textSecondary)
+                    CharacterChip(package.manifest.kind.localizedDisplayName, tint: accent)
+                    CharacterChip(package.source.localizedDisplayName, tint: AuspexPalette.textSecondary)
                     CharacterChip("\(package.cell) px", tint: AuspexPalette.textSecondary)
                 }
 
@@ -514,10 +500,10 @@ private struct CharacterCard: View {
 
     private var poseSummary: String {
         let drawn = CharacterPose.core.count - package.missingCorePoses.count
-        guard drawn > 0 else { return "No poses drawn yet." }
-        guard !package.missingCorePoses.isEmpty else { return "All 8 poses drawn." }
+        guard drawn > 0 else { return L10n.Characters.noPoses }
+        guard !package.missingCorePoses.isEmpty else { return L10n.Characters.allPoses }
         let missing = package.missingCorePoses.map(\.rawValue).joined(separator: ", ")
-        return "\(drawn) of 8 poses drawn. Built-in for: \(missing)."
+        return L10n.Characters.somePoses(drawn: drawn, missing: missing)
     }
 
 }
@@ -589,7 +575,7 @@ private struct ProblemList: View {
                 )
             }
             if sorted.count > Self.limit {
-                Text("and \(sorted.count - Self.limit) more")
+                Text(L10n.MenuBar.andMore(count: sorted.count - Self.limit))
                     .font(.system(size: 10))
                     .foregroundStyle(AuspexPalette.textTertiary)
             }

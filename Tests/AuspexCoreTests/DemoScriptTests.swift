@@ -148,7 +148,7 @@ struct DemoScriptTests {
         #expect(tools == [String?.none])
     }
 
-    @Test("the demo board puts the cloud bot under a section of its own")
+    @Test("the demo board puts the cloud bot under Projectless, last")
     func grokBotGroupsUnderAPseudoProject() {
         let script = DemoScript.make(startedAt: epoch)
         let reducer = SessionStateReducer()
@@ -169,7 +169,9 @@ struct DemoScriptTests {
             generatedAt: epoch, sessions: Array(snapshots.values).sorted { $0.key.sessionID < $1.key.sessionID })
 
         let titles = BoardGrouping.groups(for: board, groupBy: .project).map(\.title)
-        #expect(titles.contains("Grok Bot"))
+        #expect(titles.last == PseudoProject.projectlessName)
+        #expect(titles.count { $0 == PseudoProject.projectlessName } == 1)
+        #expect(!titles.contains("Grok Bot"))
         #expect(!titles.contains(BoardGrouping.noProjectTitle))
     }
 
@@ -408,6 +410,48 @@ struct DemoScriptTests {
             .map { reducer.refreshStaleness($0, now: now) }
             .filter { $0.isStale && $0.state.isActive }
         #expect(!stale.isEmpty, "the scene draws a dozing session; the demo has to produce one")
+    }
+
+    @Test("the measuring cast holds three people working and ten idle for minutes")
+    func livelinessCastHoldsItsShape() {
+        let script = DemoScript.make(startedAt: epoch, cast: .liveliness)
+        let reducer = SessionStateReducer(staleAfter: DemoScript.staleAfter)
+        for instant: TimeInterval in [20, 90, 300] {
+            var snapshots: [SessionKey: SessionSnapshot] = [:]
+            for step in script.steps where step.offset <= instant {
+                let key = step.event.session
+                var current = snapshots[key]
+                if current == nil, case .sessionStarted(let identity) = step.event.kind {
+                    current = SessionStateReducer.initialSnapshot(identity: identity)
+                }
+                guard let current else { continue }
+                snapshots[key] = reducer.reduce(current, event: step.event)
+            }
+            let now = epoch.addingTimeInterval(instant)
+            let board = snapshots.values.map { reducer.refreshStaleness($0, now: now) }
+            #expect(board.count == 13)
+            let working = board.filter { $0.state.isActive && !$0.isStale }
+            #expect(working.count == 3, "at \(instant) s")
+            #expect(board.filter { $0.state == .idle && $0.isAlive }.count == 10, "at \(instant) s")
+        }
+        // The quiet cast is the same thirteen with nobody working.
+        let quiet = DemoScript.make(startedAt: epoch, cast: .quiet)
+        var quietBoard: [SessionKey: SessionSnapshot] = [:]
+        for step in quiet.steps {
+            let key = step.event.session
+            var current = quietBoard[key]
+            if current == nil, case .sessionStarted(let identity) = step.event.kind {
+                current = SessionStateReducer.initialSnapshot(identity: identity)
+            }
+            guard let current else { continue }
+            quietBoard[key] = reducer.reduce(current, event: step.event)
+        }
+        #expect(quietBoard.count == 13)
+        #expect(quietBoard.values.allSatisfy { $0.state == .idle && $0.isAlive })
+        // And the tour is the default: naming no cast changes nothing.
+        #expect(DemoScript.make(startedAt: epoch).steps == DemoScript.make(startedAt: epoch, cast: .standard).steps)
+        #expect(DemoScript.Cast(named: " Liveliness ") == .liveliness)
+        #expect(DemoScript.Cast(named: "tour") == nil)
     }
 
     @Test("the demo's auto review is folded under its root rather than shipped linked")

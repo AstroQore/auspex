@@ -27,6 +27,10 @@ swift build -c "$CONFIG"
 
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 EXEC_PATH="$BIN_DIR/Auspex"
+# The string catalogue's bundle, built from the `auspex-i18n` package. Its
+# `L10n` looks for it under the app's Contents/Resources before it would ever
+# reach SwiftPM's `Bundle.module`.
+I18N_RESOURCE_BUNDLE="$BIN_DIR/auspex-i18n_AuspexLocalization.bundle"
 APP_DIR="$ROOT/.build/Auspex.app"
 ENTITLEMENTS="$ROOT/Resources/Auspex.entitlements"
 SPARKLE_FRAMEWORK="$APP_DIR/Contents/Frameworks/Sparkle.framework"
@@ -47,6 +51,10 @@ if [[ ! -x "$EXEC_PATH" ]]; then
 fi
 if [[ ! -f "$ENTITLEMENTS" ]]; then
     echo "Entitlements file not found at $ENTITLEMENTS" >&2
+    exit 1
+fi
+if [[ ! -d "$I18N_RESOURCE_BUNDLE" ]]; then
+    echo "Localization resource bundle not found at $I18N_RESOURCE_BUNDLE" >&2
     exit 1
 fi
 if [[ -z "$SPARKLE_SOURCE" || ! -x "$SPARKLE_SOURCE/Versions/B/Sparkle" ]]; then
@@ -79,6 +87,45 @@ for bundle in "$BIN_DIR"/Auspex_*.bundle; do
     cp -R "$bundle" "$APP_DIR/Contents/Resources/$(basename "$bundle")"
 done
 shopt -u nullglob
+
+# Where a SwiftPM resource bundle keeps its files: flat (`X.bundle/en.lproj`)
+# from the native build system, or a real macOS bundle
+# (`X.bundle/Contents/Resources/en.lproj`) from Swift Build. Foundation reads
+# both; only this script's own file checks have to ask.
+resource_root() {
+    if [[ -d "$1/Contents/Resources" ]]; then
+        printf '%s\n' "$1/Contents/Resources"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+# The string catalogue ships in the `auspex-i18n` package's own resource
+# bundle, and it is packaged twice on purpose. The bundle itself, under
+# Resources, is what the package's `L10n` resolves through in an installed app.
+# The `.lproj` directories copied beside it are what — together with
+# CFBundleLocalizations — make macOS list Auspex under Language & Region >
+# Applications. SwiftPM lowercases a locale directory when it builds a resource
+# bundle, so the name is restored to its conventional spelling on the way in;
+# the lookup matches case-insensitively, so both copies answer.
+echo "==> bundling $(basename "$I18N_RESOURCE_BUNDLE")"
+cp -R "$I18N_RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/$(basename "$I18N_RESOURCE_BUNDLE")"
+for lproj in "$(resource_root "$I18N_RESOURCE_BUNDLE")"/*.lproj; do
+    [[ -d "$lproj" ]] || continue
+    case "$(basename "$lproj")" in
+        zh-hans.lproj) canonical="zh-Hans.lproj" ;;
+        *)             canonical="$(basename "$lproj")" ;;
+    esac
+    cp -R "$lproj" "$APP_DIR/Contents/Resources/$canonical"
+done
+for lang in en zh-Hans; do
+    for table in Localizable.strings Localizable.stringsdict; do
+        if [[ ! -f "$APP_DIR/Contents/Resources/$lang.lproj/$table" ]]; then
+            echo "Packaged localization is incomplete: $lang.lproj/$table is missing." >&2
+            exit 1
+        fi
+    done
+done
 
 # The icon is optional: pre-alpha builds ship without artwork.
 if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
@@ -168,7 +215,8 @@ fi
 # asset through Contents/Resources.
 bash "$ROOT/Scripts/smoke_test_app_bundle.sh" \
     "$APP_DIR" \
-    "$BIN_DIR/Auspex_AuspexApp.bundle"
+    "$BIN_DIR/Auspex_AuspexApp.bundle" \
+    "$I18N_RESOURCE_BUNDLE"
 
 echo "==> done: $APP_DIR"
 echo "Run with: open \"$APP_DIR\""

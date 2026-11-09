@@ -24,9 +24,11 @@ public enum SessionWindow: String, Sendable, Codable, Hashable, CaseIterable, Id
     case twelveHours
     case day
     case week
-    /// Everything the registry loaded. What the board did before there was a
-    /// window, and still what somebody looking for a session from Tuesday
-    /// wants.
+    /// Everything the registry holds: every running session, and everything
+    /// active in the week bootstrap reloads. What the board did before there
+    /// was a window, and still what somebody looking for a session from
+    /// Tuesday wants. Finished history older than that week is not in the
+    /// live set at all; search and a selected key still reach it in the store.
     case all
 
     public var id: String { rawValue }

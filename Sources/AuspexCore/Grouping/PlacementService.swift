@@ -22,13 +22,77 @@ import Foundation
 /// switch changes `HEAD`, which is what ``ProjectResolver`` watches. Ask again
 /// for the same directory with ``refresh(key:cwd:)`` when a host has reason to
 /// think the branch moved.
+///
+/// ## Scratch before projects
+///
+/// ``ScratchRules`` are asked first, with the session's harness, and a
+/// directory they claim never reaches the resolver — unless one of the
+/// person's own projects claims it, which outranks every automatic rule. What
+/// the resolver answers then goes through ``ProjectRollup``: a repository is
+/// the project, and a plain directory is filed under the workspace that holds
+/// it rather than becoming a project of its own.
+///
+/// ## Asking the disk
+///
+/// A workspace root that is not on this Mac is no project, which needs a
+/// `stat`. A root that *is* there is remembered per directory, so the question
+/// is asked once however many sessions report the same folder. A root that is
+/// **not** there is never remembered: a missing folder is the one answer that
+/// can change for the better, so every fresh resolution asks again, and the
+/// sessions already placed as missing are asked again on every
+/// ``missingRecheckInterval`` — the cadence of the ingest layer's own full
+/// rediscovery sweep — or when a host calls ``recheckMissing()``.
 public actor PlacementService {
     private let resolver: ProjectResolver
+    private var rules: ScratchRules
+    private let directoryExists: @Sendable (String) -> Bool
+    private let clock: @Sendable () -> Date
     private var lastResolved: [SessionKey: String] = [:]
+    /// Workspace roots known to be on disk. Only the yes is kept — see the
+    /// type's note.
+    private var existing: Set<String> = []
+    /// The roots of the person's own projects, normalised and deduplicated.
+    private var userRoots: [String] = []
+    /// What each session placed as missing was last told, so a recheck that
+    /// finds the folder still gone does not hand the same answer back.
+    private var placedMissing: [SessionKey: ProjectPlacement] = [:]
+    /// Sessions whose missing verdict is being asked again.
+    private var rechecking: Set<SessionKey> = []
+    private var lastMissingCheck: Date
+
+    /// How often the sessions placed as missing are asked about again: once
+    /// per full discovery sweep, which the ingest layer runs every minute.
+    public static let missingRecheckInterval: TimeInterval = 60
+
+    /// Whether `path` names something on this Mac. The default for
+    /// ``init(resolver:rules:directoryExists:clock:)``.
+    public static let directoryExists: @Sendable (String) -> Bool = { path in
+        FileManager.default.fileExists(atPath: path)
+    }
 
     /// Creates a service over a resolver.
-    public init(resolver: ProjectResolver = ProjectResolver()) {
+    ///
+    /// - Parameters:
+    ///   - resolver: answers the directories the rules leave alone.
+    ///   - rules: what is scratch before a repository is even looked for.
+    ///   - directoryExists: injected so the demo — whose directories are
+    ///     invented — and a test can say what is on disk.
+    ///   - projectRoots: the roots of the person's own projects — see
+    ///     ``setUserProjectRoots(_:)``.
+    ///   - clock: what ``missingRecheckInterval`` is measured against.
+    public init(
+        resolver: ProjectResolver = ProjectResolver(),
+        rules: ScratchRules = ScratchRules(),
+        directoryExists: @escaping @Sendable (String) -> Bool = PlacementService.directoryExists,
+        projectRoots: [String] = [],
+        clock: @escaping @Sendable () -> Date = Date.init
+    ) {
         self.resolver = resolver
+        self.rules = rules
+        self.directoryExists = directoryExists
+        self.userRoots = Self.normalized(projectRoots)
+        self.clock = clock
+        self.lastMissingCheck = clock()
     }
 
     /// The placement for a session's directory, or `nil` when this session's
@@ -37,7 +101,14 @@ public actor PlacementService {
         guard !cwd.isEmpty else { return nil }
         guard lastResolved[key] != cwd else { return nil }
         lastResolved[key] = cwd
-        return await resolver.resolve(cwd: cwd)
+        let placement = await resolve(cwd: cwd, harness: key.harness)
+        let previous = rechecking.remove(key) != nil ? placedMissing[key] : nil
+        remember(placement, for: key)
+        // A recheck that found the folder still missing has nothing new to
+        // say, and saying it again would rewrite the session's row for
+        // nothing once a minute.
+        if let previous, previous == placement { return nil }
+        return placement
     }
 
     /// Resolves regardless of what was resolved before — for a caller that
@@ -45,7 +116,10 @@ public actor PlacementService {
     public func refresh(key: SessionKey, cwd: String) async -> ProjectPlacement? {
         guard !cwd.isEmpty else { return nil }
         lastResolved[key] = cwd
-        return await resolver.resolve(cwd: cwd)
+        rechecking.remove(key)
+        let placement = await resolve(cwd: cwd, harness: key.harness)
+        remember(placement, for: key)
+        return placement
     }
 
     /// Placements for every session on a board that has one to resolve,
@@ -53,8 +127,15 @@ public actor PlacementService {
     ///
     /// One pass over a snapshot, which is how a host drives this: after a
     /// frame, ask for whatever is new, and hand the result to
-    /// ``SessionRegistry/applyPlacements(_:)``.
+    /// ``SessionRegistry/applyPlacements(_:)``. Once per
+    /// ``missingRecheckInterval`` it first lets go of every missing verdict,
+    /// so a folder that came back is found on this pass.
     public func placements(for identities: [SessionIdentity]) async -> [SessionKey: ProjectPlacement] {
+        let now = clock()
+        if now.timeIntervalSince(lastMissingCheck) >= Self.missingRecheckInterval {
+            lastMissingCheck = now
+            recheckMissing()
+        }
         var out: [SessionKey: ProjectPlacement] = [:]
         for identity in identities {
             guard let cwd = identity.cwd,
@@ -65,15 +146,126 @@ public actor PlacementService {
         return out
     }
 
+    /// Replaces the person's own scratch folders.
+    ///
+    /// A change forgets every answer, so the next pass places every session
+    /// again under the new rules — a folder just marked as scratch leaves the
+    /// project list on the next tick rather than on the next launch. The
+    /// resolver's cache is kept: a repository did not move because a rule did.
+    public func setUserScratchPrefixes(_ prefixes: [String]) {
+        let next = ScratchRules(home: rules.home, userPrefixes: prefixes)
+        guard next != rules else { return }
+        rules = next
+        lastResolved.removeAll(keepingCapacity: true)
+    }
+
+    /// Replaces the roots of the person's own projects — ``ProjectRollup``'s
+    /// rule 2, and how a folder below the workspace depth is pinned as a
+    /// project of its own.
+    ///
+    /// A change forgets every answer, for the reason
+    /// ``setUserScratchPrefixes(_:)`` does.
+    public func setUserProjectRoots(_ roots: [String]) {
+        let next = Self.normalized(roots)
+        guard next != userRoots else { return }
+        userRoots = next
+        lastResolved.removeAll(keepingCapacity: true)
+    }
+
+    /// The rules in force. Test seam.
+    public var scratchRules: ScratchRules { rules }
+
+    /// The person's project roots in force. Test seam.
+    public var projectRoots: [String] { userRoots }
+
+    /// Asks again about every session placed under a folder that was missing.
+    ///
+    /// For a host that knows a full discovery sweep just ran; the service also
+    /// does this on its own once per ``missingRecheckInterval``. The next
+    /// ``placements(for:)`` pass resolves those sessions afresh, and hands
+    /// back only the ones whose answer changed.
+    public func recheckMissing() {
+        existing.removeAll(keepingCapacity: true)
+        for key in placedMissing.keys {
+            lastResolved[key] = nil
+            rechecking.insert(key)
+        }
+    }
+
     /// Forgets what has been resolved, so the next report of any directory
     /// resolves again.
     public func forgetAll() {
         lastResolved.removeAll(keepingCapacity: true)
+        existing.removeAll(keepingCapacity: true)
+        placedMissing.removeAll(keepingCapacity: true)
+        rechecking.removeAll(keepingCapacity: true)
         Task { [resolver] in await resolver.invalidateAll() }
     }
 
     /// Forgets one session — a host calls this when a session is re-seeded.
     public func forget(_ key: SessionKey) {
         lastResolved[key] = nil
+        placedMissing[key] = nil
+        rechecking.remove(key)
+    }
+
+    // MARK: - Resolving
+
+    private static func normalized(_ roots: [String]) -> [String] {
+        Array(Set(roots.map(ProjectPath.normalize).filter { !$0.isEmpty })).sorted()
+    }
+
+    private func remember(_ placement: ProjectPlacement, for key: SessionKey) {
+        if placement.placementNote == ScratchRules.Reason.missing.rawValue {
+            placedMissing[key] = placement
+        } else {
+            placedMissing[key] = nil
+        }
+    }
+
+    private func resolve(cwd: String, harness: Harness) async -> ProjectPlacement {
+        let directory = ProjectResolver.standardized(cwd)
+        if let match = rules.match(cwd: directory, harness: harness),
+           ProjectRollup.userRoot(containing: directory, among: userRoots) == nil {
+            return .scratch(match)
+        }
+        let resolved = await resolver.resolve(cwd: cwd)
+        // A directory inside a repository is placed by the repository whether
+        // or not this checkout is still on disk: an agent worktree removed
+        // after its branch merged still belongs to the project it was cut
+        // from, and the walk up already found it. Only a plain directory's
+        // workspace root is looked for on disk.
+        let outcome = ProjectRollup.place(
+            directory: directory,
+            gitRoot: resolved.gitRoot,
+            harness: harness,
+            userRoots: userRoots,
+            rules: rules,
+            directoryExists: { exists($0) }
+        )
+        switch outcome {
+        case .repository:
+            return resolved
+        case .projectless(let match):
+            return .scratch(match)
+        case .userProject(let root), .workspace(let root):
+            // Only the project changes. The checkout facts — a worktree, a
+            // branch, an agent task — are the directory's own, and stay.
+            return ProjectPlacement(
+                projectRootPath: root,
+                projectName: PathText.lastComponent(root),
+                gitRoot: nil,
+                worktreePath: resolved.worktreePath,
+                branch: resolved.branch,
+                agentWorktreeTask: resolved.agentWorktreeTask
+            )
+        }
+    }
+
+    private func exists(_ directory: String) -> Bool {
+        if existing.contains(directory) { return true }
+        guard directoryExists(directory) else { return false }
+        existing.insert(directory)
+        return true
     }
 }

@@ -128,7 +128,7 @@ struct CrewBroodRow<Mini: View>: View {
                         .frame(height: CrewMiniAvatar.size)
                 }
             }
-            .accessibilityLabel("\(members.count) sessions on this task")
+            .accessibilityLabel(L10n.Crew.sessionsOnTask(count: members.count))
         }
     }
 

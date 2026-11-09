@@ -40,24 +40,40 @@ struct TaskProjectTests {
         #expect(resolved == board.sessions.first.flatMap { board.projectKey(for: $0) })
     }
 
-    @Test("a harness with no working directory files under the harness, never nowhere")
+    @Test("a harness with no working directory files under Projectless, never nowhere")
     func pseudoProjectRatherThanUnfiled() {
         let board = board(cwd: nil, gitRoot: nil, key: Self.bot)
         let key = TaskProject.resolve(explicit: nil, session: Self.bot, board: board)
-        #expect(key == PseudoProject.key(for: .grokBot))
-        #expect(TaskProject.displayName(forKey: key, in: board) == Harness.grokBot.displayName)
+        #expect(key == PseudoProject.projectlessKey)
+        #expect(TaskProject.displayName(forKey: key, in: board) == "Projectless")
         #expect(TaskProject.subtitle(forKey: key) == nil)
     }
 
-    @Test("a caller Auspex cannot place at all gets the scratch project, not a NULL")
-    func scratchIsTheLastResort() {
+    @Test("a caller Auspex cannot place at all gets Projectless, not a NULL")
+    func projectlessIsTheLastResort() {
         let board = BoardSnapshot(generatedAt: Fixtures.date(0), sessions: [])
-        let key = TaskProject.resolve(explicit: nil, session: nil, board: board)
-        #expect(key == TaskProject.scratchKey)
-        #expect(TaskProject.displayName(forKey: key, in: board) == "Scratch")
-        #expect(TaskProject.subtitle(forKey: key) == nil)
-        // Never a path, so it can never collide with one.
-        #expect(!key.hasPrefix("/"))
+        for session in [nil, Self.bot] as [SessionKey?] {
+            let key = TaskProject.resolve(explicit: nil, session: session, board: board)
+            #expect(key == PseudoProject.projectlessKey)
+            #expect(TaskProject.displayName(forKey: key, in: board) == "Projectless")
+            #expect(TaskProject.subtitle(forKey: key) == nil)
+            // Never a path, so it can never collide with one.
+            #expect(!key.hasPrefix("/"))
+        }
+    }
+
+    @Test("every key an earlier build used for no project reads as Projectless")
+    func legacyKeysAreProjectless() {
+        let board = BoardSnapshot(generatedAt: Fixtures.date(0), sessions: [])
+        for key in [TaskProject.scratchKey, PseudoProject.key(for: .grokBot),
+                    PseudoProject.scratchKey(for: .codex), "", nil] as [String?] {
+            #expect(TaskProject.canonicalKey(key) == PseudoProject.projectlessKey, "\(key ?? "nil")")
+            if let key, !key.isEmpty {
+                #expect(TaskProject.isProjectless(key))
+                #expect(TaskProject.displayName(forKey: key, in: board) == "Projectless")
+            }
+        }
+        #expect(TaskProject.canonicalKey("/Users/example/Code/auspex") == "/Users/example/Code/auspex")
     }
 
     // MARK: - Naming one
@@ -87,11 +103,12 @@ struct TaskProjectTests {
         #expect(TaskProject.key(named: "   ", in: board) == nil)
     }
 
-    @Test("a pseudo key survives a round trip through the argument")
+    @Test("a pseudo key, the old scratch key and the word itself all name Projectless")
     func explicitPseudoKey() {
         let board = board()
-        let key = PseudoProject.key(for: .grokBot)
-        #expect(TaskProject.key(named: key, in: board) == key)
-        #expect(TaskProject.key(named: TaskProject.scratchKey, in: board) == TaskProject.scratchKey)
+        for reference in [PseudoProject.projectlessKey, PseudoProject.key(for: .grokBot),
+                          TaskProject.scratchKey, "Projectless", "projectless"] {
+            #expect(TaskProject.key(named: reference, in: board) == PseudoProject.projectlessKey)
+        }
     }
 }

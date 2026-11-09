@@ -5,10 +5,8 @@ import Testing
 
 @testable import AuspexCore
 
-/// The section a harness with no working directory gets.
-///
-/// Grok Bot is the only one, and it is the case that would otherwise land a
-/// dozen conversations under a heading that means "could not be placed".
+/// Projectless: the one section every session outside a project files under,
+/// whichever of the old per-harness keys — or none — it would have had.
 @Suite("PseudoProject")
 struct PseudoProjectTests {
     private func session(
@@ -18,12 +16,14 @@ struct PseudoProjectTests {
         gitRoot: String? = nil,
         parent: SessionKey? = nil,
         title: String? = nil,
+        variant: String? = nil,
         at offset: TimeInterval = 0
     ) -> SessionSnapshot {
         let key = SessionKey(harness: harness, sessionID: id)
         var identity = SessionIdentity(
             key: key,
             sourcePath: "/Users/example/store/\(id)",
+            variant: variant,
             cwd: cwd,
             gitRoot: gitRoot,
             title: title
@@ -58,169 +58,140 @@ struct PseudoProjectTests {
         #expect(!Harness.grokBot.recordsWorkingDirectory)
     }
 
-    @Test("a pseudo key cannot be mistaken for a directory")
-    func keysDoNotLookLikePaths() {
-        let key = PseudoProject.key(for: .grokBot)
-        // A real project key is `gitRoot ?? cwd`, and both are absolute.
-        #expect(!key.hasPrefix("/"))
-        #expect(PseudoProject.isPseudo(key))
-        #expect(PseudoProject.harness(forKey: key) == .grokBot)
-        #expect(PseudoProject.name(forKey: key) == "Grok Bot")
+    @Test("every spelling of Projectless is Projectless, and none of them is a path")
+    func projectlessKeys() {
+        let keys = [
+            PseudoProject.projectlessKey,
+            PseudoProject.key(for: .grokBot),
+            PseudoProject.scratchKey(for: .codex),
+            PseudoProject.scratchKey(for: .cursor),
+        ]
+        for key in keys {
+            // A real project key is `gitRoot ?? cwd`, and both are absolute.
+            #expect(!key.hasPrefix("/"), "\(key)")
+            #expect(PseudoProject.isPseudo(key), "\(key)")
+            #expect(PseudoProject.isProjectless(key), "\(key)")
+            #expect(PseudoProject.canonical(key) == PseudoProject.projectlessKey, "\(key)")
+            #expect(PseudoProject.name(forKey: key) == "Projectless", "\(key)")
+            #expect(BoardGrouping.projectName(forPath: key) == "Projectless", "\(key)")
+        }
+        // The one section names no harness; the keys earlier builds wrote
+        // still say whose they were.
+        #expect(PseudoProject.harness(forKey: PseudoProject.projectlessKey) == nil)
+        #expect(PseudoProject.harness(forKey: PseudoProject.key(for: .grokBot)) == .grokBot)
 
-        for path in ["/Users/example/Code/widget", "/", "harness:", "harness:nonesuch"] {
+        for path in ["/Users/example/Code/widget", "/", "harness:", "harness:nonesuch",
+                     "scratch:", "scratch:nonesuch"] {
             #expect(!PseudoProject.isPseudo(path), "\(path)")
             #expect(PseudoProject.name(forKey: path) == nil, "\(path)")
+            #expect(PseudoProject.canonical(path) == path, "\(path)")
         }
-    }
-
-    // MARK: - Grouping
-
-    @Test("a Grok Bot conversation groups under Grok Bot, not under No project")
-    func grokBotSessionsGetTheirOwnSection() {
-        let frame = board([
-            session(.claudeCode, "a", cwd: "/Users/example/Code/widget", at: 10),
-            session(.grokBot, "bot-1", title: "Scout", at: 8),
-            session(.grokBot, "bot-2", title: "Archivist", at: 6)
-        ])
-
-        let groups = BoardGrouping.groups(for: frame, groupBy: .project)
-
-        #expect(groups.map(\.title) == ["widget", "Grok Bot"])
-        #expect(!groups.contains { $0.title == BoardGrouping.noProjectTitle })
-        let bots = try? #require(groups.last)
-        #expect(bots?.sessions.count == 2)
-        // Nothing to show under the title: the harness name is the whole of
-        // what there is to say, and there is no path.
-        #expect(bots?.subtitle == nil)
-        #expect(bots?.harness == .grokBot)
-        #expect(frame.ungroupedSessions.isEmpty)
-    }
-
-    @Test("a session whose directory is merely missing is still the residue")
-    func missingDirectoriesStayUngrouped() {
-        // A subagent whose parent has aged off the board: the directory is
-        // unknown, not absent by design, and saying so is the honest answer.
-        let orphan = session(
-            .claudeCode, "orphan",
-            parent: SessionKey(harness: .claudeCode, sessionID: "gone"), at: 4
-        )
-        let frame = board([session(.grokBot, "bot-1", title: "Scout", at: 8), orphan])
-
-        let groups = BoardGrouping.groups(for: frame, groupBy: .project)
-
-        #expect(groups.map(\.title) == ["Grok Bot", BoardGrouping.noProjectTitle])
-        #expect(frame.ungroupedSessions.map(\.key) == [orphan.key])
-    }
-
-    @Test("the pseudo key is never shown to anybody")
-    func theKeyIsNeverRendered() {
-        // Every surface that names a project — the board's section header,
-        // the sidebar row, the trace header, the scene's floor plate — comes
-        // through this one function.
-        #expect(BoardGrouping.projectName(forPath: PseudoProject.key(for: .grokBot)) == "Grok Bot")
         #expect(BoardGrouping.projectName(forPath: "/Users/example/Code/widget") == "widget")
     }
 
-    @Test("the sidebar puts the bots under a project row rather than in the residue")
-    func sidebarTreeHasTheSection() {
-        let frame = board([
-            session(.grokBot, "bot-1", title: "Scout", at: 8),
-            session(.grokBot, "bot-2", title: "Archivist", at: 6)
-        ])
-
-        let tree = ProjectTree.build(board: frame)
-
-        #expect(tree.ungrouped.isEmpty)
-        #expect(tree.projects.map(\.name) == ["Grok Bot"])
-        let project = try? #require(tree.projects.first)
-        #expect(project?.sessionCount == 2)
-        #expect(project?.harnesses == [.grokBot])
-        // Not a repository, and its one checkout is implied rather than
-        // drawn — there is no branch, no worktree, and no directory to name.
-        #expect(project?.isRepository == false)
-        #expect(project?.checkouts.count == 1)
-        #expect(project?.checkouts.first?.isWorktree == false)
-        #expect(project?.checkouts.first?.agentWorktreeTask == nil)
+    @Test("Projectless goes after every project, and keeps the order inside each half")
+    func projectlessGoesLast() {
+        #expect(PseudoProject.projectlessLast(
+            [PseudoProject.projectlessKey, "/b", "harness:grokBot", "/a"]
+        ) == ["/b", "/a", PseudoProject.projectlessKey, "harness:grokBot"])
+        #expect(PseudoProject.projectlessLast(["/b", "/a"]) == ["/b", "/a"])
     }
 
-    // MARK: - Scratch
+    // MARK: - One section
 
-    @Test("a scratch key is its own kind, and names itself as one")
-    func scratchKeys() {
-        let scratch = PseudoProject.scratchKey(for: .codex)
-        #expect(!scratch.hasPrefix("/"))
-        #expect(PseudoProject.isPseudo(scratch))
-        #expect(PseudoProject.isScratch(scratch))
-        #expect(PseudoProject.harness(forKey: scratch) == .codex)
-        #expect(PseudoProject.name(forKey: scratch) == "Codex · scratch")
-        #expect(BoardGrouping.projectName(forPath: scratch) == "Codex · scratch")
-
-        // The harness's own section is a different section, and says so.
-        let plain = PseudoProject.key(for: .codex)
-        #expect(plain != scratch)
-        #expect(!PseudoProject.isScratch(plain))
-        #expect(PseudoProject.name(forKey: plain) == "Codex")
-        for path in ["/Users/example/Code/widget", "scratch:", "scratch:nonesuch"] {
-            #expect(!PseudoProject.isScratch(path), "\(path)")
-            #expect(PseudoProject.name(forKey: path) == nil, "\(path)")
-        }
-    }
-
-    @Test("a desktop thread groups under the harness's scratch, not under its folder")
-    func sandboxSessionsGetTheScratchSection() {
+    @Test("a chat folder, a session with no folder, and a cloud bot are one section")
+    func threeSourcesOneSection() {
         let thread = session(
-            .codex, "desk-1", cwd: "/Users/example/Documents/Codex/2026-08-21/zhe", at: 8)
+            .codex, "desk-1", cwd: "/Users/example/Documents/Codex/2026-08-21/zhe", at: 9)
         let other = session(
-            .codex, "desk-2", cwd: "/Users/example/Documents/Codex/2026-08-18/zai-b", at: 7)
+            .cursor, "desk-2", cwd: "/Users/example/Documents/Codex/2026-08-18/zai-b", at: 7)
+        let folderless = session(.cursor, "nowhere", at: 6)
+        let emptyCWD = session(.codex, "guardian-ish", cwd: "", at: 5)
+        let bot = session(.grokBot, "bot-1", title: "Scout", at: 8)
         let frame = board(
             [
-                session(.claudeCode, "a", cwd: "/Users/example/Code/widget", at: 10),
-                thread, other
+                // The busiest card on the board is in Projectless, and the
+                // section still goes last.
+                session(.claudeCode, "a", cwd: "/Users/example/Code/widget", at: 3),
+                thread, other, folderless, emptyCWD, bot,
             ],
             sandboxThreads: [thread.key: "zhe", other.key: "zai-b"]
         )
 
-        let groups = BoardGrouping.groups(for: frame, groupBy: .project)
-
-        // One section, not two projects called `zhe` and `zai-b`.
-        #expect(groups.map(\.title) == ["widget", "Codex · scratch"])
-        #expect(!groups.contains { $0.title == BoardGrouping.noProjectTitle })
-        let scratch = try? #require(groups.last)
-        #expect(scratch?.sessions.count == 2)
-        #expect(scratch?.harness == .codex)
-        // Not a directory, so there is no path to put under the heading.
-        #expect(scratch?.subtitle == nil)
+        for item in [thread, other, folderless, emptyCWD, bot] {
+            #expect(frame.projectKey(for: item) == PseudoProject.projectlessKey, "\(item.key)")
+            #expect(frame.isProjectless(item))
+        }
         #expect(frame.ungroupedSessions.isEmpty)
+
+        let groups = BoardGrouping.groups(for: frame, groupBy: .project)
+        // One section, not `zhe`, `zai-b`, "Codex · scratch", "Cursor ·
+        // scratch", "Grok Bot" and "No project".
+        #expect(groups.map(\.title) == ["widget", "Projectless"])
+        let projectless = try? #require(groups.last)
+        #expect(projectless?.sessions.count == 5)
+        #expect(projectless?.subtitle == nil)
+        #expect(projectless?.harness == nil)
+
+        let units = TaskUnitBuilder.units(
+            sessions: frame.sessions, board: frame, ledger: .empty,
+            builder: BoardRowBuilder(board: frame), now: frame.generatedAt
+        )
+        let wall = TaskUnitGrouping.groups(for: units, board: frame, groupBy: .project)
+        #expect(wall.map(\.title) == ["widget", "Projectless"])
+        #expect(wall.last?.unitCount == 5)
     }
 
-    @Test("the card says which thread it is, since the section already says which harness")
-    func theCardShowsTheFolder() {
+    @Test("the sidebar draws Projectless as one row whose rows sit straight under it")
+    func sidebarHasOneRow() {
+        let one = session(
+            .codex, "desk-1", cwd: "/Users/example/Documents/Codex/2026-08-21/zhe", at: 8)
+        let two = session(
+            .codex, "desk-2", cwd: "/Users/example/Documents/Codex/2026-08-18/zai-b", at: 7)
+        let bot = session(.grokBot, "bot-1", title: "Scout", at: 6)
+        let frame = board(
+            [session(.claudeCode, "a", cwd: "/Users/example/Code/widget", at: 2), one, two, bot],
+            sandboxThreads: [one.key: "zhe", two.key: "zai-b"]
+        )
+
+        let tree = ProjectTree.build(board: frame)
+        #expect(tree.ungrouped.isEmpty)
+        #expect(tree.projects.map(\.name) == ["widget", "Projectless"])
+        let project = try? #require(tree.projects.last)
+        #expect(project?.isProjectless == true)
+        #expect(project?.isRepository == false)
+        #expect(project?.sessionCount == 3)
+        #expect(project?.harnesses == [.codex, .grokBot])
+        // One checkout, implied rather than drawn: a chat folder's name is a
+        // label on its row, not a branch of the tree.
+        #expect(project?.checkouts.count == 1)
+        #expect(project?.checkouts.first?.isWorktree == false)
+        #expect(project?.checkouts.first?.branch == nil)
+        #expect(project?.checkouts.first?.path == nil)
+        #expect(project?.checkouts.first?.units.map(\.leadHarness) == [.codex, .codex, .grokBot])
+    }
+
+    @Test("a row in Projectless says where it ran, and is never titled after the folder")
+    func theFolderIsALabel() {
         let thread = session(
-            .codex, "desk-1", cwd: "/Users/example/Documents/Codex/2026-08-21/zhe",
-            title: "Work out the retry backoff", at: 8)
+            .codex, "0198f7b4-2ce9-7f31-84ad-6b0c7e2915df",
+            cwd: "/Users/example/Documents/Codex/2026-08-21/zhe", at: 8)
+        let titled = session(
+            .codex, "desk-2", cwd: "/Users/example/Documents/Codex/2026-08-21/rota",
+            title: "Work out the retry backoff", at: 7)
         let plain = session(.claudeCode, "a", cwd: "/Users/example/Code/widget", at: 10)
-        let frame = board([plain, thread], sandboxThreads: [thread.key: "zhe"])
+        let frame = board([plain, thread, titled], sandboxThreads: [thread.key: "zhe", titled.key: "rota"])
 
         let rows = BoardRowBuilder(board: frame)
-        #expect(rows.row(for: thread).project == "zhe")
-        #expect(rows.row(for: thread).directory == "/Users/example/Documents/Codex/2026-08-21/zhe")
+        #expect(rows.row(for: titled).project == "Projectless")
+        #expect(rows.row(for: titled).title == "Work out the retry backoff")
+        #expect(rows.row(for: titled).directory == "/Users/example/Documents/Codex/2026-08-21/rota")
+        // Nothing to call it: neither the folder nor the section is a title.
+        let untitled = rows.row(for: thread)
+        #expect(untitled.title != "zhe")
+        #expect(untitled.title != "Projectless")
         // Everything else still shows the project it groups under.
         #expect(rows.row(for: plain).project == "widget")
-    }
-
-    @Test("a scratch thread whose harness differs gets its own section")
-    func scratchIsPerHarness() {
-        // The rule is about the *path*, and the two desktop apps share one.
-        // Which section a session lands in is decided by whose session it is.
-        let codex = session(
-            .codex, "desk-1", cwd: "/Users/example/Documents/Codex/2026-08-21/zhe", at: 8)
-        let work = session(
-            .chatgptWork, "desk-2", cwd: "/Users/example/Documents/Codex/2026-08-21/rota", at: 7)
-        let frame = board(
-            [codex, work], sandboxThreads: [codex.key: "zhe", work.key: "rota"])
-
-        let groups = BoardGrouping.groups(for: frame, groupBy: .project)
-        #expect(groups.map(\.title) == ["Codex · scratch", "ChatGPT Work · scratch"])
     }
 
     @Test("a person who claims the folder gets their claim")
@@ -256,44 +227,99 @@ struct PseudoProjectTests {
 
         // The parent has no project to lend, so the child lands where the
         // parent did rather than under a project named after a folder.
-        #expect(frame.projectKey(for: child) == PseudoProject.scratchKey(for: .codex))
+        #expect(frame.projectKey(for: child) == PseudoProject.projectlessKey)
         #expect(frame.ungroupedSessions.isEmpty)
     }
 
-    @Test("the sidebar lists one row per thread, and calls none of them a worktree")
-    func sidebarListsThreads() {
-        let one = session(
-            .codex, "desk-1", cwd: "/Users/example/Documents/Codex/2026-08-21/zhe", at: 8)
-        let two = session(
-            .codex, "desk-2", cwd: "/Users/example/Documents/Codex/2026-08-18/zai-b", at: 7)
-        let frame = board([one, two], sandboxThreads: [one.key: "zhe", two.key: "zai-b"])
-
-        let tree = ProjectTree.build(board: frame)
-        #expect(tree.ungrouped.isEmpty)
-        #expect(tree.projects.map(\.name) == ["Codex · scratch"])
-        let project = try? #require(tree.projects.first)
-        #expect(project?.isRepository == false)
-        // One row per conversation folder, so a person can still tell the
-        // day's threads apart — and no branch glyph on any of them, because
-        // there is no repository for them to be a checkout of.
-        #expect(project?.checkouts.count == 2)
-        #expect(project?.checkouts.allSatisfy { !$0.isWorktree } == true)
-        #expect(project?.checkouts.allSatisfy { $0.branch == nil } == true)
-    }
-
-    @Test("filtering the board by the pseudo project keeps exactly the bots")
-    func filteringByThePseudoProject() {
+    @Test("filtering the board by Projectless keeps exactly what is in it")
+    func filteringByProjectless() {
         let frame = board([
             session(.claudeCode, "a", cwd: "/Users/example/Code/widget", at: 10),
-            session(.grokBot, "bot-1", title: "Scout", at: 8)
+            session(.grokBot, "bot-1", title: "Scout", at: 8),
+            session(.cursor, "nowhere", at: 7),
         ])
 
         let filtered = BoardGrouping.filtered(
             frame.sessions,
             harnessFilter: [],
-            projectFilter: PseudoProject.key(for: .grokBot),
+            projectFilter: PseudoProject.projectlessKey,
             in: frame
         )
-        #expect(filtered.map(\.key.sessionID) == ["bot-1"])
+        #expect(filtered.map(\.key.sessionID) == ["bot-1", "nowhere"])
+    }
+
+    // MARK: - Helper runs
+
+    @Test("an auto review whose thread is not here is counted, not listed")
+    func detachedHelpersAreCounted() {
+        let root = "0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6"
+        // A guardian rollout whose root aged off the board: no parent link,
+        // so it would surface as a piece of work of its own.
+        let guardian = session(
+            .codex, "0198f6d0-11ac-7e54-8b26-3ad70f9c1e83", cwd: "",
+            title: "Review", variant: "auto-review:\(root)", at: 8)
+        let chat = session(.cursor, "nowhere", title: "Plan the week", at: 7)
+        let frame = board([guardian, chat])
+
+        let units = TaskUnitBuilder.units(
+            sessions: frame.sessions, board: frame, ledger: .empty,
+            builder: BoardRowBuilder(board: frame), now: frame.generatedAt
+        )
+        #expect(units.count { $0.isDetachedHelper } == 1)
+
+        let tree = ProjectTree.build(board: frame, units: units)
+        let projectless = try? #require(tree.projects.first)
+        #expect(projectless?.isProjectless == true)
+        #expect(projectless?.helperCount == 1)
+        #expect(projectless?.checkouts.flatMap(\.units).map(\.title) == ["Plan the week"])
+
+        let wall = TaskUnitGrouping.groups(for: units, board: frame, groupBy: .project)
+        #expect(wall.map(\.title) == ["Projectless"])
+        #expect(wall.first?.helperCount == 1)
+        #expect(wall.first?.units.map(\.title) == ["Plan the week"])
+    }
+
+    @Test("a finished helper is counted with the finished work, on both surfaces")
+    func finishedHelpersAreFinishedWork() {
+        var guardian = session(
+            .codex, "0198f6d0-11ac-7e54-8b26-3ad70f9c1e83", cwd: "",
+            title: "Review", variant: "auto-review:0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6", at: 8)
+        guardian.state = .ended(reason: .exited)
+        guardian.isAlive = false
+        let chat = session(.cursor, "nowhere", title: "Plan the week", at: 7)
+        let frame = board([guardian, chat])
+
+        let units = TaskUnitBuilder.units(
+            sessions: frame.sessions, board: frame, ledger: .empty,
+            builder: BoardRowBuilder(board: frame), now: frame.generatedAt
+        )
+        let projectless = ProjectTree.build(board: frame, units: units).projects.first
+        #expect(projectless?.helperCount == 0)
+        #expect(projectless?.checkouts.first?.hiddenCount == 1)
+        #expect(projectless?.checkouts.first?.units.map(\.title) == ["Plan the week"])
+        // The wall is handed the live units, and the Ended section the rest.
+        let live = TaskUnitGrouping.split(units).live
+        #expect(TaskUnitGrouping.groups(for: units, board: frame, groupBy: .project)
+            .first?.helperCount == 0)
+        #expect(live.map(\.title) == ["Plan the week"])
+    }
+
+    @Test("a helper with its thread on the board folds under the thread instead")
+    func attachedHelpersFold() {
+        let rootID = "0198f4c2-77bd-7a10-b3e9-5c2d84f10ab6"
+        let root = session(.codex, rootID, cwd: "", title: "Plan the week", at: 9)
+        let guardian = session(
+            .codex, "0198f6d0-11ac-7e54-8b26-3ad70f9c1e83", cwd: "", parent: root.key,
+            title: "Review", variant: "auto-review:\(rootID)", at: 8)
+        let frame = board([root, guardian])
+
+        let units = TaskUnitBuilder.units(
+            sessions: frame.sessions, board: frame, ledger: .empty,
+            builder: BoardRowBuilder(board: frame), now: frame.generatedAt
+        )
+        #expect(units.count == 1)
+        #expect(units.first?.memberCount == 2)
+        #expect(units.allSatisfy { !$0.isDetachedHelper })
+        #expect(ProjectTree.build(board: frame, units: units).projects.first?.helperCount == 0)
     }
 }

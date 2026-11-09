@@ -63,6 +63,7 @@ final class ZoneNode: SKNode {
         border.lineWidth = dashed.lineWidth
         border.fillColor = .clear
         border.zPosition = dashed.zPosition
+        border.strokeShader = dashed.strokeShader
 
         headerRule.strokeColor = theme.hairlineStrong
         headerRule.lineWidth = 1
@@ -164,7 +165,7 @@ final class ZoneNode: SKNode {
         if lastTitle != area.title {
             lastTitle = area.title
             title.attributedText = SceneText.label(
-                area.title, size: 12, weight: .bold, color: theme.textPrimary
+                CoreVocabulary.localized(area.title), size: 12, weight: .bold, color: theme.textPrimary
             )
             labelsNeedFitting = true
         }
@@ -364,12 +365,12 @@ final class ZoneNode: SKNode {
         // "0 meeting" is a sentence about nothing. A company's meeting room
         // stands there whether or not it is in use, and the word for that is
         // free.
-        case .meeting: occupancy == 0 ? "free" : "\(occupancy) meeting"
+        case .meeting: occupancy == 0 ? L10n.Aviary.Room.free : L10n.Aviary.Room.meeting(count: occupancy)
         case .breakArea:
             overflow > 0
-                ? "\(occupancy) resting · +\(overflow) more"
-                : "\(occupancy) resting"
-        case .office: "\(occupancy) live"
+                ? L10n.Aviary.Room.restingMore(count: occupancy, more: overflow)
+                : L10n.Aviary.Room.resting(count: occupancy)
+        case .office: L10n.Aviary.Room.live(count: occupancy)
         }
     }
 }
@@ -394,6 +395,10 @@ final class TableNode: SKNode {
     private var lastFrame: CGRect = .null
     private var lastStateKey: String?
     private var lastTitle: String?
+    /// Whether the projector's breath is idle motion — the table's head has
+    /// stopped working — and so waits for the room to stir rather than
+    /// looping.
+    private var breathesOnBeat = false
 
     init(theme: SceneTheme) {
         super.init()
@@ -480,6 +485,7 @@ final class TableNode: SKNode {
             lastStateKey = key
             projection.removeAllActions()
             glow.removeAllActions()
+            breathesOnBeat = false
             guard let state else {
                 projection.color = theme.screenOff
                 glow.alpha = 0
@@ -490,6 +496,12 @@ final class TableNode: SKNode {
             glow.color = color
             glow.alpha = 0.3
             guard !reduceMotion else { return }
+            // A handover that is still going breathes all the time; one whose
+            // head has gone quiet breathes when the room stirs.
+            guard state.isActive else {
+                breathesOnBeat = true
+                return
+            }
             glow.run(
                 .repeatForever(
                     .sequence([
@@ -509,6 +521,27 @@ final class TableNode: SKNode {
             let rect = SceneGeometry.scene(from: table.frame)
             plate.position = CGPoint(x: rect.minX + 10, y: rect.maxY - 12)
         }
+    }
+
+    /// Whether the projector's light is changing right now.
+    var isAnimating: Bool { glow.hasActions() || projection.hasActions() }
+
+    /// Whether the table has idle motion to play when the room stirs.
+    var hasIdleMotion: Bool { breathesOnBeat }
+
+    /// One breath of the projector, for stir number `round` of the room.
+    func beat(id: String, round: UInt64) {
+        guard breathesOnBeat, glow.action(forKey: "light") == nil,
+              SceneIdleBeat.joins(id, round: round)
+        else { return }
+        glow.run(
+            .sequence([
+                .wait(forDuration: SceneIdleBeat.delay(id, round: round)),
+                .fadeAlpha(to: 0.46, duration: 1.2),
+                .fadeAlpha(to: 0.3, duration: 1.2)
+            ]),
+            withKey: "light"
+        )
     }
 }
 
@@ -628,13 +661,37 @@ enum SceneRoomChrome {
     /// The dash, in points: mark, gap.
     static let dash: [CGFloat] = [5, 4]
 
-    /// The dashed border for a room's rectangle, in scene space.
+    /// The border for a room's rectangle, in scene space: one unbroken
+    /// rounded rectangle, which ``dashShader`` breaks into dashes as it is
+    /// drawn.
     static func border(in rect: CGRect) -> CGPath {
         let inner = rect.insetBy(dx: inset, dy: inset)
         guard inner.width > 0, inner.height > 0 else { return CGMutablePath() }
         return CGPath(roundedRect: inner, cornerWidth: 3, cornerHeight: 3, transform: nil)
-            .copy(dashingWithPhase: 0, lengths: dash)
     }
+
+    /// Cuts a stroke into ``dash`` on the GPU, measured along the path from
+    /// its start — the same dashes `CGPath.copy(dashingWithPhase:lengths:)`
+    /// makes.
+    ///
+    /// ## Why not just dash the path
+    ///
+    /// `SKShapeNode` builds the geometry of its stroke again on every frame it
+    /// draws, and a dashed rounded rectangle is a hundred-odd separate pieces,
+    /// each with its own ends and its own share of a curve. Every room on
+    /// screen has one, so the borders were the largest single cost in a frame
+    /// of the office — more than every sprite in it put together. An unbroken
+    /// rectangle is nine pieces; the fragment shader leaves out the gaps.
+    static let dashShader: SKShader = {
+        let mark = dash[0]
+        let period = dash[0] + dash[1]
+        return SKShader(source: """
+        void main() {
+            if (mod(v_path_distance, \(period)) >= \(mark)) { discard; }
+            gl_FragColor = SKDefaultShading();
+        }
+        """)
+    }()
 
     /// A room's dashed border node, ready to be given a path.
     static func borderNode(theme: SceneTheme) -> SKShapeNode {
@@ -643,6 +700,7 @@ enum SceneRoomChrome {
         node.lineWidth = 1
         node.fillColor = .clear
         node.zPosition = 0.4
+        node.strokeShader = dashShader
         return node
     }
 }

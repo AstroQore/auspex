@@ -30,6 +30,15 @@ import Foundation
 ///   is somebody else's business.
 /// - ``Kind/titleContains(_:)`` — the escape hatch, for the sessions that
 ///   share a word and nothing else.
+///
+/// ## The one kind that hides nothing
+///
+/// ``Kind/scratchPrefix(_:)`` lives in the same list because it is the same
+/// gesture — "this folder is not what I opened the board to read" — and a
+/// person looking for it will look where the folder rules are. What it does
+/// is different, and it never reaches ``IgnoreRules/matches(_:projectKey:claims:)``:
+/// the sessions stay on the board, and their folder stops being a project.
+/// See ``ScratchRules``.
 public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
     /// What the rule matches on.
     public enum Kind: Sendable, Hashable {
@@ -44,6 +53,17 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
         case harness(Harness)
         /// A substring of the session's title, case-insensitive.
         case titleContains(String)
+        /// A directory whose sessions stay on the board but make no project:
+        /// they go to their harness's scratch section instead. Not an ignore
+        /// at all — see the type's documentation.
+        case scratchPrefix(String)
+
+        /// `true` for the kinds that take a session off the board. The one
+        /// that does not is ``scratchPrefix(_:)``.
+        public var hides: Bool {
+            if case .scratchPrefix = self { return false }
+            return true
+        }
 
         /// The name shown in the rules list.
         public var label: String {
@@ -53,6 +73,7 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
             case .promptPrefix: "Prompt starts with"
             case .harness: "Harness"
             case .titleContains: "Title contains"
+            case .scratchPrefix: "Scratch folder"
             }
         }
 
@@ -61,7 +82,8 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
         public var value: String {
             switch self {
             case .pathPrefix(let value), .project(let value),
-                 .promptPrefix(let value), .titleContains(let value):
+                 .promptPrefix(let value), .titleContains(let value),
+                 .scratchPrefix(let value):
                 value
             case .harness(let harness): harness.displayName
             }
@@ -76,20 +98,29 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
             case .promptPrefix: "promptPrefix"
             case .harness: "harness"
             case .titleContains: "titleContains"
+            case .scratchPrefix: "scratchPrefix"
             }
         }
 
         /// A kind without its payload — what a picker offers and what a
         /// prefilled sheet is opened with.
         ///
-        /// In Core rather than in the settings pane because the same five
+        /// In Core rather than in the settings pane because the same
         /// choices appear in three places (the pane's add row, the card's
-        /// context menu, the sidebar's), and three lists of five would be
+        /// context menu, the sidebar's), and three lists of them would be
         /// three chances for one of them to be missing a kind.
         public enum Tag: String, CaseIterable, Sendable, Identifiable, Codable {
-            case pathPrefix, project, promptPrefix, harness, titleContains
+            case pathPrefix, project, promptPrefix, harness, titleContains, scratchPrefix
 
             public var id: String { rawValue }
+
+            /// Whether the value is a folder, which the field and the list
+            /// set in a monospaced face.
+            public var takesPath: Bool { self == .pathPrefix || self == .scratchPrefix }
+
+            /// The kinds that hide a session — what a sheet titled "hide these
+            /// sessions" offers. The settings pane offers every case.
+            public static var hidingCases: [Tag] { allCases.filter { $0 != .scratchPrefix } }
 
             /// The picker's label.
             public var label: String {
@@ -104,6 +135,7 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
                 case .promptPrefix: "chore:"
                 case .harness: "A harness's name"
                 case .titleContains: "nightly"
+                case .scratchPrefix: "~/Downloads"
                 }
             }
 
@@ -120,6 +152,9 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
                     "Hides every session of one harness."
                 case .titleContains:
                     "Hides sessions whose title contains this, ignoring case."
+                case .scratchPrefix:
+                    "Keeps sessions in that folder on the board, under their harness's "
+                        + "scratch, instead of making the folder a project."
                 }
             }
         }
@@ -132,6 +167,7 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
             case .promptPrefix: .promptPrefix
             case .harness: .harness
             case .titleContains: .titleContains
+            case .scratchPrefix: .scratchPrefix
             }
         }
 
@@ -145,6 +181,7 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
             case .project: return .project(value)
             case .promptPrefix: return .promptPrefix(value)
             case .titleContains: return .titleContains(value)
+            case .scratchPrefix: return .scratchPrefix(ProjectPath.normalize(value))
             case .harness:
                 if let harness = Harness(rawValue: value) { return .harness(harness) }
                 guard let harness = Harness.allCases.first(where: {
@@ -162,13 +199,15 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
             case .promptPrefix: .promptPrefix("")
             case .harness: .harness(.claudeCode)
             case .titleContains: .titleContains("")
+            case .scratchPrefix: .scratchPrefix("")
             }
         }
 
         var storedValue: String {
             switch self {
             case .pathPrefix(let value), .project(let value),
-                 .promptPrefix(let value), .titleContains(let value):
+                 .promptPrefix(let value), .titleContains(let value),
+                 .scratchPrefix(let value):
                 value
             case .harness(let harness): harness.rawValue
             }
@@ -180,6 +219,7 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
             case "project": self = .project(storedValue)
             case "promptPrefix": self = .promptPrefix(storedValue)
             case "titleContains": self = .titleContains(storedValue)
+            case "scratchPrefix": self = .scratchPrefix(storedValue)
             case "harness":
                 guard let harness = Harness(rawValue: storedValue) else { return nil }
                 self = .harness(harness)
@@ -251,14 +291,21 @@ public struct IgnoreRule: Codable, Sendable, Hashable, Identifiable {
 public struct IgnoreRules: Sendable, Equatable {
     /// Every rule, enabled or not, in display order.
     public let all: [IgnoreRule]
-    /// The ones that are on.
+    /// The ones that are on and hide something. A scratch folder is neither
+    /// counted nor asked here — it hides nothing.
     public let active: [IgnoreRule]
+    /// The folders the enabled scratch rules name, for ``PlacementService``.
+    public let scratchPrefixes: [String]
 
     public static let none = IgnoreRules([])
 
     public init(_ rules: [IgnoreRule]) {
         all = rules
-        active = rules.filter(\.isEnabled)
+        active = rules.filter { $0.isEnabled && $0.kind.hides }
+        scratchPrefixes = rules.compactMap { rule in
+            guard rule.isEnabled, case .scratchPrefix(let path) = rule.kind else { return nil }
+            return path
+        }
     }
 
     /// `true` when nothing is being hidden and the board can skip the filter.
@@ -337,6 +384,11 @@ public struct IgnoreRules: Sendable, Equatable {
             let value = needle.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !value.isEmpty, let title = session.identity.title else { return false }
             return title.localizedCaseInsensitiveContains(value)
+
+        case .scratchPrefix:
+            // Placement, not visibility: never in `active`, and answered here
+            // only so the switch says so.
+            return false
         }
     }
 }

@@ -39,7 +39,7 @@ final class TaskDeliveryModel {
         requestKey = nextKey
         guard let path else {
             state = .loaded(.unknown(
-                reason: "No local checkout was recorded for any session on this task."
+                reason: L10n.Delivery.noCheckout
             ))
             return
         }
@@ -105,23 +105,23 @@ struct TaskDeliverySection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text("Delivery")
+                Text(L10n.Delivery.title)
                     .auspexLabel(AuspexType.labelLarge)
                     .foregroundStyle(AuspexPalette.text3)
-                Text("observed local Git")
+                Text(L10n.Delivery.observedLocalGit)
                     .font(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.stateThinking)
                 Spacer(minLength: 0)
                 Button {
                     Task { await model.load(unit: unit, board: board, force: true) }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label(L10n.Delivery.refresh, systemImage: "arrow.clockwise")
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 }
                 .buttonStyle(.auspex)
                 .disabled(model.state == .loading)
-                .help("Read this checkout again. No fetch or network request is made.")
+                .help(L10n.Delivery.refreshHelp)
             }
 
             Group {
@@ -129,7 +129,7 @@ struct TaskDeliverySection: View {
                 case .idle, .loading:
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("Reading the recorded checkout…")
+                        Text(L10n.Delivery.reading)
                             .font(AuspexType.body)
                             .foregroundStyle(AuspexPalette.text3)
                     }
@@ -143,27 +143,39 @@ struct TaskDeliverySection: View {
         }
     }
 
+    private func treeLabel(_ state: DeliverySnapshot.WorkingTreeState) -> String {
+        switch state {
+        case .clean: L10n.Delivery.Tree.clean
+        case .dirty: L10n.Delivery.Tree.dirty
+        case .unknown: L10n.Delivery.Tree.unknown
+        }
+    }
+
     private func snapshotView(_ snapshot: DeliverySnapshot) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            deliveryProperty("Working tree", snapshot.workingTree.rawValue, tint: stateTint(snapshot))
-            if let branch = snapshot.branch { deliveryProperty("Branch", branch, mono: true) }
-            if let path = snapshot.repositoryPath { deliveryProperty("Checkout", path, mono: true) }
+            deliveryProperty(L10n.Delivery.workingTree, treeLabel(snapshot.workingTree), tint: stateTint(snapshot))
+            if let branch = snapshot.branch { deliveryProperty(L10n.Delivery.branch, branch, mono: true) }
+            if let path = snapshot.repositoryPath { deliveryProperty(L10n.Delivery.checkout, path, mono: true) }
             if let count = snapshot.changedFileCount {
-                let suffix = snapshot.changedFilesTruncated ? "+ shown with a cap" : ""
-                deliveryProperty("Changed", "\(count) file\(count == 1 ? "" : "s") \(suffix)")
+                deliveryProperty(
+                    L10n.Delivery.changed,
+                    snapshot.changedFilesTruncated
+                        ? L10n.Delivery.changedFilesCapped(count: count)
+                        : L10n.Delivery.changedFiles(count: count)
+                )
             }
-            if let stat = snapshot.diffstat { deliveryProperty("Diffstat", stat) }
+            if let stat = snapshot.diffstat { deliveryProperty(L10n.Delivery.diffstat, stat) }
             if let commit = snapshot.lastCommit {
-                deliveryProperty("Last commit", "\(commit.shortHash) · \(commit.subject)", mono: true)
+                deliveryProperty(L10n.Delivery.lastCommit, "\(commit.shortHash) · \(commit.subject)", mono: true)
             }
             if snapshot.ahead != nil || snapshot.behind != nil {
                 deliveryProperty(
-                    "Upstream",
-                    "ahead \(snapshot.ahead ?? 0) · behind \(snapshot.behind ?? 0) · local refs only"
+                    L10n.Delivery.upstream,
+                    L10n.Delivery.aheadBehind(ahead: snapshot.ahead ?? 0, behind: snapshot.behind ?? 0)
                 )
             }
             if let diagnostic = snapshot.diagnostic {
-                deliveryProperty("Observation", diagnostic, tint: AuspexPalette.stateStale)
+                deliveryProperty(L10n.Delivery.observation, diagnostic, tint: AuspexPalette.stateStale)
             }
             if !snapshot.changedFiles.isEmpty {
                 Divider().overlay(AuspexPalette.line)
@@ -186,7 +198,7 @@ struct TaskDeliverySection: View {
             }
             HStack {
                 Spacer()
-                Text("checked \(RelativeTimeText.since(snapshot.checkedAt)) · no fetch")
+                Text(L10n.Delivery.checked(time: RelativeTimeText.since(snapshot.checkedAt)))
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
             }
@@ -234,24 +246,24 @@ struct TaskReviewRecordSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Review record")
+            Text(L10n.Delivery.reviewRecord)
                 .auspexLabel(AuspexType.labelLarge)
                 .foregroundStyle(AuspexPalette.text3)
             VStack(alignment: .leading, spacing: 12) {
                 bucket(
-                    "Verification evidence",
+                    L10n.Delivery.evidence,
                     entries: dossier.evidence,
-                    empty: "No verification evidence has been recorded."
+                    empty: L10n.Delivery.noEvidence
                 )
                 if !dossier.decisions.isEmpty {
                     Divider().overlay(AuspexPalette.line)
-                    bucket("Decisions", entries: dossier.decisions, empty: "")
+                    bucket(L10n.Delivery.decisions, entries: dossier.decisions, empty: "")
                 }
                 Divider().overlay(AuspexPalette.line)
                 bucket(
-                    "Risks",
+                    L10n.Delivery.risks,
                     entries: dossier.risks,
-                    empty: "No risk note has been recorded; that is not proof of no risk."
+                    empty: L10n.Delivery.noRisks
                 )
             }
             .padding(12)
@@ -300,32 +312,32 @@ struct TaskHandoffSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Handoff")
+            Text(L10n.Delivery.handoff)
                 .auspexLabel(AuspexType.labelLarge)
                 .foregroundStyle(AuspexPalette.text3)
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Copy a bounded context packet")
+                    Text(L10n.Delivery.handoffTitle)
                         .font(AuspexType.body)
                         .foregroundStyle(AuspexPalette.text2)
-                    Text("Goal, phase, current state, team, delivery, record, and resume hints. Nothing is sent.")
+                    Text(L10n.Delivery.handoffNote)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 }
                 Spacer(minLength: 8)
                 Button {
                     let packet = delivery.packet(unit: unit, log: log, board: board)
-                    CopyToast.copy(packet.text, what: "the handoff packet")
+                    CopyToast.copy(packet.text, what: L10n.Copy.What.handoffPacket)
                 } label: {
-                    Label("Copy packet", systemImage: "doc.on.doc")
+                    Label(L10n.Delivery.copyPacket, systemImage: "doc.on.doc")
                         .font(AuspexType.caption)
                 }
                 .buttonStyle(.auspex(cornerRadius: 7))
                 .disabled(delivery.snapshot == nil)
                 .help(
                     delivery.snapshot == nil
-                        ? "Wait for the local delivery check to finish"
-                        : "Copy the packet. Nothing is sent."
+                        ? L10n.Delivery.waitForCheck
+                        : L10n.Delivery.copyPacketHelp
                 )
             }
             .padding(12)

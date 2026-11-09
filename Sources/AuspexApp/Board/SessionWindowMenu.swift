@@ -27,13 +27,13 @@ struct SessionWindowMenu<Label: View>: View {
 
     var body: some View {
         Menu {
-            Section("Show sessions active in the last") {
+            Section(L10n.Board.Window.menuTitle) {
                 Picker(
-                    "Show sessions active in the last",
+                    L10n.Board.Window.menuTitle,
                     selection: Binding(get: { window }, set: onSelect)
                 ) {
                     ForEach(SessionWindow.allCases) { option in
-                        Text(option.title).tag(option)
+                        Text(option.localizedTitle).tag(option)
                     }
                 }
                 .pickerStyle(.inline)
@@ -48,7 +48,7 @@ struct SessionWindowMenu<Label: View>: View {
                 Text(hint)
             }
             Divider()
-            Text("Everything stays in the store — this is how much is drawn.")
+            Text(L10n.Board.Window.menuNote)
         } label: {
             label
         }
@@ -89,7 +89,7 @@ struct SessionWindowLabel: View {
             Image(systemName: "clock")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(AuspexPalette.text3)
-            Text(window.shortTitle).foregroundStyle(AuspexPalette.text2)
+            Text(window.localizedShortTitle).foregroundStyle(AuspexPalette.text2)
             if isNarrowing {
                 Circle()
                     .fill(AuspexPalette.text3)

@@ -75,6 +75,38 @@ final class OfficeScene: SKScene {
     /// Whether the system asked for less motion.
     private(set) var reduceMotion = false
 
+    /// Whether this scene is Now's stage rather than the aviary.
+    ///
+    /// The stage composes its own frame — the rooms with people in them,
+    /// urgent ones first, packed to fit the strip — rather than drawing the
+    /// map, and keeps it framed as it changes. See ``StageComposition``. Set
+    /// once, before the first board.
+    var composesStage = false
+
+    /// Who a watch signal is about, for the stage's ordering.
+    private var stageWatched: Set<SessionKey> = []
+
+    /// The strip the stage is composed for: the view's own bounds when there
+    /// is a view, and the last size it was told about otherwise.
+    ///
+    /// The view's bounds rather than the scene's `size`. A `resizeFill`
+    /// scene's size follows its view's on SpriteKit's schedule, not on the
+    /// view's, so a board frame arriving between the two composed the stage
+    /// for a strip the view was no longer — a few points wide during a
+    /// layout pass — and every later frame put it back to that size: the
+    /// grid with no rooms on it.
+    private var stageSize: CGSize {
+        if let bounds = view?.bounds.size, bounds.width > 0, bounds.height > 0 { return bounds }
+        return lastViewSize
+    }
+
+    /// The last size the view reported.
+    private var lastViewSize: CGSize = .zero
+
+    /// How much air a fit leaves around what it frames. None on the stage:
+    /// its composition is already laid out for the strip, edge to edge.
+    var fitPadding: CGFloat { composesStage ? 1 : SceneViewport.fitPadding }
+
     /// How much of the world beyond the window keeps animating, so that a pan
     /// does not reveal a room in the middle of catching up.
     private static let cullMargin: CGFloat = 240
@@ -121,7 +153,38 @@ final class OfficeScene: SKScene {
     /// the offscreen renderer.
     func viewSizeChanged(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
+        lastViewSize = size
         cameraController.setViewSize(size)
+        // The stage is laid out *for* the strip, so a strip of a new size is
+        // a new composition rather than the old one seen through a wider
+        // window.
+        restage(size: size)
+        if !hasFitted { fitAll() }
+        cameraDidChange()
+    }
+
+    /// Tells the stage who the watch signals are about.
+    func setStageWatched(_ watched: Set<SessionKey>) {
+        guard composesStage, watched != stageWatched else { return }
+        stageWatched = watched
+        restage(size: stageSize)
+    }
+
+    /// Composes the stage again from the last board, for a strip that
+    /// changed size or a change in who is being watched.
+    private func restage(size: CGSize) {
+        guard composesStage, size.width > 0, size.height > 0 else { return }
+        director.stage = SceneDirector.StageInput(size: size, watched: stageWatched)
+        guard director.needsStageRefresh else { return }
+        if director.refresh() { layoutMoved() }
+        requestFrame()
+    }
+
+    /// Everything that follows from the floor plan having moved.
+    private func layoutMoved() {
+        cameraController.setContentRect(director.contentRect)
+        host?.setWorld(director.frame.contentRect)
+        rebuildBackdrop()
         if !hasFitted { fitAll() }
         cameraDidChange()
     }
@@ -155,23 +218,26 @@ final class OfficeScene: SKScene {
         for session in board.sessions { byKey[session.key] = session }
         sessions = byKey
 
+        if composesStage {
+            let strip = stageSize
+            if strip.width > 0, strip.height > 0 {
+                director.stage = SceneDirector.StageInput(size: strip, watched: stageWatched)
+            }
+        }
         let moved = director.apply(board, attention: attention)
         overviewIsStale = true
-        if moved {
-            cameraController.setContentRect(director.contentRect)
-            host?.setWorld(director.frame.contentRect)
-            rebuildBackdrop()
-            if !hasFitted { fitAll() }
-            cameraDidChange()
-        }
+        if moved { layoutMoved() }
 
         // Focus before selection: a session that has just been picked in the
         // sidebar is usually in the project that was picked with it, and
         // framing the room first means the desk is already on screen by the
         // time the selection asks whether it needs to be.
+        //
+        // Not on the stage: its board is already narrowed to the focused
+        // project, so the composition *is* that room, framed.
         if self.focusedProject != .some(focusedProject) {
             self.focusedProject = .some(focusedProject)
-            apply(focus: focusedProject, animated: true)
+            if !composesStage { apply(focus: focusedProject, animated: true) }
         }
 
         if self.selected != selected {
@@ -179,6 +245,49 @@ final class OfficeScene: SKScene {
             director.select(selected)
             if let selected { revealDesk(of: selected) }
         }
+        // Whatever the board changed, a still office has to draw it; if it
+        // changed nothing that moves, the view stops again after one frame.
+        requestFrame()
+    }
+
+    /// Hangs Now's balloons over the people they are about.
+    ///
+    /// Separate from ``update(board:selected:focusedProject:reduceMotion:theme:zones:attention:)``
+    /// because the aviary never sends any, and because the balloons change on
+    /// a different rhythm from the room: their stopwatches are re-read from
+    /// the scene's own clock when a reading is due to change — at most every
+    /// ``captionStep`` seconds — while the room only moves when the board
+    /// does.
+    func setCaptions(_ captions: [SessionKey: SceneCaption]) {
+        hasCaptions = !captions.isEmpty
+        guard director.apply(captions: captions) else { return }
+        // New words were just set; the stopwatches are read again on the next
+        // frame and scheduled from there.
+        nextCaptionTick = 0
+        requestFrame()
+    }
+
+    private var hasCaptions = false
+    /// When the balloons' stopwatches are next re-read, in
+    /// `CACurrentMediaTime()` seconds. Infinite when none of them is due to
+    /// change on its own.
+    private var nextCaptionTick: TimeInterval = 0
+
+    /// The shortest gap between two re-readings of the balloons'
+    /// stopwatches. Under ten minutes a reading has seconds in it and would
+    /// otherwise change — and cost a frame — every second; a balloon is read
+    /// at a glance, and a glance does not need the units digit.
+    static let captionStep: TimeInterval = 5
+
+    /// Asks the view to draw, because something in the picture changed.
+    ///
+    /// A view whose last frame had nothing moving in it has stopped its clock
+    /// (see `OfficeSKView`), so every change that does not arrive through an
+    /// action — a board frame, a balloon, the pointer, new art — says so here.
+    /// Without a view, which is how the tests and the offscreen renderer hold
+    /// a scene, it does nothing.
+    func requestFrame() {
+        (view as? OfficeSKView)?.wake()
     }
 
     // MARK: - Pointing the camera
@@ -217,13 +326,16 @@ final class OfficeScene: SKScene {
         }
     }
 
-    /// Frames the whole building.
+    /// Frames the whole building — or, on the stage, the whole composition,
+    /// at exactly the zoom it was laid out for.
     func fitAll(animated: Bool = false) {
         cameraController.setViewSize(size)
         let current = viewport
         guard current.content.width > 0, current.size.width > 0 else { return }
         hasFitted = true
-        setViewport(current.fitted(), animated: animated, framingEverything: true)
+        setViewport(
+            current.fitted(padding: fitPadding), animated: animated, framingEverything: true
+        )
     }
 
     /// Steps the zoom by rungs of the ladder, for the overlay's buttons and
@@ -248,6 +360,13 @@ final class OfficeScene: SKScene {
         guard let rect = director.deskRect(for: key) else { return }
         hasFitted = true
         setViewport(viewport.focused(on: rect.insetBy(dx: -110, dy: -80)), animated: animated)
+    }
+
+    /// Frames Now's stage: its whole composition, which was laid out for the
+    /// strip at the zoom the strip is drawn at — so the camera keeps it framed
+    /// as it changes, until the reader pans or zooms themselves.
+    func frameStage() {
+        fitAll()
     }
 
     /// Frames one project's room, or the whole building when there is no
@@ -297,6 +416,16 @@ final class OfficeScene: SKScene {
     /// Whether a session has walked out of its company's door. Likewise.
     func hasDeparted(_ key: SessionKey) -> Bool { director.hasDeparted(key) }
 
+    /// Whether anything the camera can see is in the middle of an action —
+    /// what decides whether the view keeps drawing. Likewise.
+    var hasVisibleMotion: Bool { director.isAnimating() }
+
+    /// When the balloons' stopwatches are next re-read. Likewise.
+    var nextCaptionRefresh: TimeInterval { nextCaptionTick }
+
+    /// When the room next stirs, if anything on screen would. Likewise.
+    var nextIdleBeat: TimeInterval? { director.nextBeat }
+
     // MARK: - The clock
 
     /// Everything that has to happen because the camera moved.
@@ -329,12 +458,38 @@ final class OfficeScene: SKScene {
             cameraController.mirror(host.viewport)
             director.setCameraScale(cameraController.node.xScale)
         }
+        // A stage composed for a strip the view no longer is — a resize that
+        // reached the view and not the scene — is composed again before the
+        // frame that would show it.
+        if composesStage, let strip = view?.bounds.size, strip.width > 0, strip.height > 0,
+           director.stage?.size != strip {
+            restage(size: strip)
+        }
         // At most one hit test per drawn frame, however many times the pointer
         // moved between them.
         flushHover()
 
         let live = cameraController.viewport
         director.cull(to: live.visibleRect, margin: Self.cullMargin)
+
+        // The balloons' stopwatches, when the next reading on screen is due
+        // and no sooner than every few seconds, and only while the scene is
+        // running: a paused scene is never asked, so a hidden stage costs
+        // nothing here at all.
+        if hasCaptions, currentTime >= nextCaptionTick {
+            let hold = director.tickCaptions(now: Date())
+            nextCaptionTick = hold.map { currentTime + max(Self.captionStep, $0) } ?? .infinity
+        }
+        // After the cull, so only what is on screen stirs.
+        director.beat(at: currentTime)
+
+        // And after the stopwatches, whose new words may have widened one.
+        if director.captionsNeedLayout {
+            director.layoutCaptions(
+                visible: live.visibleRect,
+                safeAreas: composesStage ? stageSafeAreas(live) : []
+            )
+        }
 
         // A scene nobody is touching publishes nothing: the minimap is a
         // SwiftUI view, and handing it an equal value thirty times a second
@@ -353,6 +508,110 @@ final class OfficeScene: SKScene {
         guard overview != publishedOverview else { return }
         publishedOverview = overview
         onOverview?(overview)
+    }
+
+    /// Tells the view whether the frame about to be drawn has anything moving
+    /// in it, once the actions for it have run.
+    ///
+    /// A frame with nothing moving is the last one worth drawing until
+    /// something changes, and the view stops its clock after it. What can
+    /// still change on its own — a balloon's stopwatch, the room's next idle
+    /// stir — is handed over as the time to wake up for.
+    override func didFinishUpdate() {
+        super.didFinishUpdate()
+        guard let office = view as? OfficeSKView else { return }
+        let time = CACurrentMediaTime()
+        let moving = pendingHover != nil || (host?.isMoving ?? false)
+            || director.isAnimating(at: time)
+        office.frameFinished(moving: moving, nextWake: moving ? nil : nextWake)
+    }
+
+    /// What no balloon on the stage may cover, in scene coordinates: the tag
+    /// row along the top — the view's name and hint on the left, its fold
+    /// chevron on the right — the legend in the bottom right, and the
+    /// `+N rooms` tile.
+    private func stageSafeAreas(_ viewport: SceneViewport) -> [CGRect] {
+        let visible = viewport.visibleRect
+        guard viewport.zoom > 0, visible.width > 0 else { return [] }
+        let perPoint = 1 / viewport.zoom
+        let insets = StageComposer.Insets.stage
+        var areas = [
+            CGRect(
+                x: visible.minX, y: visible.maxY - insets.top * perPoint,
+                width: visible.width, height: insets.top * perPoint
+            ),
+            CGRect(
+                x: visible.maxX - Self.legendWidth * perPoint, y: visible.minY,
+                width: Self.legendWidth * perPoint, height: insets.bottom * perPoint
+            ),
+        ]
+        if let tile = director.composition.overflowTile {
+            areas.append(SceneGeometry.scene(from: tile))
+        }
+        return areas
+    }
+
+    /// How wide the stage's legend is, in view points, with its margin.
+    private static let legendWidth: CGFloat = 340
+
+    /// Lands everybody mid-walk in their seat and every sliding desk at the
+    /// end of its slide. The view calls it when it stops its clock for good,
+    /// so a picture held while nobody is looking is never half a walk — see
+    /// ``SceneDirector/settleMotion()``.
+    func settleMotion() {
+        director.settleMotion()
+    }
+
+    /// How many people are mid-walk. For the tests that stand in for a pair of
+    /// eyes.
+    var walkerCount: Int { director.walkerCount }
+
+    /// Whether `key` is drawn in their place rather than being carried to it.
+    /// Likewise.
+    func isSeated(_ key: SessionKey) -> Bool { director.isSeated(key) }
+
+    /// The stage as it was last composed. Likewise.
+    var composition: StageComposition { director.composition }
+
+    /// Whether a balloon hangs over the desk `key` is drawn at. Likewise.
+    func showsCaption(over key: SessionKey) -> Bool {
+        director.desk(for: key)?.hasCaption ?? false
+    }
+
+    /// Where each balloon the scene draws is, in scene coordinates, and how
+    /// many are folded into dots. Likewise.
+    var drawnCaptions: (frames: [CGRect], dots: Int) {
+        var frames: [CGRect] = []
+        var dots = 0
+        for slot in director.frame.slots {
+            guard let key = slot.session, let node = director.desk(for: key), node.showsCaption
+            else { continue }
+            if let frame = node.drawnCaptionFrame { frames.append(frame) } else { dots += 1 }
+        }
+        return (frames, dots)
+    }
+
+    /// Where the balloon over `key` was placed, `nil` when there is none.
+    /// Likewise.
+    func drawnCaptionPlacement(for key: SessionKey) -> CaptionLayout.Placement? {
+        guard let node = director.desk(for: key), node.showsCaption else { return nil }
+        return node.drawnCaptionFrame == nil ? .dot : .lines(0)
+    }
+
+    /// What no balloon on the stage may cover, for the camera as it is.
+    /// Likewise.
+    var captionSafeAreas: [CGRect] { composesStage ? stageSafeAreas(cameraController.viewport) : [] }
+
+    /// When the picture next changes with nobody touching it, in
+    /// `CACurrentMediaTime()` seconds.
+    private var nextWake: TimeInterval? {
+        let caption = hasCaptions && nextCaptionTick.isFinite ? nextCaptionTick : nil
+        switch (caption, director.nextBeat) {
+        case let (caption?, beat?): return min(caption, beat)
+        case let (caption?, nil): return caption
+        case let (nil, beat?): return beat
+        case (nil, nil): return nil
+        }
     }
 
     /// Renders the office as a window `window` points across would show it,
@@ -466,7 +725,11 @@ final class OfficeScene: SKScene {
         // way clicking it in the sidebar does. The camera only moves if the
         // room is not already on screen — a click on a desk in the room the
         // reader is watching should not fly anywhere.
-        if let room = director.room(for: key) {
+        //
+        // Not on the stage: there a click opens the session and nothing else.
+        // Focusing the project would narrow the whole of Now to it, and the
+        // strip would recompose around one room under the pointer.
+        if !composesStage, let room = director.room(for: key) {
             claimFocus(room.projectKey)
             let rect = SceneGeometry.scene(from: room.frame)
             if !viewport.showsAll(of: rect) {
@@ -504,6 +767,7 @@ final class OfficeScene: SKScene {
     /// same picture for a fraction of the work.
     func hover(atLayoutPoint point: CGPoint?) {
         pendingHover = .some(point)
+        requestFrame()
     }
 
     /// Acts on wherever the pointer was last seen, at most once per frame.
@@ -575,18 +839,15 @@ final class OfficeScene: SKScene {
 
     // MARK: - Nameplate copy
 
-    /// What the harness called this session, or the project it is in, or its
-    /// own id — the same fallback chain a card's title uses, so hovering a desk
-    /// and reading a card cannot disagree.
+    /// The same fallback chain a card's title uses, so hovering a desk and
+    /// reading a card cannot disagree — and neither shows a bare id.
     private static func title(for session: SessionSnapshot) -> String {
-        if let title = session.identity.title, !title.isEmpty { return title }
-        if let project = BoardGrouping.projectName(for: session) { return project }
-        return String(session.key.sessionID.prefix(12))
+        BoardRowBuilder.title(for: session, project: BoardGrouping.projectName(for: session))
     }
 
     private static func detail(for session: SessionSnapshot) -> String {
         var parts = [session.key.harness.displayName, session.state.style.label]
-        if session.isStale { parts.append("stale") }
+        if session.isStale { parts.append(L10n.State.stale.lowercased()) }
         return parts.joined(separator: " · ")
     }
 }

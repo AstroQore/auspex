@@ -201,8 +201,8 @@ struct CrewView: View {
                         }
                     } header: {
                         BoardSectionHeader(
-                            title: group.title,
-                            subtitle: group.subtitle,
+                            title: CoreVocabulary.localized(group.title),
+                            subtitle: group.subtitle.map(CoreVocabulary.localized),
                             liveCount: group.liveCount,
                             harness: group.harness
                         )
@@ -452,7 +452,7 @@ struct CrewCard<Avatar: View, Brood: View>: View {
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(session.key.harness.displayName), \(cardTitle), \(session.state.label)"
+            "\(session.key.harness.displayName), \(cardTitle), \(session.state.localizedLabel)"
         )
     }
 
@@ -515,7 +515,7 @@ struct CrewCard<Avatar: View, Brood: View>: View {
             .overlay(
                 Capsule().strokeBorder(AuspexPalette.stateDelegating.opacity(0.45), lineWidth: 1)
             )
-            .accessibilityLabel("\(descendantCount) sessions below this one")
+            .accessibilityLabel(L10n.Crew.sessionsBelow(count: descendantCount))
         }
     }
 
@@ -540,10 +540,10 @@ struct CrewCard<Avatar: View, Brood: View>: View {
     /// in the trace header for whoever wants it.
     private static func word(for reason: SessionEndReason) -> String {
         switch reason {
-        case .exited: "exited"
-        case .killed: "killed"
-        case .processGone: "process gone"
-        case .unknown: "went quiet"
+        case .exited: L10n.Crew.End.exited
+        case .killed: L10n.Crew.End.killed
+        case .processGone: L10n.Crew.End.processGone
+        case .unknown: L10n.Crew.End.wentQuiet
         }
     }
 }
@@ -567,7 +567,7 @@ private struct CrewEndedFold: View {
             Image(systemName: "moon.zzz")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(AuspexPalette.textTertiary)
-            Text("\(sessions.count) asleep")
+            Text(L10n.Crew.asleep(count: sessions.count))
                 .auspexLabel(AuspexType.label)
                 .foregroundStyle(AuspexPalette.textTertiary)
             FlowLayout(spacing: 6, lineSpacing: 6) {
@@ -602,8 +602,8 @@ private struct CrewEndedFold: View {
             .frame(width: 14, height: 14)
             .contentShape(Circle())
             .onTapGesture { onSelect(session.key) }
-            .help("\(session.key.harness.displayName) — finished")
-            .accessibilityLabel("\(session.key.harness.displayName), finished")
+            .help(L10n.Crew.finishedHelp(harness: session.key.harness.displayName))
+            .accessibilityLabel(L10n.Crew.finishedAccessibility(harness: session.key.harness.displayName))
     }
 }
 
@@ -635,8 +635,8 @@ enum CrewCardChrome: Sendable, Hashable {
 
     var badge: (symbol: String, colour: Color, label: String)? {
         switch self {
-        case .blocked: ("exclamationmark", AuspexPalette.statePermission, "waiting for you")
-        case .done: ("checkmark", AuspexPalette.stateWriting, "finished")
+        case .blocked: ("exclamationmark", AuspexPalette.statePermission, L10n.Crew.Badge.waitingForYou)
+        case .done: ("checkmark", AuspexPalette.stateWriting, L10n.Crew.Badge.finished)
         case .none, .over: nil
         }
     }

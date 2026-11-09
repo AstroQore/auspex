@@ -17,20 +17,23 @@ struct HarnessCatalogTests {
     /// Every harness the app claims to watch, in the order it shows them.
     private var featured: [Harness] { AuspexAdapters.featured }
 
-    @Test("eight harnesses are featured, grouped by vendor, Grok Bot after Grok Build")
+    @Test("seven harnesses are featured, grouped by vendor, Grok Bot after Grok Build")
     func featuredOrder() {
         #expect(featured == [
-            .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor,
+            .claudeCode, .codex, .chatgptWork, .cursor,
             .grokBuild, .grokBot, .antigravity
         ])
-        #expect(featured.count == 8)
-        #expect(Set(featured).count == 8)
+        #expect(featured.count == 7)
+        #expect(Set(featured).count == 7)
         let build = try? #require(featured.firstIndex(of: .grokBuild))
         let bot = try? #require(featured.firstIndex(of: .grokBot))
         #expect(build.flatMap { b in bot.map { b + 1 == $0 } } == true)
         // Gemini CLI is the deliberate omission: deprecated, and no adapter
         // reads its store.
         #expect(!featured.contains(.geminiCLI))
+        // Claude Cowork is the other: it runs in the cloud since it merged
+        // with Chat and writes no transcript on this machine.
+        #expect(!featured.contains(.claudeCowork))
     }
 
     @Test("every featured harness has an adapter that actually reads its store")

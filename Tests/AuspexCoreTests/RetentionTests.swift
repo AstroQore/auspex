@@ -158,6 +158,83 @@ struct RetentionTests {
         #expect(hits.first?.snippet.contains("resizers") == true)
     }
 
+    @Test("the batched pass removes what the policy drops, a batch at a time")
+    func batchedPassMatchesThePolicy() async throws {
+        let chatty = Fixtures.key(.claudeCode, "chatty")
+        let quiet = Fixtures.key(.codex, "quiet")
+        let store = try makeStore(withSessions: [chatty, quiet])
+        let repository = SessionRepository(store: store)
+        let day: TimeInterval = 86_400
+
+        // Thirty events read a month ago, then twenty-three recent ones on the
+        // chatty session and three on the quiet one.
+        try repository.insertEvents((0..<30).map {
+            Fixtures.event(.note("stale-\($0)"), key: chatty, at: -30 * day + TimeInterval($0))
+        })
+        try repository.insertEvents((0..<23).map {
+            Fixtures.event(.note("chatty-\($0)"), key: chatty, at: TimeInterval($0))
+        })
+        try repository.insertEvents((0..<3).map {
+            Fixtures.event(.note("quiet-\($0)"), key: quiet, at: TimeInterval($0))
+        })
+        try repository.indexMessage(
+            session: chatty, harness: .claudeCode, role: .user,
+            ts: Fixtures.date(-40 * day), content: "an ancient question about resizers"
+        )
+
+        let job = RetentionJob(store: store, policy: RetentionPolicy(eventsPerSession: 5))
+        // A batch size that leaves a remainder on every rule.
+        let report = try await job.runBatched(now: Fixtures.date(100), batchSize: 4)
+
+        // Age first: the month-old rows go as old rows, not as overflow.
+        #expect(report.eventsOverAgeLimit == 30)
+        #expect(report.eventsOverPerSessionLimit == 18)
+        #expect(report.messagesOverAgeLimit == 1)
+        #expect(try repository.eventCount(key: chatty) == 5)
+        #expect(try repository.eventCount(key: quiet) == 3)
+        // The window kept is the newest one.
+        let kept = try repository.recentEvents(key: chatty, limit: 10)
+        #expect(kept.map(\.timestamp) == (18..<23).map { Fixtures.date(TimeInterval($0)) })
+
+        // Nothing left to do is a pass that does nothing.
+        #expect(try await job.runBatched(now: Fixtures.date(100), batchSize: 4).totalDeleted == 0)
+    }
+
+    @Test("events can be found by when they were observed without a scan")
+    func observedAtIsIndexed() throws {
+        let store = try AuspexStore(inMemory: true)
+        let plan = try store.dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: "EXPLAIN QUERY PLAN SELECT id FROM events WHERE observed_at < ? LIMIT 10",
+                arguments: [0]
+            ).map { $0["detail"] as String? ?? "" }
+        }
+        #expect(plan.contains { $0.contains("events_on_observed_at") })
+    }
+
+    @Test("a maintenance pass purges heartbeats once and then applies retention")
+    func maintenancePass() async throws {
+        let key = Fixtures.key()
+        let store = try makeStore(withSessions: [key])
+        let repository = SessionRepository(store: store)
+        try repository.insertEvents([
+            Fixtures.event(.liveness(alive: true), key: key, at: 0),
+            Fixtures.event(.note("ancient"), key: key, at: -20 * 86_400),
+            Fixtures.event(.note("recent"), key: key, at: 0),
+        ])
+
+        let maintenance = StoreMaintenance(store: store, initialDelay: .zero, interval: .seconds(3_600))
+        let first = try await maintenance.runPass(now: Fixtures.date(60))
+        #expect(first.livenessEventsPurged == 1)
+        #expect(first.retention.eventsOverAgeLimit == 1)
+        #expect(try repository.recentEvents(key: key).map(\.kindLabel) == ["note"])
+
+        let second = try await maintenance.runPass(now: Fixtures.date(60))
+        #expect(second.livenessEventsPurged == nil)
+        #expect(second.totalDeleted == 0)
+    }
+
     @Test("an on-disk store is in incremental auto-vacuum mode")
     func onDiskStoreIsIncrementalAutoVacuum() throws {
         let home = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)

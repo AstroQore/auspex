@@ -31,7 +31,7 @@ enum CoordinationSkillResource {
 
         var description: String {
             switch self {
-            case .missingSkill: "The packaged auspex-coordination resource is missing."
+            case .missingSkill: L10n.Setup.skillMissing
             }
         }
     }

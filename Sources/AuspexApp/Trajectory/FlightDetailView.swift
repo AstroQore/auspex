@@ -6,7 +6,12 @@ private enum FlightDetailTab: String, CaseIterable, Identifiable {
     case moment
     case step
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: String {
+        switch self {
+        case .moment: L10n.Flight.Tab.moment
+        case .step: L10n.Flight.Tab.step
+        }
+    }
 }
 
 /// The window's detail column while Flight is open. Moment reconstructs the
@@ -80,7 +85,7 @@ struct FlightDetailView: View {
             }
             Spacer()
             if trajectory.isHistory {
-                Text("HISTORY")
+                Text(L10n.Perch.history.uppercased())
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.stateStale)
             }
@@ -113,8 +118,8 @@ struct FlightDetailView: View {
         } else {
             EmptyStateView(
                 symbol: "clock.arrow.circlepath",
-                title: trajectory.isHistory ? "Rebuilding this event…" : "Live",
-                detail: "Pause or scrub the event ruler to inspect a historical moment."
+                title: trajectory.isHistory ? L10n.Flight.rebuilding : L10n.Flight.live,
+                detail: L10n.Flight.liveDetail
             )
             .centredInPane()
         }
@@ -127,13 +132,13 @@ struct FlightDetailView: View {
         return VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("MOMENT").auspexLabel(AuspexType.labelSmall)
-                    Text(frame.timestamp.formatted(date: .omitted, time: .standard))
+                    Text(L10n.Flight.moment.uppercased()).auspexLabel(AuspexType.labelSmall)
+                    Text(AppLocale.time(frame.timestamp))
                         .font(.system(size: 28, weight: .bold, design: .monospaced))
                         .foregroundStyle(AuspexPalette.text)
                 }
                 Spacer()
-                Text(trajectory.isHistory ? "HISTORY" : "LIVE")
+                Text(trajectory.isHistory ? L10n.Perch.history.uppercased() : L10n.Flight.live.uppercased())
                     .auspexLabel(AuspexType.labelSmall)
                     .foregroundStyle(
                         trajectory.isHistory ? AuspexPalette.stateStale : AuspexPalette.stateWriting
@@ -141,15 +146,15 @@ struct FlightDetailView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                fact("Agents", "\(frame.nodes.count)")
-                fact("Tools open", "\(frame.openToolCount)")
-                fact("Tokens", TokenFormat.compact(frame.nodes.reduce(0) { $0 + $1.tokensIn }))
-                fact("Files touched", "\(filesTouched(through: frame.index))")
+                fact(L10n.Flight.agents, "\(frame.nodes.count)")
+                fact(L10n.Perch.History.toolsOpen, "\(frame.openToolCount)")
+                fact(L10n.Flight.tokens, TokenFormat.compact(frame.nodes.reduce(0) { $0 + $1.tokensIn }))
+                fact(L10n.Flight.filesTouched, "\(filesTouched(through: frame.index))")
             }
 
-            section("IN FLIGHT") {
+            section(L10n.Flight.inFlight.uppercased()) {
                 if frame.chips.isEmpty {
-                    Text("Nothing is in flight at this moment.")
+                    Text(L10n.Flight.nothingInFlight)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 } else {
@@ -168,7 +173,7 @@ struct FlightDetailView: View {
                 }
             }
 
-            section("SELECTED AGENT") {
+            section(L10n.Flight.selectedAgent.uppercased()) {
                 if let selected {
                     VStack(alignment: .leading, spacing: 9) {
                         HStack(spacing: 8) {
@@ -185,11 +190,11 @@ struct FlightDetailView: View {
                             state: selected.state, isStale: selected.isStale, showsChildCount: false
                         )
                         .fixedSize()
-                        MetaField(key: "session", value: String(selected.key.sessionID.prefix(12)))
-                        MetaField(key: "turns", value: "\(selected.turnCount)")
-                        MetaField(key: "tools", value: "\(selected.toolCount)")
+                        MetaField(key: L10n.Meta.session, value: String(selected.key.sessionID.prefix(12)))
+                        MetaField(key: L10n.Meta.turns, value: "\(selected.turnCount)")
+                        MetaField(key: L10n.Meta.tools, value: "\(selected.toolCount)")
                         MetaField(
-                            key: "tokens",
+                            key: L10n.Meta.tokens,
                             value:
                                 "\(TokenFormat.compact(selected.tokensIn)) / \(TokenFormat.compact(selected.tokensOut))"
                         )
@@ -199,7 +204,7 @@ struct FlightDetailView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
                     Text(
-                        "Click a graph node to pin its details here. Follow glides to current activity; pan or zoom enters Manual."
+                        L10n.Flight.selectNodeHint
                     )
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
@@ -208,11 +213,11 @@ struct FlightDetailView: View {
 
             if trajectory.isHistory {
                 HStack {
-                    Text("Live is \(trajectory.eventsAhead) events ahead")
+                    Text(L10n.Flight.liveAhead(count: trajectory.eventsAhead))
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                     Spacer()
-                    Button("Jump to Live") { trajectory.jumpToLive() }
+                    Button(L10n.Perch.jumpToLive) { trajectory.jumpToLive() }
                         .font(AuspexType.pill)
                         .buttonStyle(.auspex(cornerRadius: 7))
                 }
@@ -228,25 +233,25 @@ struct FlightDetailView: View {
         return VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("AT PLAYHEAD").auspexLabel(AuspexType.labelSmall)
-                    Text(playback.event.timestamp.formatted(date: .omitted, time: .standard))
+                    Text(L10n.Flight.atPlayhead.uppercased()).auspexLabel(AuspexType.labelSmall)
+                    Text(AppLocale.time(playback.event.timestamp))
                         .font(.system(size: 28, weight: .bold, design: .monospaced))
                         .foregroundStyle(AuspexPalette.text)
                 }
                 Spacer()
-                Text("event \(playback.index + 1) / \(playback.count)")
+                Text(L10n.Perch.eventPosition(index: playback.index + 1, count: playback.count))
                     .font(AuspexType.monoSmall)
                     .foregroundStyle(AuspexPalette.text3)
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                fact("Agents", "\(snapshots.count)")
-                fact("Tools open", "\(tools.count)")
-                fact("Tokens", TokenFormat.compact(snapshots.reduce(0) { $0 + $1.tokensIn }))
-                fact("Files touched", "\(filesTouched(through: playback.index))")
+                fact(L10n.Flight.agents, "\(snapshots.count)")
+                fact(L10n.Perch.History.toolsOpen, "\(tools.count)")
+                fact(L10n.Flight.tokens, TokenFormat.compact(snapshots.reduce(0) { $0 + $1.tokensIn }))
+                fact(L10n.Flight.filesTouched, "\(filesTouched(through: playback.index))")
             }
 
-            section("AGENTS AT THIS MOMENT") {
+            section(L10n.Flight.agentsAtMoment.uppercased()) {
                 ForEach(snapshots, id: \.identity.key) { snapshot in
                     HStack(spacing: 8) {
                         HarnessBadge(
@@ -271,9 +276,9 @@ struct FlightDetailView: View {
                 }
             }
 
-            section("IN FLIGHT") {
+            section(L10n.Flight.inFlight.uppercased()) {
                 if tools.isEmpty {
-                    Text("No tool was open at this event.")
+                    Text(L10n.Flight.noToolOpen)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 } else {
@@ -295,11 +300,11 @@ struct FlightDetailView: View {
             }
 
             HStack {
-                Text("Live is \(playback.eventsAhead) events ahead")
+                Text(L10n.Flight.liveAhead(count: playback.eventsAhead))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                 Spacer()
-                Button("Jump to Live") { trajectory.jumpToLive() }
+                Button(L10n.Perch.jumpToLive) { trajectory.jumpToLive() }
                     .font(AuspexType.pill)
                     .buttonStyle(.auspex(cornerRadius: 7))
             }

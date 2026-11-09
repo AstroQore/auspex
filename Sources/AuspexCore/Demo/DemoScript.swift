@@ -75,15 +75,23 @@ public struct DemoScript: Sendable, Equatable {
     ///   - scale: how many times to run the cast. `1` is the demo as written;
     ///     `12` is roughly the size a busy machine reaches. See
     ///     ``scaledBlueprints(_:)``.
+    ///   - cast: which sessions to run — see ``Cast``.
     public static func make(
         seed: UInt64 = DemoScript.defaultSeed,
         startedAt: Date,
         generation: Int = 0,
-        scale: Int = 1
+        scale: Int = 1,
+        cast: Cast = .standard
     ) -> DemoScript {
         var rng = SeededRandom(seed: seed &+ UInt64(bitPattern: Int64(generation)))
         var steps: [Step] = []
-        for blueprint in scaledBlueprints(scale) {
+        let blueprints: [Blueprint]
+        switch cast {
+        case .standard: blueprints = scaledBlueprints(scale)
+        case .liveliness: blueprints = Blueprint.liveliness
+        case .quiet: blueprints = Blueprint.liveliness.map(\.quieted)
+        }
+        for blueprint in blueprints {
             var writer = Writer(
                 blueprint: blueprint,
                 startedAt: startedAt,
@@ -100,6 +108,28 @@ public struct DemoScript: Sendable, Equatable {
         }
         let end = steps.last?.offset ?? 0
         return DemoScript(steps: steps, duration: end + 6, seed: seed)
+    }
+
+    /// Which sessions a demo runs.
+    ///
+    /// The standard cast is a tour: every harness, every state, a delegation,
+    /// a permission wall, all inside two minutes, after which the board holds
+    /// its last frame. That is the right board to look at and the wrong one to
+    /// *measure* on — the performance budget has a row for "three people
+    /// working, the rest idle", and the tour passes through that shape for a
+    /// few seconds at most. ``liveliness`` holds it: three sessions that keep
+    /// working for ten minutes and ten that went quiet straight away.
+    /// ``quiet`` is the same thirteen with nobody working, which is the
+    /// budget's "everybody idle" row.
+    public enum Cast: String, Sendable, Equatable, CaseIterable {
+        case standard
+        case liveliness
+        case quiet
+
+        /// The cast a launch named, or `nil` for a name that is not one.
+        public init?(named raw: String) {
+            self.init(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
     }
 
     private init(steps: [Step], duration: TimeInterval, seed: UInt64) {
@@ -409,7 +439,7 @@ extension DemoScript {
 // MARK: - The cast
 
 extension DemoScript.Blueprint {
-    /// The fourteen sessions the demo board shows.
+    /// The seventeen sessions the demo board shows.
     ///
     /// Chosen to cover all eight featured harnesses, every state the card can
     /// be in, both grouping axes (five directories, two of them shared by
@@ -897,7 +927,7 @@ extension DemoScript.Blueprint {
         //     `~/Documents/Codex/<date>/<name>`, a folder made for this one
         //     conversation. It has a directory and it is not a project, which
         //     is the whole of what this session is on the board to show — it
-        //     belongs under "Codex · scratch" with `zhe` on its card, not
+        //     belongs under Projectless with `zhe` as its directory, not
         //     under a project called `zhe` that will mean nothing tomorrow.
         DemoScript.Blueprint(
             harness: .codex,
@@ -969,8 +999,202 @@ extension DemoScript.Blueprint {
                 .idle(9.0)
             ],
             startDelay: 3.4
+        ),
+
+        // 15–17. Three more sessions that are in no project, so the
+        //     Projectless section on a screenshot holds every kind it exists
+        //     for: 13's desktop chat folder, a Claude Desktop scratch
+        //     workspace, a chat with no folder at all, and a review whose
+        //     thread is not on the board — counted under the section rather
+        //     than listed in it.
+        DemoScript.Blueprint(
+            harness: .claudeCode,
+            sessionID: "5e9b2c71-0d4a-4f88-b6e3-91a7c4d2f058",
+            cwd: "/Users/example/Library/Application Support/Claude/scratch-workspaces"
+                + "/ws-demo/7d3e/scratch-2026-08-19-4b1f",
+            gitRoot: nil,
+            branch: nil,
+            title: "Draft the on-call handover note",
+            model: "claude-opus-5",
+            pid: 45_310,
+            entrypoint: "claude-desktop",
+            variant: nil,
+            prologue: [
+                .prompt("Turn this week's pages into a handover note for the next on-call"),
+                .think(1.0),
+                .say("Four pages, two of them the same flapping health check."),
+                .endTurn
+            ],
+            live: [
+                .prompt("Lead with the flapping check and what we tried"),
+                .think(2.2),
+                .write("handover.md", 6.0),
+                .say("Drafted; the flapping check is first, with the two mitigations that did not hold."),
+                .usage(8_900, 1_420, 2_600),
+                .endTurn,
+                .idle(10.0)
+            ],
+            startDelay: 2.8
+        ),
+        DemoScript.Blueprint(
+            harness: .cursor,
+            sessionID: "c4f81e06a93d2b57",
+            cwd: nil,
+            gitRoot: nil,
+            branch: nil,
+            title: "Name the new queue metrics",
+            model: "composer-2",
+            pid: nil,
+            entrypoint: "ide",
+            variant: nil,
+            prologue: [
+                .prompt("Suggest names for the queue's lag and retry metrics"),
+                .think(0.9),
+                .say("queue_lag_seconds and queue_retries_total, following the existing prefix."),
+                .endTurn
+            ],
+            live: [
+                .prompt("And for the dead-letter count?"),
+                .think(1.6),
+                .say("queue_dead_letters_total — a counter, so it ends in _total."),
+                .endTurn,
+                .idle(12.0)
+            ],
+            startDelay: 3.0
+        ),
+        DemoScript.Blueprint(
+            harness: .codex,
+            sessionID: "0198f9a2-5c3e-7b41-9d06-2e8f4a7c1b39",
+            cwd: nil,
+            gitRoot: nil,
+            branch: nil,
+            title: "Review the queue metrics change",
+            model: "codex-auto-review",
+            pid: nil,
+            entrypoint: "subagent",
+            // A root that is not on the demo board: the review has nothing to
+            // fold under, which is the case Projectless counts.
+            variant: "auto-review:0198e000-0000-7000-8000-00000000d3a0",
+            prologue: [
+                .prompt("Review the metric names before they ship"),
+                .think(0.7),
+                .endTurn
+            ],
+            live: [
+                .think(1.2),
+                .say("The names follow the house convention."),
+                .endTurn,
+                .idle(15.0)
+            ],
+            startDelay: 3.6
         )
     ]
+}
+
+// MARK: - The measuring cast
+
+extension DemoScript.Blueprint {
+    /// Three sessions that keep working and ten that are idle — see
+    /// ``DemoScript/Cast/liveliness``.
+    ///
+    /// The three cycle through the three working poses — reasoning, a tool
+    /// open, a file being written — for ten minutes, never silent long enough
+    /// to go stale, so the stage always has exactly three people whose motion
+    /// is a loop. The ten each run one short turn in the opening half second
+    /// and stop: alive, finished, nothing outstanding.
+    static let liveliness: [DemoScript.Blueprint] = {
+        let workers: [(Harness, String, String, String)] = [
+            (.claudeCode, "7a1e0c55-3d2b-4f60-8c19-2b7d4e0f9a11", "/Users/example/Code/atlas", "Index the tile cache"),
+            (.codex, "019a7c2e-55d1-7b30-9e84-c1f0a2b3d4e5", "/Users/example/Code/atlas", "Port the renderer"),
+            (.cursor, "c4d81e2f907a3b65", "/Users/example/Code/ledger", "Tidy the migrations"),
+        ]
+        let resting: [(Harness, String, String)] = [
+            (.claudeCode, "0b7f1a2c-9e3d-4c58-a6b1-7d2e9f0c3a01", "/Users/example/Code/atlas"),
+            (.claudeCode, "0b7f1a2c-9e3d-4c58-a6b1-7d2e9f0c3a02", "/Users/example/Code/ledger"),
+            (.codex, "019a7c2e-0000-7b30-9e84-c1f0a2b30003", "/Users/example/Code/ledger"),
+            (.codex, "019a7c2e-0000-7b30-9e84-c1f0a2b30004", "/Users/example/Code/harbor"),
+            (.cursor, "e19a0c7d55b24f05", "/Users/example/Code/harbor"),
+            (.grokBuild, "grok-build-0000-0006", "/Users/example/Code/harbor"),
+            (.antigravity, "conv:2026-08-19:a10007", "/Users/example/Code/orchard"),
+            (.claudeCode, "0b7f1a2c-9e3d-4c58-a6b1-7d2e9f0c3a08", "/Users/example/Code/orchard"),
+            (.codex, "019a7c2e-0000-7b30-9e84-c1f0a2b30009", "/Users/example/Code/orchard"),
+            (.cursor, "e19a0c7d55b24f10", "/Users/example/Code/atlas"),
+        ]
+
+        // One cycle is about ten seconds; sixty of them is ten minutes, which
+        // is longer than any measurement the budget asks for.
+        let cycle: [DemoScript.Beat] = [
+            .think(2.6),
+            .tool("Read", .fileRead, "Sources/Tiles/Cache.swift", 2.4),
+            .write("Sources/Tiles/Cache.swift", 2.8),
+            .tool("Bash", .shell, "swift test --filter Tiles", 2.2),
+        ]
+        var working: [DemoScript.Blueprint] = []
+        for (index, worker) in workers.enumerated() {
+            let (harness, id, path, title) = worker
+            working.append(
+                DemoScript.Blueprint(
+                    harness: harness,
+                    sessionID: id,
+                    cwd: path,
+                    gitRoot: path,
+                    branch: "main",
+                    title: title,
+                    model: nil,
+                    pid: 47_000 + pid_t(index),
+                    entrypoint: "terminal",
+                    variant: "cli",
+                    prologue: [.prompt(title), .think(0.4)],
+                    live: [.prompt(title)] + Array(repeating: cycle, count: 60).flatMap { $0 },
+                    startDelay: 0.3 + Double(index) * 0.7
+                )
+            )
+        }
+        let idle = resting.enumerated().map { index, entry in
+            let (harness, id, path) = entry
+            return DemoScript.Blueprint(
+                harness: harness,
+                sessionID: id,
+                cwd: path,
+                gitRoot: path,
+                branch: "main",
+                title: "Quiet session \(index + 1)",
+                model: nil,
+                pid: 47_100 + pid_t(index),
+                entrypoint: "terminal",
+                variant: "cli",
+                prologue: [
+                    .prompt("Summarise what changed since yesterday"),
+                    .think(0.4),
+                    .say("Nothing that needs you; the build is green."),
+                    .endTurn
+                ],
+                live: [],
+                startDelay: 0
+            )
+        }
+        return working + idle
+    }()
+
+    /// The same session, finishing its opening turn and doing nothing more.
+    var quieted: DemoScript.Blueprint {
+        guard !live.isEmpty else { return self }
+        return DemoScript.Blueprint(
+            harness: harness,
+            sessionID: sessionID,
+            cwd: cwd,
+            gitRoot: gitRoot,
+            branch: branch,
+            title: title,
+            model: model,
+            pid: pid,
+            entrypoint: entrypoint,
+            variant: variant,
+            prologue: prologue + [.endTurn],
+            live: [],
+            startDelay: 0
+        )
+    }
 }
 
 // MARK: - Compilation

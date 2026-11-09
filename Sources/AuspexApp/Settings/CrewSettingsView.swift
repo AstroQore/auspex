@@ -38,13 +38,7 @@ struct CrewSettingsView: View {
     /// The pane's name and its one line live in the chrome — see
     /// ``AuspexSettingsView``. This is the paragraph underneath them.
     private var header: some View {
-        Text(
-            "Every avatar lives in a loop that belongs to what its session is "
-                + "doing — thinking, working, waiting on you — and now and then it "
-                + "breaks out of it: a glance away, a shrug, a yawn. This is how "
-                + "often that happens. It does not change how fast anything moves, "
-                + "and it does not switch anything off."
-        )
+        Text(L10n.Settings.Crew.intro)
         .font(AuspexType.body)
         .foregroundStyle(AuspexPalette.textSecondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -52,7 +46,7 @@ struct CrewSettingsView: View {
 
     private var picker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Liveliness", selection: binding) {
+            Picker(L10n.Settings.Crew.liveliness, selection: binding) {
                 ForEach(CrewLiveliness.allCases, id: \.self) { value in
                     Text(Self.title(value)).tag(value)
                 }
@@ -70,9 +64,7 @@ struct CrewSettingsView: View {
 
     private var note: some View {
         Label(
-            "A session that is waiting on you keeps its own rhythm whatever this "
-                + "says: it is the one state that will not resolve itself, so it goes "
-                + "on asking.",
+            L10n.Settings.Crew.waitingNote,
             systemImage: "exclamationmark.bubble"
         )
         .font(AuspexType.body)
@@ -89,9 +81,9 @@ struct CrewSettingsView: View {
 
     private static func title(_ value: CrewLiveliness) -> String {
         switch value {
-        case .calm: "Calm"
-        case .normal: "Normal"
-        case .lively: "Lively"
+        case .calm: L10n.Settings.Crew.calm
+        case .normal: L10n.Settings.Crew.normal
+        case .lively: L10n.Settings.Crew.lively
         }
     }
 
@@ -100,13 +92,11 @@ struct CrewSettingsView: View {
     private static func detail(_ value: CrewLiveliness) -> String {
         switch value {
         case .calm:
-            "Something happens to an avatar every fourteen to fifty seconds. "
-                + "For a board you work beside rather than watch."
+            L10n.Settings.Crew.calmDetail
         case .normal:
-            "Something happens to an avatar every eight to thirty seconds."
+            L10n.Settings.Crew.normalDetail
         case .lively:
-            "Something happens to an avatar every five to eighteen seconds. "
-                + "The wall is never quite still."
+            L10n.Settings.Crew.livelyDetail
         }
     }
 }

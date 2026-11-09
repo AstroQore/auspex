@@ -539,7 +539,7 @@ final class MapModel {
             let moment = playbackMoment,
             let historyID = moment.state.lastBoardHistoryID
         else { return }
-        let rawName = "\(source.name) · event \(moment.index + 1)"
+        let rawName = L10n.Perch.forkName(name: source.name, index: moment.index + 1)
         let name = String(rawName.prefix(80))
         var forkState = moment.state
         for item in synchronizedBySource.values {
@@ -792,9 +792,9 @@ final class MapModel {
                 focus: state.reports[key.description]?.focus
                     ?? snapshot?.brief.latestAssistant
                     ?? base?.focus
-                    ?? (snapshot?.state.label ?? "No observed activity"),
+                    ?? (snapshot?.state.localizedLabel ?? L10n.Perch.noActivity),
                 projectKey: projectKey,
-                projectName: projectKey.map(BoardGrouping.projectName(forPath:)) ?? "Scratch",
+                projectName: projectKey.map(BoardGrouping.projectName(forPath:)) ?? L10n.Common.scratch,
                 memberCount: max(1, links),
                 subagents: subagents,
                 turnCount: snapshot?.turnCount ?? base?.turnCount ?? 0,
@@ -952,7 +952,7 @@ final class MapModel {
             let maxY = members.map { $0.position.y + MapPlacement.cardSize.height }.max() ?? 0
             return MapProjectFrame(
                 id: key,
-                title: members.first?.projectName ?? "Scratch",
+                title: members.first?.projectName ?? L10n.Common.scratch,
                 rect: CGRect(
                     x: minX - 28,
                     y: minY - 42,
@@ -974,7 +974,7 @@ final class MapModel {
                 return MapDependencyValue(
                     fromNodeID: card.id,
                     toNodeID: target,
-                    label: "depends"
+                    label: L10n.Perch.depends
                 )
             }
         }
@@ -1074,7 +1074,7 @@ final class MapModel {
             status: unit.status,
             focus: unit.lead.reportedFocus ?? unit.lead.activity,
             projectKey: unit.projectKey,
-            projectName: unit.projectKey.map(BoardGrouping.projectName(forPath:)) ?? "Scratch",
+            projectName: unit.projectKey.map(BoardGrouping.projectName(forPath:)) ?? L10n.Common.scratch,
             memberCount: unit.memberCount,
             subagents: unit.subagents.map {
                 MapSubagentValue(

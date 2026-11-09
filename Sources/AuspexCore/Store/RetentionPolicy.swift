@@ -94,8 +94,30 @@ public struct RetentionReport: Hashable, Sendable {
 
 /// Applies a ``RetentionPolicy`` to the store.
 ///
-/// Not scheduled yet — M4 wires it to an idle timer. Call ``run(now:)``.
+/// ## In batches
+///
+/// A store that has never been trimmed can owe millions of deletions, and one
+/// `DELETE` of all of them is one transaction that holds the writer for as long
+/// as it takes and grows the WAL by roughly every page it touches. So every rule
+/// deletes at most `batchSize` rows per transaction (``defaultBatchSize``) and
+/// goes round again until a batch comes back short; ``runBatched(now:batchSize:)``
+/// also yields between batches so the registry's own writes interleave instead
+/// of queueing behind the pass.
+///
+/// The rules are independent and idempotent, so nothing is lost by not doing
+/// them atomically: a pass interrupted halfway has trimmed some of what it
+/// would have, and the next one trims the rest.
+///
+/// ## In this order
+///
+/// Age first, because on a neglected store it is by far the biggest cut and it
+/// has an index (`events_on_observed_at`); the per-session cap then counts what
+/// is left, which is a much smaller scan. The search index follows, and freed
+/// pages go back to the filesystem last — see ``StoreSpace``.
 public struct RetentionJob: Sendable {
+    /// Rows per transaction.
+    public static let defaultBatchSize = 10_000
+
     public let dbWriter: any DatabaseWriter
     public let policy: RetentionPolicy
 
@@ -110,71 +132,186 @@ public struct RetentionJob: Sendable {
     }
 
     /// Deletes everything the policy no longer keeps, then returns freed pages
-    /// to the filesystem.
-    ///
-    /// Deletes run in one transaction so a crash mid-pass cannot leave the
-    /// event log trimmed by one rule and not the other. `PRAGMA
-    /// incremental_vacuum` runs afterwards, outside that transaction: it is
-    /// bookkeeping on the file, not on the data, and it is a no-op on a
-    /// database that is not in incremental auto-vacuum mode.
+    /// to the filesystem — synchronously, for a caller already off the main
+    /// actor that has no reason to suspend.
     @discardableResult
-    public func run(now: Date = Date()) throws -> RetentionReport {
-        var report = RetentionReport(
-            eventsOverPerSessionLimit: 0,
-            eventsOverAgeLimit: 0,
-            messagesOverAgeLimit: 0,
-            messagesFromExcludedHarnesses: 0
-        )
-
-        try dbWriter.write { db in
-            if policy.eventsPerSession > 0 {
-                // The window function partitions by session, so one chatty
-                // session's overflow is trimmed without touching a quiet one.
-                try db.execute(sql: """
-                    DELETE FROM events WHERE id IN (
-                        SELECT id FROM (
-                            SELECT id, ROW_NUMBER() OVER (
-                                PARTITION BY session_key ORDER BY id DESC
-                            ) AS row_number_desc
-                            FROM events
-                        ) WHERE row_number_desc > ?
-                    )
-                    """, arguments: [policy.eventsPerSession])
-                report.eventsOverPerSessionLimit = db.changesCount
-            }
-
-            if policy.eventsMaxAge > 0 {
-                let cutoff = now.addingTimeInterval(-policy.eventsMaxAge).timeIntervalSince1970
-                try db.execute(
-                    sql: "DELETE FROM events WHERE observed_at < ?",
-                    arguments: [cutoff]
-                )
-                report.eventsOverAgeLimit = db.changesCount
-            }
-
-            if let ftsMaxAge = policy.ftsMaxAge, ftsMaxAge > 0 {
-                let cutoff = now.addingTimeInterval(-ftsMaxAge).timeIntervalSince1970
-                try db.execute(sql: "DELETE FROM messages WHERE ts < ?", arguments: [cutoff])
-                report.messagesOverAgeLimit = db.changesCount
-            }
-
-            let excluded = policy.excludedHarnessesForFTS
-            if !excluded.isEmpty {
-                let placeholders = Array(repeating: "?", count: excluded.count).joined(separator: ", ")
-                try db.execute(
-                    sql: "DELETE FROM messages WHERE harness IN (\(placeholders))",
-                    arguments: StatementArguments(excluded.map(\.rawValue))
-                )
-                report.messagesFromExcludedHarnesses = db.changesCount
+    public func run(now: Date = Date(), batchSize: Int = defaultBatchSize) throws -> RetentionReport {
+        let size = max(1, batchSize)
+        var report = RetentionReport.none
+        func drain(_ step: Step) throws {
+            while true {
+                let deleted = try dbWriter.write { db in try step.delete(limit: size, in: db) }
+                report[keyPath: step.field] += deleted
+                if deleted < size { return }
             }
         }
+
+        for step in eventAgeSteps(now: now) { try drain(step) }
+        let limit = policy.eventsPerSession
+        if limit > 0 {
+            let overflowing = try dbWriter.read { db in try Self.overflowingSessions(limit: limit, in: db) }
+            for step in Self.perSessionSteps(overflowing) { try drain(step) }
+        }
+        for step in messageSteps(now: now) { try drain(step) }
 
         if report.totalDeleted > 0 {
-            try dbWriter.writeWithoutTransaction { db in
-                try db.execute(sql: "PRAGMA incremental_vacuum")
+            try StoreSpace.reclaimFreePagesNow(dbWriter)
+        }
+        return report
+    }
+
+    /// The same pass, yielding between batches and stopping between them when
+    /// the task is cancelled. What the app schedules.
+    @discardableResult
+    public func runBatched(
+        now: Date = Date(),
+        batchSize: Int = defaultBatchSize
+    ) async throws -> RetentionReport {
+        let size = max(1, batchSize)
+        let writer = dbWriter
+        var report = RetentionReport.none
+        func drain(_ step: Step) async throws {
+            while true {
+                try Task.checkCancellation()
+                let deleted = try await writer.write { db in try step.delete(limit: size, in: db) }
+                report[keyPath: step.field] += deleted
+                if deleted < size { return }
+                await Task.yield()
             }
         }
 
+        for step in eventAgeSteps(now: now) { try await drain(step) }
+        let limit = policy.eventsPerSession
+        if limit > 0 {
+            let overflowing = try await writer.read { db in
+                try Self.overflowingSessions(limit: limit, in: db)
+            }
+            for step in Self.perSessionSteps(overflowing) { try await drain(step) }
+        }
+        for step in messageSteps(now: now) { try await drain(step) }
+
+        if report.totalDeleted > 0 {
+            try await StoreSpace.reclaimFreePages(writer)
+        }
         return report
     }
+
+    // MARK: - Steps
+
+    /// One bounded delete, repeated until it comes back short, and the report
+    /// field its count goes in.
+    ///
+    /// Every statement takes its batch limit as the last argument and deletes
+    /// by primary key through a `LIMIT`ed subquery, which SQLite allows without
+    /// the `DELETE … LIMIT` extension and which picks the rows by whatever
+    /// index the inner `WHERE` has.
+    private struct Step: Sendable {
+        let sql: String
+        let values: [DatabaseValue]
+        let field: WritableKeyPath<RetentionReport, Int> & Sendable
+
+        func delete(limit: Int, in db: Database) throws -> Int {
+            try db.execute(sql: sql, arguments: StatementArguments(values + [limit.databaseValue]))
+            return db.changesCount
+        }
+    }
+
+    /// Events older than ``RetentionPolicy/eventsMaxAge``, measured from when
+    /// Auspex observed them.
+    private func eventAgeSteps(now: Date) -> [Step] {
+        guard policy.eventsMaxAge > 0 else { return [] }
+        let cutoff = now.addingTimeInterval(-policy.eventsMaxAge).timeIntervalSince1970
+        return [Step(
+            sql: """
+                DELETE FROM events WHERE id IN (
+                    SELECT id FROM events WHERE observed_at < ? LIMIT ?
+                )
+                """,
+            values: [cutoff.databaseValue],
+            field: \.eventsOverAgeLimit
+        )]
+    }
+
+    /// The sessions with more than `limit` events, and the id of the newest
+    /// event each of them no longer keeps.
+    ///
+    /// One pass over `events_on_session_key_id` to count, then one indexed seek
+    /// per overflowing session to find where its window starts. The window is
+    /// the newest `limit` by id, which is the same order every trace reads in.
+    private static func overflowingSessions(limit: Int, in db: Database) throws -> [(String, Int64)] {
+        let keys = try String.fetchAll(db, sql: """
+            SELECT session_key FROM events GROUP BY session_key HAVING COUNT(*) > ?
+            """, arguments: [limit])
+        var result: [(String, Int64)] = []
+        result.reserveCapacity(keys.count)
+        for key in keys {
+            guard let floor = try Int64.fetchOne(db, sql: """
+                SELECT id FROM events WHERE session_key = ?
+                 ORDER BY id DESC LIMIT 1 OFFSET ?
+                """, arguments: [key, limit])
+            else { continue }
+            result.append((key, floor))
+        }
+        return result
+    }
+
+    /// One session's overflow: everything at or below the newest event its
+    /// window no longer holds. One chatty session's history goes without
+    /// touching a quiet one's.
+    private static func perSessionSteps(_ overflowing: [(String, Int64)]) -> [Step] {
+        overflowing.map { key, floor in
+            Step(
+                sql: """
+                    DELETE FROM events WHERE id IN (
+                        SELECT id FROM events WHERE session_key = ? AND id <= ?
+                         ORDER BY id LIMIT ?
+                    )
+                    """,
+                values: [key.databaseValue, floor.databaseValue],
+                field: \.eventsOverPerSessionLimit
+            )
+        }
+    }
+
+    /// The search index: text older than ``RetentionPolicy/ftsMaxAge``, then
+    /// every message from an excluded harness.
+    private func messageSteps(now: Date) -> [Step] {
+        var steps: [Step] = []
+        if let ftsMaxAge = policy.ftsMaxAge, ftsMaxAge > 0 {
+            let cutoff = now.addingTimeInterval(-ftsMaxAge).timeIntervalSince1970
+            steps.append(Step(
+                sql: """
+                    DELETE FROM messages WHERE id IN (
+                        SELECT id FROM messages WHERE ts < ? LIMIT ?
+                    )
+                    """,
+                values: [cutoff.databaseValue],
+                field: \.messagesOverAgeLimit
+            ))
+        }
+        let excluded = policy.excludedHarnessesForFTS
+        if !excluded.isEmpty {
+            let placeholders = Array(repeating: "?", count: excluded.count).joined(separator: ", ")
+            steps.append(Step(
+                sql: """
+                    DELETE FROM messages WHERE id IN (
+                        SELECT id FROM messages WHERE harness IN (\(placeholders)) LIMIT ?
+                    )
+                    """,
+                values: excluded.map(\.rawValue.databaseValue),
+                field: \.messagesFromExcludedHarnesses
+            ))
+        }
+        return steps
+    }
+}
+
+extension RetentionReport {
+    /// A pass that removed nothing.
+    public static let none = RetentionReport(
+        eventsOverPerSessionLimit: 0,
+        eventsOverAgeLimit: 0,
+        messagesOverAgeLimit: 0,
+        messagesFromExcludedHarnesses: 0
+    )
 }

@@ -16,17 +16,17 @@ struct MapRuleEditor: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Automatic membership").font(AuspexType.cardTitle)
-                    Text("Nested AND / OR / NOT, then per-task include or exclude overrides.")
+                    Text(L10n.Perch.Rules.title).font(AuspexType.cardTitle)
+                    Text(L10n.Perch.Rules.note)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                 }
                 Spacer()
                 if draft == nil {
-                    Button("Add rules") { draft = .defaultRoot }
+                    Button(L10n.Perch.Rules.add) { draft = .defaultRoot }
                         .buttonStyle(.auspex)
                 } else {
-                    Button("Clear") { draft = nil }
+                    Button(L10n.Common.clear) { draft = nil }
                         .buttonStyle(.auspex)
                 }
             }
@@ -51,7 +51,7 @@ struct MapRuleEditor: View {
                         .foregroundStyle(AuspexPalette.statePermission)
                 }
                 Spacer()
-                Button("Apply rules") { apply() }
+                Button(L10n.Perch.Rules.apply) { apply() }
                     .buttonStyle(.auspex(cornerRadius: 7))
             }
         }
@@ -76,7 +76,7 @@ private struct RuleNodeEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Picker("Rule kind", selection: kindBinding) {
+                Picker(L10n.Perch.Rules.kind, selection: kindBinding) {
                     ForEach(MapRuleDraft.Kind.allCases, id: \.self) { kind in
                         Text(kind.title).tag(kind)
                     }
@@ -88,7 +88,7 @@ private struct RuleNodeEditor: View {
                     Button {
                         node.children.append(.defaultPredicate)
                     } label: {
-                        Label("Condition", systemImage: "plus")
+                        Label(L10n.Perch.Rules.condition, systemImage: "plus")
                     }
                     .buttonStyle(.auspex)
                 }
@@ -112,12 +112,12 @@ private struct RuleNodeEditor: View {
                                 .foregroundStyle(AuspexPalette.text3)
                         }
                         .buttonStyle(.auspex)
-                        .accessibilityLabel("Remove rule")
+                        .accessibilityLabel(L10n.Perch.Rules.remove)
                     }
                     .padding(.leading, 10)
                 }
                 if node.children.isEmpty {
-                    Text(node.kind == .all ? "All with no conditions matches everything." : "This group matches nothing.")
+                    Text(node.kind == .all ? L10n.Perch.Rules.emptyAll : L10n.Perch.Rules.emptyGroup)
                         .font(AuspexType.caption)
                         .foregroundStyle(AuspexPalette.text3)
                         .padding(.leading, 10)
@@ -148,7 +148,7 @@ private struct PredicateEditor: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Picker("Field", selection: $predicate.field) {
+            Picker(L10n.Perch.Rules.field, selection: $predicate.field) {
                 ForEach(MapRuleDraft.PredicateDraft.Field.allCases, id: \.self) {
                     Text($0.title).tag($0)
                 }
@@ -163,25 +163,25 @@ private struct PredicateEditor: View {
     private var valueControl: some View {
         switch predicate.field {
         case .project, .label:
-            TextField(predicate.field == .project ? "Project key" : "Label", text: $predicate.text)
+            TextField(predicate.field == .project ? L10n.Perch.Rules.projectKey : L10n.Task.Filter.label, text: $predicate.text)
                 .textFieldStyle(.roundedBorder)
                 .auspexSystemControlFocus()
         case .harness:
-            Picker("Harness", selection: $predicate.harness) {
+            Picker(L10n.Common.harness, selection: $predicate.harness) {
                 ForEach(Harness.allCases, id: \.self) { harness in
                     Text(harness.rawValue).tag(harness)
                 }
             }
             .auspexSystemControlFocus()
         case .status:
-            Picker("Status", selection: $predicate.status) {
+            Picker(L10n.Common.status, selection: $predicate.status) {
                 ForEach(AuspexTaskStatus.allCases, id: \.self) { status in
                     Text(status.rawValue).tag(status)
                 }
             }
             .auspexSystemControlFocus()
         case .attention:
-            Picker("Attention", selection: $predicate.attention) {
+            Picker(L10n.Perch.Rules.attention, selection: $predicate.attention) {
                 ForEach(MapAttentionKind.allCases, id: \.self) { attention in
                     Text(attention.title).tag(attention)
                 }
@@ -200,10 +200,10 @@ private struct MapRuleDraft: Equatable {
 
         var title: String {
             switch self {
-            case .all: "All (AND)"
-            case .any: "Any (OR)"
-            case .not: "Not"
-            case .predicate: "Condition"
+            case .all: L10n.Perch.Rules.all
+            case .any: L10n.Perch.Rules.any
+            case .not: L10n.Perch.Rules.not
+            case .predicate: L10n.Perch.Rules.condition
             }
         }
     }
@@ -218,11 +218,11 @@ private struct MapRuleDraft: Equatable {
 
             var title: String {
                 switch self {
-                case .project: "Project"
-                case .harness: "Harness"
-                case .label: "Label"
-                case .status: "Status"
-                case .attention: "Attention"
+                case .project: L10n.Common.project
+                case .harness: L10n.Common.harness
+                case .label: L10n.Task.Filter.label
+                case .status: L10n.Common.status
+                case .attention: L10n.Perch.Rules.attention
                 }
             }
         }
@@ -324,11 +324,11 @@ private struct MapRuleDraft: Equatable {
 private extension MapAttentionKind {
     var title: String {
         switch self {
-        case .needsYou: "Needs you"
-        case .review: "Review"
-        case .working: "Working"
-        case .idle: "Idle"
-        case .ended: "Ended"
+        case .needsYou: L10n.Now.needsYou
+        case .review: L10n.Perch.Attention.review
+        case .working: L10n.Now.working
+        case .idle: L10n.Now.idle
+        case .ended: L10n.Board.Ended.title
         }
     }
 }

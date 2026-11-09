@@ -22,7 +22,7 @@ struct TaskFilterBar: View {
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(AuspexPalette.stateThinking)
             if let importance = model.filters.importance {
-                chip(importance.label) { model.filters.importance = nil }
+                chip(importance.localizedLabel) { model.filters.importance = nil }
             }
             if let label = model.filters.label {
                 chip(label) { model.filters.label = nil }
@@ -31,17 +31,17 @@ struct TaskFilterBar: View {
                 chip(harness.displayName) { model.filters.harness = nil }
             }
             if model.filters.readyOnly {
-                chip("ready only") { model.filters.readyOnly = false }
+                chip(L10n.Task.Filter.readyOnly) { model.filters.readyOnly = false }
             }
             if let claim = model.filters.claim {
-                chip(claim.label) { model.filters.claim = nil }
+                chip(claim.localizedLabel) { model.filters.claim = nil }
             }
             if model.filters.orphanedOnly {
-                chip("claim orphaned") { model.filters.orphanedOnly = false }
+                chip(L10n.Task.Filter.claimOrphaned) { model.filters.orphanedOnly = false }
             }
             Spacer(minLength: 8)
             Button { model.filters = .none } label: {
-                Text("Clear")
+                Text(L10n.Common.clear)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .padding(.horizontal, 8)
@@ -52,7 +52,7 @@ struct TaskFilterBar: View {
                     )
             }
             .buttonStyle(.auspex)
-            .help("Show every task again")
+            .help(L10n.Task.Filter.clearHelp)
         }
         .padding(.horizontal, 20)
         .frame(height: 32)
@@ -85,7 +85,7 @@ struct TaskFilterBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex(cornerRadius: 6))
-        .help("Stop filtering by \(text)")
+        .help(L10n.Task.Filter.stopFiltering(filter: text))
     }
 }
 
@@ -100,9 +100,9 @@ struct TaskFilterMenu: View {
     var body: some View {
         Menu {
             if !model.filterOptions.importances.isEmpty {
-                Section("Importance") {
+                Section(L10n.Task.Filter.importance) {
                     ForEach(model.filterOptions.importances, id: \.self) { importance in
-                        toggle(importance.label, isOn: model.filters.importance == importance) {
+                        toggle(importance.localizedLabel, isOn: model.filters.importance == importance) {
                             model.filters.importance =
                                 model.filters.importance == importance ? nil : importance
                         }
@@ -110,7 +110,7 @@ struct TaskFilterMenu: View {
                 }
             }
             if !model.filterOptions.labels.isEmpty {
-                Section("Label") {
+                Section(L10n.Task.Filter.label) {
                     ForEach(model.filterOptions.labels, id: \.self) { label in
                         toggle(label, isOn: model.filters.label == label) {
                             model.filters.label = model.filters.label == label ? nil : label
@@ -119,7 +119,7 @@ struct TaskFilterMenu: View {
                 }
             }
             if model.filterOptions.harnesses.count > 1 {
-                Section("Harness") {
+                Section(L10n.Common.harness) {
                     ForEach(model.filterOptions.harnesses, id: \.self) { harness in
                         toggle(harness.displayName, isOn: model.filters.harness == harness) {
                             model.filters.harness =
@@ -128,26 +128,26 @@ struct TaskFilterMenu: View {
                     }
                 }
             }
-            Section("Only") {
+            Section(L10n.Task.Filter.only) {
                 if model.filterOptions.hasDependencies {
-                    toggle("Ready to start", isOn: model.filters.readyOnly) {
+                    toggle(L10n.Task.Filter.readyToStart, isOn: model.filters.readyOnly) {
                         model.filters.readyOnly.toggle()
                     }
                 }
                 ForEach(TaskFilters.Claim.allCases, id: \.self) { claim in
-                    toggle(claim.label.capitalized, isOn: model.filters.claim == claim) {
+                    toggle(claim.localizedLabel.capitalized, isOn: model.filters.claim == claim) {
                         model.filters.claim = model.filters.claim == claim ? nil : claim
                     }
                 }
                 if model.filterOptions.hasOrphans {
-                    toggle("Orphaned claims", isOn: model.filters.orphanedOnly) {
+                    toggle(L10n.Task.Filter.orphanedClaims, isOn: model.filters.orphanedOnly) {
                         model.filters.orphanedOnly.toggle()
                     }
                 }
             }
             if !model.filters.isEmpty {
                 Divider()
-                Button("Clear filters") { model.filters = .none }
+                Button(L10n.Task.Filter.clearFilters) { model.filters = .none }
             }
         } label: {
             HStack(spacing: 6) {
@@ -177,7 +177,7 @@ struct TaskFilterMenu: View {
                         .strokeBorder(AuspexPalette.line, lineWidth: 1)
                 )
         )
-        .help("Narrow the wall: importance, label, harness, what is ready, what is claimed")
+        .help(L10n.Task.Filter.help)
     }
 
     private func toggle(
@@ -206,17 +206,17 @@ struct TaskCardMenu: View {
     let environment: AppEnvironment
 
     var body: some View {
-        Button("Open task…") { model.openUnitID = unit.id }
+        Button(L10n.Task.Menu.open) { model.openUnitID = unit.id }
         if unit.isInReview {
-            Button("Close") { environment.tasks.close(unit: unit) }
+            Button(L10n.Common.close) { environment.tasks.close(unit: unit) }
         } else if unit.status == .done {
-            Button("Reopen") { environment.tasks.reopen(unit: unit) }
+            Button(L10n.Task.Menu.reopen) { environment.tasks.reopen(unit: unit) }
         }
         if unit.origin.isImplicit {
-            Button("Promote to task…") { environment.tasks.promote(unit: unit) }
+            Button(L10n.Task.Menu.promote) { environment.tasks.promote(unit: unit) }
         }
         if unit.isClaimOrphaned, let id = unit.origin.taskID {
-            Button("Release claim") { environment.tasks.releaseClaim(taskID: id) }
+            Button(L10n.Task.Menu.releaseClaim) { environment.tasks.releaseClaim(taskID: id) }
         }
         Divider()
         if let session = model.session(for: unit.lead.key) {

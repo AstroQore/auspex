@@ -9,6 +9,8 @@ import Testing
 @MainActor
 @Suite("Task delivery UI model")
 struct TaskDeliveryModelTests {
+    init() { pinEnglishInterface() }
+
     private final class FakeRunner: GitCommandRunning, @unchecked Sendable {
         private let lock = NSLock()
         let root: String

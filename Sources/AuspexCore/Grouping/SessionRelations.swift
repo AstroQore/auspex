@@ -72,6 +72,31 @@ public enum SessionRelations {
             != nil
     }
 
+    /// The thread a spawned Codex thread came from, or `nil` when this is
+    /// not one.
+    ///
+    /// Read off the ``CodexThreadSpawn/variant`` the grouping pass tags such a
+    /// thread with, so — like ``autoReviewRootID(of:)`` — it needs the
+    /// identity and nothing else.
+    public static func spawnParentID(of identity: SessionIdentity) -> String? {
+        guard codexStoreHarnesses.contains(identity.key.harness),
+              let variant = identity.variant,
+              variant.hasPrefix(CodexThreadSpawn.variantPrefix)
+        else { return nil }
+        let parent = variant.dropFirst(CodexThreadSpawn.variantPrefix.count)
+            .trimmingCharacters(in: .whitespaces)
+        guard !parent.isEmpty,
+              parent.caseInsensitiveCompare(identity.key.sessionID) != .orderedSame
+        else { return nil }
+        return parent
+    }
+
+    /// `true` when this session is a Codex thread another thread spawned,
+    /// and takes its parent's project rather than one of its own.
+    public static func isThreadSpawn(_ identity: SessionIdentity) -> Bool {
+        spawnParentID(of: identity) != nil
+    }
+
     /// The parent edges recorded in `identities` but not yet folded into them.
     ///
     /// Pure and total, like every grouping pass: same input, same output, no
@@ -81,35 +106,47 @@ public enum SessionRelations {
     ///
     /// - Parameter identities: whatever the board is holding. Routinely
     ///   incomplete — a review whose root is not here yields nothing.
-    /// - Returns: one link per auto-review session whose root is present and
-    ///   whose own parent is still unknown, in input order.
+    /// - Returns: one link per auto-review session, and one per spawned thread,
+    ///   whose parent is present and whose own parent is still unknown, in
+    ///   input order.
     public static func links(identities: [SessionIdentity]) -> [ProcessLink] {
         let present = Set(identities.map(\.key))
         guard !present.isEmpty else { return [] }
 
         var links: [ProcessLink] = []
         for identity in identities where identity.parent == nil {
-            guard let rootID = autoReviewRootID(of: identity) else { continue }
-            guard let parent = rootKey(rootID, for: identity.key, among: present) else { continue }
+            let recorded: (id: String, evidence: String)
+            if let rootID = autoReviewRootID(of: identity) {
+                recorded = (rootID, "provider variant names root session")
+            } else if let parentID = spawnParentID(of: identity) {
+                // The direct parent this time, not the root: the header's
+                // `parent_thread_id` is the thread that spawned it.
+                recorded = (parentID, "rollout header names parent thread")
+            } else {
+                continue
+            }
+            guard let parent = rootKey(recorded.id, for: identity.key, among: present) else {
+                continue
+            }
             links.append(ProcessLink(
                 child: identity.key,
                 parent: parent,
                 // The same evidence class an adapter emits for a spawn the
                 // parent's own log recorded: the id came out of the child's
                 // own header, which only the run that started it could have
-                // written there. No call id — a guardian run is not a tool
-                // call in the root's transcript.
+                // written there. No call id — neither a guardian run nor a
+                // spawn read this way is a tool call in a transcript.
                 link: .subagent(toolUseID: nil),
                 confidence: .high,
                 // Session keys only, per `ProcessLink.evidence`: no path, no
                 // command, nothing out of a transcript.
-                evidence: "provider variant names root session \(parent)"
+                evidence: "\(recorded.evidence) \(parent)"
             ))
         }
         return links
     }
 
-    /// Which of the Codex-store harnesses the root id belongs to.
+    /// Which of the Codex-store harnesses the root (or parent) id belongs to.
     ///
     /// The child's own harness first, because a review of a Codex thread is
     /// overwhelmingly a Codex thread; the sibling second, so a ChatGPT Work

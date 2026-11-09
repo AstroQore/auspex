@@ -103,7 +103,7 @@ struct BoardInvalidationTests {
         let again = applying(frame(sessions), to: model)
         #expect(await !invalidates(reading: { _ = model.rowGroups }, during: again))
         #expect(await !invalidates(reading: { _ = model.summary }, during: again))
-        #expect(await !invalidates(reading: { _ = model.endedRows }, during: again))
+        #expect(await !invalidates(reading: { _ = model.endedUnits }, during: again))
         #expect(await !invalidates(reading: { _ = model.sessionCount }, during: again))
     }
 

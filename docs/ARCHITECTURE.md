@@ -373,8 +373,52 @@ magnification, and a Metal-backed one would be re-rasterised for it.
 The view, not the scene, answers "is anybody looking at this": `OfficeSKView`
 watches window occlusion, superview, and hidden state, and suspends the render
 loop, the scene's actions, and the frame rate together when the answer is no.
-It rests at 30 fps — the fastest thing in the office is a typing hand at ten
-changes a second — and goes to 60 for the length of a gesture.
+While something is moving it draws at a resting rate — 30 fps in the Aviary,
+10 on Now's stage; the fastest thing in the office is a typing hand at ten
+changes a second — and at 60 and 30 respectively for the length of a gesture.
+
+It also answers "is there anything to look at". An unpaused `SKView`'s display
+link fires at the display's rate whatever its frame rate says, so the only
+cheap rate is paused: after every frame the scene reports whether anything
+visible was moving (`OfficeScene.didFinishUpdate()`, asked of the director's
+own tables), and a frame with nothing moving is the last one drawn. Every
+change that does not arrive as an action — a board frame, a balloon, the
+pointer, the clip view moving, a resize, new character art — calls `wake()`,
+and what the scene will change on its own — a balloon's stopwatch, the next
+stir of idle motion — is handed over as a time to wake up at. Idle motion is
+deliberately a beat rather than a loop (`SceneIdleBeat`): every three to eight
+seconds the room stirs, about three in five idle things on screen play once,
+and the picture is still again — a loop would keep the clock running forever.
+Working motion stays looped, because it is the signal.
+
+Now's stage is the same scene drawing a different frame. It is not a window
+onto the map: `StageComposer` (Core, pure) composes one from the same reduced
+board — only people (alive and not over, or explicitly asking for a person),
+one desk each, no annexes and so no walking, subagents folded into their
+parent's `↳N`, rooms and the people in them ordered *needs you → may need
+you → working → idle* from the top left — laid out for the strip at 1× when
+it fits and ½× when it must, with what still does not fit counted on a
+`+N rooms` tile. The canvas keeps that composition framed until the reader
+pans or zooms. Its balloons are placed by `CaptionLayout` (Core, pure) so
+none covers another or the strip's chrome: a balloon tries where it hangs,
+one line up, one line down — flipped to the left of its person near the
+right-hand edge — and folds into a dot that opens under the pointer when
+none is free. When the view stops its clock for good it first lands
+anything between two places — walkers in their seats, sliding desks at the
+end of the slide — so the picture it holds is never half a walk.
+
+Now's stage goes one step further and leaves the window. `StageIdleCollapse`
+(Core) folds it into a one-line strip after 150 s with no mouse, scroll or key
+input in the window, or when its chevron is clicked; a click on the strip opens
+it and starts the countdown again. Board frames are not input. The countdown is
+a deadline rather than a timer restarted per event: a local event monitor and a
+tracking area (`StageIdleProbe`) only move the instant of the last input, one
+one-shot timer is armed for the deadline, and when it fires early because the
+deadline moved it is armed again — one wake per 150 s while a person works, and
+none while the stage is folded or its window cannot be seen. Folded, the
+representable is dismantled (the scene is released before the view is paused),
+and the assembler stops building the reduced board, keeping the last one so the
+stage reopens without an empty frame.
 
 The scene's zones shipped: one continuous map — the office, a meeting room
 strip where a delegating session sits at a long table with its sub-agents,
@@ -563,6 +607,21 @@ A milestone (`plans.*`) is an optional heading *inside* a project. The tools
 keep their old names because briefs already in flight carry them, and they are
 described as milestones in every schema string an agent reads.
 
+**Tasks are filed to hand work out, and the ledger tidies itself.** An agent
+whose brief carries no task id is already tracked as its implicit session task;
+`tasks.list`, its empty answer, the server instructions, the protocol note and
+the coordination skill all say so, and say that `plans.create` +
+`tasks.create` are for handing work to another agent. `tasks.create` returns
+the open (`todo`/`doing`) task already filed under the same normalized title in
+the project, marked `deduplicated`, and composes `objective`, `acceptance`,
+`deliverable`, `scope` and `out_of_scope` into the body in a fixed layout
+(`TaskBrief`). `LedgerHygiene`, run by `StoreMaintenance` every six hours, marks
+unclaimed to-dos untouched for a week as stale (`task_hygiene`; no status
+change, no version bump), archives milestones whose work has settled for a
+week, and leaves reviews older than two weeks with no live claimer for the
+Tasks page to fold into "Old reviews" — it never closes a task. Stale tasks are
+left out of the Tasks page, the board and `tasks.list` unless asked for.
+
 - **Transport: a Unix domain socket at `~/.auspex/mcp.sock`.** Local user
   only, never a TCP port. The running app owns the listener.
 - **`auspex --mcp-stdio`** is a thin bridge for MCP clients that speak stdio:
@@ -609,15 +668,27 @@ bridge stamps every JSON-RPC object with its own pid; the server keeps that
 attribution request-scoped and accepts it only while the kernel's live socket
 roster contains the same process. `MCPSelfResolver` then walks its ancestry
 until it finds a process the board already owns, or a session-id environment
-variable the harness handed down. Old unstamped clients work only when exactly
+variable the harness handed down — and stops at the first harness process
+(`HarnessProcess`), because anything above it is an outer harness: a Codex
+worker launched from Claude Code is never filed as the Claude session. Pid
+evidence counts only when it is unique: a pid several live sessions share, a
+Codex thread server, or a harness serving several Auspex bridges is reported
+as ambiguous rather than settled by picking one. Harnesses that write no pid
+of their own (Codex, Cursor) learn it from their hooks: when a payload names a
+row with no pid and the hook's parent is that harness's program,
+`HookProcessLearning` records the pid and its start time. Old unstamped clients work only when exactly
 one socket is attached; with two they fail closed instead of using activity
 order. The socket is a local-user trust boundary, not authentication against a
 different process running as that same user. The next agent-session-kit API
 must attach its frozen connection id and kernel peer directly to each handler
 call; once Auspex pins that release, the bridge stamp can disappear.
 `sessions.self` says which pid it used and what convinced it. An optional
-`session_id` is only a corroborating hint: it must agree with the process
-evidence and cannot identify a caller by itself. Anonymous task/milestone
+`session_id` must agree with the process evidence whenever there is some.
+When there is none, it is accepted as a bounded self-report — only from a
+kernel-attributed bridge, only for a live session, only for the harness of the
+nearest harness process above that bridge, and never for a session that
+demonstrably runs in another live process — and its evidence says
+"self-reported" so a person can tell it from a resolved caller. Anonymous task/milestone
 creation remains possible (explicit project or Scratch); writes that author
 session state or history fail closed when the process cannot be attributed.
 

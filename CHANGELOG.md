@@ -10,6 +10,185 @@ Auspex is pre-alpha. Stable 0.1.0 is published alongside the Dev channel;
 
 ## [Unreleased]
 
+### Added
+
+- **Now, the new default screen.** The office sits across the top as a stage,
+  with a balloon over the few people who most need reading — what a session is
+  running and for how long, the permission it is waiting on, or the watch
+  signal about it — and the balloons follow their desks as the room moves.
+  Under it, four short lists: *needs you* (explicit signals only), *may need
+  you* (watch signals, kept apart), *working* (one row per root session, its
+  sub-agents folded into `↳N`, with a context bar), and *done, unseen* with a
+  one-click "mark seen"; idle sessions are a count. The lists are derived once
+  per frame off the main thread, the stage can be closed to stop the office
+  entirely, and the Ledger, Aviary, Flock, Perch and Flight move into a view
+  menu in the header. The sidebar now reads Now, Tasks, Sessions, Projects,
+  Harnesses.
+- **Simplified Chinese, and a Language setting.** Every word Auspex shows now
+  comes from [auspex-i18n](https://github.com/AstroQore/auspex-i18n), a
+  catalogue of about 1,100 strings in English and Simplified Chinese consumed
+  as an exact-pinned package. Settings → General gains *Language: System /
+  English / 简体中文*; the choice is kept in `~/.auspex/settings.json` and
+  takes effect at once, without a relaunch. Harness, company and product names
+  stay as their owners spell them, and what agents read — MCP tool
+  descriptions and results, the coordination skill, `--help` — stays English.
+  `swift test` now fails on a hardcoded user-facing string anywhere in the app.
+
+### Fixed
+
+- **Now's stage no longer freezes on launch.** About one launch in six the
+  office's SpriteKit view was unpaused without its render loop starting, so
+  the stage showed its last picture — often an empty grid — for the rest of
+  the launch. The view now checks that a frame follows a wake and restarts
+  its loop when none does.
+- **Nobody is left frozen mid-stride on the office floor.** Somebody walking
+  out of a suite's door could be left standing at it in a walking pose until
+  the next board frame — on a quiet board, indefinitely — and a walk paused
+  when the view stopped its clock resumed halfway. Departures are now
+  collected after every re-layout, and the scene lands every walker in its
+  seat when the view stops.
+- **Codex and `cursor-agent` sessions can claim, finish and notify.** Neither
+  harness writes its pid anywhere Auspex reads, so their MCP calls could never
+  be attributed and every `tasks.claim`, `tasks.complete` and `auspex.notify`
+  was refused. A hook now teaches a pid-less session its process when the hook
+  was run by that harness's own program, and the pid reaches the `sessions`
+  table. Where one process runs many sessions — Codex's thread server inside a
+  desktop app — a session may name itself with `session_id`, accepted only for
+  a live session of the harness the connection descends from. The bundled
+  coordination skill (1.2.0) says how each harness finds its own id.
+- **Codex threads inside a desktop app are recognised by their own
+  transcript.** ChatGPT's Codex runs every open thread in one `codex
+  app-server`, gives each thread its own Auspex bridge, and exports no thread
+  id to it — so the process walk ended, honestly, at "hosts many sessions",
+  and a thread that did not know its own id saw every `auspex.notify` refused
+  and told the person "Auspex could not identify this session". Auspex was
+  already reading those threads' transcripts, where a tool call is recorded
+  as the model emits it; now a call that reaches the socket from such a
+  harness is matched to the one live thread whose transcript records that
+  very call — the same tool with this request's own words in it — waiting up
+  to two seconds for the tailer to catch up. An earlier call to the same tool
+  from another thread does not answer for it, two threads recording the same
+  call at once stay ambiguous, and a thread demonstrably living in another
+  process is never picked.
+- **A deleted run folder under a living workspace is rolled up, not dropped.**
+  The one-time scratch purge removed every project row whose folder was gone
+  before the roll-up could see it, so tasks filed under such a folder kept a
+  key no project answered to and drew their own lane. The purge now keeps a
+  row the live placement would still put somewhere, and the roll-up merges it
+  into its workspace with its tasks.
+- **Editing or moving a stale task brings it back at once.** A task the
+  hygiene pass had set aside stayed hidden from the board and from
+  `tasks.list` after somebody retitled, reprioritised or moved it, until the
+  next pass up to six hours later. Both read predicates now treat any touch
+  after the mark as revoking it, as the pass itself already did.
+- **A worker launched by another harness is no longer filed under its
+  launcher.** The caller walk used to climb past a Codex worker to the Claude
+  Code session that started it, and to trust the Claude session id the worker
+  had inherited, so the worker's claims landed on the orchestrator's row. It
+  now stops at the nearest harness process.
+- **Idle CPU and an ever-growing store.** Auspex no longer records a liveness
+  confirmation that changes nothing (these were three quarters of the event
+  log), and removes the ones earlier builds stored, once, in the background.
+  Relaunch reloads only sessions that are running or were active this week
+  instead of filling a 2,000-session budget with history. Board frames are
+  published at most twice a second, and every five seconds while neither the
+  window nor the menu bar panel is on screen.
+- The retention policy (14 days of events, 2,000 per session, 30 days of
+  search text) is finally applied: a minute after launch and every six hours,
+  in small batches that never hold the database for long.
+- **No session is titled with its id any more.** A session with no title,
+  no prompt and no project is called by its harness and start time —
+  "Codex · 14:32" — and a harness title that is just the thread's UUID is
+  skipped; a prompt headline is its first line, at most 60 characters.
+- A Codex sub-agent forked several levels deep is recognised again: its
+  header is read up to the end of the replayed ancestors' headers instead of
+  the first four lines. A folder that was missing when a session was placed
+  is looked for again every minute, so the session joins its project once
+  the folder is back.
+- **Scratch folders are no longer projects.** The home directory, the Codex
+  desktop's `~/Documents/Codex` chats, Claude Desktop's scratch workspaces,
+  `/root`, `/workspace`, `/tmp`, and folders that are no longer on disk each
+  used to become a project and a sidebar heading. Their sessions now sit in
+  the harness's scratch section, the project rows earlier builds stored for
+  them are removed once (projects you made yourself are kept), and Settings →
+  Ignore gains a "Scratch folder" rule for your own throwaway folders — it
+  keeps the sessions on the board and only stops the folder becoming a
+  project. Codex sub-agent threads now join the project of the thread that
+  spawned them instead of making one of their own.
+
+### Changed
+
+- **One Projectless section instead of a project per chat folder.** Every
+  session that is in no project — a Codex desktop chat folder, a Claude
+  Desktop scratch workspace, the home folder, a session with no folder at
+  all, a cloud bot — is now filed in one *Projectless* section (中文「无项目」)
+  that sits after the real projects in the sidebar, on the Ledger, on Now and
+  in the Aviary. It replaces the per-harness "Codex · scratch", "Cursor ·
+  scratch" and "Grok Bot" sections and the "No project" residue. The sidebar
+  shows it as one folded row with a count; opened, its rows lead with the
+  harness's badge, and a chat folder's name is the row's directory rather
+  than a heading. Codex auto reviews whose thread is not on the board are
+  counted as "+N helper sessions" instead of listed. Tasks filed under any of
+  the old keys are shown, and refiled once, under Projectless.
+- **Plain folders roll up to their workspace.** A directory in no git
+  repository is filed under the workspace that holds it — two levels below
+  the home (or below a mounted volume), cut at the first hidden folder — so a
+  job that runs in a fresh dated folder every hour is one project, not one
+  per run. A folder you made a project of is kept as its own, at any depth,
+  and a workspace that is no longer on disk is Projectless. The project rows
+  earlier builds stored per folder are folded into their workspaces once, in
+  the background, with their sessions and tasks; repositories and your own
+  projects are not touched.
+- **Now's stage shows the people, not the building.** It used to be a strip
+  of the Aviary's map at half scale, which on a real board was mostly empty
+  desks — their owners resting in a lounge the strip cut off — with the one
+  person working half under its top edge. It now composes its own picture:
+  only sessions that are alive or asking for you, one desk each, a room per
+  project that has someone in it, urgent rooms first, sub-agents folded into
+  their parent's `↳N`, framed to fit at 1× or ½× with a `+N rooms` tile for
+  whatever does not. Balloons no longer cover each other or the stage's own
+  chrome: they move a line up or down, hang to the left near the right-hand
+  edge, or fold into a dot that opens under the pointer. Working people keep
+  their typing loop; the Aviary is unchanged.
+- **Now's lists feel live.** The stopwatches on Working and Needs you rows
+  tick every second while the window is visible, a working row's dot
+  breathes, and a row's activity fades in when it changes. May need you
+  folds every "shares a directory / branch" signal into one row that opens
+  to list them, so the single-session signals are not drowned out.
+
+- Claude Cowork is no longer tailed live. Cowork runs in the cloud by default
+  since it merged with Chat, and the workspace tree under Claude.app's
+  container has held no new transcript since July 2026; watching it cost a
+  sweep of every Claude.app helper's environment every three seconds for
+  nothing. The harness, its logo, and the rows already in the store remain.
+
+- The board's derivation skips work nobody reads: session lookups are indexed,
+  the Flock's and Aviary's own data is built only while that view is open, and
+  the delegation tree is rebuilt for the store only when a parent changes.
+- A search hit on a session older than the live set now opens its details from
+  the store instead of an empty pane.
+- **The office stops drawing when nothing in it moves.** A frame with nothing
+  moving in it is the last one drawn until something changes — a board frame,
+  the pointer, a scroll, a resize, a balloon's stopwatch — so a quiet office on
+  Now's stage or in the Aviary costs what the lists cost. Idle motion (a drawn
+  character breathing or dozing, a `z` over a stale session, a finished note
+  in the garden, the projector over a quiet table) plays once every three to
+  eight seconds instead of looping; working motion keeps its loops, and a
+  delegation arc pulses only while its parent is still delegating. Now's stage
+  draws at 15 frames a second (30 during a gesture); the Aviary keeps 30 and
+  60. Balloon stopwatches refresh every five seconds, only on screen. Room
+  borders are dashed on the GPU, and a closed stage's view is left paused.
+  `--stage <on|off>` (`AUSPEX_STAGE`) opens Now with or without the stage, for
+  measuring each.
+- **Now's stage folds itself away.** After two and a half minutes with no
+  mouse, scroll or key input in the window — board updates do not count — the
+  office folds into one line, *Office · 4 working · 1 needs you ▸*, and its
+  view and clock leave the window until the line is clicked; the stage's
+  chevron folds it the same way by hand. Nothing counts while the window is
+  covered, and the fold is kept for the launch only. `--render-board …
+  stage=collapsed` draws the folded line, and a demo launch reads
+  `AUSPEX_STAGE_IDLE_DELAY=<seconds>` to fold sooner.
+
 ## [0.2.0] - 2026-08-31
 
 ### Fixed

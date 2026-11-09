@@ -99,11 +99,10 @@ extension TaskRepository {
     /// The tasks a session is attached to.
     public func tasks(linkedTo session: SessionKey) throws -> [AuspexTask] {
         try dbWriter.read { db in
-            try Row.fetchAll(db, sql: """
-                SELECT t.* FROM tasks t
-                  JOIN task_links l ON l.task_id = t.id
+            try Row.fetchAll(db, sql: Self.taskSelect + """
+                  JOIN task_links l ON l.task_id = tasks.id
                  WHERE l.session_key = ?
-                 ORDER BY t.updated_at DESC
+                 ORDER BY tasks.updated_at DESC
                 """, arguments: [session.description]).compactMap(AuspexTask.init(row:))
         }
     }

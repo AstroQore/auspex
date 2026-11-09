@@ -372,6 +372,66 @@ public struct HarnessInstaller: Sendable {
         }
     }
 
+    // MARK: - Keeping what is installed current
+
+    /// Whether what is installed is Auspex's own and older than this build's.
+    ///
+    /// Only the two pieces that are prose an agent reads — the note and the
+    /// skill — and only when the installed copy says it is older: a note with
+    /// a lower revision (or from before notes carried one), a skill with a
+    /// lower version. A newer copy, left by a newer build that also runs on
+    /// this Mac, is not "outdated" and is never rolled back.
+    public func isOutdated(_ harness: Harness, _ piece: Piece) -> Bool {
+        let offer = offer(harness, piece)
+        guard case let .installedElsewhere(what) = offer.state, let path = offer.path else {
+            return false
+        }
+        switch piece {
+        case .protocolNote:
+            guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+                  let body = Self.noteFence.body(in: text)
+            else { return false }
+            return Self.revision(ofNote: body) < Self.protocolNoteRevision
+        case .coordinationSkill:
+            guard let coordinationSkill,
+                  let installed = what.split(separator: " ").last, installed.hasPrefix("v")
+            else { return false }
+            return installed.dropFirst().compare(coordinationSkill.version, options: .numeric)
+                == .orderedAscending
+        case .mcpServer, .hooks:
+            return false
+        }
+    }
+
+    /// Rewrites every outdated note and skill among `harnesses`, each with
+    /// the backup an install by hand would have made.
+    ///
+    /// A person who installed the note agreed to Auspex keeping a fenced
+    /// paragraph in that file; what the paragraph says is Auspex's to keep
+    /// right, and a wording that misleads agents should not wait for someone
+    /// to find a button. Nothing absent is installed and nothing outside the
+    /// fence, or the skill's own directory, is touched.
+    ///
+    /// - Returns: one report per piece it tried to rewrite.
+    @discardableResult
+    public func refreshOutdated(for harnesses: [Harness] = Harness.allCases) -> [Report] {
+        var reports: [Report] = []
+        for harness in harnesses {
+            for piece in [Piece.protocolNote, .coordinationSkill] where isOutdated(harness, piece) {
+                reports.append(install(harness, piece))
+            }
+        }
+        return reports
+    }
+
+    /// The revision a fenced note says it is; zero for one from before notes
+    /// said.
+    static func revision(ofNote body: String) -> Int {
+        let marker = "auspex task-protocol note, revision "
+        guard let range = body.range(of: marker) else { return 0 }
+        return Int(body[range.upperBound...].prefix { $0.isNumber }) ?? 0
+    }
+
     /// Removes one piece, restoring the file to what it was without it.
     public func uninstall(_ harness: Harness, _ piece: Piece) -> Report {
         let offer = offer(harness, piece)
@@ -684,8 +744,14 @@ extension HarnessInstaller {
     /// It never tells an agent to do anything Auspex cannot do: no shell
     /// commands, no paths, no "run this". Everything is a tool call the server
     /// itself advertises.
+    ///
+    /// The first line carries ``protocolNoteRevision``. Whether a harness has
+    /// the current note is still decided by comparing the whole text — see
+    /// `noteState` — so the number is for a person reading the file, and for
+    /// the suite to prove that every older wording reads as one to replace.
     public static func protocolNote(for harness: Harness) -> String {
         """
+        <!-- auspex task-protocol note, revision \(protocolNoteRevision) -->
         ## Auspex
 
         Auspex watches every agent session on this Mac and exposes an MCP server
@@ -699,18 +765,28 @@ extension HarnessInstaller {
            need. It posts a macOS notification and moves your session into the
            right bucket on their board. Nothing else can tell "waiting for a
            human" apart from "thinking hard".
-        2. **Use the `auspex-coordination` skill for tracked work.** When a brief
-           names an Auspex task id, load that skill and follow its
-           Supervisor/Worker/Reviewer playbook. Discover the connected server's
-           capabilities and treat MCP as the state source; the skill is guidance.
-        3. **Do not manufacture coordination.** With no task id, continue the
-           user's work under the implicit session task. Do not create or claim an
-           explicit task merely to satisfy this note. Agent completion enters
-           Review; it does not close the task.
+        2. **A task id in your brief means tracked work.** Claim that task with
+           `tasks.claim`, load the `auspex-coordination` skill, and follow its
+           Supervisor/Worker/Reviewer playbook. Treat MCP as the state source;
+           the skill is guidance.
+        3. **No task id: just do the work.** Auspex already watches this
+           session as its implicit session task. Do not list, create or claim
+           tasks to satisfy this note. Call `plans.create` and `tasks.create`
+           only when you are handing work to another agent, and put the new task
+           id in that agent's brief. Agent completion enters Review; it does not
+           close the task.
         4. **Degrade honestly.** If MCP is unavailable or `sessions.self` cannot
            resolve this process, continue the user's task and say which board
            updates were not recorded. Never impersonate another session or claim
            a notification, task update, or completion the server rejected.
         """
     }
+
+    /// Which wording of the note this build installs. Bumped whenever the text
+    /// changes, so an installed note can say how old it is.
+    ///
+    /// Revision 3 stopped the note being read as "find or file a task before
+    /// you start": an agent with no task id is already tracked, and files
+    /// tasks only to hand work to another agent.
+    public static let protocolNoteRevision = 3
 }

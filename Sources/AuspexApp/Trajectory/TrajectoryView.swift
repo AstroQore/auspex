@@ -71,8 +71,8 @@ struct TrajectoryView: View {
     private var noSelection: some View {
         EmptyStateView(
             symbol: BoardViewMode.trajectory.systemImage,
-            title: "Select a session",
-            detail: "A flight is one session opened out. Pick a card to see its turns."
+            title: L10n.Trace.selectSession,
+            detail: L10n.Flight.selectSessionDetail
         )
         .centredInPane()
     }
@@ -214,8 +214,7 @@ private struct TrajectoryBar: View {
                 )
                 .fixedSize()
                 .help(
-                    "One session's flight, or the whole task's — every session "
-                        + "on it in one waterfall, in the order things happened"
+                    L10n.Flight.scopeHelp
                 )
             }
             if trajectory.presentation == .graph {
@@ -228,14 +227,14 @@ private struct TrajectoryBar: View {
                 )
                 .fixedSize()
                 .help(
-                    "Overview fits the graph; Follow glides to activity; pan or zoom enters Manual")
+                    L10n.Flight.cameraHelp)
             } else {
                 SegmentedPicker(
                     selection: $trajectory.scale,
-                    options: TrajectoryScale.allCases.map { ($0, $0.title) }
+                    options: TrajectoryScale.allCases.map { ($0, $0.localizedTitle) }
                 )
                 .fixedSize()
-                .help("What the timeline's width measures")
+                .help(L10n.Flight.scaleHelp)
                 if let searchWidth {
                     searchField(width: searchWidth)
                 }
@@ -257,7 +256,7 @@ private struct TrajectoryBar: View {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 9, weight: .bold))
                 if showsLabel {
-                    Text("Board")
+                    Text(L10n.Flight.board)
                         .font(AuspexType.pill)
                 }
             }
@@ -272,7 +271,7 @@ private struct TrajectoryBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.auspex)
-        .help("Back to the board (⌘T)")
+        .help(L10n.Flight.backHelp)
     }
 
     private func searchField(width: CGFloat) -> some View {
@@ -284,7 +283,7 @@ private struct TrajectoryBar: View {
             // with a system placeholder box where the field should be says
             // nothing true about the app.
             if isSnapshotRender {
-                Text(trajectory.query.isEmpty ? "Filter steps" : trajectory.query)
+                Text(trajectory.query.isEmpty ? L10n.Flight.filterSteps : trajectory.query)
                     .font(AuspexType.body)
                     .foregroundStyle(
                         trajectory.query.isEmpty ? AuspexPalette.text3 : AuspexPalette.text
@@ -292,7 +291,7 @@ private struct TrajectoryBar: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             } else {
-                TextField("Filter steps", text: $trajectory.query)
+                TextField(L10n.Flight.filterSteps, text: $trajectory.query)
                     .textFieldStyle(.plain)
                     .font(AuspexType.body)
                     .foregroundStyle(AuspexPalette.text)
@@ -309,7 +308,7 @@ private struct TrajectoryBar: View {
                         .strokeBorder(AuspexPalette.line, lineWidth: 1)
                 )
         )
-        .help("Show only the steps whose text matches")
+        .help(L10n.Flight.filterHelp)
     }
 
     private func followToggle(showsLabel: Bool) -> some View {
@@ -324,7 +323,7 @@ private struct TrajectoryBar: View {
                     glows: trajectory.followsTail
                 )
                 if showsLabel {
-                    Text("Follow")
+                    Text(L10n.Flight.follow)
                         .font(AuspexType.pill)
                         .foregroundStyle(
                             trajectory.followsTail
@@ -337,12 +336,12 @@ private struct TrajectoryBar: View {
             .frame(minWidth: showsLabel ? nil : 22)
             .contentShape(Rectangle())
         }
-        .accessibilityLabel("Follow the newest step")
+        .accessibilityLabel(L10n.Flight.followAccessibility)
         .buttonStyle(.auspex)
         .help(
             trajectory.followsTail
-                ? "Stop scrolling to the newest step"
-                : "Scroll to the newest step as it arrives"
+                ? L10n.Flight.stopFollowing
+                : L10n.Flight.startFollowing
         )
     }
 
@@ -357,37 +356,37 @@ private struct TrajectoryFactsBar: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            MetaField(key: "steps", value: "\(model.steps.count)")
-            MetaField(key: "turns", value: "\(model.turns.count)")
-            MetaField(key: "requests", value: "\(model.requests.count)")
+            MetaField(key: L10n.Meta.steps, value: "\(model.steps.count)")
+            MetaField(key: L10n.Meta.turns, value: "\(model.turns.count)")
+            MetaField(key: L10n.Meta.requests, value: "\(model.requests.count)")
             if model.errorCount > 0 {
                 MetaField(
-                    key: "failed",
+                    key: L10n.Meta.failed,
                     value: "\(model.errorCount)",
                     tint: AuspexPalette.statePermission
                 )
             }
             if let tokens = model.tokens {
                 MetaField(
-                    key: "tokens",
+                    key: L10n.Meta.tokens,
                     value: "\(TokenFormat.compact(tokens.input)) / "
                         + "\(TokenFormat.compact(tokens.output))"
                 )
             }
             if let elapsed = model.elapsed {
-                MetaField(key: "elapsed", value: DurationFormat.short(elapsed))
+                MetaField(key: L10n.Meta.elapsed, value: DurationFormat.short(elapsed))
             }
             Spacer(minLength: 6)
             if model.isTruncated {
-                Text("first \(TrajectoryModel.eventWindow) events")
+                Text(L10n.Flight.firstEvents(count: TrajectoryModel.eventWindow))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.stateStale)
             }
             if model.isFiltered {
-                Text("showing \(model.rows.count) of \(model.steps.count)")
+                Text(L10n.Flight.showing(shown: model.rows.count, total: model.steps.count))
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text2)
-                Button("Clear") {
+                Button(L10n.Common.clear) {
                     model.brush = nil
                     model.query = ""
                 }
@@ -478,10 +477,10 @@ private struct TrajectoryStepList: View {
     @ViewBuilder
     private var emptyList: some View {
         EmptyStateView(
-            title: model.isLoading ? "Reading the event log…" : "Nothing in this range."
+            title: model.isLoading ? L10n.Flight.readingLog : L10n.Flight.nothingInRange
         ) {
             if !model.isLoading, model.isFiltered {
-                Button("Show the whole session") {
+                Button(L10n.Flight.showWholeSession) {
                     model.brush = nil
                     model.query = ""
                 }

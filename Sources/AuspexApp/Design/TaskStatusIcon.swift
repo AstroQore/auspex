@@ -66,7 +66,7 @@ struct TaskStatusIcon: View {
             }
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(status.label)
+        .accessibilityLabel(status.localizedLabel)
     }
 
     private var line: CGFloat { max(1, size * 0.145) }
@@ -143,8 +143,8 @@ struct TaskImportanceIcon: View {
             }
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(importance.label)
-        .help("Importance: \(importance.label)")
+        .accessibilityLabel(importance.localizedLabel)
+        .help(L10n.Task.importanceHelp(importance: importance.localizedLabel))
     }
 
     /// The ramp: a dot on the baseline, then one bar per level.
@@ -215,23 +215,21 @@ struct TaskChips: View {
     /// would be a number nobody can look up.
     private var waits: some View {
         FactChip(tint: AuspexPalette.stateStale) {
-            Text("waits on \(unit.waitingOn.map(\.shortID).joined(separator: ", "))")
+            Text(L10n.Task.waitsOn(ids: unit.waitingOn.map(\.shortID).joined(separator: ", ")))
                 .font(AuspexType.monoSmall)
         }
         .fixedSize()
         .help(
-            "Blocked by "
-                + unit.waitingOn.map { "\($0.shortID) \($0.title)" }.joined(separator: " · ")
+            L10n.Task.blockedBy(
+                tasks: unit.waitingOn.map { "\($0.shortID) \($0.title)" }.joined(separator: " · ")
+            )
         )
     }
 
     /// A claim its session did not live to finish.
     private var orphan: some View {
-        FactChip("claim orphaned", tint: AuspexPalette.stateStale)
+        FactChip(L10n.Task.Filter.claimOrphaned, tint: AuspexPalette.stateStale)
             .fixedSize()
-            .help(
-                "The session holding this claim ended without finishing. "
-                    + "Release it so somebody else can take it."
-            )
+            .help(L10n.Task.orphanHelp)
     }
 }

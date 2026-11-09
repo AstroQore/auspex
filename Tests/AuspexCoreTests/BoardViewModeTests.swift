@@ -10,7 +10,10 @@ struct BoardViewModeTests {
         // was added to the enum and not to the picker would be a mode nobody
         // could reach.
         #expect(BoardViewMode.pickerOrder == BoardViewMode.allCases)
-        #expect(BoardViewMode.pickerOrder.first == .board)
+        // Now is the default and leads the menu; the Ledger stays one step
+        // down for the person who wants the wall.
+        #expect(BoardViewMode.pickerOrder.first == .now)
+        #expect(BoardViewMode.pickerOrder.contains(.board))
     }
 
     @Test("every mode has a label and a symbol, and no two share either")
@@ -46,5 +49,18 @@ struct BoardViewModeTests {
         #expect(BoardViewMode(rawValue: "office") == nil)
         #expect(BoardViewMode(named: "map") == .perch)
         #expect(BoardViewMode(named: "perch") == .perch)
+        #expect(BoardViewMode(named: "now") == .now)
+    }
+
+    @Test("only the aviary, and Now with its stage open, draw the office")
+    func officeIsDrawnByTwoModes() {
+        // The assembler builds the reduced board the office is laid out from
+        // only when this says so; a list-only Now must not pay for a room.
+        #expect(BoardViewMode.scene.drawsOffice(showsStage: false))
+        #expect(BoardViewMode.now.drawsOffice(showsStage: true))
+        #expect(!BoardViewMode.now.drawsOffice(showsStage: false))
+        for mode in [BoardViewMode.board, .crew, .perch, .trajectory] {
+            #expect(!mode.drawsOffice(showsStage: true))
+        }
     }
 }

@@ -43,7 +43,7 @@ struct IgnoreSettingsView: View {
 
             if let error = catalog.saveErrorDescription {
                 Label(
-                    "Your change is in effect but could not be saved: \(error)",
+                    L10n.Projects.saveError(error: error),
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(AuspexType.body)
@@ -55,21 +55,20 @@ struct IgnoreSettingsView: View {
 
     private var headline: String {
         let active = rules.count(where: \.isEnabled)
-        guard !rules.isEmpty else { return "Nothing is being hidden." }
-        let noun = rules.count == 1 ? "rule" : "rules"
-        guard active != rules.count else { return "\(rules.count) \(noun)." }
-        return "\(rules.count) \(noun), \(active) of them on."
+        guard !rules.isEmpty else { return L10n.Settings.Ignore.nothingHidden }
+        guard active != rules.count else { return L10n.Settings.Ignore.rules(count: rules.count) }
+        return L10n.Settings.Ignore.rulesOn(count: rules.count, active: active)
     }
 
     // MARK: Adding
 
     private var addRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionRule("Add a rule", detail: tag.explanation)
+            SectionRule(L10n.Settings.Ignore.addRule, detail: tag.localizedExplanation)
             HStack(spacing: 8) {
                 Picker("", selection: $tag) {
                     ForEach(IgnoreRule.Kind.Tag.allCases) { tag in
-                        Text(tag.label).tag(tag)
+                        Text(tag.localizedLabel).tag(tag)
                     }
                 }
                 .labelsHidden()
@@ -77,20 +76,20 @@ struct IgnoreSettingsView: View {
 
                 if tag == .harness {
                     Picker("", selection: $value) {
-                        Text("Choose a harness").tag("")
+                        Text(L10n.Settings.Ignore.chooseHarness).tag("")
                         ForEach(AuspexAdapters.featured, id: \.self) { harness in
                             Text(harness.displayName).tag(harness.rawValue)
                         }
                     }
                     .labelsHidden()
                 } else {
-                    TextField(tag.placeholder, text: $value)
+                    TextField(tag.localizedPlaceholder, text: $value)
                         .textFieldStyle(.roundedBorder)
-                        .font(tag == .pathPrefix ? AuspexType.monoSmall : AuspexType.body)
+                        .font(tag.takesPath ? AuspexType.monoSmall : AuspexType.body)
                         .onSubmit { add() }
                 }
 
-                Button("Add") { add() }
+                Button(L10n.Common.add) { add() }
                     .controlSize(.small)
                     .disabled(IgnoreRule.Kind.make(tag: tag, value: value) == nil)
             }
@@ -108,15 +107,14 @@ struct IgnoreSettingsView: View {
     @ViewBuilder
     private var list: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionRule("Rules", detail: "Switch one off to try the board without it.")
+            SectionRule(L10n.Settings.Ignore.rulesTitle, detail: L10n.Settings.Ignore.rulesDetail)
             if rules.isEmpty {
                 // No box: a border drawn around the sentence "there are no
                 // rules" is a control that looks like it failed to load. See
                 // ``EmptyStateView``.
                 EmptyStateView(
-                    title: "No rules yet.",
-                    detail: "Right-click a card, or a project in the sidebar, to hide the "
-                        + "folder it is in."
+                    title: L10n.Settings.Ignore.noRules,
+                    detail: L10n.Settings.Ignore.noRulesDetail
                 )
                 .frame(maxWidth: .infinity)
             } else {
@@ -145,14 +143,14 @@ struct IgnoreSettingsView: View {
                 .toggleStyle(.switch)
                 .controlSize(.mini)
 
-            Text(rule.kind.label)
+            Text(rule.kind.localizedLabel)
                 .font(AuspexType.caption)
                 .foregroundStyle(AuspexPalette.text3)
                 .frame(width: 118, alignment: .leading)
 
             Text(rule.kind.value)
                 .font(
-                    rule.kind.tag == .pathPrefix ? AuspexType.monoSmall : AuspexType.rowTitle
+                    rule.kind.tag.takesPath ? AuspexType.monoSmall : AuspexType.rowTitle
                 )
                 .foregroundStyle(rule.isEnabled ? AuspexPalette.text : AuspexPalette.text3)
                 .lineLimit(1)
@@ -169,7 +167,7 @@ struct IgnoreSettingsView: View {
                     .foregroundStyle(AuspexPalette.text3)
             }
             .buttonStyle(.auspex)
-            .help("Delete this rule")
+            .help(L10n.Settings.Ignore.deleteRule)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

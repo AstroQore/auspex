@@ -5,6 +5,9 @@ import Foundation
 extension AuspexMCPServer {
     enum RequestScope {
         @TaskLocal static var attribution: MCPTransportAttribution = .absent
+        /// The tool this request is calling, for corroborating a caller by
+        /// what its own transcript records; `nil` outside `tools/call`.
+        @TaskLocal static var tool: String?
     }
 
     /// Who is calling, and how that was worked out.
@@ -55,13 +58,18 @@ extension AuspexMCPServer {
     /// socket is attached; multiple connections without request attribution
     /// fail closed instead of choosing whoever happened to speak last.
     ///
-    /// `session_id` is now a corroborating hint, never an override. It must
-    /// resolve to the same session as the process evidence. This makes a typo
-    /// visible and prevents any local MCP caller from acting as an arbitrary
-    /// session merely by naming a row that exists on the board.
+    /// `session_id` corroborates process evidence whenever there is some: it
+    /// must then name the same session, which makes a typo visible and stops
+    /// any local MCP caller from acting as another session merely by naming a
+    /// row on the board.
+    ///
+    /// When the process tree cannot answer — a Codex thread server runs every
+    /// open thread in one process, and most harnesses tell their MCP servers
+    /// nothing — `session_id` is accepted as a *bounded* self-report. See
+    /// ``selfReported(_:reference:bridge:attempt:board:table:attribution:)``
+    /// for the bounds; outside them it is refused with the reason.
     func caller(_ arguments: MCPArguments) async throws -> Caller {
         let board = await host.boardSnapshot()
-        let identities = board.sessions.map(\.identity)
         let table = await host.processTable()
         let roster = await host.clientRoster()
         let candidatePID: pid_t?
@@ -90,9 +98,16 @@ extension AuspexMCPServer {
                     : "\(roster.connectionCount) connections are attached without request-scoped identity"
             }
         }
-        let automatic: Caller
-        if let pid = candidatePID,
-           let resolution = resolver.resolve(pid: pid, identities: identities, table: table) {
+        let attempt = candidatePID.map {
+            resolver.attempt(
+                pid: $0,
+                candidates: board.sessions.map(MCPSelfResolver.Candidate.init),
+                table: table,
+                attached: roster.processIDs
+            )
+        }
+        var automatic: Caller
+        if let pid = candidatePID, let resolution = attempt?.resolution {
             automatic = Caller(
                 session: resolution.session,
                 pid: pid,
@@ -103,9 +118,28 @@ extension AuspexMCPServer {
                 session: nil,
                 pid: candidatePID,
                 evidence: candidatePID.map {
-                    "no session on the board owns process \($0) or any of its ancestors"
+                    attempt?.refusal
+                        ?? "no session on the board owns process \($0) or any of its ancestors"
                 } ?? attributionEvidence ?? "the socket caller is not attributable"
             )
+            // The process tree stopped at a harness that could not say which
+            // of its sessions is calling. The sessions can: the one whose
+            // transcript records this very call is the caller.
+            if let pid = candidatePID, let harness = attempt?.harness,
+               let corroborated = await transcriptCorroboration(
+                   of: arguments, harness: harness, board: board, table: table
+               ) {
+                switch corroborated {
+                case .session(let key, let evidence):
+                    automatic = Caller(
+                        session: key,
+                        pid: pid,
+                        evidence: evidence + "; " + (attributionEvidence ?? "socket peer")
+                    )
+                case .ambiguous(let reason):
+                    automatic = Caller(session: nil, pid: pid, evidence: automatic.evidence + "; " + reason)
+                }
+            }
         }
 
         guard let raw = try arguments.optionalString("session_id") else { return automatic }
@@ -113,23 +147,221 @@ extension AuspexMCPServer {
             throw MCPToolFailure("'session_id' must not be empty.")
         }
         let requested = try requestedSession(cleaned, board: board)
-        guard let resolved = automatic.session else {
+        if let resolved = automatic.session {
+            guard requested == resolved else {
+                throw MCPToolFailure(
+                    "session_id '\(cleaned)' names \(requested.description), but this connection "
+                        + "resolves to \(resolved.description). Auspex will not act as another session."
+                )
+            }
+            return Caller(
+                session: resolved,
+                pid: automatic.pid,
+                evidence: automatic.evidence + "; session_id agreed"
+            )
+        }
+        guard let bridge = candidatePID else {
             throw MCPToolFailure(
                 "Auspex cannot corroborate session_id '\(cleaned)' from this connection "
                     + "(\(automatic.evidence)). A session_id cannot identify its caller by itself."
             )
         }
-        guard requested == resolved else {
+        return try selfReported(
+            requested,
+            reference: cleaned,
+            bridge: bridge,
+            attempt: attempt,
+            board: board,
+            table: table,
+            attribution: attributionEvidence ?? "socket peer"
+        )
+    }
+
+    /// Accepts a `session_id` the process tree could not establish, within
+    /// bounds that keep it from being an impersonation tool:
+    ///
+    /// 1. The connection itself is attributed — a kernel-corroborated bridge
+    ///    pid, never a bare claim.
+    /// 2. The named session is on the board, alive, and not ended.
+    /// 3. The nearest harness process above the bridge is one that runs that
+    ///    session's harness. A Codex bridge can name a Codex (or ChatGPT Work)
+    ///    session and nothing else; there is no route from it to a Claude
+    ///    Code row.
+    /// 4. If the session records a pid that is still running, it is that same
+    ///    harness process. A session demonstrably living in another process
+    ///    belongs to that process.
+    ///
+    /// The evidence says "self-reported" first, so a person reading the
+    /// claim history can tell it from one the kernel established.
+    private func selfReported(
+        _ requested: SessionKey,
+        reference: String,
+        bridge: pid_t,
+        attempt: MCPSelfResolver.Attempt?,
+        board: BoardSnapshot,
+        table: any ProcessTableReading,
+        attribution: String
+    ) throws -> Caller {
+        let because = attempt?.refusal
+            ?? "no session on the board owns process \(bridge) or any of its ancestors"
+        guard let session = board.session(for: requested), session.isAlive, !session.state.isEnded else {
             throw MCPToolFailure(
-                "session_id '\(cleaned)' names \(requested.description), but this connection "
-                    + "resolves to \(resolved.description). Auspex will not act as another session."
+                "session_id '\(reference)' names \(requested.description), which is not running. "
+                    + "Auspex accepts a self-reported session_id only for a live session (\(because))."
+            )
+        }
+        guard let harness = attempt?.harness else {
+            throw MCPToolFailure(
+                "Auspex cannot corroborate session_id '\(reference)' from this connection: no process "
+                    + "above it is a harness Auspex recognises (\(because)). "
+                    + "A session_id cannot identify its caller by itself."
+            )
+        }
+        guard harness.harnesses.contains(requested.harness) else {
+            throw MCPToolFailure(
+                "session_id '\(reference)' names a \(requested.harness.displayName) session, but this "
+                    + "connection was opened by \(harness.executable) (process \(harness.pid)). "
+                    + "Auspex will not act as a session of another harness."
+            )
+        }
+        if let recorded = session.identity.pid, recorded != harness.pid,
+           table.record(pid: recorded) != nil {
+            throw MCPToolFailure(
+                "session_id '\(reference)' names \(requested.description), which runs in process "
+                    + "\(recorded), not in the \(harness.executable) process \(harness.pid) this "
+                    + "connection belongs to. Auspex will not act as another session."
             )
         }
         return Caller(
-            session: resolved,
-            pid: automatic.pid,
-            evidence: automatic.evidence + "; session_id agreed"
+            session: requested,
+            pid: bridge,
+            evidence: "self-reported, harness-corroborated by \(harness.executable) "
+                + "(process \(harness.pid)); \(because); \(attribution)"
         )
+    }
+
+    // MARK: - Corroboration by the caller's own transcript
+
+    /// What the transcripts said about who is calling.
+    enum TranscriptCorroboration: Equatable {
+        case session(SessionKey, evidence: String)
+        case ambiguous(String)
+    }
+
+    /// How recently a transcript must record the call for it to be this one.
+    /// Generous, because a harness flushes its log on its own schedule and a
+    /// tailer picks the line up on Auspex's; strict enough that yesterday's
+    /// `auspex.notify` cannot vouch for today's.
+    static let transcriptWindow: TimeInterval = 180
+
+    /// Finds the session whose transcript records the call being answered.
+    ///
+    /// The case this exists for is a desktop app's Codex: one `codex app-server`
+    /// hosts every thread the app has open, each thread gets its own Auspex
+    /// bridge, and neither the bridge's environment nor the board's pid column
+    /// says which thread spawned which. The pid walk stops there, honestly
+    /// ambiguous — and before this, every `auspex.notify` from those threads
+    /// was refused, so agents wrote "Auspex could not identify this session"
+    /// instead of posting the notification.
+    ///
+    /// But Auspex is already reading those threads' transcripts, and a tool
+    /// call is recorded there as the model emits it, before the harness runs
+    /// it. So among the harness's own live sessions — those not demonstrably
+    /// living in some other process — the one with an open call to this tool
+    /// *with these arguments*, started within ``transcriptWindow``, is the
+    /// caller. The arguments are what make it this call and not an earlier
+    /// one: thread A's `auspex.notify` from a minute ago, still open because
+    /// its finish has not been read yet, must not answer for thread B's, so a
+    /// recording has to carry this request's own words
+    /// (``fingerprints(of:)``). A request with nothing distinctive in it is
+    /// not corroborated at all. Two threads recording the same call at once
+    /// stay ambiguous: the answer is never a guess.
+    ///
+    /// The transcript may lag the socket by a moment. When nothing matches
+    /// under a multi-session harness, the board is re-read for up to
+    /// `transcriptPatience` before giving up; only on that path, so a call
+    /// the pid walk already settled costs nothing here.
+    func transcriptCorroboration(
+        of arguments: MCPArguments,
+        harness: HarnessProcess,
+        board: BoardSnapshot,
+        table: any ProcessTableReading
+    ) async -> TranscriptCorroboration? {
+        guard let tool = RequestScope.tool else { return nil }
+        let fingerprints = Self.fingerprints(of: arguments)
+        guard !fingerprints.isEmpty else { return nil }
+        var board = board
+        let deadline = Date().addingTimeInterval(transcriptPatience)
+        while true {
+            let matches = Self.sessionsRecordingCall(
+                to: tool, fingerprints: fingerprints, harness: harness, board: board, table: table, now: now()
+            )
+            if matches.count == 1 {
+                let key = matches[0]
+                return .session(key, evidence: "the transcript of \(key.description) records this "
+                    + "\(tool) call, and it is the only live \(harness.executable) session that does")
+            }
+            if matches.count > 1 {
+                return .ambiguous("\(matches.count) live \(harness.executable) sessions record a \(tool) "
+                    + "call right now, so none of them can be told to be this one")
+            }
+            guard harness.isMultiSession, Date() < deadline else { return nil }
+            try? await Task.sleep(for: .milliseconds(250))
+            board = await host.boardSnapshot()
+        }
+    }
+
+    /// The words of a request that a transcript recording of it has to carry:
+    /// the opening of every string argument of six characters or more, cut
+    /// before the first character a harness might escape differently, and
+    /// every whole number. Nothing for a request with none — `sessions.self`
+    /// cannot be corroborated this way, and says so.
+    static func fingerprints(of arguments: MCPArguments) -> [String] {
+        arguments.fields.values.compactMap { value -> String? in
+            if let text = value.stringValue {
+                let opening = text.prefix(24).prefix { !"\"'\\`\n\r\t".contains($0) }
+                return opening.count >= 6 ? String(opening) : nil
+            }
+            if let number = value.intValue { return String(number) }
+            return nil
+        }
+    }
+
+    /// The live sessions of `harness` whose open tool calls include one to
+    /// `tool` with these `fingerprints`, as the harness spells it: the MCP
+    /// name (`auspex.notify`), the underscored name a client registers
+    /// (`auspex_notify`), or a code-mode snippet that calls
+    /// `tools.mcp__auspex__auspex_notify({...})` with the arguments inline.
+    static func sessionsRecordingCall(
+        to tool: String,
+        fingerprints: [String],
+        harness: HarnessProcess,
+        board: BoardSnapshot,
+        table: any ProcessTableReading,
+        now: Date
+    ) -> [SessionKey] {
+        guard !fingerprints.isEmpty else { return [] }
+        let underscored = tool.replacingOccurrences(of: ".", with: "_")
+        let since = now.addingTimeInterval(-transcriptWindow)
+        return board.sessions.compactMap { session -> SessionKey? in
+            guard session.isAlive, !session.state.isEnded,
+                  harness.harnesses.contains(session.key.harness)
+            else { return nil }
+            if let recorded = session.identity.pid, recorded != harness.pid,
+               table.record(pid: recorded) != nil {
+                return nil
+            }
+            let records = session.pending.openToolCalls.values.contains { call in
+                guard call.startedAt >= since else { return false }
+                let text = call.name + " " + (call.target ?? "")
+                guard text.contains("auspex"), text.contains(tool) || text.contains(underscored) else {
+                    return false
+                }
+                return fingerprints.allSatisfy(text.contains)
+            }
+            return records ? session.key : nil
+        }
+        .sorted { $0.description < $1.description }
     }
 
     /// A write that changes a session's state or authors history must have an
@@ -145,8 +377,9 @@ extension AuspexMCPServer {
         guard caller.session != nil else {
             throw MCPToolFailure(
                 "Auspex cannot \(action) without a process-attributed session "
-                    + "(\(caller.evidence)). Call sessions.self to inspect the evidence; "
-                    + "session_id is only a cross-check and cannot override it."
+                    + "(\(caller.evidence)). Call sessions.self to inspect the evidence. "
+                    + "If it stays unresolved, pass your harness's own session id as session_id: "
+                    + "Auspex accepts it for a live session of the harness this connection runs under."
             )
         }
         return caller

@@ -44,14 +44,14 @@ struct TrajectoryInspector: View {
         HStack(spacing: 8) {
             if let step = model.selectedStep {
                 TrajectoryRoleChip(role: step.role, isError: step.isError)
-                Text("Turn \(step.turn)")
+                Text(L10n.Trace.turn(number: step.turn))
                     .font(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
-                Text("Step \(step.index + 1)")
+                Text(L10n.Flight.step(number: step.index + 1))
                     .font(AuspexType.labelSmall)
                     .foregroundStyle(AuspexPalette.text3)
             } else {
-                Text("Inspector")
+                Text(L10n.Flight.inspector)
                     .auspexLabel(AuspexType.labelLarge)
                     .foregroundStyle(AuspexPalette.text3)
             }
@@ -64,7 +64,7 @@ struct TrajectoryInspector: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.auspex)
-            .help("Close the inspector (Esc)")
+            .help(L10n.Flight.closeInspector)
         }
         .padding(.horizontal, 14)
         .frame(height: 40)
@@ -117,30 +117,30 @@ struct TrajectoryInspector: View {
     private var summary: some View {
         if let step = model.selectedStep {
             VStack(alignment: .leading, spacing: 16) {
-                block("Source") {
-                    fact("Request", step.request > 0 ? "#\(step.request)" : "—")
-                    fact("Turn", step.turn == 0 ? "before turn 1" : "\(step.turn)")
-                    fact("Started", Self.clock.string(from: step.start))
-                    fact("Record", step.raw.map { ($0.path as NSString).lastPathComponent } ?? "—")
+                block(L10n.Flight.source) {
+                    fact(L10n.Flight.request, step.request > 0 ? "#\(step.request)" : "—")
+                    fact(L10n.Flight.turn, step.turn == 0 ? L10n.Flight.beforeTurn1 : "\(step.turn)")
+                    fact(L10n.Flight.started, Self.clock.string(from: step.start))
+                    fact(L10n.Flight.record, step.raw.map { ($0.path as NSString).lastPathComponent } ?? "—")
                 }
-                block("Status") {
+                block(L10n.Common.status) {
                     fact(
-                        "Outcome",
-                        step.isError ? "failed" : (step.end == nil ? "no end recorded" : "ok"),
+                        L10n.Flight.outcome,
+                        step.isError ? L10n.Flight.failed : (step.end == nil ? L10n.Flight.noEnd : L10n.Flight.ok),
                         tint: step.isError ? AuspexPalette.statePermission : nil
                     )
-                    fact("Duration", step.duration.map(DurationFormat.short) ?? "—")
-                    if let id = step.toolCallID { fact("Call id", id) }
+                    fact(L10n.Flight.Scale.duration, step.duration.map(DurationFormat.short) ?? "—")
+                    if let id = step.toolCallID { fact(L10n.Flight.callID, id) }
                 }
-                block("Tokens") {
-                    fact("In", step.tokens.map { TokenFormat.compact($0.input) } ?? "—")
-                    fact("Out", step.tokens.map { TokenFormat.compact($0.output) } ?? "—")
-                    fact("Cached", step.tokens.map { TokenFormat.compact($0.cached) } ?? "—")
+                block(L10n.Flight.tokens) {
+                    fact(L10n.Flight.in, step.tokens.map { TokenFormat.compact($0.input) } ?? "—")
+                    fact(L10n.Flight.out, step.tokens.map { TokenFormat.compact($0.output) } ?? "—")
+                    fact(L10n.Flight.cached, step.tokens.map { TokenFormat.compact($0.cached) } ?? "—")
                 }
                 requestTiming
                 previewBlock(for: step)
                 if let asked = brief?.firstPrompt {
-                    block("Asked") {
+                    block(L10n.Flight.asked) {
                         Text(asked)
                             .font(AuspexType.body)
                             .foregroundStyle(AuspexPalette.text2)
@@ -156,18 +156,18 @@ struct TrajectoryInspector: View {
     /// this step belongs to.
     @ViewBuilder
     private var requestTiming: some View {
-        block("Request timing") {
+        block(L10n.Flight.requestTiming) {
             if let request = model.selectedRequest {
-                fact("Started", Self.clock.string(from: request.started))
-                fact("Total duration", request.duration.map(DurationFormat.short) ?? "—")
-                fact("TTFT", request.timeToFirstToken.map(DurationFormat.short) ?? "—")
-                fact("Generation", request.generation.map(DurationFormat.short) ?? "—")
+                fact(L10n.Flight.started, Self.clock.string(from: request.started))
+                fact(L10n.Flight.totalDuration, request.duration.map(DurationFormat.short) ?? "—")
+                fact(L10n.Flight.ttft, request.timeToFirstToken.map(DurationFormat.short) ?? "—")
+                fact(L10n.Flight.generation, request.generation.map(DurationFormat.short) ?? "—")
                 fact(
-                    "Throughput",
-                    request.throughput.map { String(format: "%.1f tok/s", $0) } ?? "—"
+                    L10n.Flight.throughput,
+                    request.throughput.map { L10n.Flight.tokensPerSecond(rate: String(format: "%.1f", $0)) } ?? "—"
                 )
             } else {
-                Text("This step happened outside a model request.")
+                Text(L10n.Flight.outsideRequest)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
             }
@@ -176,7 +176,7 @@ struct TrajectoryInspector: View {
 
     @ViewBuilder
     private func previewBlock(for step: TrajectoryStep) -> some View {
-        block("Preview") {
+        block(L10n.Flight.preview) {
             Text(step.title)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.text)
@@ -211,10 +211,7 @@ struct TrajectoryInspector: View {
                     well(body, font: step.role == .tool ? AuspexType.monoBlock : AuspexType.body)
                 } else {
                     well(step.title, font: AuspexType.body)
-                    Text(
-                        "This harness recorded only a preview of this step; there is no full text "
-                            + "in the log to show."
-                    )
+                    Text(L10n.Flight.previewOnly)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -239,7 +236,7 @@ struct TrajectoryInspector: View {
                 }
                 Spacer(minLength: 4)
                 if let text = model.raw?.text {
-                    Button("Copy") {
+                    Button(L10n.Common.copy) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(text, forType: .string)
                     }
@@ -249,7 +246,7 @@ struct TrajectoryInspector: View {
                 }
             }
             if model.isLoadingRaw {
-                Text("Reading the record…")
+                Text(L10n.Flight.readingRecord)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
             } else if let text = model.raw?.text {
@@ -260,7 +257,7 @@ struct TrajectoryInspector: View {
                     .foregroundStyle(AuspexPalette.text3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Nothing has been read yet.")
+                Text(L10n.Flight.nothingRead)
                     .font(AuspexType.caption)
                     .foregroundStyle(AuspexPalette.text3)
             }
@@ -316,8 +313,8 @@ struct TrajectoryInspector: View {
 
     private var empty: some View {
         EmptyStateView(
-            title: "Nothing selected",
-            detail: "Click a row, or a bar on the timeline, to take a step apart."
+            title: L10n.Flight.nothingSelected,
+            detail: L10n.Flight.nothingSelectedDetail
         )
         .centredInPane()
     }

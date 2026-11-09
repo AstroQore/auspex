@@ -148,7 +148,7 @@ struct BoardGroupingTests {
         #expect(groups.map(\.title) == ["zulu", "alpha"])
     }
 
-    @Test("sessions with neither a git root nor a cwd land in one section, last")
+    @Test("sessions with neither a git root nor a cwd land in Projectless, last")
     func rootlessSessionsGoLast() {
         let frame = board([
             session(.codex, "nowhere", state: .waitingPermission(tool: "shell"), cwd: nil, at: 60),
@@ -157,7 +157,7 @@ struct BoardGroupingTests {
 
         let groups = BoardGrouping.groups(for: frame, groupBy: .project)
 
-        #expect(groups.map(\.title) == ["alpha", BoardGrouping.noProjectTitle])
+        #expect(groups.map(\.title) == ["alpha", PseudoProject.projectlessName])
         #expect(groups.last?.sessions.map(\.key.sessionID) == ["nowhere"])
     }
 

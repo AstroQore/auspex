@@ -2,7 +2,7 @@
 name: auspex-coordination
 description: Coordinate Supervisor, Worker, and Reviewer work through Auspex when a brief names an Auspex task, when handing work to another agent, or when reviewing shared task progress. Auspex remains the task state source; this skill is only the operating playbook.
 metadata:
-  version: 1.1.0
+  version: 1.3.0
 ---
 
 # Auspex Coordination
@@ -26,7 +26,8 @@ Auspex has two layers:
    schemas. Never invent a call because this playbook mentions a newer tool.
 3. If the brief includes an Auspex task id, use it. If it does not, keep the
    implicit session task: do not create or claim an explicit task merely to
-   satisfy this protocol.
+   satisfy this protocol. Create tasks only when you are handing work to
+   another agent.
 4. Never claim work already held by another live session. Inspect the task and
    peer context, then ask for a handoff or use `tasks.release` only when the
    owner is deliberately giving it up and the server permits the transition.
@@ -35,8 +36,9 @@ Auspex has two layers:
 6. Do not put raw transcripts, prompts, credentials, full command output, or
    secrets in task notes. Record only a compact fact and a checkable reference.
 7. If MCP is unavailable or `sessions.self` cannot resolve this process,
-   continue the user's work. State the degraded coordination honestly; never
-   report a claim, notification, or update that the server rejected.
+   retry once with your own session id (see "Identity unresolved" below),
+   then continue the user's work. State the degraded coordination honestly;
+   never report a claim, notification, or update that the server rejected.
 8. Treat a task's `version` as a compare-and-swap token. Pass the latest value
    as `expected_version` on every task write that accepts it. If it conflicts,
    re-read `tasks.get`, understand what changed, and decide again; never retry
@@ -59,9 +61,11 @@ When the brief names a task id:
 5. Call `auspex.report` with the immediate focus and progress only when those
    facts are useful to a person scanning the board.
 
-When there is no task id, do the requested work normally. Use `auspex.notify`
-when the person is needed, but do not search for or manufacture a task unless
-the user explicitly asks for project coordination.
+When there is no task id, do the requested work normally. Auspex already
+watches the session as its implicit session task. Use `auspex.notify` when the
+person is needed, but do not call `tasks.list` looking for a task to claim, and
+do not manufacture one, unless the user explicitly asks for project
+coordination.
 
 ## Worker playbook
 
@@ -96,10 +100,12 @@ the user explicitly asks for project coordination.
 ## Supervisor playbook
 
 1. Call `overview.get` before decomposing work. Reuse an existing matching plan
-   or task instead of duplicating it.
+   or task instead of duplicating it. `tasks.create` returns the open task
+   already filed under the same title in the project, marked
+   `deduplicated: true`, rather than a second one.
 2. Create a plan only for a real decomposition. Create one bounded task per
-   worker with objective, scope, dependencies, acceptance criteria, and a task
-   id in the worker brief.
+   worker, written as described in "How to write a task" below, and put its
+   task id in the worker brief.
 3. Make scopes non-overlapping where possible: separate files, subsystems,
    worktrees, or read-only review. If overlap is intentional, name the owner of
    the shared boundary.
@@ -108,6 +114,33 @@ the user explicitly asks for project coordination.
    reported progress have different provenance.
 5. Surface collisions, blocked dependencies, orphaned claims, and Review work
    to the person. Do not automatically kill, steal, or reassign a session.
+
+## How to write a task
+
+A task is a brief another agent will act on and a person will check. Pass the
+structured fields to `tasks.create`; Auspex stores them in the body in a fixed
+layout, so every reader sees the same shape.
+
+- `title`: a verb and its object — "Port the cart to the new checkout API",
+  not "Cart" or "Work on checkout".
+- `objective`: one sentence saying why the task exists.
+- `acceptance`: at least one item, each a checkable outcome — a test passes, a
+  file exists, a number is reached ("CartTests pass", "docs/cart.md exists",
+  "p95 under 200 ms"). Write what must be true, not what to avoid.
+- `deliverable`: what the worker hands back — a commit, a file, a report.
+- `scope`: the files, subsystem or worktree the work stays inside.
+- `out_of_scope`: the boundaries — what this task deliberately leaves alone.
+  Prohibitions belong here, not in `acceptance`.
+- Pass `session_id` when `sessions.self` could not resolve you; a task filed
+  by an unattributed caller cannot be traced back to who handed it out.
+
+When the work is finished, `tasks.complete` takes a `result` that says what was
+done plus one piece of evidence a reviewer can check: a commit, a file path, or
+a test name.
+
+Unclaimed to-dos nobody touched for a week are set aside as stale and left out
+of `tasks.list` unless `include_stale` is passed. A stale task is not closed;
+claiming it, or a person keeping it, brings it back.
 
 ## Reviewer playbook
 
@@ -131,8 +164,10 @@ Auspex coordination must never become a prerequisite for useful work.
 
 - MCP unavailable: continue, keep a local handoff summary, and say that board
   updates were not recorded.
-- Identity unresolved: use read-only overview/task context if available;
-  continue without claim/report/notify calls that require identity.
+- Identity unresolved: retry once with your own session id, as described
+  below. If that is refused too, use read-only overview/task context if
+  available and continue without claim/report/notify calls that require
+  identity.
 - A write is rejected: respect the server state, do not retry by impersonating
   another session or supplying a guessed session id.
 - A version is stale: re-read the task and make a fresh decision from the new
@@ -142,3 +177,33 @@ Auspex coordination must never become a prerequisite for useful work.
 
 In every degraded case, finish the user's actual task if it remains safe and
 possible.
+
+### Identity unresolved: name your own session
+
+Some harnesses run several sessions in one process (a Codex thread server
+inside a desktop app) or tell their MCP servers nothing, so the process tree
+cannot always say which session is calling. When `sessions.self` answers
+`resolved: false`, retry once with your own session id:
+
+1. Read the id from your own environment. Never guess one, and never use a
+   peer's.
+   - Claude Code: `echo "$CLAUDE_CODE_SESSION_ID"` in the Bash tool.
+   - Cursor (`cursor-agent`): `echo "$CURSOR_AGENT_CHAT_ID"`.
+   - Grok Build: `echo "$GROK_SESSION_ID"`, when it is set.
+   - Codex: `echo "$CODEX_THREAD_ID"` in your shell tool, when it is set.
+     Otherwise your rollout file is named `rollout-<timestamp>-<thread id>.jsonl`
+     under `${CODEX_HOME:-$HOME/.codex}/sessions/YYYY/MM/DD/` (the day the
+     thread started), and its trailing UUID is your id. Several threads can
+     write in the same directory at once, so do not take the newest file:
+     print a unique marker in one command (`echo auspex-self-<random>`), then
+     in a second command find the one rollout that contains it —
+     `find "${CODEX_HOME:-$HOME/.codex}/sessions" -name 'rollout-*.jsonl' -mmin -10 -exec grep -l 'auspex-self-<random>' {} +`
+     — and take the UUID at the end of that file name. If no file or more
+     than one file matches, stop: you do not know your id.
+2. Call `sessions.self(session_id=<id>)`. Auspex accepts it only for a live
+   session of the same harness as the process this connection came from,
+   and its `evidence` then starts with "self-reported".
+3. If it resolves, pass the same `session_id` on every later write that
+   accepts it (`tasks.claim`, `tasks.update`, `tasks.log`, `tasks.complete`,
+   `tasks.release`, `auspex.notify`, `auspex.report`). If it is refused, read
+   the reason, do not try a different id, and continue in degraded mode.

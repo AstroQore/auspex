@@ -86,6 +86,11 @@ both *typing*, they only differ in tempo and screen colour.
 A pose with no file uses the built-in rig for that pose only. A pose listed
 in `poses` with no file is a mistake and is reported.
 
+`idle`, `stale` and `ended` are idle motion rather than signals: the office
+shows their first frame at rest and plays the strip once each time the room
+stirs, every three to eight seconds. Every other pose loops for as long as the
+session is in it.
+
 ## The strip
 
 - **One horizontal row.** Frames run left to right — no second row, no padding

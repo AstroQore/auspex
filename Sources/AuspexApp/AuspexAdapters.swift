@@ -18,10 +18,17 @@ enum AuspexAdapters {
     /// Nothing else in the app names a harness: `installed` is derived from
     /// this list, the empty state reads `installed`, and the coordinator
     /// discovers, tails, and re-seeds on its own.
+    ///
+    /// `ClaudeCoworkLiveAdapter` is deliberately absent. Cowork runs in the
+    /// cloud by default since it merged with Chat (October 2026): the
+    /// workspace tree it used to write under Claude.app's container holds a
+    /// few dozen transcripts from March–July 2026 and nothing since, so
+    /// tailing it bought nothing but a process-table sweep of every Claude.app
+    /// helper every three seconds. Those historical rows stay readable; the
+    /// harness is still a `Harness` case and keeps its logo and colours.
     static var all: [any SourceAdapter] {
         [
             ClaudeLiveAdapter(),
-            ClaudeCoworkLiveAdapter(),
             CodexLiveAdapter(),
             CursorLiveAdapter(),
             GrokLiveAdapter(),
@@ -90,9 +97,9 @@ enum AuspexAdapters {
     static func storeNote(for harness: Harness) -> String? {
         switch harness {
         case .codex:
-            "shares ~/.codex/sessions; every originator except ChatGPT Work"
+            L10n.Harnesses.Store.codexShared
         case .chatgptWork:
-            "shares ~/.codex/sessions; originator ChatGPT Work"
+            L10n.Harnesses.Store.chatgptShared
         default:
             nil
         }
@@ -112,8 +119,11 @@ enum AuspexAdapters {
     /// account for. Gemini CLI is the one left out: it is deprecated, it has
     /// no live adapter, and a status panel that listed every case in the
     /// catalog would be a specification rather than a status panel.
+    /// Claude Cowork is the other omission, since October 2026: it runs in
+    /// the cloud and writes no transcript here, so a row for it would only
+    /// ever say "nothing seen".
     static let featured: [Harness] = [
-        .claudeCode, .claudeCowork, .codex, .chatgptWork, .cursor,
+        .claudeCode, .codex, .chatgptWork, .cursor,
         .grokBuild, .grokBot, .antigravity
     ]
 }

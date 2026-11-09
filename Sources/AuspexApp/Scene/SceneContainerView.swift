@@ -16,6 +16,22 @@ import SwiftUI
 /// does.
 struct SceneContainerView: View {
     let model: LiveBoardModel
+    /// How much of the aviary's own chrome to draw.
+    var chrome: Chrome = .full
+    /// Now's balloons, by the desk they hang over. Empty in the aviary.
+    var captions: [SessionKey: SceneCaption] = [:]
+    /// Who Now's *may need you* list is about, which the stage orders its
+    /// rooms by. Empty in the aviary.
+    var stageWatched: Set<SessionKey> = []
+
+    /// The aviary draws its own zoom controls, legend and minimap. Now's
+    /// stage is a fixed-height window onto the same office with its own
+    /// labels over it, and those three would crowd a picture a third the
+    /// height.
+    enum Chrome: Equatable {
+        case full
+        case stage
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Which appearance the office is built for. Read here rather than inside
@@ -66,6 +82,9 @@ struct SceneContainerView: View {
                 reduceMotion: reduceMotion || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                 zones: zones,
                 attention: attention,
+                captions: captions,
+                stageWatched: stageWatched,
+                frameAsStage: chrome == .stage,
                 commands: commands,
                 onSelect: { model.selectedKey = $0 },
                 onFocusProject: { model.focusedProjectKey = $0 },
@@ -81,24 +100,30 @@ struct SceneContainerView: View {
                 emptyRoom
             }
 
-            controls
-                .padding(12)
+            if chrome == .full {
+                controls
+                    .padding(12)
+            }
         }
         .overlay(alignment: .bottomLeading) {
-            VStack(alignment: .leading, spacing: 6) {
-                // Above the legend rather than on the garden's nameplate: the
-                // sessions the window is holding back have no bench and no
-                // gate — they are not on this map at all — so the place to say
-                // so is the map's own chrome, next to the garden it would
-                // otherwise have filled.
-                if let hint = model.olderHiddenHint { windowHint(hint) }
-                legend
+            if chrome == .full {
+                VStack(alignment: .leading, spacing: 6) {
+                    // Above the legend rather than on the garden's nameplate:
+                    // the sessions the window is holding back have no bench
+                    // and no gate — they are not on this map at all — so the
+                    // place to say so is the map's own chrome, next to the
+                    // garden it would otherwise have filled.
+                    if let hint = model.olderHiddenHint { windowHint(hint) }
+                    legend
+                }
+                .padding(12)
             }
-            .padding(12)
         }
         .overlay(alignment: .bottomTrailing) {
-            SceneMinimapView(overview: overview) { commands.jump($0) }
-                .padding(12)
+            if chrome == .full {
+                SceneMinimapView(overview: overview) { commands.jump($0) }
+                    .padding(12)
+            }
         }
         .background(AuspexPalette.canvas)
         // Switching to the board is the common case and SwiftUI takes the
@@ -106,6 +131,12 @@ struct SceneContainerView: View {
         // alive would keep a scene rendering behind the cards — which is a
         // whole core spent on a picture nobody is looking at.
         .onDisappear { commands.pause() }
+        // And the other half: SwiftUI can take a view off screen and put the
+        // same one back — a section switched away from and back to, a column
+        // reshuffled — and a view paused on the way out has to be asked
+        // again on the way in, or it holds its last picture until the next
+        // board frame happens to arrive, which on a quiet board is never.
+        .onAppear { commands.resume() }
     }
 
     // MARK: Chrome
@@ -117,17 +148,17 @@ struct SceneContainerView: View {
     /// odd wants "100 %" more than they want to count clicks back to it.
     private var controls: some View {
         VStack(spacing: 6) {
-            controlButton("Fit all", systemImage: "arrow.up.left.and.arrow.down.right") {
+            controlButton(L10n.Perch.fitAll, systemImage: "arrow.up.left.and.arrow.down.right") {
                 commands.fit()
             }
             .keyboardShortcut("0", modifiers: .command)
 
-            controlButton("Zoom in", systemImage: "plus.magnifyingglass") { commands.zoomIn() }
+            controlButton(L10n.Perch.zoomIn, systemImage: "plus.magnifyingglass") { commands.zoomIn() }
                 .keyboardShortcut("=", modifiers: .command)
 
             SceneZoomControl(overview: overview, commands: commands)
 
-            controlButton("Zoom out", systemImage: "minus.magnifyingglass") { commands.zoomOut() }
+            controlButton(L10n.Perch.zoomOut, systemImage: "minus.magnifyingglass") { commands.zoomOut() }
                 .keyboardShortcut("-", modifiers: .command)
         }
         .padding(4)
@@ -183,7 +214,7 @@ struct SceneContainerView: View {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .strokeBorder(AuspexPalette.hairline, lineWidth: 1)
         )
-        .help("Older sessions are in the store, not on the map. Widen to draw them.")
+        .help(L10n.Aviary.olderHelp)
     }
 
     /// What the monitors mean, and what the garden's two rows mean.
@@ -219,35 +250,25 @@ struct SceneContainerView: View {
         .accessibilityHidden(true)
     }
 
-    private static let legendEntries: [(label: String, color: Color, help: String)] = [
-        ("Thinking", AuspexPalette.stateThinking, "Reasoning, with no tool open."),
-        ("Tool", AuspexPalette.stateTool, "A tool call is running."),
-        ("Writing", AuspexPalette.stateWriting, "The working tree is being changed."),
-        (
-            "Delegating", AuspexPalette.stateDelegating,
-            "Waiting on the sub-agents it spawned, around a table."
-        ),
-        (
-            "Needs you", AuspexPalette.statePermission,
-            StateCopy.explanation(for: .waitingPermission(tool: nil))
-                ?? "Blocked on a person."
-        ),
-        (
-            "Idle", AuspexPalette.stateIdle,
-            StateCopy.explanation(for: .idle) ?? "Nothing outstanding."
-        ),
-        (
-            "Ended", AuspexPalette.stateEnded,
-            StateCopy.explanation(for: .ended(reason: .exited)) ?? "Over."
-        )
-    ]
+    /// Computed rather than stored, so the legend follows the Language setting.
+    private static var legendEntries: [(label: String, color: Color, help: String)] {
+        [
+            (L10n.State.thinking, AuspexPalette.stateThinking, L10n.Aviary.Legend.thinkingHelp),
+            (L10n.State.tool, AuspexPalette.stateTool, L10n.Aviary.Legend.toolHelp),
+            (L10n.State.writing, AuspexPalette.stateWriting, L10n.Aviary.Legend.writingHelp),
+            (L10n.State.delegating, AuspexPalette.stateDelegating, L10n.Aviary.Legend.delegatingHelp),
+            (L10n.Now.needsYou, AuspexPalette.statePermission, L10n.State.Explain.needsYou),
+            (L10n.Now.idle, AuspexPalette.stateIdle, L10n.State.Explain.idle),
+            (L10n.Board.Ended.title, AuspexPalette.stateEnded, L10n.State.Explain.ended),
+        ]
+    }
 
     private var emptyRoom: some View {
         VStack(spacing: 6) {
-            Text("The office is empty")
+            Text(L10n.Aviary.empty)
                 .font(AuspexType.display)
                 .foregroundStyle(AuspexPalette.textSecondary)
-            Text("A desk appears for every session Auspex can see.")
+            Text(L10n.Aviary.emptyDetail)
                 .font(AuspexType.body)
                 .foregroundStyle(AuspexPalette.textTertiary)
         }
@@ -281,7 +302,7 @@ private struct SceneZoomControl: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .foregroundStyle(AuspexPalette.textSecondary)
-        .help("Zoom")
+        .help(L10n.Aviary.zoom)
     }
 
     /// A zoom as a person reads it. Rounded, because `33 %` is what a third is
@@ -364,7 +385,7 @@ private struct SceneMinimapView: View {
                     onJump(map.worldPoint(value.location))
                 }
         )
-        .help("The whole office. Click to go there.")
+        .help(L10n.Aviary.minimapHelp)
         .accessibilityHidden(true)
     }
 }
@@ -385,6 +406,9 @@ final class SceneCommands {
     /// Stops the clock, for the moment SwiftUI takes the view off screen
     /// without taking it away.
     var pause: () -> Void = {}
+    /// Asks the view whether it is on screen again, for the moment SwiftUI
+    /// puts it back.
+    var resume: () -> Void = {}
 }
 
 /// The canvas itself: a scroll view over an `SKView`.
@@ -395,6 +419,9 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     let reduceMotion: Bool
     let zones: SceneZoneOptions
     let attention: [SessionKey: AttentionState]
+    let captions: [SessionKey: SceneCaption]
+    let stageWatched: Set<SessionKey>
+    let frameAsStage: Bool
     let commands: SceneCommands
     let onSelect: (SessionKey?) -> Void
     let onFocusProject: (String?) -> Void
@@ -422,9 +449,12 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> SceneCanvasView {
         let theme = SceneTheme.resolved(for: appearance)
         let scene = OfficeScene(theme: theme)
+        scene.composesStage = frameAsStage
         let view = SceneCanvasView(
             scene: scene, frame: CGRect(x: 0, y: 0, width: 900, height: 640)
         )
+        view.skView.rates = frameAsStage ? .stage : .aviary
+        view.fitPadding = scene.fitPadding
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
@@ -435,7 +465,19 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         commands.setZoom = { [weak scene] zoom in scene?.setZoom(zoom) }
         commands.jump = { [weak scene] point in scene?.jump(toLayoutPoint: point) }
         commands.pause = { [weak view] in view?.suspend() }
+        commands.resume = { [weak view] in view?.refreshPaused() }
         return view
+    }
+
+    /// Whatever the container offers. The office has no size of its own to
+    /// ask for, and without this SwiftUI measures the scroll view and the
+    /// `SKView` under it through Auto Layout on every update that reaches the
+    /// representable — which is every board frame — and lays the window out
+    /// again after it.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize, nsView: SceneCanvasView, context: Context
+    ) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
     }
 
     func updateNSView(_ view: SceneCanvasView, context: Context) {
@@ -445,23 +487,78 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
         scene.onSelect = onSelect
         scene.onFocusProject = onFocusProject
         scene.onOverview = onOverview
-        scene.update(
+        // Who is being watched goes first: the stage orders its rooms by it,
+        // and the board below should be composed with the answer it gives.
+        scene.setStageWatched(stageWatched)
+        // The room only when something the room draws moved. This body is
+        // invalidated by the balloons and the selection as well as by the
+        // board, and an update with an unchanged board used to put the whole
+        // floor plan back through the layout to find that nothing had moved.
+        let inputs = Coordinator.Inputs(
             board: board,
             selected: selected,
             focusedProject: focusedProject,
             reduceMotion: reduceMotion,
-            theme: SceneTheme.resolved(for: appearance),
+            theme: SceneTheme.resolved(for: appearance).id,
             zones: zones,
             attention: attention
         )
+        if context.coordinator.inputs != inputs {
+            context.coordinator.inputs = inputs
+            context.coordinator.sceneUpdates += 1
+            scene.update(
+                board: board,
+                selected: selected,
+                focusedProject: focusedProject,
+                reduceMotion: reduceMotion,
+                theme: SceneTheme.resolved(for: appearance),
+                zones: zones,
+                attention: attention
+            )
+        }
+        // After the board, so a balloon lands on the desk this frame seats
+        // its session at.
+        scene.setCaptions(captions)
+        // A stage is framed once, when it first has a room to frame; after
+        // that the composition keeps itself framed, until the reader pans
+        // or zooms.
+        if frameAsStage, !context.coordinator.framedStage, !board.sessions.isEmpty {
+            context.coordinator.framedStage = true
+            // Next turn of the run loop, once the card has given the view
+            // its real size.
+            DispatchQueue.main.async { [weak scene] in scene?.frameStage() }
+        }
     }
 
-    static func dismantleNSView(_ view: SceneCanvasView, coordinator: ()) {
+    final class Coordinator {
+        var framedStage = false
+        /// What the scene was last updated with.
+        var inputs: Inputs?
+        /// How many times the scene was actually updated. For the tests.
+        var sceneUpdates = 0
+
+        /// Everything ``OfficeScene/update(board:selected:focusedProject:reduceMotion:theme:zones:attention:)``
+        /// draws from.
+        struct Inputs: Equatable {
+            let board: BoardSnapshot
+            let selected: SessionKey?
+            let focusedProject: String?
+            let reduceMotion: Bool
+            let theme: String
+            let zones: SceneZoneOptions
+            let attention: [SessionKey: AttentionState]
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    static func dismantleNSView(_ view: SceneCanvasView, coordinator: Coordinator) {
         view.stop()
     }
 }
 
-/// An `SKView` that knows when nobody is looking at it.
+/// An `SKView` that knows when nobody is looking at it, and when there is
+/// nothing to look at.
 ///
 /// ## Why the pausing is here and not in the scene
 ///
@@ -470,18 +567,87 @@ private struct OfficeSceneRepresentable: NSViewRepresentable {
 /// core to render into a surface nobody composites. Only the view can answer
 /// "is this on screen", so the view owns the answer and pushes it down.
 ///
-/// Thirty frames a second rather than sixty for the same reason the board
-/// coalesces its snapshots at twenty: the fastest thing in the scene is a
-/// typing hand at ten changes a second, and the difference between 30 and 60 Hz
-/// on that is a difference nobody can see and everybody's fan can hear.
+/// ## Three speeds, and stopped
+///
+/// An unpaused `SKView` is not only the frames it draws. Its display link
+/// fires at the display's own rate whatever `preferredFramesPerSecond` says,
+/// and every one of those ticks wakes a thread and the main queue to decide
+/// not to draw — so a scene that changes once every few seconds and a scene
+/// running at thirty frames a second cost nearly the same to leave alone. The
+/// only rate that costs nothing is *paused*. So the view runs at one of:
+///
+/// - **the gesture rate** while a hand is on the map, because a map moving
+///   under the fingers is judged by a stricter standard than anything else;
+/// - **the resting rate** while anything in the picture is moving — a typing
+///   hand, a walk, a flight of the camera;
+/// - **stopped** the moment a drawn frame had nothing moving in it. The last
+///   frame stays on the glass, and the first thing that changes — a board
+///   frame, the pointer, a scroll, a resize, a balloon's stopwatch, the next
+///   beat of the room's idle motion — starts the clock again on the next
+///   vsync. The scene reports which frames were still; see
+///   `OfficeScene.didFinishUpdate()`.
+///
+/// The resting rate is thirty in the aviary and ten on Now's stage: the
+/// fastest thing in the office is a typing hand at about ten changes a
+/// second, and the stage is a strip a third the height of the window that
+/// sits on the default screen all day. Every frame it draws is also a Core
+/// Animation commit of the window it sits in, which is the larger half of
+/// what a running stage costs: measured with three people working, ten
+/// frames a second instead of fifteen took about 1.2 % process CPU off. A
+/// gesture gets thirty, for as long as it lasts.
 final class OfficeSKView: SKView {
+    /// How fast the office is drawn while something in it moves, and while a
+    /// hand is on it.
+    struct Rates: Equatable {
+        /// While anything on screen is moving.
+        var resting: Int
+        /// While a gesture is in flight.
+        var gesture: Int
+
+        /// The aviary: the office is the whole window.
+        static let aviary = Rates(resting: 30, gesture: 60)
+        /// Now's stage: a strip over the lists, open all day on the default
+        /// screen, where a picture that is glanced at does not need the
+        /// aviary's rate.
+        static let stage = Rates(resting: 10, gesture: 30)
+    }
+
+    /// Which pair of rates this view runs at.
+    var rates: Rates = .aviary {
+        didSet {
+            guard rates != oldValue else { return }
+            applyRate()
+        }
+    }
+
     /// Whether a gesture is in flight, which is the one time the office is
-    /// worth drawing at the display's rate.
+    /// worth drawing at the gesture rate.
     private var isInteracting = false
+    /// Whether a window is showing this view at all. A view that is not on
+    /// screen is suspended rather than still, and nothing wakes it but the
+    /// window coming back.
+    private(set) var isOnScreen = false
+    /// Whether the clock is stopped because the last drawn frame had nothing
+    /// moving in it.
+    private(set) var isStill = false
+    /// Bumped by every wake, so a decision to stop that was taken before
+    /// something changed is recognised as stale when it arrives.
+    private var generation = 0
+
+    /// When the scene last finished a frame, in `CACurrentMediaTime()`
+    /// seconds — what the start-up check below compares against.
+    private(set) var lastFrameAt: TimeInterval = 0
+    /// Whether a check that the render loop really started is pending.
+    private var isCheckingStart = false
+    /// How many times in a row the render loop had to be started again.
+    private var restarts = 0
+    /// How many times the render loop was found not to have started — a
+    /// number to read in a debugger when a stage looks frozen.
+    private(set) var stalledStarts = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        preferredFramesPerSecond = Self.framesPerSecond
+        preferredFramesPerSecond = rates.resting
         ignoresSiblingOrder = true
         allowsTransparency = false
         NotificationCenter.default.addObserver(
@@ -498,9 +664,13 @@ final class OfficeSKView: SKView {
     deinit { NotificationCenter.default.removeObserver(self) }
 
     /// Releases the scene when SwiftUI takes the view away.
+    ///
+    /// The scene goes first: presenting — even presenting nothing — starts an
+    /// `SKView`'s clock again, so a view suspended and *then* emptied was left
+    /// ticking for as long as SwiftUI took to let go of it.
     func stop() {
-        suspend()
         presentScene(nil)
+        suspend()
     }
 
     /// Stops the clock, whoever asked.
@@ -511,9 +681,17 @@ final class OfficeSKView: SKView {
     /// the frame rate is dropped so that even a run loop that somehow ticks is
     /// ticking once a second rather than thirty times.
     func suspend() {
+        generation &+= 1
+        isOnScreen = false
+        isStill = false
         isPaused = true
         scene?.isPaused = true
         preferredFramesPerSecond = 1
+        // Whatever was between two places lands in the second one. A paused
+        // scene keeps its actions where they were, and the picture this view
+        // holds — and shows again the moment it comes back — would otherwise
+        // be somebody frozen mid-stride on the open floor.
+        officeScene?.settleMotion()
     }
 
     /// Recomputes whether the scene should be running, from the window.
@@ -526,18 +704,117 @@ final class OfficeSKView: SKView {
 
     /// Says whether a gesture is in flight.
     ///
-    /// The office rests at thirty frames a second — the fastest thing in it is
-    /// a typing hand at ten changes a second — but a *map moving under the
-    /// fingers* is judged by a different standard, and thirty frames of a pan
-    /// is the one place the difference is visible. So the rate goes up for the
-    /// length of a gesture and comes straight back down; the canvas stops
-    /// asking a few hundred milliseconds after the last event, so nothing is
-    /// left paying for it.
+    /// The rate goes up for the length of a gesture and comes straight back
+    /// down; the canvas stops asking a few hundred milliseconds after the last
+    /// event, so nothing is left paying for it.
     func setInteracting(_ interacting: Bool) {
         guard isInteracting != interacting else { return }
         isInteracting = interacting
-        guard !isPaused else { return }
-        preferredFramesPerSecond = interacting ? Self.gestureFramesPerSecond : Self.framesPerSecond
+        applyRate()
+        if interacting { wake() }
+    }
+
+    /// Something in the picture changed: draw it.
+    ///
+    /// Cheap enough to call for every change, which is the point — the board,
+    /// the pointer, the scroll view and the scene's own beats all call it
+    /// rather than each deciding whether their change was worth a frame. A
+    /// running view only notes that the frame it is about to draw is not the
+    /// still one; a still view starts its clock again on the next vsync. A
+    /// view that is not on screen stays asleep.
+    func wake() {
+        defer { checkStarted() }
+        generation &+= 1
+        guard isOnScreen else { return }
+        isStill = false
+        if isPaused { isPaused = false }
+    }
+
+    /// Hears from the scene, once per drawn frame, whether anything in that
+    /// frame was moving — and when it next has something to do.
+    ///
+    /// A frame with nothing moving is the last one worth drawing until
+    /// something changes, so the clock stops after it. Not here: this is
+    /// called from inside SpriteKit's update, before the frame is rendered,
+    /// and a view paused at that moment might not draw the frame that made
+    /// the picture still. The stop is queued behind the render instead, and
+    /// abandoned if anything woke the view in between.
+    ///
+    /// - Parameter nextWake: when, in `CACurrentMediaTime()` seconds, the
+    ///   scene next changes on its own — a balloon's stopwatch ticking over,
+    ///   the next beat of the room's idle motion. `nil` when nothing will.
+    func frameFinished(moving: Bool, nextWake: TimeInterval?) {
+        lastFrameAt = CACurrentMediaTime()
+        restarts = 0
+        guard !moving, !isInteracting, isOnScreen else { return }
+        let decided = generation
+        DispatchQueue.main.async { [weak self] in
+            self?.settle(decided: decided, nextWake: nextWake)
+        }
+    }
+
+    private func settle(decided: Int, nextWake: TimeInterval?) {
+        guard decided == generation, isOnScreen, !isInteracting, !isPaused else { return }
+        isPaused = true
+        isStill = true
+        guard let nextWake else { return }
+        let delay = max(0.05, nextWake - CACurrentMediaTime())
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            // A wake that came first has already drawn whatever this was for,
+            // and set up its own next one.
+            guard let self, decided == generation else { return }
+            wake()
+        }
+    }
+
+    /// Makes sure a view that was just told to run is actually running.
+    ///
+    /// ## Why this exists
+    ///
+    /// Unpausing an `SKView` asks SpriteKit to start its display link, and
+    /// about one launch in six it did not: the view said it was running —
+    /// on screen, unpaused, at its resting rate — and the scene was never
+    /// asked for a single frame. Nothing in the view's own state can tell
+    /// that apart from a scene with nothing to draw, so the stage showed
+    /// whatever was last on the glass — the grid with no rooms on it, or a
+    /// room frozen mid-walk — and stayed that way for the rest of the launch,
+    /// however many board frames woke it, because waking an unpaused view
+    /// does nothing.
+    ///
+    /// So a wake that leaves the view running checks, a quarter of a second
+    /// later, that a frame has finished since; when none has, it pauses the
+    /// view and runs it again, and after that presents the scene again, and
+    /// checks again — a few times, backing off, then gives up until the next
+    /// wake. A view that is drawing never gets past the first comparison.
+    private func checkStarted() {
+        guard isOnScreen, !isPaused, !isCheckingStart else { return }
+        isCheckingStart = true
+        let askedAt = CACurrentMediaTime()
+        let delay = 0.25 * Double(1 << min(restarts, 3))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            isCheckingStart = false
+            guard isOnScreen, !isPaused, lastFrameAt < askedAt, restarts < 4 else { return }
+            restarts += 1
+            stalledStarts += 1
+            if restarts > 1, let scene {
+                presentScene(nil)
+                presentScene(scene)
+                scene.isPaused = false
+            }
+            isPaused = true
+            isPaused = false
+            preferredFramesPerSecond = isInteracting ? rates.gesture : rates.resting
+            checkStarted()
+        }
+    }
+
+    /// The rate for what is happening now. Written whenever the view is
+    /// running or could start running; a suspended view keeps its one frame
+    /// a second.
+    private func applyRate() {
+        guard isOnScreen || !isPaused else { return }
+        preferredFramesPerSecond = isInteracting ? rates.gesture : rates.resting
     }
 
     // MARK: - Live resize
@@ -572,11 +849,15 @@ final class OfficeSKView: SKView {
         // The scene has been following the size all along; this is only the
         // last one, and it lands on a size it has already been given.
         officeScene?.viewSizeChanged(to: bounds.size)
+        wake()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         officeScene?.viewSizeChanged(to: newSize)
+        // A still view's drawable is the old size, and AppKit would stretch
+        // it to the new one until a frame arrived.
+        wake()
     }
 
     /// Every Metal layer under this view. SpriteKit does not promise where its
@@ -625,18 +906,15 @@ final class OfficeSKView: SKView {
             suspend()
             return
         }
-        preferredFramesPerSecond = isInteracting
-            ? Self.gestureFramesPerSecond : Self.framesPerSecond
-        isPaused = false
+        isOnScreen = true
         scene?.isPaused = false
+        applyRate()
+        defer { checkStarted() }
+        // Whatever brought the view back, the picture on the glass is the one
+        // it had when it left: draw at least one frame, and let the scene say
+        // whether there is reason to draw a second.
+        wake()
     }
-
-    /// Thirty rather than sixty for the same reason the board coalesces its
-    /// snapshots at twenty: the fastest thing in the scene is a typing hand at
-    /// ten changes a second.
-    private static let framesPerSecond = 30
-    /// What a gesture gets, for as long as it lasts.
-    private static let gestureFramesPerSecond = 60
 }
 
 /// Renders the office to a PNG without a window.

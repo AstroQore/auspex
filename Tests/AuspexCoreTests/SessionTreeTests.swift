@@ -158,14 +158,15 @@ struct SessionTreeTests {
         #expect(board.ungroupedSessions.isEmpty)
     }
 
-    @Test("a chain with no directory anywhere in it stays ungrouped")
+    @Test("a chain with no directory anywhere in it is Projectless")
     func ungroupedChain() {
         let board = BoardSnapshot(generatedAt: Fixtures.date(0), sessions: [
             snapshot(root, cwd: nil),
             snapshot(child, parent: root, cwd: nil),
         ])
-        #expect(board.byProject.isEmpty)
-        #expect(Set(board.ungroupedSessions.map(\.key)) == [root, child])
+        #expect(board.byProject.keys.sorted() == [PseudoProject.projectlessKey])
+        #expect(Set(board.byProject[PseudoProject.projectlessKey]?.map(\.key) ?? []) == [root, child])
+        #expect(board.ungroupedSessions.isEmpty)
     }
 
     @Test("a child with its own directory keeps it")
@@ -183,6 +184,6 @@ struct SessionTreeTests {
         let board = BoardSnapshot(generatedAt: Fixtures.date(0), sessions: [
             snapshot(child, parent: root, cwd: nil)
         ])
-        #expect(board.ungroupedSessions.map(\.key) == [child])
+        #expect(board.byProject[PseudoProject.projectlessKey]?.map(\.key) == [child])
     }
 }

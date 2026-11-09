@@ -9,9 +9,9 @@ import Foundation
 /// showing the same thing — three readers of one value cannot disagree, while
 /// three readers of an actor can each observe a different moment.
 ///
-/// The sessions are already sorted and the counts already computed, because a
-/// value that arrives at up to 20 Hz should not make every consumer redo the
-/// same work.
+/// The sessions are already sorted, the counts already computed and the keys
+/// already indexed, because a value every surface reads on every frame should
+/// not make each of them redo the same work.
 public struct BoardSnapshot: Sendable, Equatable {
     /// When the frame was produced. Not the time of the newest event: a frame
     /// is also published when nothing happened but a session went stale.
@@ -53,6 +53,25 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// Empty on a frame nothing has been placed on yet, which reads exactly
     /// like the behaviour before there was such a thing as scratch.
     public let sandboxThreads: [SessionKey: String]
+
+    /// The sessions in no repository that are filed under a root other than
+    /// their own directory, and that root — see ``ProjectRollup``.
+    ///
+    /// Carried on the frame for the reason ``sandboxThreads`` is: the answer
+    /// needs the disk and the person's project roots, and the placement
+    /// service already asked both. Empty on a frame nothing has been placed on
+    /// yet, which groups every plain directory by itself, as it always did.
+    public let workspaceRoots: [SessionKey: String]
+
+    /// Where each session sits in ``sessions``.
+    ///
+    /// Built once with the frame. ``session(for:)`` used to be a linear scan,
+    /// and it is asked inside loops over every session — the ancestor walk in
+    /// ``projectKey(for:)``, the sidebar's tree, the unit builder, the ignore
+    /// rules — which made each of those quadratic in the size of the board.
+    ///
+    /// Derived from ``sessions`` and so left out of `==`.
+    public let index: [SessionKey: Int]
 
     /// The tallies a board shows at a glance.
     public struct Counts: Sendable, Equatable, Hashable {
@@ -112,7 +131,8 @@ public struct BoardSnapshot: Sendable, Equatable {
         generatedAt: Date,
         sessions: [SessionSnapshot],
         claims: ProjectClaims = .empty,
-        sandboxThreads: [SessionKey: String] = [:]
+        sandboxThreads: [SessionKey: String] = [:],
+        workspaceRoots: [SessionKey: String] = [:]
     ) {
         self.generatedAt = generatedAt
         self.sessions = Self.sorted(sessions)
@@ -120,6 +140,8 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = SessionTreeBuilder.build(self.sessions)
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.workspaceRoots = workspaceRoots
+        self.index = Self.makeIndex(self.sessions)
     }
 
     /// Creates a frame from sessions that are already in board order.
@@ -135,7 +157,9 @@ public struct BoardSnapshot: Sendable, Equatable {
         counts: Counts,
         tree: SessionTree,
         claims: ProjectClaims,
-        sandboxThreads: [SessionKey: String]
+        sandboxThreads: [SessionKey: String],
+        workspaceRoots: [SessionKey: String],
+        index: [SessionKey: Int]? = nil
     ) {
         self.generatedAt = generatedAt
         self.sessions = sessions
@@ -143,6 +167,30 @@ public struct BoardSnapshot: Sendable, Equatable {
         self.tree = tree
         self.claims = claims
         self.sandboxThreads = sandboxThreads
+        self.workspaceRoots = workspaceRoots
+        self.index = index ?? Self.makeIndex(sessions)
+    }
+
+    /// The first position of every key. First rather than last, so a board
+    /// that somehow held a key twice answers the way the old scan did.
+    private static func makeIndex(_ sessions: [SessionSnapshot]) -> [SessionKey: Int] {
+        var index: [SessionKey: Int] = [:]
+        index.reserveCapacity(sessions.count)
+        for (position, session) in sessions.enumerated() where index[session.key] == nil {
+            index[session.key] = position
+        }
+        return index
+    }
+
+    /// Everything but ``index``, which is a function of ``sessions``.
+    public static func == (lhs: BoardSnapshot, rhs: BoardSnapshot) -> Bool {
+        lhs.generatedAt == rhs.generatedAt
+            && lhs.sessions == rhs.sessions
+            && lhs.counts == rhs.counts
+            && lhs.tree == rhs.tree
+            && lhs.claims == rhs.claims
+            && lhs.sandboxThreads == rhs.sandboxThreads
+            && lhs.workspaceRoots == rhs.workspaceRoots
     }
 
     /// An empty board, for a view's initial state.
@@ -158,9 +206,13 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// that is identical.
     ///
     /// `counts` and `tree` are derived from `sessions` in every initialiser, so
-    /// comparing the sessions and the claims answers for all four.
+    /// comparing the sessions, the claims and the scratch folders answers for
+    /// all five. The scratch folders are not derived from anything here: a
+    /// folder a person marks as scratch moves its session to another heading
+    /// without changing the session.
     public func saysTheSameAs(_ other: BoardSnapshot) -> Bool {
-        sessions == other.sessions && claims == other.claims
+        sessions == other.sessions && claims == other.claims && sandboxThreads == other.sandboxThreads
+            && workspaceRoots == other.workspaceRoots
     }
 
     /// The same frame, placed by a different set of user projects.
@@ -172,7 +224,9 @@ public struct BoardSnapshot: Sendable, Equatable {
             counts: counts,
             tree: tree,
             claims: claims,
-            sandboxThreads: sandboxThreads
+            sandboxThreads: sandboxThreads,
+            workspaceRoots: workspaceRoots,
+            index: index
         )
     }
 
@@ -192,7 +246,8 @@ public struct BoardSnapshot: Sendable, Equatable {
             counts: Counts(sessions: kept),
             tree: SessionTreeBuilder.build(kept),
             claims: claims,
-            sandboxThreads: sandboxThreads
+            sandboxThreads: sandboxThreads,
+            workspaceRoots: workspaceRoots
         )
     }
 
@@ -219,9 +274,10 @@ public struct BoardSnapshot: Sendable, Equatable {
 
     // MARK: - Lookups
 
-    /// The session with `key`, when the board has one.
+    /// The session with `key`, when the board has one. A dictionary lookup —
+    /// see ``index``.
     public func session(for key: SessionKey) -> SessionSnapshot? {
-        sessions.first { $0.key == key }
+        index[key].map { sessions[$0] }
     }
 
     /// Sessions grouped by the harness that produced them, each group still in
@@ -230,27 +286,28 @@ public struct BoardSnapshot: Sendable, Equatable {
         Dictionary(grouping: sessions) { $0.key.harness }
     }
 
-    /// Sessions grouped by project — the git root when one is known, and the
-    /// working directory otherwise.
+    /// Sessions grouped by project — the git root when one is known, the
+    /// workspace a plain directory rolls up to, and the working directory
+    /// otherwise. Every session is in it: one with no project of its own is
+    /// under ``PseudoProject/projectlessKey``.
     ///
     /// The git root is preferred so that three sessions in three worktrees of
     /// one repository group together instead of looking like three projects.
-    /// Sessions whose adapter has recorded neither are in
-    /// ``ungroupedSessions`` rather than under a made-up key.
     public var byProject: [String: [SessionSnapshot]] {
         Dictionary(grouping: sessions.filter { projectKey(for: $0) != nil }) {
             projectKey(for: $0) ?? ""
         }
     }
 
-    /// Sessions that can be placed under no project: no directory of their
-    /// own, and no ancestor with one either.
+    /// Sessions that can be placed under no key at all. Always empty since
+    /// every such session files under Projectless; kept for the readers that
+    /// still ask.
     public var ungroupedSessions: [SessionSnapshot] {
         sessions.filter { projectKey(for: $0) == nil }
     }
 
     /// The grouping key for one session, falling back to its ancestors and
-    /// then to the harness itself.
+    /// then to Projectless.
     ///
     /// A delegated session frequently records no directory at all — a Claude
     /// subagent has no process and no cwd line, and a spawned harness may not
@@ -258,48 +315,72 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// parent is working on. So an unplaceable child takes the key of the
     /// nearest ancestor that has one.
     ///
-    /// What is left after that walk is of two kinds, and they are not the
-    /// same. A session whose directory is *missing* is genuinely unplaceable
-    /// and belongs in the residue. A session of a harness that records no
-    /// directory *at all* — Grok Bot, whose conversations run on xAI's
-    /// servers — is not missing anything, and filing every bot on the machine
-    /// under a heading that means "could not be placed" would say something
-    /// false about the store and bury the sessions that really could not be.
-    /// Those take a ``PseudoProject`` key instead.
-    ///
     /// A user project's claim is asked first, at every step of that walk: a
     /// person who put a directory in a project meant its sessions and the
     /// subagents they spawn, and a child that inherited its parent's automatic
     /// key while its parent moved into a project would be the one row on the
     /// board in the wrong place.
-    /// A third kind was hiding inside the first. A Codex desktop thread has a
-    /// directory, and it is `~/Documents/Codex/<date>/<name>` — a folder the
-    /// app made for that one conversation. Grouping by it gives a project per
-    /// conversation, so it is refused as a key and the session goes to a
-    /// scratch ``PseudoProject`` instead. A person who *claimed* that
-    /// directory still gets their claim: the rule below the user is the only
-    /// one this overrides.
+    ///
+    /// A session's own key is its git root, then the workspace a plain
+    /// directory was rolled up to (``workspaceRoots``), then its directory.
+    /// Two kinds of session never group by their own directory. A scratch
+    /// thread — a Codex desktop conversation's folder, a Claude Desktop
+    /// scratch workspace, the home directory — has a directory that is not a
+    /// project; a Codex thread another thread spawned has one that is not what
+    /// it is working on (see ``CodexThreadSpawn``). Both take their nearest
+    /// placeable ancestor's key, and a child of a scratch thread is in that
+    /// thread.
+    ///
+    /// Everything left after that walk is **Projectless**: a scratch thread
+    /// with no project above it, a session with no directory and no ancestor
+    /// with one, a harness whose store records no directory at all (Grok Bot).
+    /// One key, ``PseudoProject/projectlessKey``, for all of them — which is
+    /// why this never answers `nil`. The optional is kept for the callers that
+    /// were written against the residue.
     public func projectKey(for session: SessionSnapshot) -> String? {
         if let claimed = claims.key(for: session) { return claimed }
-        if !isSandbox(session), let own = Self.projectKey(for: session) { return own }
+        if groupsByOwnDirectory(session), let own = ownKey(for: session) { return own }
         var seen: Set<SessionKey> = [session.key]
         var current = session.identity.parent
         while let key = current, seen.insert(key).inserted {
             guard let ancestor = self.session(for: key) else { break }
             if let claimed = claims.key(for: ancestor) { return claimed }
-            if isSandbox(ancestor) {
-                // A child of a scratch thread is in that thread. Inheriting
-                // the *directory* would put it back under a folder name, and
-                // falling past it would strand it in the residue while its
-                // parent sits in a section.
-                return PseudoProject.scratchKey(for: ancestor.key.harness)
+            // A child of a scratch thread is in that thread. Inheriting the
+            // *directory* would put it back under a folder name.
+            if isSandbox(ancestor) { return PseudoProject.projectlessKey }
+            if !inheritsProject(ancestor), let inherited = ownKey(for: ancestor) {
+                return inherited
             }
-            if let inherited = Self.projectKey(for: ancestor) { return inherited }
             current = ancestor.identity.parent
         }
-        if isSandbox(session) { return PseudoProject.scratchKey(for: session.key.harness) }
-        guard !session.key.harness.recordsWorkingDirectory else { return nil }
-        return PseudoProject.key(for: session.key.harness)
+        return PseudoProject.projectlessKey
+    }
+
+    /// Whether a session is filed under Projectless.
+    public func isProjectless(_ session: SessionSnapshot) -> Bool {
+        projectKey(for: session).map(PseudoProject.isProjectless) ?? true
+    }
+
+    /// The key a session's own directory gives it: the git root, then the
+    /// workspace it was rolled up to, then the directory. `nil` for a session
+    /// that reported none of them — an empty string is no directory.
+    private func ownKey(for session: SessionSnapshot) -> String? {
+        if let root = session.identity.gitRoot, !root.isEmpty { return root }
+        if let root = workspaceRoots[session.key] { return root }
+        if let cwd = session.identity.cwd, !cwd.isEmpty { return cwd }
+        return nil
+    }
+
+    /// Whether this session's own directory can be its project key — neither
+    /// a scratch thread nor a spawned thread.
+    private func groupsByOwnDirectory(_ session: SessionSnapshot) -> Bool {
+        !isSandbox(session) && !inheritsProject(session)
+    }
+
+    /// Whether this session takes its project from its parent whatever its
+    /// own directory says: a Codex thread another thread spawned.
+    public func inheritsProject(_ session: SessionSnapshot) -> Bool {
+        SessionRelations.isThreadSpawn(session.identity)
     }
 
     /// Whether this session's own directory is a harness's per-thread scratch.
@@ -307,17 +388,15 @@ public struct BoardSnapshot: Sendable, Equatable {
         sandboxThreads[session.key] != nil
     }
 
-    /// The folder a scratch session is running in, when it is running in one.
-    ///
-    /// What a card shows in place of a project name: `zhe` says which of the
-    /// day's threads this is, where "Codex · scratch" — already the section
-    /// heading above it — would say nothing twice.
+    /// The folder a scratch session is running in, when it is running in one
+    /// — `zhe` for a Codex desktop thread. Not a heading and not a title: the
+    /// session is under Projectless, and its row carries the directory.
     public func sandboxThreadName(for session: SessionSnapshot) -> String? {
         sandboxThreads[session.key]
     }
 
-    /// What to call a project key: the name a person gave it, then the
-    /// harness a pseudo key stands for, then the key's last path component.
+    /// What to call a project key: the name a person gave it, then
+    /// "Projectless" for a pseudo key, then the key's last path component.
     ///
     /// Every surface that heads a section goes through here, so renaming a
     /// project in the Projects page renames it on the wall, in the sidebar, in
@@ -330,6 +409,8 @@ public struct BoardSnapshot: Sendable, Equatable {
     /// Ignores the tree — see ``projectKey(for:)-(SessionSnapshot)`` for the
     /// answer a board groups by.
     public static func projectKey(for session: SessionSnapshot) -> String? {
-        session.identity.gitRoot ?? session.identity.cwd
+        if let root = session.identity.gitRoot, !root.isEmpty { return root }
+        if let cwd = session.identity.cwd, !cwd.isEmpty { return cwd }
+        return nil
     }
 }
